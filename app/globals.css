@@ -552,6 +552,10 @@ h3 {
   background: var(--surface);
 }
 
+.form-actions .destructive-action {
+  margin-right: auto;
+}
+
 .tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1014,6 +1018,10 @@ h3 {
 
   .form-actions .button {
     width: 100%;
+  }
+
+  .form-actions .destructive-action {
+    margin-right: 0;
   }
 
   .tabs {

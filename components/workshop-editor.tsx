@@ -70,6 +70,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
   const savingRef = useRef(false);
   const [publishing, setPublishing] = useState(false);
   const publishingRef = useRef(false);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
   const [loadError, setLoadError] = useState("");
   const localeNames: Record<Locale, string> = {
     vi: t.common.vietnamese,
@@ -229,6 +231,27 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
       showToast(t.editor.unpublished);
     } catch (caught) {
       showToast(requestErrorMessage(caught, t), "error");
+    }
+  }
+
+  async function deleteWorkshop() {
+    if (!workshopId || deletingRef.current) return;
+    const archivesPublishedWorkshop = data.has_published_revision;
+    const confirmation = archivesPublishedWorkshop
+      ? t.editor.confirmArchive
+      : t.editor.confirmDelete;
+    if (!window.confirm(confirmation)) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    try {
+      await api(`admin/workshops/${data.id}/`, { method: "DELETE" });
+      showToast(archivesPublishedWorkshop ? t.editor.archived : t.editor.deleted);
+      router.replace("/workshops");
+    } catch (caught) {
+      showToast(requestErrorMessage(caught, t), "error");
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
     }
   }
 
@@ -397,11 +420,27 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
       </section>
 
       <div className="form-actions">
+        {workshopId && (
+          <button
+            type="button"
+            className="button danger destructive-action"
+            disabled={saving || publishing || deleting}
+            onClick={() => void deleteWorkshop()}
+          >
+            {deleting
+              ? data.has_published_revision
+                ? t.editor.archiving
+                : t.editor.deleting
+              : data.has_published_revision
+                ? t.editor.archive
+                : t.editor.delete}
+          </button>
+        )}
         {data.has_published_revision && (
           <button
             type="button"
             className="button danger"
-            disabled={saving || publishing}
+            disabled={saving || publishing || deleting}
             onClick={() => void unpublish()}
           >
             {t.editor.unpublish}
@@ -411,7 +450,7 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           <button
             type="button"
             className="button secondary"
-            disabled={saving || publishing}
+            disabled={saving || publishing || deleting}
             onClick={() => void preview()}
           >
             {t.editor.preview}
@@ -420,7 +459,7 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
         <button
           type="button"
           className="button secondary"
-          disabled={saving || publishing}
+          disabled={saving || publishing || deleting}
           onClick={() => void save()}
         >
           {saving ? t.editor.saving : t.editor.saveDraft}
@@ -429,7 +468,7 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           <button
             type="button"
             className="button"
-            disabled={saving || publishing}
+            disabled={saving || publishing || deleting}
             onClick={() => void publish()}
           >
             {publishing ? t.editor.publishing : t.editor.publish}
