@@ -19,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare:cpanel": "./prepare-cpanel-deploy.sh"
   },
   "dependencies": {
     "@tiptap/extension-image": "^2.11.5",
@@ -28,7 +29,8 @@
     "@tiptap/starter-kit": "^2.11.5",
     "next": "15.5.20",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "styled-jsx": "5.1.6"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
