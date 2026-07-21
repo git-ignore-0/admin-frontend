@@ -41,6 +41,8 @@ export type MediaAsset = {
 
 export type TiptapDocument = Record<string, unknown>;
 
+export type WorkshopStatus = "upcoming" | "ongoing" | "completed";
+
 export type WorkshopTranslation = {
   locale: Locale;
   title: string;
@@ -58,7 +60,7 @@ export type Workshop = {
   start_at: string;
   end_at: string;
   event_timezone: string;
-  effective_status: string;
+  effective_status: WorkshopStatus;
   registration_url: string;
   has_published_revision: boolean;
   translations: WorkshopTranslation[];

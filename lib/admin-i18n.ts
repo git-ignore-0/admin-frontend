@@ -41,7 +41,7 @@ const vi = {
   },
   dashboard: {
     statsLabel: "Thống kê nội dung",
-    upcoming: "Workshop sắp diễn ra",
+    upcoming: "Workshop sắp/đang diễn ra",
     drafts: "Bản nháp đang chỉnh",
     incomplete: "Bản dịch chưa hoàn chỉnh",
     recent: "Hoạt động gần đây",
@@ -96,6 +96,7 @@ const vi = {
     publiclyVisible: "Đang hiển thị",
     status: {
       upcoming: "Sắp diễn ra",
+      ongoing: "Đang diễn ra",
       completed: "Đã tổ chức",
     },
   },
@@ -199,7 +200,7 @@ const en: AdminDictionary = {
   },
   dashboard: {
     statsLabel: "Content statistics",
-    upcoming: "Upcoming workshops",
+    upcoming: "Upcoming/ongoing workshops",
     drafts: "Drafts being edited",
     incomplete: "Incomplete translations",
     recent: "Recent activity",
@@ -254,6 +255,7 @@ const en: AdminDictionary = {
     publiclyVisible: "Published",
     status: {
       upcoming: "Upcoming",
+      ongoing: "Ongoing",
       completed: "Completed",
     },
   },
