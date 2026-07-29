@@ -12,6 +12,47 @@ export type Dashboard = {
   }>;
 };
 
+export type PaginationMeta = { page: number; page_size: number; total: number };
+
+export type AdminUserListItem = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  status: string;
+  date_joined: string;
+  points_balance: number;
+};
+
+export type InvitedAdminUser = {
+  id: string;
+  name: string;
+  email: string;
+  status: string;
+  referred_at: string;
+};
+
+export type AdminUserDetail = AdminUserListItem & {
+  referral_code: string;
+  source: "organic" | "referred";
+  referrer: { id: string; name: string } | null;
+  invited_count: number;
+  invited_users: InvitedAdminUser[];
+};
+
+export type PointDirection = "credit" | "debit";
+
+export type PointTransaction = {
+  id: string;
+  direction: PointDirection;
+  amount: number;
+  message: string;
+  actor: { id: string; name: string } | null;
+  created_at: string;
+};
+
+export type PointHistoryMeta = PaginationMeta & { balance: number };
+
 export type ExternalLink = {
   id?: number;
   kind: "facebook" | "youtube" | "store" | "forum" | "other";

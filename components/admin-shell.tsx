@@ -13,6 +13,8 @@ export function AdminShell({ user, children }: Props) {
   const { t } = useAdminI18n();
   const links = [
     ["/dashboard", t.common.dashboard],
+    ["/users", t.common.users],
+    ["/points", t.common.points],
     ["/settings", t.common.settings],
     ["/workshops", t.common.workshops],
   ] as const;

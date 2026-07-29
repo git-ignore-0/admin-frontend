@@ -15,7 +15,12 @@ export function firstValidationField(value: unknown): string | undefined {
   return undefined;
 }
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+export type ApiEnvelope<T, M = Record<string, unknown>> = { data: T; meta?: M };
+
+export async function apiEnvelope<T, M = Record<string, unknown>>(
+  path: string,
+  init?: RequestInit,
+): Promise<ApiEnvelope<T, M>> {
   const method = (init?.method || "GET").toUpperCase();
   const mutatesData = !["GET", "HEAD", "OPTIONS"].includes(method);
   let response: Response;
@@ -49,5 +54,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     Object.assign(error, { status: response.status, payload, field });
     throw error;
   }
-  return payload.data as T;
+  return payload as ApiEnvelope<T, M>;
+}
+
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await apiEnvelope<T>(path, init)).data;
 }

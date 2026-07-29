@@ -4,14 +4,14 @@ export function PageHeading({
   action,
 }: {
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
     <header className="page-heading">
       <div>
         <h1>{title}</h1>
-        <p>{description}</p>
+        {description && <p>{description}</p>}
       </div>
       {action}
     </header>
