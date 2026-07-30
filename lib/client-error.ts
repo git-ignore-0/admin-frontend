@@ -9,7 +9,11 @@ export function requestErrorMessage(
 ) {
   if (!(caught instanceof Error)) return t.common.requestFailed;
   const error = caught as ClientApiError;
-  if (error.message === "network_error" || error.message === "upstream_unavailable") {
+  if (
+    error.message === "network_error" ||
+    error.message === "upstream_unavailable" ||
+    error.message === "upstream_timeout"
+  ) {
     return t.common.networkError;
   }
   if (error.message === "forbidden" || error.message === "csrf_rejected") {

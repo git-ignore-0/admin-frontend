@@ -3,11 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildBackendTarget } from "@/lib/backend-target";
 import { adminOrigin, authOrigin } from "@/lib/config";
 import { isTrustedAdminRequest } from "@/lib/csrf";
-import { refreshAccessToken } from "@/lib/oauth";
+import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { clearSession, readSession, writeSession } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function jsonError(error: string, status: number) {
+  return NextResponse.json(
+    { error },
+    { status, headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   if (
@@ -18,17 +25,20 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       request.headers.get("x-nfv-admin-request"),
     )
   ) {
-    return NextResponse.json({ error: "csrf_rejected" }, { status: 403 });
+    return jsonError("csrf_rejected", 403);
   }
   let session = await readSession();
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!session) return jsonError("unauthorized", 401);
   if (session.expiresAt < Date.now() + 30_000) {
     try {
       session = await refreshAccessToken(session);
       await writeSession(session);
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthServiceUnavailableError) {
+        return jsonError("upstream_unavailable", 502);
+      }
       await clearSession();
-      return NextResponse.json({ error: "session_expired" }, { status: 401 });
+      return jsonError("session_expired", 401);
     }
   }
   const { path } = await context.params;
@@ -45,14 +55,20 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       headers,
       body: method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer(),
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
-  } catch {
-    return NextResponse.json({ error: "upstream_unavailable" }, { status: 502 });
+  } catch (error) {
+    const timedOut =
+      error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name);
+    return jsonError(timedOut ? "upstream_timeout" : "upstream_unavailable", timedOut ? 504 : 502);
   }
   if (response.status === 401) await clearSession();
   return new NextResponse(response.body, {
     status: response.status,
-    headers: { "Content-Type": response.headers.get("content-type") || "application/json" },
+    headers: {
+      "Content-Type": response.headers.get("content-type") || "application/json",
+      "Cache-Control": "private, no-store",
+    },
   });
 }
 

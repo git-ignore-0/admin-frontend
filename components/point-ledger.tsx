@@ -3,8 +3,10 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
+import { formatAdminDateTime } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { PointDirection, PointHistoryMeta, PointTransaction } from "@/lib/types";
@@ -177,12 +179,7 @@ export function PointLedger({
                       {item.amount}
                     </td>
                     <td>{item.actor?.name ?? "—"}</td>
-                    <td>
-                      {new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-US", {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      }).format(new Date(item.created_at))}
-                    </td>
+                    <td>{formatAdminDateTime(item.created_at, locale)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -202,44 +199,27 @@ export function PointLedger({
         )}
       </div>
       {pendingTransaction && (
-        <div className="confirmation-backdrop" role="presentation">
-          <section
-            aria-labelledby={`confirm-points-${userId}`}
-            aria-modal="true"
-            className="confirmation-dialog"
-            role="dialog"
-          >
-            <h2 id={`confirm-points-${userId}`}>{t.points.confirmTitle}</h2>
-            <p>
-              {t.points.confirmBody
-                .replace("{user}", userName)
-                .replace(
-                  "{direction}",
-                  pendingTransaction.direction === "credit" ? t.points.credit : t.points.debit,
-                )
-                .replace("{amount}", String(pendingTransaction.amount))}
-            </p>
-            <p className="muted-copy">{pendingTransaction.message}</p>
-            <div className="confirmation-actions">
-              <button
-                className="button secondary"
-                disabled={saving}
-                onClick={() => setPendingTransaction(null)}
-                type="button"
-              >
-                {t.points.cancel}
-              </button>
-              <button
-                className="button"
-                disabled={saving}
-                onClick={confirmTransaction}
-                type="button"
-              >
-                {saving ? t.points.creating : t.points.confirm}
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmationDialog
+          busy={saving}
+          busyLabel={t.points.creating}
+          cancelLabel={t.points.cancel}
+          confirmLabel={t.points.confirm}
+          error={error}
+          onCancel={() => setPendingTransaction(null)}
+          onConfirm={confirmTransaction}
+          title={t.points.confirmTitle}
+        >
+          <p>
+            {t.points.confirmBody
+              .replace("{user}", userName)
+              .replace(
+                "{direction}",
+                pendingTransaction.direction === "credit" ? t.points.credit : t.points.debit,
+              )
+              .replace("{amount}", String(pendingTransaction.amount))}
+          </p>
+          <p className="muted-copy">{pendingTransaction.message}</p>
+        </ConfirmationDialog>
       )}
     </section>
   );

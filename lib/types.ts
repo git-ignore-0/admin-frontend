@@ -51,6 +51,59 @@ export type PointTransaction = {
   created_at: string;
 };
 
+export type RewardTranslation = {
+  locale: Locale;
+  name: string;
+  short_description: string;
+};
+
+export type Reward = {
+  id: string;
+  point_cost: number;
+  image: MediaAsset;
+  position: number;
+  is_active: boolean;
+  translations: RewardTranslation[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type RedemptionStatus = "pending" | "contacted" | "completed" | "rejected";
+
+export type RedemptionTransaction = {
+  id: string;
+  direction: PointDirection;
+  amount: number;
+  template: string;
+  message: string;
+  created_at: string;
+};
+
+export type RedemptionListItem = {
+  id: string;
+  reward_id: string;
+  reward_name_vi_snapshot: string;
+  reward_name_en_snapshot: string;
+  point_cost_snapshot: number;
+  status: RedemptionStatus;
+  rejection_message: string;
+  user: { id: string; name: string; email: string; phone: string };
+  created_at: string;
+  contacted_at: string | null;
+  completed_at: string | null;
+  rejected_at: string | null;
+  updated_at: string;
+};
+
+export type RedemptionDetail = RedemptionListItem & {
+  points_balance: number;
+  debit_transaction: RedemptionTransaction | null;
+  refund_transaction: RedemptionTransaction | null;
+  contacted_by: { id: string; name: string } | null;
+  processed_by: { id: string; name: string } | null;
+  internal_note: string;
+};
+
 export type PointHistoryMeta = PaginationMeta & { balance: number };
 
 export type ExternalLink = {

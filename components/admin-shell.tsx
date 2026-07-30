@@ -15,6 +15,8 @@ export function AdminShell({ user, children }: Props) {
     ["/dashboard", t.common.dashboard],
     ["/users", t.common.users],
     ["/points", t.common.points],
+    ["/rewards", t.common.rewards],
+    ["/redemptions", t.common.redemptions],
     ["/settings", t.common.settings],
     ["/workshops", t.common.workshops],
   ] as const;
