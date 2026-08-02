@@ -1,3 +1,4 @@
+import { MembershipPaymentSettingsForm } from "@/components/membership-payment-settings-form";
 import { PageHeading } from "@/components/page-heading";
 import { SiteSettingsForm } from "@/components/site-settings-form";
 import { adminDictionaries } from "@/lib/admin-i18n";
@@ -14,6 +15,7 @@ export default async function SettingsPage() {
     <>
       <PageHeading title={t.common.settings} description={t.page.settingsDescription} />
       <SiteSettingsForm />
+      <MembershipPaymentSettingsForm />
     </>
   );
 }

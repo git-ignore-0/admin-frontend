@@ -10,6 +10,11 @@ import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
+import {
+  numericInputErrorMessage,
+  parsePositiveInteger,
+  sanitizeIntegerInput,
+} from "@/lib/numeric-input";
 import type { Locale, MediaAsset, Reward } from "@/lib/types";
 
 type TranslationForm = { name: string; shortDescription: string };
@@ -47,7 +52,8 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<unknown>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [pointCost, setPointCost] = useState(100);
+  const [pointCost, setPointCost] = useState("100");
+  const [pointCostError, setPointCostError] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [image, setImage] = useState<MediaAsset | null>(null);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -62,7 +68,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
     api<Reward>(`admin/rewards/${rewardId}`, { signal: controller.signal })
       .then((reward) => {
         if (controller.signal.aborted) return;
-        setPointCost(reward.point_cost);
+        setPointCost(String(reward.point_cost));
         setIsActive(reward.is_active);
         setImage(reward.image);
         setSelectedImage(null);
@@ -110,10 +116,14 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
     event.preventDefault();
     if (savingRef.current || uploading) return;
     setError("");
-    if (!Number.isInteger(pointCost) || pointCost <= 0) {
-      setError(t.rewards.pointCostError);
+    const parsedPointCost = parsePositiveInteger(pointCost);
+    if (parsedPointCost.error) {
+      setPointCostError(
+        numericInputErrorMessage(parsedPointCost.error, t.common.numericInput),
+      );
       return;
     }
+    setPointCostError("");
     if (!translations.vi.name.trim() || !translations.en.name.trim()) {
       setError(t.rewards.namesRequired);
       return;
@@ -139,7 +149,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
       }
       if (!savedImage) throw new Error("reward_image_missing");
       const payload = {
-        point_cost: pointCost,
+        point_cost: parsedPointCost.value,
         image_id: savedImage.id,
         is_active: isActive,
         translations: (["vi", "en"] as const).map((locale) => ({
@@ -157,7 +167,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
         router.replace(`/rewards/${reward.id}`);
         keepLockedForNavigation = true;
       } else {
-        setPointCost(reward.point_cost);
+        setPointCost(String(reward.point_cost));
         setIsActive(reward.is_active);
         setImage(reward.image);
         setTranslations(translationsFromReward(reward));
@@ -187,7 +197,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
     );
 
   return (
-    <form className="reward-editor" onSubmit={submit}>
+    <form className="reward-editor" noValidate onSubmit={submit}>
       {error && (
         <p className="error-box" role="alert">
           {error}
@@ -233,14 +243,23 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
           <label className="field">
             <span>{t.rewards.pointCost} *</span>
             <input
+              aria-invalid={Boolean(pointCostError)}
               className="input"
               disabled={saving}
-              min="1"
-              onChange={(event) => setPointCost(Number(event.target.value))}
+              inputMode="numeric"
+              onChange={(event) => {
+                setPointCost(sanitizeIntegerInput(event.target.value));
+                setPointCostError("");
+              }}
               required
-              type="number"
+              type="text"
               value={pointCost}
             />
+            {pointCostError ? (
+              <small className="field-error" role="alert">
+                {pointCostError}
+              </small>
+            ) : null}
           </label>
           <label className="checkbox field full">
             <input

@@ -14,6 +14,180 @@ export type Dashboard = {
 
 export type PaginationMeta = { page: number; page_size: number; total: number };
 
+export type MembershipStatus = "scheduled" | "active" | "ended";
+export type MembershipRequestStatus =
+  | "consultation_requested"
+  | "contacted"
+  | "payment_pending"
+  | "payment_submitted"
+  | "approved"
+  | "rejected";
+export type MembershipQuotaPolicy = "expire" | "rollover";
+
+export type MembershipCustomer = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+};
+
+export type MembershipProduct = {
+  id: string;
+  name: string;
+  short_description: string;
+  unit_size: string;
+  unit_label_vi: string;
+  unit_label_en: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MembershipPackageItem = {
+  product_id: string;
+  product_name: string;
+  short_description: string;
+  unit_size: string;
+  unit_label_vi: string;
+  unit_label_en: string;
+  quota_units: number;
+};
+
+export type MembershipPackage = {
+  id: string;
+  name: string;
+  description: string;
+  upfront_price: string;
+  duration_months: number;
+  quota_policy: MembershipQuotaPolicy;
+  items: MembershipPackageItem[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MembershipPaymentSettings = {
+  direct_transfer_enabled: boolean;
+  bank_bin: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  version: number;
+  updated_at: string;
+};
+
+export type MembershipBankOption = {
+  bin: string;
+  name: string;
+  short_name: string;
+  code: string;
+};
+
+export type MembershipPaymentInstruction = {
+  bank_bin: string;
+  bank_name: string;
+  bank_code?: string;
+  account_number: string;
+  account_name: string;
+  amount: string;
+  phone_snapshot: string;
+  transfer_content: string;
+  issued_at: string;
+};
+
+export type MembershipRequestEvent = {
+  id: string;
+  action: string;
+  actor: { id: string; name: string } | null;
+  reason: string;
+  created_at: string;
+};
+
+export type MembershipRequest = {
+  id: string;
+  short_code: string;
+  status: MembershipRequestStatus;
+  user: MembershipCustomer;
+  package: {
+    id: string;
+    name: string;
+    description: string;
+    upfront_price: string;
+    duration_months: number;
+    quota_policy: MembershipQuotaPolicy;
+    items: MembershipPackageItem[];
+  };
+  payment_instruction: MembershipPaymentInstruction | null;
+  return_reason: string;
+  rejection_reason: string;
+  contacted_at: string | null;
+  payment_submitted_at: string | null;
+  returned_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  created_at: string;
+  updated_at: string;
+  events?: MembershipRequestEvent[];
+};
+
+export type MembershipQuota = {
+  product_id: string;
+  product_name: string;
+  unit_size: string;
+  unit_label_vi: string;
+  unit_label_en: string;
+  quota_units_per_cycle: number;
+  remaining_units: number;
+};
+
+export type MembershipCycle = {
+  sequence: number;
+  start_date: string;
+  end_date: string;
+  granted_at: string;
+  quotas: Array<{
+    product_id: string;
+    product_name: string;
+    granted_units: number;
+    remaining_units: number;
+    expired_units: number;
+  }>;
+};
+
+export type AdminMembership = {
+  id: string;
+  user_id: string;
+  request_id: string;
+  user: MembershipCustomer;
+  status: MembershipStatus;
+  package_name: string;
+  package_description: string;
+  upfront_price: string;
+  duration_months: number;
+  quota_policy: MembershipQuotaPolicy;
+  start_date: string;
+  end_date: string;
+  activated_at: string;
+  quota?: MembershipQuota[];
+  cycles?: MembershipCycle[];
+};
+
+export type MembershipUsage = {
+  id: string;
+  membership_id: string;
+  status: "applied" | "reversed";
+  note: string;
+  created_at: string;
+  reversed_at: string | null;
+  reversal?: { reason: string; created_at: string };
+  lines: Array<{
+    product_id: string;
+    product_name: string;
+    units: number;
+    allocations?: Array<{ cycle: number; units: number }>;
+  }>;
+};
+
 export type AdminUserListItem = {
   id: string;
   name: string;

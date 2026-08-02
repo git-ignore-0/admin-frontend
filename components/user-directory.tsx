@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { ListState } from "@/components/list-state";
+import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserListItem, PaginationMeta } from "@/lib/types";
+import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function UserDirectory({
   detailBasePath = "/users",
@@ -16,77 +20,77 @@ export function UserDirectory({
   detailBasePath?: "/users" | "/points";
   actionLabel?: string;
 }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [items, setItems] = useState<AdminUserListItem[] | null>(null);
-  const [meta, setMeta] = useState<PaginationMeta | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const requestId = useRef(0);
+  const fetchPage = useCallback(
+    (page: number) => {
+      const params = new URLSearchParams({ page: String(page), search });
+      return apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`);
+    },
+    [search],
+  );
+  const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
+  const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
+    fetchPage,
+    getErrorMessage,
+  });
 
-  const load = useCallback(() => {
-    const currentRequest = ++requestId.current;
-    setItems(null);
-    setError("");
-    setLoading(true);
-    const params = new URLSearchParams({ page: String(page), search });
-    apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`)
-      .then((payload) => {
-        if (currentRequest !== requestId.current) return;
-        setItems(payload.data);
-        setMeta(payload.meta ?? null);
-      })
-      .catch((caught) => {
-        if (currentRequest === requestId.current) setError(requestErrorMessage(caught, t));
-      })
-      .finally(() => {
-        if (currentRequest === requestId.current) setLoading(false);
-      });
-  }, [page, search, t]);
-
-  useEffect(load, [load]);
-
-  function submit(event: FormEvent) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (loading) return;
+    const nextSearch = query.trim();
     setPage(1);
-    setSearch(query.trim());
+    if (nextSearch === search && page === 1) reload();
+    else setSearch(nextSearch);
   }
 
+  function changeQuery(value: string) {
+    setQuery(value);
+    if (!value.trim() && search) {
+      setPage(1);
+      setSearch("");
+    }
+  }
+
+  function clearFilters() {
+    setQuery("");
+    setSearch("");
+    setPage(1);
+  }
+
+  const detailLabel = actionLabel ?? t.users.view;
+
   return (
-    <section>
-      <form className="search-bar" onSubmit={submit} role="search">
-        <label className="field">
-          <span>{t.users.searchLabel}</span>
-          <input
-            className="input"
-            type="search"
-            value={query}
-            placeholder={t.users.searchPlaceholder}
-            onChange={(event) => {
-              const value = event.target.value;
-              setQuery(value);
-              if (!value.trim() && search) {
-                setPage(1);
-                setSearch("");
-              }
-            }}
-          />
-        </label>
-        <button className="button" disabled={loading} type="submit">
-          {loading ? t.users.searching : t.users.search}
-        </button>
-      </form>
-      {error && <p className="error-box">{error}</p>}
-      {!items ? (
-        <div className="panel">{t.users.loading}</div>
-      ) : items.length === 0 ? (
-        <div className="empty">{t.users.empty}</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="table user-table">
+    <section aria-busy={loading} className="admin-list-section">
+      <ListToolbar
+        busy={loading}
+        clearLabel={t.common.clearFilters}
+        hasFilters={Boolean(query || search)}
+        onClear={clearFilters}
+        onQueryChange={changeQuery}
+        onSubmit={submit}
+        placeholder={t.users.searchPlaceholder}
+        query={query}
+        resultCount={meta?.total}
+        resultCountLabel={t.common.resultCount}
+        resultCountSingularLabel={t.common.resultCountSingular}
+        searchLabel={t.users.searchLabel}
+        searchSubmitLabel={loading ? t.users.searching : t.users.search}
+      />
+      <ListState
+        empty={t.users.empty}
+        error={error}
+        hasData={items !== null}
+        isEmpty={items?.length === 0}
+        loading={loading}
+        loadingLabel={t.users.loading}
+        onRetry={reload}
+        retryLabel={t.common.retry}
+      />
+      {items && items.length > 0 && (
+        <div className="table-wrap admin-list-wrap">
+          <table className="table admin-list-table user-directory-table">
             <thead>
               <tr>
                 <th>{t.users.name}</th>
@@ -94,36 +98,30 @@ export function UserDirectory({
                 <th>{t.users.created}</th>
                 <th>{t.users.status}</th>
                 <th>{t.users.balance}</th>
-                <th />
               </tr>
             </thead>
             <tbody>
               {items.map((user) => (
                 <tr key={user.id}>
-                  <td>
-                    <Link className="user-name-link" href={`${detailBasePath}/${user.id}`}>
+                  <td data-label={t.users.name}>
+                    <Link
+                      aria-label={`${detailLabel}: ${user.name}`}
+                      className="admin-list-primary-link"
+                      href={`${detailBasePath}/${user.id}`}
+                    >
                       {user.name}
                     </Link>
                     <small className="table-secondary">{user.email}</small>
                   </td>
-                  <td>{user.phone || "—"}</td>
-                  <td>
-                    {new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-US", {
-                      dateStyle: "medium",
-                    }).format(new Date(user.date_joined))}
-                  </td>
-                  <td>
+                  <td data-label={t.users.phone}>{user.phone || "—"}</td>
+                  <td data-label={t.users.created}>{formatAdminDateTime(user.date_joined)}</td>
+                  <td data-label={t.users.status}>
                     <span className="badge">
                       {t.users.statuses[user.status as keyof typeof t.users.statuses] ??
                         user.status}
                     </span>
                   </td>
-                  <td>{user.points_balance}</td>
-                  <td>
-                    <Link className="button secondary" href={`${detailBasePath}/${user.id}`}>
-                      {actionLabel ?? t.users.view}
-                    </Link>
-                  </td>
+                  <td data-label={t.users.balance}>{user.points_balance}</td>
                 </tr>
               ))}
             </tbody>
@@ -132,13 +130,14 @@ export function UserDirectory({
       )}
       {meta && (
         <Pagination
-          page={meta.page}
-          total={meta.total}
-          pageSize={meta.page_size}
-          onPage={setPage}
-          previousLabel={t.common.previous}
+          disabled={loading}
           nextLabel={t.common.next}
+          onPage={setPage}
+          page={meta.page}
+          pageSize={meta.page_size}
+          previousLabel={t.common.previous}
           summary={t.common.pagination}
+          total={meta.total}
         />
       )}
     </section>

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { adminDictionaries } from "@/lib/admin-i18n";
+import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { firstValidationField } from "@/lib/client-api";
 import { isTrustedAdminRequest } from "@/lib/csrf";
@@ -40,6 +41,35 @@ describe("workshop timezone conversion", () => {
     expect(formatZonedDateTimeInput(instant, "Asia/Ho_Chi_Minh")).toBe("2026-07-20T09:00");
     expect(zonedDateTimeInputToIso("2026-07-20T09:00", "Asia/Ho_Chi_Minh")).toBe(instant);
     expect(formatZonedDateTimeInput(instant, "Asia/Singapore")).toBe("2026-07-20T10:00");
+  });
+});
+
+describe("admin date display", () => {
+  it("formats timestamps in the fixed Vietnam timezone", () => {
+    expect(formatAdminDateTime("2026-08-01T08:21:00Z")).toBe("01/08/2026 15:21");
+  });
+
+  it("formats date-only values without timezone date shifts", () => {
+    expect(formatAdminDate("2026-08-01")).toBe("01/08/2026");
+  });
+
+  it("uses the requested fallback for missing or invalid values", () => {
+    expect(formatAdminDateTime(null)).toBe("—");
+    expect(formatAdminDateTime("not-a-date")).toBe("—");
+    expect(formatAdminDate("2026-02-30", "N/A")).toBe("N/A");
+  });
+
+  it("does not change with the browser or process timezone", () => {
+    const originalTimeZone = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    const inNewYork = formatAdminDateTime("2026-08-01T08:21:00Z");
+    process.env.TZ = "Asia/Tokyo";
+    const inTokyo = formatAdminDateTime("2026-08-01T08:21:00Z");
+    if (originalTimeZone) process.env.TZ = originalTimeZone;
+    else delete process.env.TZ;
+
+    expect(inNewYork).toBe("01/08/2026 15:21");
+    expect(inTokyo).toBe(inNewYork);
   });
 });
 

@@ -199,19 +199,19 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
           <dl className="detail-list">
             <DetailRow
               label={t.redemptions.requestedAt}
-              value={formatAdminDateTime(item.created_at, locale)}
+              value={formatAdminDateTime(item.created_at)}
             />
             <DetailRow
               label={t.redemptions.contactedAt}
-              value={formatAdminDateTime(item.contacted_at, locale)}
+              value={formatAdminDateTime(item.contacted_at)}
             />
             <DetailRow
               label={t.redemptions.completedAt}
-              value={formatAdminDateTime(item.completed_at, locale)}
+              value={formatAdminDateTime(item.completed_at)}
             />
             <DetailRow
               label={t.redemptions.rejectedAt}
-              value={formatAdminDateTime(item.rejected_at, locale)}
+              value={formatAdminDateTime(item.rejected_at)}
             />
             <DetailRow label={t.redemptions.contactedBy} value={item.contacted_by?.name || "—"} />
             <DetailRow label={t.redemptions.processedBy} value={item.processed_by?.name || "—"} />
@@ -226,13 +226,11 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
             emptyLabel={t.redemptions.noDebit}
             item={item.debit_transaction}
             label={t.redemptions.debitTransaction}
-            locale={locale}
           />
           <TransactionCard
             emptyLabel={t.redemptions.noRefund}
             item={item.refund_transaction}
             label={t.redemptions.refundTransaction}
-            locale={locale}
           />
         </section>
 
@@ -314,12 +312,10 @@ function TransactionCard({
   label,
   item,
   emptyLabel,
-  locale,
 }: {
   label: string;
   item: RedemptionTransaction | null;
   emptyLabel: string;
-  locale: "vi" | "en";
 }) {
   if (!item)
     return (
@@ -339,7 +335,7 @@ function TransactionCard({
           {item.direction === "credit" ? "+" : "−"}
           {item.amount}
         </strong>
-        <time>{formatAdminDateTime(item.created_at, locale)}</time>
+        <time>{formatAdminDateTime(item.created_at)}</time>
       </div>
     </div>
   );

@@ -1,111 +1,114 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { ListState } from "@/components/list-state";
+import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { PaginationMeta, RedemptionListItem, RedemptionStatus } from "@/lib/types";
+import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function RedemptionList() {
   const { locale, t } = useAdminI18n();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<RedemptionStatus | "">("");
-  const [page, setPage] = useState(1);
-  const [items, setItems] = useState<RedemptionListItem[] | null>(null);
-  const [meta, setMeta] = useState<PaginationMeta | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const requestId = useRef(0);
+  const fetchPage = useCallback(
+    (page: number) => {
+      const params = new URLSearchParams({ page: String(page), search, status });
+      return apiEnvelope<RedemptionListItem[], PaginationMeta>(`admin/redemptions?${params}`);
+    },
+    [search, status],
+  );
+  const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
+  const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
+    fetchPage,
+    getErrorMessage,
+  });
 
-  const load = useCallback(() => {
-    const currentRequest = ++requestId.current;
-    setItems(null);
-    setError("");
-    setLoading(true);
-    const params = new URLSearchParams({ page: String(page), search, status });
-    apiEnvelope<RedemptionListItem[], PaginationMeta>(`admin/redemptions?${params}`)
-      .then((payload) => {
-        if (currentRequest !== requestId.current) return;
-        setItems(payload.data);
-        setMeta(payload.meta ?? null);
-      })
-      .catch((caught) => {
-        if (currentRequest === requestId.current) setError(requestErrorMessage(caught, t));
-      })
-      .finally(() => {
-        if (currentRequest === requestId.current) setLoading(false);
-      });
-  }, [page, search, status, t]);
-
-  useEffect(load, [load]);
-
-  function submit(event: FormEvent) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (loading) return;
+    const nextSearch = query.trim();
     setPage(1);
-    setSearch(query.trim());
+    if (nextSearch === search && page === 1) reload();
+    else setSearch(nextSearch);
+  }
+
+  function changeQuery(value: string) {
+    setQuery(value);
+    if (!value.trim() && search) {
+      setPage(1);
+      setSearch("");
+    }
+  }
+
+  function clearFilters() {
+    setQuery("");
+    setSearch("");
+    setStatus("");
+    setPage(1);
   }
 
   const statusLabels: Record<RedemptionStatus, string> = t.redemptions.statuses;
-  return (
-    <section>
-      <form className="redemption-filters" onSubmit={submit} role="search">
-        <label className="field">
-          <span>{t.redemptions.searchLabel}</span>
-          <input
-            className="input"
-            onChange={(event) => {
-              setQuery(event.target.value);
-              if (!event.target.value.trim() && search) {
-                setPage(1);
-                setSearch("");
-              }
-            }}
-            placeholder={t.users.searchPlaceholder}
-            type="search"
-            value={query}
-          />
-        </label>
-        <label className="field">
-          <span>{t.redemptions.filterStatus}</span>
-          <select
-            className="input"
-            onChange={(event) => {
-              setPage(1);
-              setStatus(event.target.value as RedemptionStatus | "");
-            }}
-            value={status}
-          >
-            <option value="">{t.redemptions.allStatuses}</option>
-            {(Object.keys(statusLabels) as RedemptionStatus[]).map((value) => (
-              <option key={value} value={value}>
-                {statusLabels[value]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="button" disabled={loading} type="submit">
-          {loading ? t.users.searching : t.users.search}
-        </button>
-      </form>
 
-      {error && (
-        <p className="error-box" role="alert">
-          {error}
-        </p>
-      )}
-      {!items ? (
-        <div className="panel">{t.redemptions.loading}</div>
-      ) : items.length === 0 ? (
-        <div className="empty">{t.redemptions.empty}</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="table redemption-table">
+  return (
+    <section aria-busy={loading} className="admin-list-section">
+      <ListToolbar
+        busy={loading}
+        clearLabel={t.common.clearFilters}
+        filter={
+          <label className="field">
+            <span>{t.redemptions.filterStatus}</span>
+            <select
+              className="input"
+              disabled={loading}
+              onChange={(event) => {
+                setStatus(event.target.value as RedemptionStatus | "");
+                setPage(1);
+              }}
+              value={status}
+            >
+              <option value="">{t.redemptions.allStatuses}</option>
+              {(Object.keys(statusLabels) as RedemptionStatus[]).map((value) => (
+                <option key={value} value={value}>
+                  {statusLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+        }
+        hasFilters={Boolean(query || search || status)}
+        onClear={clearFilters}
+        onQueryChange={changeQuery}
+        onSubmit={submit}
+        placeholder={t.users.searchPlaceholder}
+        query={query}
+        resultCount={meta?.total}
+        resultCountLabel={t.common.resultCount}
+        resultCountSingularLabel={t.common.resultCountSingular}
+        searchLabel={t.redemptions.searchLabel}
+        searchSubmitLabel={loading ? t.users.searching : t.users.search}
+      />
+
+      <ListState
+        empty={t.redemptions.empty}
+        error={error}
+        hasData={items !== null}
+        isEmpty={items?.length === 0}
+        loading={loading}
+        loadingLabel={t.redemptions.loading}
+        onRetry={reload}
+        retryLabel={t.common.retry}
+      />
+      {items && items.length > 0 && (
+        <div className="table-wrap admin-list-wrap">
+          <table className="table admin-list-table redemption-list-table">
             <thead>
               <tr>
                 <th>{t.redemptions.member}</th>
@@ -113,37 +116,33 @@ export function RedemptionList() {
                 <th>{t.redemptions.points}</th>
                 <th>{t.redemptions.requestedAt}</th>
                 <th>{t.redemptions.status}</th>
-                <th />
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td>
-                    <strong>{item.user.name}</strong>
-                    <small className="table-secondary">{item.user.email}</small>
-                    {item.user.phone && (
-                      <small className="table-secondary">{item.user.phone}</small>
-                    )}
-                  </td>
-                  <td>
-                    <Link className="user-name-link" href={`/redemptions/${item.id}`}>
-                      {locale === "en"
-                        ? item.reward_name_en_snapshot
-                        : item.reward_name_vi_snapshot}
+                  <td data-label={t.redemptions.member}>
+                    <Link
+                      aria-label={`${t.redemptions.view}: ${item.user.name}`}
+                      className="admin-list-primary-link"
+                      href={`/redemptions/${item.id}`}
+                    >
+                      {item.user.name}
                     </Link>
+                    <small className="table-secondary">{item.user.email}</small>
+                    <small className="table-secondary">{item.user.phone || "—"}</small>
                   </td>
-                  <td>{item.point_cost_snapshot}</td>
-                  <td>{formatAdminDateTime(item.created_at, locale)}</td>
-                  <td>
+                  <td data-label={t.redemptions.reward}>
+                    {locale === "en" ? item.reward_name_en_snapshot : item.reward_name_vi_snapshot}
+                  </td>
+                  <td data-label={t.redemptions.points}>{item.point_cost_snapshot}</td>
+                  <td data-label={t.redemptions.requestedAt}>
+                    {formatAdminDateTime(item.created_at)}
+                  </td>
+                  <td data-label={t.redemptions.status}>
                     <span className={`badge redemption-status ${item.status}`}>
                       {statusLabels[item.status]}
                     </span>
-                  </td>
-                  <td>
-                    <Link className="button secondary" href={`/redemptions/${item.id}`}>
-                      {t.redemptions.view}
-                    </Link>
                   </td>
                 </tr>
               ))}
@@ -153,6 +152,7 @@ export function RedemptionList() {
       )}
       {meta && (
         <Pagination
+          disabled={loading}
           nextLabel={t.common.next}
           onPage={setPage}
           page={meta.page}

@@ -5,12 +5,13 @@ import { useCallback, useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DetailPageHeading } from "@/components/detail-page-heading";
 import { Pagination } from "@/components/pagination";
+import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserDetail, PaginationMeta } from "@/lib/types";
 
 export function UserDetail({ userId }: { userId: string }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const [user, setUser] = useState<AdminUserDetail | null>(null);
   const [invitedMeta, setInvitedMeta] = useState<PaginationMeta | null>(null);
   const [invitedPage, setInvitedPage] = useState(1);
@@ -30,10 +31,6 @@ export function UserDetail({ userId }: { userId: string }) {
   useEffect(load, [load]);
   if (error) return <p className="error-box">{error}</p>;
   if (!user) return <div className="panel">{t.users.loading}</div>;
-  const date = new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-US", {
-    dateStyle: "long",
-    timeStyle: "short",
-  }).format(new Date(user.date_joined));
   return (
     <>
       <DetailPageHeading
@@ -54,7 +51,7 @@ export function UserDetail({ userId }: { userId: string }) {
           </div>
           <div>
             <dt>{t.users.created}</dt>
-            <dd>{date}</dd>
+            <dd>{formatAdminDateTime(user.date_joined)}</dd>
           </div>
           <div>
             <dt>{t.users.status}</dt>

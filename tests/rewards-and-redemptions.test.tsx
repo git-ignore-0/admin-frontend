@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -9,7 +10,8 @@ import { RewardEditor } from "@/components/reward-editor";
 import { RewardList } from "@/components/reward-list";
 import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
-import type { RedemptionDetail, Reward } from "@/lib/types";
+import type { PaginationMeta, RedemptionDetail, RedemptionListItem, Reward } from "@/lib/types";
+import { usePaginatedList } from "@/lib/use-paginated-list";
 
 const replace = vi.fn();
 
@@ -29,6 +31,49 @@ function providers(children: React.ReactNode) {
     <AdminI18nProvider initialLocale="en">
       <ToastProvider>{children}</ToastProvider>
     </AdminI18nProvider>,
+  );
+}
+
+function PaginatedRedemptionHarness({
+  fetcher,
+  requestKey,
+}: {
+  fetcher: (
+    requestKey: string,
+    page: number,
+  ) => Promise<{ data: RedemptionListItem[]; meta: PaginationMeta }>;
+  requestKey: string;
+}) {
+  const fetchPage = useCallback((page: number) => fetcher(requestKey, page), [fetcher, requestKey]);
+  const getErrorMessage = useCallback(() => "load failed", []);
+  const { items, meta } = usePaginatedList({ fetchPage, getErrorMessage });
+  return (
+    <div>
+      {items?.map((item) => (
+        <span key={item.id}>{item.user.name}</span>
+      ))}
+      {meta && <span data-testid="redemption-harness-total">{meta.total}</span>}
+    </div>
+  );
+}
+
+function PaginatedRewardHarness({
+  fetcher,
+  requestKey,
+}: {
+  fetcher: (requestKey: string, page: number) => Promise<{ data: Reward[]; meta: PaginationMeta }>;
+  requestKey: string;
+}) {
+  const fetchPage = useCallback((page: number) => fetcher(requestKey, page), [fetcher, requestKey]);
+  const getErrorMessage = useCallback(() => "load failed", []);
+  const { items, meta } = usePaginatedList({ fetchPage, getErrorMessage });
+  return (
+    <div>
+      {items?.map((item) => (
+        <span key={item.id}>{item.translations[1]?.name}</span>
+      ))}
+      {meta && <span data-testid="reward-harness-total">{meta.total}</span>}
+    </div>
   );
 }
 
@@ -52,6 +97,13 @@ const reward: Reward = {
   ],
   created_at: "2026-07-20T02:00:00Z",
   updated_at: "2026-07-20T02:00:00Z",
+};
+
+const secondReward: Reward = {
+  ...reward,
+  id: "72bb1e57-a73b-4635-ae80-25da7499073c",
+  position: 3,
+  translations: reward.translations.map((item) => ({ ...item, name: "Seed box" })),
 };
 
 const redemption: RedemptionDetail = {
@@ -89,22 +141,128 @@ const redemption: RedemptionDetail = {
 };
 
 describe("rewards", () => {
-  it("lists localized rewards and paginates to a dedicated editor", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [reward],
-      meta: { page: 1, page_size: 30, total: 31 },
-    });
+  it("shows no initial count and uses each reward name as the only detail link", async () => {
+    let resolveList!: (value: { data: Reward[]; meta: PaginationMeta }) => void;
+    vi.mocked(apiEnvelope).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+    );
     providers(<RewardList />);
 
-    expect(await screen.findByText("Seasonal vegetables")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute(
+    expect(screen.queryByText(/\d+ results?/)).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading rewards…");
+    await act(async () =>
+      resolveList({
+        data: [reward, secondReward],
+        meta: { page: 1, page_size: 30, total: 2 },
+      }),
+    );
+
+    expect(await screen.findByRole("link", { name: "Edit: Seasonal vegetables" })).toHaveAttribute(
       "href",
       `/rewards/${reward.id}`,
     );
+    expect(screen.getAllByRole("link", { name: "Edit: Seasonal vegetables" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByText("2 results")).toBeVisible();
     expect(screen.queryByRole("columnheader", { name: /inventory/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/out of stock/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the current rewards visible and disables controls during a pending page load", async () => {
+    let resolvePage!: (value: { data: Reward[]; meta: PaginationMeta }) => void;
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
+      if (path.endsWith("page=2")) {
+        return new Promise((resolve) => {
+          resolvePage = resolve;
+        });
+      }
+      return {
+        data: [reward, secondReward],
+        meta: { page: 1, page_size: 30, total: 31 },
+      };
+    });
+    providers(<RewardList />);
+
+    const detailLink = await screen.findByRole("link", { name: "Edit: Seasonal vegetables" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => expect(apiEnvelope).toHaveBeenLastCalledWith("admin/rewards?page=2"));
+    expect(detailLink).toBeVisible();
+    expect(detailLink.closest("section")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Loading rewards…");
+    expect(
+      screen.getByRole("button", { name: "Drag to reorder Seasonal vegetables" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move Seasonal vegetables down" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.getByRole("navigation", { name: "Page {page}/{pages}" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.getByText("31 results")).toBeVisible();
+
+    await act(async () =>
+      resolvePage({
+        data: [secondReward],
+        meta: { page: 2, page_size: 30, total: 31 },
+      }),
+    );
+    expect(await screen.findByRole("link", { name: "Edit: Seed box" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Edit: Seasonal vegetables" })).toBeNull();
+  });
+
+  it("ignores stale reward list data and metadata", async () => {
+    let resolveOld!: (value: { data: Reward[]; meta: PaginationMeta }) => void;
+    let resolveNew!: (value: { data: Reward[]; meta: PaginationMeta }) => void;
+    const fetcher = vi.fn(
+      (requestKey: string) =>
+        new Promise<{ data: Reward[]; meta: PaginationMeta }>((resolve) => {
+          if (requestKey === "old") resolveOld = resolve;
+          else resolveNew = resolve;
+        }),
+    );
+    const view = render(<PaginatedRewardHarness fetcher={fetcher} requestKey="old" />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("old", 1));
+    view.rerender(<PaginatedRewardHarness fetcher={fetcher} requestKey="new" />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("new", 1));
+
+    await act(async () =>
+      resolveNew({
+        data: [secondReward],
+        meta: { page: 1, page_size: 30, total: 2 },
+      }),
+    );
+    expect(await screen.findByText("Seed box")).toBeVisible();
+    expect(screen.getByTestId("reward-harness-total")).toHaveTextContent("2");
+
+    await act(async () =>
+      resolveOld({
+        data: [reward],
+        meta: { page: 1, page_size: 30, total: 99 },
+      }),
+    );
+    expect(screen.queryByText("Seasonal vegetables")).toBeNull();
+    expect(screen.getByText("Seed box")).toBeVisible();
+    expect(screen.getByTestId("reward-harness-total")).toHaveTextContent("2");
+  });
+
+  it("retries a failed list load on the current page and shows a singular count", async () => {
+    vi.mocked(apiEnvelope)
+      .mockRejectedValueOnce(new Error("network_error"))
+      .mockResolvedValueOnce({
+        data: [reward],
+        meta: { page: 1, page_size: 30, total: 1 },
+      });
+    providers(<RewardList />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Edit: Seasonal vegetables" })).toBeVisible();
+    expect(screen.getByText("1 result")).toBeVisible();
+    expect(apiEnvelope).toHaveBeenNthCalledWith(2, "admin/rewards?page=1");
   });
 
   it("uploads an image and creates a bilingual reward only once on rapid submit", async () => {
@@ -118,6 +276,12 @@ describe("rewards", () => {
       throw new Error("unexpected_request");
     });
     const view = providers(<RewardEditor />);
+
+    const pointCost = screen.getByLabelText("Point cost *");
+    expect(pointCost).toHaveAttribute("type", "text");
+    expect(pointCost).toHaveAttribute("inputmode", "numeric");
+    fireEvent.change(pointCost, { target: { value: "abc00120e+" } });
+    expect(pointCost).toHaveValue("00120");
 
     fireEvent.change(screen.getAllByLabelText("Reward name *")[0], {
       target: { value: "Rau theo mùa" },
@@ -145,7 +309,7 @@ describe("rewards", () => {
       .mocked(api)
       .mock.calls.find(([path, init]) => path === "admin/rewards" && init?.method === "POST");
     expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
-      point_cost: 100,
+      point_cost: 120,
       image_id: media.id,
       is_active: true,
       translations: [
@@ -164,6 +328,26 @@ describe("rewards", () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith(`/rewards/${reward.id}`));
     expect(save).toBeDisabled();
     expect(screen.getByRole("link", { name: "Cancel" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("blocks empty, zero, and out-of-range reward point costs inline", () => {
+    providers(<RewardEditor />);
+    const pointCost = screen.getByLabelText("Point cost *");
+    const save = screen.getByRole("button", { name: "Save reward" });
+
+    fireEvent.change(pointCost, { target: { value: "abc" } });
+    expect(pointCost).toHaveValue("");
+    fireEvent.click(save);
+    expect(screen.getByText("Enter a value.")).toBeVisible();
+
+    fireEvent.change(pointCost, { target: { value: "0" } });
+    fireEvent.click(save);
+    expect(screen.getByText(/whole number greater than 0/i)).toBeVisible();
+
+    fireEvent.change(pointCost, { target: { value: "999999999999" } });
+    fireEvent.click(save);
+    expect(screen.getByText(/must not exceed/i)).toBeVisible();
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("loads and updates both translations without a delete action", async () => {
@@ -203,22 +387,19 @@ describe("rewards", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
-  it("reorders the current page with keyboard controls and sends all page ids", async () => {
-    const second = {
-      ...reward,
-      id: "72bb1e57-a73b-4635-ae80-25da7499073c",
-      position: 3,
-      translations: reward.translations.map((item) => ({ ...item, name: "Seed box" })),
-    };
-    vi.mocked(apiEnvelope)
-      .mockResolvedValueOnce({
-        data: [reward, second],
-        meta: { page: 1, page_size: 30, total: 2 },
-      })
-      .mockResolvedValueOnce({
-        data: [second, reward],
-        meta: { page: 1, page_size: 30, total: 2 },
-      });
+  it("optimistically reorders with the existing payload and locks every reorder control", async () => {
+    let resolveReorder!: (value: { data: Reward[]; meta: PaginationMeta }) => void;
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
+      if (path === "admin/rewards/reorder") {
+        return new Promise((resolve) => {
+          resolveReorder = resolve;
+        });
+      }
+      return {
+        data: [reward, secondReward],
+        meta: { page: 1, page_size: 30, total: 31 },
+      };
+    });
     providers(<RewardList />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
@@ -226,10 +407,64 @@ describe("rewards", () => {
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith("admin/rewards/reorder", {
         method: "POST",
-        body: JSON.stringify({ page: 1, reward_ids: [second.id, reward.id] }),
+        body: JSON.stringify({ page: 1, reward_ids: [secondReward.id, reward.id] }),
       }),
     );
     expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
+    expect(screen.getByRole("status")).toHaveTextContent("Saving order…");
+    expect(screen.getByRole("button", { name: "Drag to reorder Seed box" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Drag to reorder Seed box" })).toHaveAttribute(
+      "draggable",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Move Seed box down" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move Seasonal vegetables up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Seed box down" }));
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+
+    await act(async () =>
+      resolveReorder({
+        data: [secondReward, reward],
+        meta: { page: 1, page_size: 30, total: 31 },
+      }),
+    );
+    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
+    expect(screen.queryByText("Saving order…")).toBeNull();
+  });
+
+  it("rolls back the exact previous order when reorder fails", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [reward, secondReward],
+        meta: { page: 1, page_size: 30, total: 2 },
+      })
+      .mockRejectedValueOnce(new Error("network_error"));
+    providers(<RewardList />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
+    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect");
+    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seasonal vegetables");
+    expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
+  });
+
+  it("rolls back and shows the dedicated conflict message", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [reward, secondReward],
+        meta: { page: 1, page_size: 30, total: 2 },
+      })
+      .mockRejectedValueOnce(new Error("reward_reorder_conflict"));
+    providers(<RewardList />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The reward list just changed. Reload the page before reordering again.",
+    );
+    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seasonal vegetables");
+    expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
   });
 
   it("does not overwrite unsaved reward fields when the admin locale changes", async () => {
@@ -264,28 +499,200 @@ describe("rewards", () => {
 });
 
 describe("redemptions", () => {
-  it("searches, filters and localizes redemption statuses", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [{ ...redemption, internal_note: "Private fulfillment note" }],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
+  it("uses the member name as the only detail link and does not show a count before loading", async () => {
+    let resolveList!: (value: { data: RedemptionListItem[]; meta: PaginationMeta }) => void;
+    vi.mocked(apiEnvelope).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+    );
     providers(<RedemptionList />);
 
-    expect(await screen.findByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ results?/)).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading redemptions…");
+    await act(async () =>
+      resolveList({
+        data: [redemption],
+        meta: { page: 1, page_size: 30, total: 1 },
+      }),
+    );
+
+    expect(await screen.findByText("Pending", { selector: ".badge" })).toBeInTheDocument();
+    expect(screen.getByText("Seasonal vegetables")).toBeInTheDocument();
     expect(screen.queryByText("Private fulfillment note")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "green@example.com" } });
+    expect(
+      screen.getByRole("link", { name: `View details: ${redemption.user.name}` }),
+    ).toHaveAttribute("href", `/redemptions/${redemption.id}`);
+    expect(
+      screen.getAllByRole("link", { name: `View details: ${redemption.user.name}` }),
+    ).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+    expect(screen.getByText("1 result")).toBeVisible();
+  });
+
+  it("searches and filters from page one, then clears all filters", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => ({
+      data: [redemption],
+      meta: {
+        page: path.includes("page=2") ? 2 : 1,
+        page_size: 30,
+        total: path.includes("status=pending") ? 1 : 31,
+      },
+    }));
+    providers(<RedemptionList />);
+
+    expect(await screen.findByText("31 results")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/redemptions?page=2&search=&status="),
+    );
+    await waitFor(() => expect(screen.getByRole("searchbox")).toBeEnabled());
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search by email or phone number" }), {
+      target: { value: " green@example.com " },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith(
-        expect.stringContaining("search=green%40example.com"),
+        "admin/redemptions?page=1&search=green%40example.com&status=",
       ),
     );
+    await waitFor(() => expect(screen.getByLabelText("Filter by status")).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "pending" } });
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith(
-        expect.stringContaining("search=green%40example.com&status=pending"),
+        "admin/redemptions?page=1&search=green%40example.com&status=pending",
       ),
     );
+    expect(await screen.findByText("1 result")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/redemptions?page=1&search=&status="),
+    );
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.getByLabelText("Filter by status")).toHaveValue("");
+    expect(await screen.findByText("31 results")).toBeVisible();
+  });
+
+  it("keeps old requests visible and disables accessible controls while a filter is pending", async () => {
+    let resolveFiltered!: (value: { data: RedemptionListItem[]; meta: PaginationMeta }) => void;
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
+      if (path.includes("status=contacted")) {
+        return new Promise((resolve) => {
+          resolveFiltered = resolve;
+        });
+      }
+      return { data: [redemption], meta: { page: 1, page_size: 30, total: 31 } };
+    });
+    providers(<RedemptionList />);
+
+    const detailLink = await screen.findByRole("link", {
+      name: `View details: ${redemption.user.name}`,
+    });
+    const searchbox = screen.getByRole("searchbox", {
+      name: "Search by email or phone number",
+    });
+    const statusFilter = screen.getByRole("combobox", { name: "Filter by status" });
+    fireEvent.change(statusFilter, { target: { value: "contacted" } });
+
+    await waitFor(() => expect(statusFilter).toBeDisabled());
+    expect(detailLink).toBeVisible();
+    expect(searchbox).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Searching…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.getByRole("navigation", { name: "Page {page}/{pages}" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(detailLink.closest("section")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Loading redemptions…");
+    expect(screen.getByText("31 results")).toBeVisible();
+
+    await act(async () =>
+      resolveFiltered({
+        data: [
+          {
+            ...redemption,
+            id: "contacted-redemption",
+            status: "contacted",
+            user: { ...redemption.user, name: "Contacted Member" },
+          },
+        ],
+        meta: { page: 1, page_size: 30, total: 1 },
+      }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "View details: Contacted Member" }),
+    ).toBeVisible();
+    expect(screen.getByText("1 result")).toBeVisible();
+  });
+
+  it("ignores a stale redemption response and its metadata", async () => {
+    let resolveOld!: (value: { data: RedemptionListItem[]; meta: PaginationMeta }) => void;
+    let resolveNew!: (value: { data: RedemptionListItem[]; meta: PaginationMeta }) => void;
+    const fetcher = vi.fn(
+      (requestKey: string) =>
+        new Promise<{ data: RedemptionListItem[]; meta: PaginationMeta }>((resolve) => {
+          if (requestKey === "old") resolveOld = resolve;
+          else resolveNew = resolve;
+        }),
+    );
+    const view = render(<PaginatedRedemptionHarness fetcher={fetcher} requestKey="old" />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("old", 1));
+    view.rerender(<PaginatedRedemptionHarness fetcher={fetcher} requestKey="new" />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("new", 1));
+
+    await act(async () =>
+      resolveNew({
+        data: [
+          {
+            ...redemption,
+            id: "new-redemption",
+            user: { ...redemption.user, name: "Newest redemption" },
+          },
+        ],
+        meta: { page: 1, page_size: 30, total: 2 },
+      }),
+    );
+    expect(await screen.findByText("Newest redemption")).toBeVisible();
+    expect(screen.getByTestId("redemption-harness-total")).toHaveTextContent("2");
+
+    await act(async () =>
+      resolveOld({
+        data: [
+          {
+            ...redemption,
+            id: "stale-redemption",
+            user: { ...redemption.user, name: "Stale redemption" },
+          },
+        ],
+        meta: { page: 1, page_size: 30, total: 99 },
+      }),
+    );
+    expect(screen.queryByText("Stale redemption")).toBeNull();
+    expect(screen.getByText("Newest redemption")).toBeVisible();
+    expect(screen.getByTestId("redemption-harness-total")).toHaveTextContent("2");
+  });
+
+  it("shows a list error and retries the same redemption query", async () => {
+    vi.mocked(apiEnvelope)
+      .mockRejectedValueOnce(new Error("network_error"))
+      .mockResolvedValueOnce({
+        data: [redemption],
+        meta: { page: 1, page_size: 30, total: 1 },
+      });
+    providers(<RedemptionList />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByRole("link", { name: `View details: ${redemption.user.name}` }),
+    ).toBeVisible();
+    expect(apiEnvelope).toHaveBeenNthCalledWith(2, "admin/redemptions?page=1&search=&status=");
   });
 
   it("marks a request as contacted without sending point or status fields", async () => {

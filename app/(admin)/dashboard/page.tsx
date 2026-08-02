@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { PageHeading } from "@/components/page-heading";
+import { formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { Dashboard } from "@/lib/types";
 
 export default function DashboardPage() {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -56,12 +57,7 @@ export default function DashboardPage() {
             {data.recent_activity.map((item, index) => (
               <li key={`${item.entity_id}-${index}`}>
                 <span>{labels[item.action] ?? t.dashboard.actions.unknown}</span>
-                <time>
-                  {new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-US", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  }).format(new Date(item.created_at))}
-                </time>
+                <time>{formatAdminDateTime(item.created_at)}</time>
               </li>
             ))}
           </ul>

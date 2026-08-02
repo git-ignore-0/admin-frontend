@@ -6,10 +6,11 @@ import { useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import { formatAdminDateTimeInZone } from "@/lib/admin-date";
 import type { Workshop } from "@/lib/types";
 
 export function WorkshopList() {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const [items, setItems] = useState<Workshop[] | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -52,11 +53,7 @@ export function WorkshopList() {
                   <strong>{title}</strong>
                 </td>
                 <td>
-                  {new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-US", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                    timeZone: item.event_timezone,
-                  }).format(new Date(item.start_at))}
+                  {formatAdminDateTimeInZone(item.start_at, item.event_timezone)}
                 </td>
                 <td>
                   {item.translations.map((t) => (

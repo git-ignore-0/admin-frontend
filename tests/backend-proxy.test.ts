@@ -23,7 +23,7 @@ vi.mock("@/lib/session", () => ({
   writeSession: vi.fn(),
 }));
 
-import { GET } from "@/app/api/backend/[...path]/route";
+import { GET, POST } from "@/app/api/backend/[...path]/route";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { clearSession, readSession, writeSession } from "@/lib/session";
 
@@ -33,6 +33,73 @@ afterEach(() => {
 });
 
 describe("admin backend proxy", () => {
+  it("keeps the bearer token server-side for an allowed Membership request", async () => {
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ data: [] }, { headers: { "X-Upstream-Secret": "do-not-forward" } }),
+      );
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(
+      new NextRequest(
+        "https://admin.example.test/api/backend/admin/membership-requests?page=1&search=0912",
+      ),
+      { params: Promise.resolve({ path: ["admin", "membership-requests"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    const init = upstream.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer access-token");
+    expect(response.headers.get("authorization")).toBeNull();
+    expect(response.headers.get("x-upstream-secret")).toBeNull();
+    expect(await response.json()).toEqual({ data: [] });
+  });
+
+  it("proxies the admin-only VietQR bank options without exposing the token", async () => {
+    const upstream = vi.fn().mockResolvedValue(
+      Response.json({
+        data: [
+          {
+            bin: "970436",
+            name: "Ngân hàng TMCP Ngoại Thương Việt Nam",
+            short_name: "Vietcombank",
+            code: "VCB",
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(
+      new NextRequest("https://admin.example.test/api/backend/admin/membership-banks"),
+      { params: Promise.resolve({ path: ["admin", "membership-banks"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      new Headers((upstream.mock.calls[0][1] as RequestInit).headers).get("authorization"),
+    ).toBe("Bearer access-token");
+    expect(response.headers.get("authorization")).toBeNull();
+  });
+
+  it("rejects non-allowlisted proxy paths before forwarding", async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await POST(
+      new NextRequest("https://admin.example.test/api/backend/admin/memberships", {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path: ["admin", "memberships"] }) },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "backend_route_not_allowed" });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("returns a bounded timeout with no-store caching", async () => {
     vi.stubGlobal(
       "fetch",

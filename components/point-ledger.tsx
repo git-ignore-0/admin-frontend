@@ -9,6 +9,11 @@ import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import {
+  numericInputErrorMessage,
+  parsePositiveInteger,
+  sanitizeIntegerInput,
+} from "@/lib/numeric-input";
 import type { PointDirection, PointHistoryMeta, PointTransaction } from "@/lib/types";
 
 type PendingTransaction = {
@@ -26,13 +31,14 @@ export function PointLedger({
   userName: string;
   onBalanceChange?: (balance: number) => void;
 }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const toast = useToast();
   const [items, setItems] = useState<PointTransaction[] | null>(null);
   const [meta, setMeta] = useState<PointHistoryMeta | null>(null);
   const [page, setPage] = useState(1);
   const [direction, setDirection] = useState<PointDirection>("credit");
-  const [amount, setAmount] = useState(100);
+  const [amount, setAmount] = useState("100");
+  const [amountError, setAmountError] = useState("");
   const [message, setMessage] = useState("");
   const [pendingTransaction, setPendingTransaction] = useState<PendingTransaction | null>(null);
   const [error, setError] = useState("");
@@ -54,15 +60,23 @@ export function PointLedger({
   function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
+    const parsedAmount = parsePositiveInteger(amount);
+    if (parsedAmount.error) {
+      setAmountError(
+        numericInputErrorMessage(parsedAmount.error, t.common.numericInput),
+      );
+      return;
+    }
+    setAmountError("");
     if (!message.trim()) {
       setError(t.points.messageRequired);
       return;
     }
-    if (direction === "debit" && meta && amount > meta.balance) {
+    if (direction === "debit" && meta && parsedAmount.value > meta.balance) {
       setError(t.points.insufficient);
       return;
     }
-    setPendingTransaction({ direction, amount, message: message.trim() });
+    setPendingTransaction({ direction, amount: parsedAmount.value, message: message.trim() });
   }
 
   async function confirmTransaction() {
@@ -109,7 +123,7 @@ export function PointLedger({
             </p>
           </div>
         </div>
-        <form className="form-grid one" onSubmit={submit}>
+        <form className="form-grid one" noValidate onSubmit={submit}>
           <label className="field">
             <span>{t.points.direction}</span>
             <select
@@ -124,13 +138,22 @@ export function PointLedger({
           <label className="field">
             <span>{t.points.amount}</span>
             <input
+              aria-invalid={Boolean(amountError)}
               className="input"
-              type="number"
-              min="1"
+              inputMode="numeric"
+              onChange={(event) => {
+                setAmount(sanitizeIntegerInput(event.target.value));
+                setAmountError("");
+              }}
               required
+              type="text"
               value={amount}
-              onChange={(event) => setAmount(Number(event.target.value))}
             />
+            {amountError ? (
+              <small className="field-error" role="alert">
+                {amountError}
+              </small>
+            ) : null}
           </label>
           <label className="field">
             <span>{t.points.message} *</span>
@@ -179,7 +202,7 @@ export function PointLedger({
                       {item.amount}
                     </td>
                     <td>{item.actor?.name ?? "—"}</td>
-                    <td>{formatAdminDateTime(item.created_at, locale)}</td>
+                    <td>{formatAdminDateTime(item.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

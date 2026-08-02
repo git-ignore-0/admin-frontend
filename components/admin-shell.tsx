@@ -2,24 +2,82 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
 type Props = { user: { email: string; name: string }; children: React.ReactNode };
 
+type NavigationGroup = "pointsRewards" | "csa" | "website";
+
+const groupRoutes: Record<NavigationGroup, readonly string[]> = {
+  pointsRewards: ["/points", "/rewards", "/redemptions"],
+  csa: ["/membership-catalog", "/membership-requests", "/memberships"],
+  website: ["/settings", "/workshops"],
+};
+
+function isActiveRoute(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function activeGroupForPath(pathname: string): NavigationGroup | undefined {
+  return (Object.entries(groupRoutes) as [NavigationGroup, readonly string[]][]).find(
+    ([, routes]) => routes.some((href) => isActiveRoute(pathname, href)),
+  )?.[0];
+}
+
 export function AdminShell({ user, children }: Props) {
   const pathname = usePathname();
   const { t } = useAdminI18n();
-  const links = [
+  const directLinks = [
     ["/dashboard", t.common.dashboard],
     ["/users", t.common.users],
-    ["/points", t.common.points],
-    ["/rewards", t.common.rewards],
-    ["/redemptions", t.common.redemptions],
-    ["/settings", t.common.settings],
-    ["/workshops", t.common.workshops],
   ] as const;
+  const groups = [
+    {
+      key: "pointsRewards",
+      label: t.common.pointsAndRewards,
+      links: [
+        ["/points", t.common.managePoints],
+        ["/rewards", t.common.rewards],
+        ["/redemptions", t.common.redemptions],
+      ],
+    },
+    {
+      key: "csa",
+      label: t.common.csa,
+      links: [
+        ["/membership-catalog", t.common.membershipCatalog],
+        ["/membership-requests", t.common.membershipRequests],
+        ["/memberships", t.common.memberships],
+      ],
+    },
+    {
+      key: "website",
+      label: t.common.website,
+      links: [
+        ["/settings", t.common.settings],
+        ["/workshops", t.common.workshops],
+      ],
+    },
+  ] as const satisfies readonly {
+    key: NavigationGroup;
+    label: string;
+    links: readonly (readonly [string, string])[];
+  }[];
+  const activeGroup = activeGroupForPath(pathname);
+  const [openGroups, setOpenGroups] = useState<Record<NavigationGroup, boolean>>(() => ({
+    pointsRewards: activeGroup === "pointsRewards",
+    csa: activeGroup === "csa",
+    website: activeGroup === "website",
+  }));
+
+  useEffect(() => {
+    if (!activeGroup) return;
+    setOpenGroups((current) => ({ ...current, [activeGroup]: true }));
+  }, [activeGroup, pathname]);
+
   return (
     <div className="admin-shell">
       <aside className="sidebar">
@@ -28,16 +86,54 @@ export function AdminShell({ user, children }: Props) {
           <span>NFV Admin</span>
         </Link>
         <nav className="nav" aria-label={t.common.navigation}>
-          {links.map(([href, label]) => (
+          {directLinks.map(([href, label]) => (
             <Link
-              className={`nav-link ${pathname.startsWith(href) ? "active" : ""}`}
+              className={`nav-link ${isActiveRoute(pathname, href) ? "active" : ""}`}
               href={href}
               key={href}
-              aria-current={pathname.startsWith(href) ? "page" : undefined}
+              aria-current={isActiveRoute(pathname, href) ? "page" : undefined}
             >
               {label}
             </Link>
           ))}
+          {groups.map((group) => {
+            const expanded = openGroups[group.key];
+            const panelId = `admin-nav-${group.key}`;
+            return (
+              <div className="nav-group" key={group.key}>
+                <button
+                  aria-controls={panelId}
+                  aria-expanded={expanded}
+                  className={`nav-group-toggle ${activeGroup === group.key ? "has-active-item" : ""}`}
+                  onClick={() =>
+                    setOpenGroups((current) => ({
+                      ...current,
+                      [group.key]: !current[group.key],
+                    }))
+                  }
+                  type="button"
+                >
+                  <span>{group.label}</span>
+                  <span aria-hidden="true" className="nav-group-chevron" />
+                </button>
+                <div className="nav-submenu" hidden={!expanded} id={panelId}>
+                  {group.links.map(([href, label]) => {
+                    const active = isActiveRoute(pathname, href);
+                    return (
+                      <Link
+                        aria-current={active ? "page" : undefined}
+                        className={`nav-link nav-submenu-link ${active ? "active" : ""}`}
+                        href={href}
+                        key={href}
+                      >
+                        {label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <LanguageSwitcher />

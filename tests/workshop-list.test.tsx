@@ -46,5 +46,6 @@ describe("workshop list", () => {
     );
 
     expect(await screen.findByText("Đang diễn ra")).toBeInTheDocument();
+    expect(screen.getByText("21/07/2026 08:00")).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { buildBackendTarget } from "@/lib/backend-target";
+import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-target";
 import { adminOrigin, authOrigin } from "@/lib/config";
 import { isTrustedAdminRequest } from "@/lib/csrf";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
@@ -42,6 +42,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     }
   }
   const { path } = await context.params;
+  if (!isAllowedBackendRequest(request.method, path)) {
+    return jsonError("backend_route_not_allowed", 404);
+  }
   const target = buildBackendTarget(authOrigin(), path, request.nextUrl.search);
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${session.accessToken}`);
