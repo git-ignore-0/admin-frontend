@@ -7,7 +7,12 @@ export default async function NewProductPage() {
   const t = adminDictionaries[await getAdminLocale()];
   return (
     <>
-      <DetailPageHeading backHref="/membership-catalog/products" backLabel={t.membershipCatalog.backToProducts} description={t.membershipCatalog.newProductDescription} title={t.membershipCatalog.newProduct} />
+      <DetailPageHeading
+        backHref="/membership-catalog/products"
+        backLabel={t.membershipCatalog.backToProducts}
+        description={t.membershipCatalog.newProductDescription}
+        title={t.membershipCatalog.newProduct}
+      />
       <MembershipProductEditor />
     </>
   );

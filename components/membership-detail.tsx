@@ -47,7 +47,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const loadMembership = useCallback(async () => {
     setLoading(true);
     try {
-      const latest = await api<AdminMembership>(`admin/memberships/${membershipId}`);
+      const latest = await api<AdminMembership>(
+        `admin/memberships/${membershipId}?locale=${locale}`,
+      );
       setItem(latest);
       setLoadError(null);
       return latest;
@@ -57,21 +59,21 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [membershipId]);
+  }, [locale, membershipId]);
 
   const loadHistory = useCallback(async () => {
     setHistory(null);
     setHistoryError("");
     try {
       const payload = await apiEnvelope<MembershipUsage[], PaginationMeta>(
-        `admin/memberships/${membershipId}/history?page=${historyPage}`,
+        `admin/memberships/${membershipId}/history?page=${historyPage}&locale=${locale}`,
       );
       setHistory(payload.data);
       setHistoryMeta(payload.meta ?? null);
     } catch (caught) {
       setHistoryError(requestErrorMessage(caught, t));
     }
-  }, [historyPage, membershipId, t]);
+  }, [historyPage, locale, membershipId, t]);
 
   useEffect(() => void loadMembership(), [loadMembership]);
   useEffect(() => void loadHistory(), [loadHistory]);
@@ -110,10 +112,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     usageLines.forEach((line, index) => {
       const parsed = parsePositiveInteger(line.units);
       if (parsed.error) {
-        nextUnitErrors[index] = numericInputErrorMessage(
-          parsed.error,
-          t.common.numericInput,
-        );
+        nextUnitErrors[index] = numericInputErrorMessage(parsed.error, t.common.numericInput);
       } else {
         validatedLines[index] = { productId: line.productId, units: parsed.value };
       }
@@ -139,7 +138,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     setSaving(true);
     setActionError("");
     try {
-      await api<MembershipUsage>("admin/membership-usage", {
+      await api<MembershipUsage>(`admin/membership-usage?locale=${locale}`, {
         method: "POST",
         body: JSON.stringify({
           membership_id: item.id,
@@ -169,7 +168,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     setSaving(true);
     setActionError("");
     try {
-      await api<MembershipUsage>(`admin/membership-usage/${undoItem.id}/undo`, {
+      await api<MembershipUsage>(`admin/membership-usage/${undoItem.id}/undo?locale=${locale}`, {
         method: "POST",
         body: JSON.stringify({ reason: undoReason.trim() }),
       });
@@ -222,6 +221,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <h2 ref={headingRef} tabIndex={-1}>
             {item.package_name}
           </h2>
+          {item.snapshot_complete === false && (
+            <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
+          )}
           <p>
             {formatAdminDate(item.start_date)} – {formatAdminDate(item.end_date)}
           </p>
@@ -263,14 +265,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                   : t.membershipCatalog.rollover
               }
             />
-            <DetailRow
-              label={t.memberships.startDate}
-              value={formatAdminDate(item.start_date)}
-            />
-            <DetailRow
-              label={t.memberships.endDate}
-              value={formatAdminDate(item.end_date)}
-            />
+            <DetailRow label={t.memberships.startDate} value={formatAdminDate(item.start_date)} />
+            <DetailRow label={t.memberships.endDate} value={formatAdminDate(item.end_date)} />
           </dl>
           {item.package_description && (
             <p className="snapshot-description">{item.package_description}</p>
@@ -296,7 +292,12 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                 <tbody>
                   {item.quota.map((quota) => (
                     <tr key={quota.product_id}>
-                      <td>{quota.product_name}</td>
+                      <td>
+                        {quota.product_name}
+                        {quota.snapshot_complete === false && (
+                          <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
+                        )}
+                      </td>
                       <td>{quota.quota_units_per_cycle}</td>
                       <td>
                         <strong>{quota.remaining_units}</strong>
@@ -334,6 +335,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     {cycle.quotas.map((quota) => (
                       <li key={quota.product_id}>
                         <span>{quota.product_name}</span>
+                        {quota.snapshot_complete === false && (
+                          <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
+                        )}
                         <span>
                           {t.memberships.cycleBalance
                             .replace("{remaining}", String(quota.remaining_units))
@@ -393,6 +397,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                   {usage.lines.map((line) => (
                     <li key={line.product_id}>
                       <strong>{line.product_name}</strong>
+                      {line.snapshot_complete === false && (
+                        <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
+                      )}
                       <span>
                         {line.units} {t.memberships.units}
                       </span>

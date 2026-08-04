@@ -46,7 +46,9 @@ export function MembershipRequestDetail({ requestId }: { requestId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const latest = await api<MembershipRequest>(`admin/membership-requests/${requestId}`);
+      const latest = await api<MembershipRequest>(
+        `admin/membership-requests/${requestId}?locale=${locale}`,
+      );
       setItem(latest);
       setLoadError(null);
       return latest;
@@ -56,7 +58,7 @@ export function MembershipRequestDetail({ requestId }: { requestId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [requestId]);
+  }, [locale, requestId]);
   useEffect(() => void load(), [load]);
 
   async function runImmediate(nextAction: ImmediateAction) {
@@ -66,7 +68,7 @@ export function MembershipRequestDetail({ requestId }: { requestId: string }) {
     setActionError("");
     try {
       const updated = await api<MembershipRequest>(
-        `admin/membership-requests/${item.id}/${nextAction}`,
+        `admin/membership-requests/${item.id}/${nextAction}?locale=${locale}`,
         { method: "POST", body: JSON.stringify({}) },
       );
       setItem(updated);
@@ -118,7 +120,7 @@ export function MembershipRequestDetail({ requestId }: { requestId: string }) {
             ? {}
             : { reason: reason.trim() };
       const updated = await api<MembershipRequest>(
-        `admin/membership-requests/${item.id}/${action}`,
+        `admin/membership-requests/${item.id}/${action}?locale=${locale}`,
         {
           method: "POST",
           body: JSON.stringify(body),
@@ -195,6 +197,9 @@ export function MembershipRequestDetail({ requestId }: { requestId: string }) {
           <h2 ref={headingRef} tabIndex={-1}>
             {item.package.name}
           </h2>
+          {item.package.snapshot_complete === false && (
+            <span className="badge warm">{t.membershipRequests.legacySnapshotWarning}</span>
+          )}
           <p>
             {formatMembershipMoney(item.package.upfront_price, locale)} · {item.short_code}
           </p>
@@ -438,6 +443,9 @@ function ProductSnapshot({ items }: { items: MembershipRequest["package"]["items
       {items.map((item) => (
         <div key={item.product_id}>
           <strong>{item.product_name}</strong>
+          {item.snapshot_complete === false && (
+            <span className="badge warm">{t.membershipRequests.legacySnapshotWarning}</span>
+          )}
           <span>
             {item.quota_units} {t.membershipRequests.unitsPerCycle} · {item.unit_size}{" "}
             {item.unit_label_vi}/{item.unit_label_en}

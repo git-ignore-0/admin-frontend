@@ -5,11 +5,15 @@ import { FormEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
-import { ListResultSummary, ListToolbar } from "@/components/list-toolbar";
+import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
+import {
+  hasCompleteCatalogTranslations,
+  localizedCatalogTranslation,
+} from "@/lib/membership-translations";
 import type { MembershipPackage, MembershipProduct, PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
@@ -25,7 +29,7 @@ function Status({ active }: { active: boolean }) {
 }
 
 export function MembershipProductList() {
-  const { t } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [active, setActive] = useState<ActiveFilter>("");
@@ -118,25 +122,35 @@ export function MembershipProductList() {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td data-label={t.membershipCatalog.product}>
-                    <Link
-                      className="csa-list-primary-link"
-                      href={`/membership-catalog/products/${item.id}`}
-                    >
-                      {item.name}
-                    </Link>
-                    <small className="table-secondary">{item.short_description || "—"}</small>
-                  </td>
-                  <td data-label={t.membershipCatalog.unitConversion}>
-                    {item.unit_size} {item.unit_label_vi} / {item.unit_label_en}
-                  </td>
-                  <td data-label={t.membershipCatalog.status}>
-                    <Status active={item.is_active} />
-                  </td>
-                </tr>
-              ))}
+              {items.map((item) => {
+                const translation = localizedCatalogTranslation(item.translations, locale);
+                return (
+                  <tr key={item.id}>
+                    <td data-label={t.membershipCatalog.product}>
+                      <Link
+                        className="csa-list-primary-link"
+                        href={`/membership-catalog/products/${item.id}`}
+                      >
+                        {translation?.name || item.name}
+                      </Link>
+                      {!hasCompleteCatalogTranslations(item.translations) && (
+                        <span className="badge warm catalog-translation-warning">
+                          {t.membershipCatalog.translationNeedsReview}
+                        </span>
+                      )}
+                      <small className="table-secondary">
+                        {translation?.short_description || item.short_description || "—"}
+                      </small>
+                    </td>
+                    <td data-label={t.membershipCatalog.unitConversion}>
+                      {item.unit_size} {item.unit_label_vi} / {item.unit_label_en}
+                    </td>
+                    <td data-label={t.membershipCatalog.status}>
+                      <Status active={item.is_active} />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -159,28 +173,54 @@ export function MembershipProductList() {
 
 export function MembershipPackageList() {
   const { locale, t } = useAdminI18n();
+  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
   const fetchPage = useCallback(
-    (page: number) =>
-      apiEnvelope<MembershipPackage[], PaginationMeta>(`admin/membership-packages?page=${page}`),
-    [],
+    (page: number) => {
+      const params = new URLSearchParams({ page: String(page) });
+      if (search) params.set("search", search);
+      return apiEnvelope<MembershipPackage[], PaginationMeta>(
+        `admin/membership-packages?${params.toString()}`,
+      );
+    },
+    [search],
   );
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
-  const { error, items, loading, meta, reload, setPage } = usePaginatedList({
+  const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
     getErrorMessage,
   });
 
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (loading) return;
+    const nextSearch = query.trim();
+    setPage(1);
+    if (nextSearch === search && page === 1) reload();
+    else setSearch(nextSearch);
+  }
+
   return (
     <section aria-busy={loading} className="csa-list-section">
-      {meta && (
-        <div className="list-toolbar-row list-toolbar-summary-only">
-          <ListResultSummary
-            count={meta.total}
-            label={t.common.resultCount}
-            singularLabel={t.common.resultCountSingular}
-          />
-        </div>
-      )}
+      <ListToolbar
+        busy={loading}
+        clearLabel={t.common.clearFilters}
+        hasFilters={Boolean(query || search)}
+        onClear={() => {
+          setQuery("");
+          setSearch("");
+          setPage(1);
+        }}
+        onQueryChange={setQuery}
+        onSubmit={submit}
+        placeholder={t.membershipCatalog.packageSearchPlaceholder}
+        query={query}
+        resultCount={meta?.total}
+        resultCountLabel={t.common.resultCount}
+        resultCountSingularLabel={t.common.resultCountSingular}
+        searchLabel={t.membershipCatalog.packageSearchLabel}
+        searchSubmitLabel={loading ? t.membershipCatalog.searching : t.membershipCatalog.search}
+      />
       <ListState
         empty={t.membershipCatalog.emptyPackages}
         error={error}
@@ -203,35 +243,46 @@ export function MembershipPackageList() {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td data-label={t.membershipCatalog.package}>
-                    <Link
-                      className="csa-list-primary-link"
-                      href={`/membership-catalog/packages/${item.id}`}
-                    >
-                      {item.name}
-                    </Link>
-                    <small className="table-secondary">
-                      {item.items
-                        .map((line) => `${line.product_name}: ${line.quota_units}`)
-                        .join(" · ") || "—"}
-                    </small>
-                  </td>
-                  <td data-label={t.membershipCatalog.upfrontPrice}>
-                    {formatMembershipMoney(item.upfront_price, locale)}
-                  </td>
-                  <td data-label={t.membershipCatalog.duration}>
-                    {t.membershipCatalog.monthCount.replace(
-                      "{count}",
-                      String(item.duration_months),
-                    )}
-                  </td>
-                  <td data-label={t.membershipCatalog.status}>
-                    <Status active={item.is_active} />
-                  </td>
-                </tr>
-              ))}
+              {items.map((item) => {
+                const translation = localizedCatalogTranslation(item.translations, locale);
+                return (
+                  <tr key={item.id}>
+                    <td data-label={t.membershipCatalog.package}>
+                      <Link
+                        className="csa-list-primary-link"
+                        href={`/membership-catalog/packages/${item.id}`}
+                      >
+                        {translation?.name || item.name}
+                      </Link>
+                      {!hasCompleteCatalogTranslations(item.translations) && (
+                        <span className="badge warm catalog-translation-warning">
+                          {t.membershipCatalog.translationNeedsReview}
+                        </span>
+                      )}
+                      <small className="table-secondary">
+                        {item.items
+                          .map(
+                            (line) =>
+                              `${localizedCatalogTranslation(line.product_translations ?? [], locale)?.name || line.product_name}: ${line.quota_units}`,
+                          )
+                          .join(" · ") || "—"}
+                      </small>
+                    </td>
+                    <td data-label={t.membershipCatalog.upfrontPrice}>
+                      {formatMembershipMoney(item.upfront_price, locale)}
+                    </td>
+                    <td data-label={t.membershipCatalog.duration}>
+                      {t.membershipCatalog.monthCount.replace(
+                        "{count}",
+                        String(item.duration_months),
+                      )}
+                    </td>
+                    <td data-label={t.membershipCatalog.status}>
+                      <Status active={item.is_active} />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -51,10 +51,7 @@ describe("admin sidebar navigation", () => {
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute(
-      "href",
-      "/points",
-    );
+    expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute("href", "/points");
     expect(screen.getByRole("link", { name: "Rewards" })).toHaveAttribute("href", "/rewards");
     expect(screen.getByRole("link", { name: "Redemptions" })).toHaveAttribute(
       "href",

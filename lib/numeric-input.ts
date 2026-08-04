@@ -11,8 +11,7 @@ export type NumericInputError =
   | "decimal_range";
 
 export type NumericInputResult =
-  | { value: number; error?: never }
-  | { value?: never; error: NumericInputError };
+  { value: number; error?: never } | { value?: never; error: NumericInputError };
 
 export function sanitizeIntegerInput(value: string) {
   return value.replace(/\D/g, "");

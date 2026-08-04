@@ -4,9 +4,16 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import {
+  BilingualContentFields,
+  emptyBilingualContent,
+  type BilingualContentValue,
+} from "@/components/bilingual-content-fields";
 import { useToast } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import { formatMembershipMoney } from "@/lib/membership-format";
+import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import {
   MAX_MEMBERSHIP_PRICE,
   MAX_UNIT_SIZE,
@@ -18,7 +25,7 @@ import {
 } from "@/lib/numeric-input";
 import type { MembershipPackage, MembershipProduct, PaginationMeta } from "@/lib/types";
 
-type ProductOption = Pick<MembershipProduct, "id" | "name" | "is_active">;
+type ProductOption = Pick<MembershipProduct, "id" | "name" | "is_active" | "translations">;
 
 function mergeProductOptions(current: ProductOption[], incoming: ProductOption[]) {
   const byId = new Map(current.map((item) => [item.id, item]));
@@ -44,15 +51,18 @@ function LoadFailure({ error, retry }: { error: unknown; retry: () => void }) {
   const { t } = useAdminI18n();
   return (
     <div className="panel load-error-state">
-      <p className="error-box" role="alert">{requestErrorMessage(error, t)}</p>
-      <button className="button secondary" onClick={retry} type="button">{t.common.retry}</button>
+      <p className="error-box" role="alert">
+        {requestErrorMessage(error, t)}
+      </p>
+      <button className="button secondary" onClick={retry} type="button">
+        {t.common.retry}
+      </button>
     </div>
   );
 }
 
 type ProductForm = {
-  name: string;
-  description: string;
+  content: BilingualContentValue;
   unitSize: string;
   unitVi: string;
   unitEn: string;
@@ -60,8 +70,7 @@ type ProductForm = {
 };
 
 const emptyProduct: ProductForm = {
-  name: "",
-  description: "",
+  content: emptyBilingualContent(),
   unitSize: "",
   unitVi: "",
   unitEn: "",
@@ -69,9 +78,15 @@ const emptyProduct: ProductForm = {
 };
 
 function productForm(item: MembershipProduct): ProductForm {
+  const content = emptyBilingualContent();
+  item.translations.forEach((translation) => {
+    content[translation.locale] = {
+      name: translation.name,
+      description: translation.short_description,
+    };
+  });
   return {
-    name: item.name,
-    description: item.short_description,
+    content,
     unitSize: item.unit_size,
     unitVi: item.unit_label_vi,
     unitEn: item.unit_label_en,
@@ -80,7 +95,7 @@ function productForm(item: MembershipProduct): ProductForm {
 }
 
 export function MembershipProductEditor({ productId }: { productId?: string }) {
-  const { t } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
   const toast = useToast();
   const router = useRouter();
   const savingRef = useRef(false);
@@ -118,6 +133,10 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
       );
       return;
     }
+    if (!form.content.vi.name.trim() || !form.content.en.name.trim()) {
+      setError(t.membershipCatalog.namesRequired);
+      return;
+    }
     setUnitSizeError("");
     setError("");
     savingRef.current = true;
@@ -129,8 +148,11 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
         {
           method: productId ? "PATCH" : "POST",
           body: JSON.stringify({
-            name: form.name.trim(),
-            short_description: form.description.trim(),
+            translations: (["vi", "en"] as const).map((translationLocale) => ({
+              locale: translationLocale,
+              name: form.content[translationLocale].name.trim(),
+              short_description: form.content[translationLocale].description.trim(),
+            })),
             unit_size: parsedUnitSize.value,
             unit_label_vi: form.unitVi.trim(),
             unit_label_en: form.unitEn.trim(),
@@ -157,43 +179,101 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
   if (!loaded) return <div className="panel">{t.membershipCatalog.loadingProduct}</div>;
 
   return (
-    <form className="panel catalog-editor form-grid" noValidate onSubmit={save}>
-      {error && <p className="error-box full" role="alert">{error}</p>}
-      <p className="catalog-help full">{t.membershipCatalog.unitHelp}</p>
-      <label className="field">
-        <span>{t.membershipCatalog.name} *</span>
-        <input className="input" disabled={busy} maxLength={200} onChange={(event) => update("name", event.target.value)} required value={form.name} />
-      </label>
-      <label className="field full">
-        <span>{t.membershipCatalog.shortDescription}</span>
-        <textarea className="textarea" disabled={busy} maxLength={800} onChange={(event) => update("description", event.target.value)} value={form.description} />
-      </label>
-      <label className="field">
-        <span>{t.membershipCatalog.unitSize} *</span>
-        <input aria-invalid={Boolean(unitSizeError)} className="input" disabled={busy} inputMode="decimal" onChange={(event) => { update("unitSize", sanitizeDecimalInput(event.target.value)); setUnitSizeError(""); }} required type="text" value={form.unitSize} />
-        {unitSizeError && <small className="field-error" role="alert">{unitSizeError}</small>}
-      </label>
-      <label className="field">
-        <span>{t.membershipCatalog.unitVi} *</span>
-        <input className="input" disabled={busy} maxLength={40} onChange={(event) => update("unitVi", event.target.value)} required value={form.unitVi} />
-      </label>
-      <label className="field">
-        <span>{t.membershipCatalog.unitEn} *</span>
-        <input className="input" disabled={busy} maxLength={40} onChange={(event) => update("unitEn", event.target.value)} required value={form.unitEn} />
-      </label>
-      <label className="checkbox field">
-        <input checked={form.isActive} disabled={busy} onChange={(event) => update("isActive", event.target.checked)} type="checkbox" />
-        <span>{t.membershipCatalog.active}</span>
-      </label>
-      <EditorActions busy={busy} onCancel={() => router.push(productId ? `/membership-catalog/products/${productId}` : "/membership-catalog/products")} />
+    <form className="catalog-editor" noValidate onSubmit={save}>
+      {error && (
+        <p className="error-box full" role="alert">
+          {error}
+        </p>
+      )}
+      <BilingualContentFields
+        busy={busy}
+        completionLabels={{
+          complete: t.membershipCatalog.complete,
+          incomplete: t.membershipCatalog.incomplete,
+        }}
+        defaultLocale={locale}
+        descriptionLabel={t.membershipCatalog.shortDescription}
+        languageLabels={{ vi: t.common.vietnamese, en: t.common.english }}
+        nameLabel={t.membershipCatalog.productName}
+        onChange={(content) => setForm((current) => ({ ...current, content }))}
+        title={t.membershipCatalog.displayContent}
+        value={form.content}
+      />
+      <section className="catalog-editor-section">
+        <h2>{t.membershipCatalog.unitsAndStatus}</h2>
+        <p className="catalog-section-help">{t.membershipCatalog.unitHelp}</p>
+        <div className="form-grid">
+          <label className="field">
+            <span>{t.membershipCatalog.unitSize} *</span>
+            <input
+              aria-invalid={Boolean(unitSizeError)}
+              className="input"
+              disabled={busy}
+              inputMode="decimal"
+              onChange={(event) => {
+                update("unitSize", sanitizeDecimalInput(event.target.value));
+                setUnitSizeError("");
+              }}
+              required
+              type="text"
+              value={form.unitSize}
+            />
+            {unitSizeError && (
+              <small className="field-error" role="alert">
+                {unitSizeError}
+              </small>
+            )}
+          </label>
+          <label className="field">
+            <span>{t.membershipCatalog.unitVi} *</span>
+            <input
+              className="input"
+              disabled={busy}
+              maxLength={40}
+              onChange={(event) => update("unitVi", event.target.value)}
+              required
+              value={form.unitVi}
+            />
+          </label>
+          <label className="field">
+            <span>{t.membershipCatalog.unitEn} *</span>
+            <input
+              className="input"
+              disabled={busy}
+              maxLength={40}
+              onChange={(event) => update("unitEn", event.target.value)}
+              required
+              value={form.unitEn}
+            />
+          </label>
+          <label className="checkbox field">
+            <input
+              checked={form.isActive}
+              disabled={busy}
+              onChange={(event) => update("isActive", event.target.checked)}
+              type="checkbox"
+            />
+            <span>{t.membershipCatalog.active}</span>
+          </label>
+        </div>
+      </section>
+      <EditorActions
+        busy={busy}
+        onCancel={() =>
+          router.push(
+            productId
+              ? `/membership-catalog/products/${productId}`
+              : "/membership-catalog/products",
+          )
+        }
+      />
     </form>
   );
 }
 
 type PackageLine = { productId: string; quotaUnits: string };
 type PackageForm = {
-  name: string;
-  description: string;
+  content: BilingualContentValue;
   price: string;
   months: string;
   policy: "expire" | "rollover";
@@ -202,8 +282,7 @@ type PackageForm = {
 };
 
 const emptyPackage: PackageForm = {
-  name: "",
-  description: "",
+  content: emptyBilingualContent(),
   price: "",
   months: "6",
   policy: "expire",
@@ -212,21 +291,30 @@ const emptyPackage: PackageForm = {
 };
 
 function packageForm(item: MembershipPackage): PackageForm {
+  const content = emptyBilingualContent();
+  item.translations.forEach((translation) => {
+    content[translation.locale] = {
+      name: translation.name,
+      description: translation.description,
+    };
+  });
   return {
-    name: item.name,
-    description: item.description,
+    content,
     price: item.upfront_price,
     months: String(item.duration_months),
     policy: item.quota_policy,
     isActive: item.is_active,
-    lines: item.items.map((line) => ({ productId: line.product_id, quotaUnits: String(line.quota_units) })),
+    lines: item.items.map((line) => ({
+      productId: line.product_id,
+      quotaUnits: String(line.quota_units),
+    })),
   };
 }
 
 type PackageInputErrors = { price?: string; months?: string; quotaUnits: Record<number, string> };
 
 export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
-  const { t } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
   const toast = useToast();
   const router = useRouter();
   const savingRef = useRef(false);
@@ -245,6 +333,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [priceFocused, setPriceFocused] = useState(false);
   const [inputErrors, setInputErrors] = useState<PackageInputErrors>({ quotaUnits: {} });
 
   useEffect(() => {
@@ -261,6 +350,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
               id: line.product_id,
               name: line.product_name,
               is_active: true,
+              translations: line.product_translations ?? [],
             })),
           ),
         );
@@ -301,25 +391,36 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
   function updateLine(index: number, patch: Partial<PackageLine>) {
     setForm((current) => ({
       ...current,
-      lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line),
+      lines: current.lines.map((line, lineIndex) =>
+        lineIndex === index ? { ...line, ...patch } : line,
+      ),
     }));
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
     if (savingRef.current) return;
+    if (!form.content.vi.name.trim() || !form.content.en.name.trim()) {
+      setError(t.membershipCatalog.namesRequired);
+      return;
+    }
     const parsedPrice = parsePositiveInteger(form.price, { max: MAX_MEMBERSHIP_PRICE });
     const parsedMonths = parsePositiveInteger(form.months, { max: 120 });
     const quotaUnits: number[] = [];
     const quotaErrors: Record<number, string> = {};
     form.lines.forEach((line, index) => {
       const parsed = parsePositiveInteger(line.quotaUnits);
-      if (parsed.error) quotaErrors[index] = numericInputErrorMessage(parsed.error, t.common.numericInput);
+      if (parsed.error)
+        quotaErrors[index] = numericInputErrorMessage(parsed.error, t.common.numericInput);
       else quotaUnits[index] = parsed.value;
     });
     const nextErrors: PackageInputErrors = {
-      price: parsedPrice.error ? numericInputErrorMessage(parsedPrice.error, t.common.numericInput, MAX_MEMBERSHIP_PRICE) : undefined,
-      months: parsedMonths.error ? numericInputErrorMessage(parsedMonths.error, t.common.numericInput, 120) : undefined,
+      price: parsedPrice.error
+        ? numericInputErrorMessage(parsedPrice.error, t.common.numericInput, MAX_MEMBERSHIP_PRICE)
+        : undefined,
+      months: parsedMonths.error
+        ? numericInputErrorMessage(parsedMonths.error, t.common.numericInput, 120)
+        : undefined,
       quotaUnits: quotaErrors,
     };
     setInputErrors(nextErrors);
@@ -339,13 +440,19 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
         {
           method: packageId ? "PATCH" : "POST",
           body: JSON.stringify({
-            name: form.name.trim(),
-            description: form.description.trim(),
+            translations: (["vi", "en"] as const).map((translationLocale) => ({
+              locale: translationLocale,
+              name: form.content[translationLocale].name.trim(),
+              description: form.content[translationLocale].description.trim(),
+            })),
             upfront_price: parsedPrice.value,
             duration_months: parsedMonths.value,
             quota_policy: form.policy,
             is_active: form.isActive,
-            items: form.lines.map((line, index) => ({ product_id: line.productId, quota_units: quotaUnits[index] })),
+            items: form.lines.map((line, index) => ({
+              product_id: line.productId,
+              quota_units: quotaUnits[index],
+            })),
           }),
         },
       );
@@ -372,87 +479,272 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
     (item) => visibleProductIds.has(item.id) || selected.has(item.id),
   );
   return (
-    <form className="panel catalog-editor package-editor" noValidate onSubmit={save}>
-      {error && <p className="error-box" role="alert">{error}</p>}
-      <div className="form-grid">
-        <label className="field"><span>{t.membershipCatalog.name} *</span><input className="input" disabled={busy} maxLength={200} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} required value={form.name} /></label>
-        <label className="field"><span>{t.membershipCatalog.upfrontPrice} *</span><input aria-invalid={Boolean(inputErrors.price)} className="input" disabled={busy} inputMode="numeric" onChange={(event) => { setForm((value) => ({ ...value, price: sanitizeIntegerInput(event.target.value) })); setInputErrors((current) => ({ ...current, price: undefined })); }} required type="text" value={form.price} />{inputErrors.price && <small className="field-error" role="alert">{inputErrors.price}</small>}</label>
-        <label className="field full"><span>{t.membershipCatalog.description}</span><textarea className="textarea" disabled={busy} onChange={(event) => setForm((value) => ({ ...value, description: event.target.value }))} value={form.description} /></label>
-        <label className="field"><span>{t.membershipCatalog.duration} *</span><input aria-invalid={Boolean(inputErrors.months)} className="input" disabled={busy} inputMode="numeric" onChange={(event) => { setForm((value) => ({ ...value, months: sanitizeIntegerInput(event.target.value) })); setInputErrors((current) => ({ ...current, months: undefined })); }} required type="text" value={form.months} />{inputErrors.months && <small className="field-error" role="alert">{inputErrors.months}</small>}</label>
-        <label className="field"><span>{t.membershipCatalog.policy} *</span><select className="input" disabled={busy} onChange={(event) => setForm((value) => ({ ...value, policy: event.target.value as PackageForm["policy"] }))} value={form.policy}><option value="expire">{t.membershipCatalog.expire}</option><option value="rollover">{t.membershipCatalog.rollover}</option></select></label>
-        <label className="checkbox field full"><input checked={form.isActive} disabled={busy} onChange={(event) => setForm((value) => ({ ...value, isActive: event.target.checked }))} type="checkbox" /><span>{t.membershipCatalog.active}</span></label>
-      </div>
-      <section className="package-product-lookup" aria-label={t.membershipCatalog.productLookup}>
-        <div className="package-product-search">
+    <form className="catalog-editor package-editor" noValidate onSubmit={save}>
+      {error && (
+        <p className="error-box" role="alert">
+          {error}
+        </p>
+      )}
+      <BilingualContentFields
+        busy={busy}
+        completionLabels={{
+          complete: t.membershipCatalog.complete,
+          incomplete: t.membershipCatalog.incomplete,
+        }}
+        defaultLocale={locale}
+        descriptionLabel={t.membershipCatalog.description}
+        languageLabels={{ vi: t.common.vietnamese, en: t.common.english }}
+        nameLabel={t.membershipCatalog.packageName}
+        onChange={(content) => setForm((current) => ({ ...current, content }))}
+        title={t.membershipCatalog.displayContent}
+        value={form.content}
+      />
+      <section className="catalog-editor-section">
+        <h2>{t.membershipCatalog.packageInformation}</h2>
+        <div className="form-grid">
           <label className="field">
-            <span>{t.membershipCatalog.productSearch}</span>
+            <span>{t.membershipCatalog.upfrontPrice} *</span>
             <input
+              aria-invalid={Boolean(inputErrors.price)}
               className="input"
-              disabled={busy || productsLoading}
-              onChange={(event) => setProductSearchInput(event.target.value)}
-              type="search"
-              value={productSearchInput}
+              disabled={busy}
+              inputMode="numeric"
+              onBlur={() => setPriceFocused(false)}
+              onChange={(event) => {
+                setForm((value) => ({ ...value, price: sanitizeIntegerInput(event.target.value) }));
+                setInputErrors((current) => ({ ...current, price: undefined }));
+              }}
+              onFocus={() => setPriceFocused(true)}
+              required
+              type="text"
+              value={
+                priceFocused || !form.price ? form.price : formatMembershipMoney(form.price, locale)
+              }
             />
+            {inputErrors.price && (
+              <small className="field-error" role="alert">
+                {inputErrors.price}
+              </small>
+            )}
           </label>
-          <button
-            className="button secondary"
-            disabled={busy || productsLoading}
-            onClick={() => {
-              setProductPage(1);
-              setProductSearch(productSearchInput.trim());
-            }}
-            type="button"
-          >
-            {t.membershipCatalog.searchProducts}
-          </button>
+          <label className="field">
+            <span>{t.membershipCatalog.duration} *</span>
+            <input
+              aria-invalid={Boolean(inputErrors.months)}
+              className="input"
+              disabled={busy}
+              inputMode="numeric"
+              onChange={(event) => {
+                setForm((value) => ({
+                  ...value,
+                  months: sanitizeIntegerInput(event.target.value),
+                }));
+                setInputErrors((current) => ({ ...current, months: undefined }));
+              }}
+              required
+              type="text"
+              value={form.months}
+            />
+            {inputErrors.months && (
+              <small className="field-error" role="alert">
+                {inputErrors.months}
+              </small>
+            )}
+          </label>
+          <label className="field">
+            <span>{t.membershipCatalog.policy} *</span>
+            <select
+              className="input"
+              disabled={busy}
+              onChange={(event) =>
+                setForm((value) => ({
+                  ...value,
+                  policy: event.target.value as PackageForm["policy"],
+                }))
+              }
+              value={form.policy}
+            >
+              <option value="expire">{t.membershipCatalog.expire}</option>
+              <option value="rollover">{t.membershipCatalog.rollover}</option>
+            </select>
+          </label>
+          <label className="checkbox field">
+            <input
+              checked={form.isActive}
+              disabled={busy}
+              onChange={(event) =>
+                setForm((value) => ({ ...value, isActive: event.target.checked }))
+              }
+              type="checkbox"
+            />
+            <span>{t.membershipCatalog.active}</span>
+          </label>
         </div>
-        {productsLoading ? (
-          <p className="muted-copy" aria-live="polite">{t.membershipCatalog.loadingProducts}</p>
-        ) : productsError ? (
-          <div className="error-box retry-error" role="alert">
-            <span>{productsError}</span>
-            <button
-              className="button secondary"
-              onClick={() => setProductsAttempt((value) => value + 1)}
-              type="button"
-            >
-              {t.common.retry}
-            </button>
-          </div>
-        ) : productMeta ? (
-          <div className="package-product-pagination">
-            <button
-              className="button secondary"
-              disabled={busy || productMeta.page <= 1}
-              onClick={() => setProductPage((value) => Math.max(1, value - 1))}
-              type="button"
-            >
-              {t.common.previous}
-            </button>
-            <span>{t.common.pagination.replace("{page}", String(productMeta.page)).replace("{pages}", String(Math.max(1, Math.ceil(productMeta.total / productMeta.page_size))))}</span>
-            <button
-              className="button secondary"
-              disabled={busy || productMeta.page * productMeta.page_size >= productMeta.total}
-              onClick={() => setProductPage((value) => value + 1)}
-              type="button"
-            >
-              {t.common.next}
-            </button>
-          </div>
-        ) : null}
       </section>
-      <div className="package-lines">
-        <h3>{t.membershipCatalog.packageProducts}</h3>
-        {form.lines.map((line, index) => (
-          <div className="package-line" key={index}>
-            <label className="field"><span>{t.membershipCatalog.product} *</span><select aria-label={`${t.membershipCatalog.product} ${index + 1}`} className="input" disabled={busy || productsLoading || Boolean(productsError)} onChange={(event) => updateLine(index, { productId: event.target.value })} required value={line.productId}><option value="">{t.membershipCatalog.chooseProduct}</option>{visibleProducts.filter((item) => !selected.has(item.id) || item.id === line.productId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label className="field"><span>{t.membershipCatalog.quotaUnits} *</span><input aria-label={`${t.membershipCatalog.quotaUnits} ${index + 1}`} aria-invalid={Boolean(inputErrors.quotaUnits[index])} className="input" disabled={busy} inputMode="numeric" onChange={(event) => { updateLine(index, { quotaUnits: sanitizeIntegerInput(event.target.value) }); setInputErrors((current) => ({ ...current, quotaUnits: { ...current.quotaUnits, [index]: "" } })); }} required type="text" value={line.quotaUnits} />{inputErrors.quotaUnits[index] && <small className="field-error" role="alert">{inputErrors.quotaUnits[index]}</small>}</label>
-            <button className="button secondary" disabled={busy || form.lines.length === 1} onClick={() => setForm((value) => ({ ...value, lines: value.lines.filter((_, lineIndex) => lineIndex !== index) }))} type="button">{t.membershipCatalog.removeProduct}</button>
+      <section
+        className="catalog-editor-section package-products-section"
+        aria-label={t.membershipCatalog.productLookup}
+      >
+        <h2>{t.membershipCatalog.packageProducts}</h2>
+        <div className="package-product-lookup">
+          <div className="package-product-search">
+            <label className="field">
+              <span>{t.membershipCatalog.productSearch}</span>
+              <input
+                className="input"
+                disabled={busy || productsLoading}
+                onChange={(event) => setProductSearchInput(event.target.value)}
+                type="search"
+                value={productSearchInput}
+              />
+            </label>
+            <button
+              className="button secondary"
+              disabled={busy || productsLoading}
+              onClick={() => {
+                setProductPage(1);
+                setProductSearch(productSearchInput.trim());
+              }}
+              type="button"
+            >
+              {t.membershipCatalog.searchProducts}
+            </button>
           </div>
-        ))}
-      </div>
-      <button className="button secondary" disabled={busy || productsLoading || Boolean(productsError)} onClick={() => setForm((value) => ({ ...value, lines: [...value.lines, { productId: "", quotaUnits: "1" }] }))} type="button">{t.membershipCatalog.addProductLine}</button>
-      <EditorActions busy={busy} onCancel={() => router.push(packageId ? `/membership-catalog/packages/${packageId}` : "/membership-catalog/packages")} />
+          {productsLoading ? (
+            <p className="muted-copy" aria-live="polite">
+              {t.membershipCatalog.loadingProducts}
+            </p>
+          ) : productsError ? (
+            <div className="error-box retry-error" role="alert">
+              <span>{productsError}</span>
+              <button
+                className="button secondary"
+                onClick={() => setProductsAttempt((value) => value + 1)}
+                type="button"
+              >
+                {t.common.retry}
+              </button>
+            </div>
+          ) : productMeta ? (
+            <div className="package-product-pagination">
+              <button
+                className="button secondary"
+                disabled={busy || productMeta.page <= 1}
+                onClick={() => setProductPage((value) => Math.max(1, value - 1))}
+                type="button"
+              >
+                {t.common.previous}
+              </button>
+              <span>
+                {t.common.pagination
+                  .replace("{page}", String(productMeta.page))
+                  .replace(
+                    "{pages}",
+                    String(Math.max(1, Math.ceil(productMeta.total / productMeta.page_size))),
+                  )}
+              </span>
+              <button
+                className="button secondary"
+                disabled={busy || productMeta.page * productMeta.page_size >= productMeta.total}
+                onClick={() => setProductPage((value) => value + 1)}
+                type="button"
+              >
+                {t.common.next}
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div className="package-lines">
+          {form.lines.map((line, index) => (
+            <div className="package-line" key={index}>
+              <label className="field">
+                <span>{t.membershipCatalog.product} *</span>
+                <select
+                  aria-label={`${t.membershipCatalog.product} ${index + 1}`}
+                  className="input"
+                  disabled={busy || productsLoading || Boolean(productsError)}
+                  onChange={(event) => updateLine(index, { productId: event.target.value })}
+                  required
+                  value={line.productId}
+                >
+                  <option value="">{t.membershipCatalog.chooseProduct}</option>
+                  {visibleProducts
+                    .filter((item) => !selected.has(item.id) || item.id === line.productId)
+                    .map((item) => {
+                      const translated = localizedCatalogTranslation(item.translations, locale);
+                      return (
+                        <option key={item.id} value={item.id}>
+                          {translated?.name || item.name}
+                        </option>
+                      );
+                    })}
+                </select>
+              </label>
+              <label className="field">
+                <span>{t.membershipCatalog.quotaUnits} *</span>
+                <input
+                  aria-label={`${t.membershipCatalog.quotaUnits} ${index + 1}`}
+                  aria-invalid={Boolean(inputErrors.quotaUnits[index])}
+                  className="input"
+                  disabled={busy}
+                  inputMode="numeric"
+                  onChange={(event) => {
+                    updateLine(index, { quotaUnits: sanitizeIntegerInput(event.target.value) });
+                    setInputErrors((current) => ({
+                      ...current,
+                      quotaUnits: { ...current.quotaUnits, [index]: "" },
+                    }));
+                  }}
+                  required
+                  type="text"
+                  value={line.quotaUnits}
+                />
+                {inputErrors.quotaUnits[index] && (
+                  <small className="field-error" role="alert">
+                    {inputErrors.quotaUnits[index]}
+                  </small>
+                )}
+              </label>
+              <button
+                className="button secondary"
+                disabled={busy || form.lines.length === 1}
+                onClick={() =>
+                  setForm((value) => ({
+                    ...value,
+                    lines: value.lines.filter((_, lineIndex) => lineIndex !== index),
+                  }))
+                }
+                type="button"
+              >
+                {t.membershipCatalog.removeProduct}
+              </button>
+            </div>
+          ))}
+        </div>
+        <button
+          className="button secondary add-product-line"
+          disabled={busy || productsLoading || Boolean(productsError)}
+          onClick={() =>
+            setForm((value) => ({
+              ...value,
+              lines: [...value.lines, { productId: "", quotaUnits: "1" }],
+            }))
+          }
+          type="button"
+        >
+          {t.membershipCatalog.addProductLine}
+        </button>
+      </section>
+      <EditorActions
+        busy={busy}
+        onCancel={() =>
+          router.push(
+            packageId
+              ? `/membership-catalog/packages/${packageId}`
+              : "/membership-catalog/packages",
+          )
+        }
+      />
     </form>
   );
 }

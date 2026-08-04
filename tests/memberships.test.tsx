@@ -140,6 +140,10 @@ const catalogProduct: MembershipProduct = {
   id: membershipRequest.package.items[0].product_id,
   name: "Vegetable basket",
   short_description: "Fresh vegetables",
+  translations: [
+    { locale: "vi", name: "Giỏ rau", short_description: "Rau tươi" },
+    { locale: "en", name: "Vegetable basket", short_description: "Fresh vegetables" },
+  ],
   unit_size: "0.500",
   unit_label_vi: "kg",
   unit_label_en: "kg",
@@ -150,6 +154,10 @@ const catalogProduct: MembershipProduct = {
 
 const catalogPackage: MembershipPackage = {
   ...membershipRequest.package,
+  translations: [
+    { locale: "vi", name: "Gói CSA sáu tháng", description: "Rau theo mùa" },
+    { locale: "en", name: "Six month CSA", description: "Seasonal vegetables" },
+  ],
   is_active: true,
   created_at: "2026-07-20T02:00:00Z",
   updated_at: "2026-07-21T02:00:00Z",
@@ -513,7 +521,7 @@ describe("Membership administration", () => {
 
     const packageList = providers(<MembershipPackageList />);
     expect(await screen.findByText("32 results")).toBeVisible();
-    expect(screen.queryByRole("search")).toBeNull();
+    expect(screen.getByRole("search")).toBeVisible();
     packageList.unmount();
 
     const requestList = providers(<MembershipRequestList />);
@@ -572,6 +580,29 @@ describe("Membership administration", () => {
       "href",
       `/membership-catalog/products/${catalogProduct.id}/edit`,
     );
+  });
+
+  it("flags legacy catalog content without rendering a blank list name", async () => {
+    const legacyProduct: MembershipProduct = {
+      ...catalogProduct,
+      name: "Legacy basket",
+      translations: [
+        { locale: "vi", name: "Giỏ rau cũ", short_description: "Nội dung cần rà soát" },
+      ],
+    };
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [legacyProduct],
+      meta: { page: 1, page_size: 30, total: 1 },
+    });
+    const list = providers(<MembershipProductList />);
+    expect(await screen.findByRole("link", { name: "Giỏ rau cũ" })).toBeVisible();
+    expect(screen.getByText("Translation needs review")).toBeVisible();
+    list.unmount();
+
+    vi.mocked(api).mockResolvedValue(legacyProduct);
+    providers(<MembershipProductDetail productId={legacyProduct.id} />);
+    expect(await screen.findByRole("heading", { name: "Giỏ rau cũ" })).toBeVisible();
+    expect(screen.getByText("Incomplete", { selector: "strong" })).toBeVisible();
   });
 
   it("shows full package detail with products and correct edit destination", async () => {
@@ -646,6 +677,26 @@ describe("Membership administration", () => {
     providers(<MembershipPackageEditor />);
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(navigation.push).toHaveBeenCalledWith("/membership-catalog/packages");
+  });
+
+  it("preserves bilingual product content across tabs and reports completion", () => {
+    providers(<MembershipProductEditor />);
+
+    const englishTab = screen.getByRole("tab", { name: /English/ });
+    const vietnameseTab = screen.getByRole("tab", { name: /Tiếng Việt/ });
+    expect(englishTab).toHaveTextContent("Incomplete");
+    fireEvent.change(screen.getByLabelText("Product name *"), {
+      target: { value: "Seasonal basket" },
+    });
+    expect(englishTab).toHaveTextContent("Complete");
+
+    fireEvent.click(vietnameseTab);
+    fireEvent.change(screen.getByLabelText("Product name *"), {
+      target: { value: "Giỏ rau theo mùa" },
+    });
+    expect(vietnameseTab).toHaveTextContent("Complete");
+    fireEvent.click(englishTab);
+    expect(screen.getByLabelText("Product name *")).toHaveValue("Seasonal basket");
   });
 
   it("shows explicit loading states while product and package edit data is pending", async () => {
@@ -741,7 +792,9 @@ describe("Membership administration", () => {
 
     const productEditor = providers(<MembershipProductEditor productId={catalogProduct.id} />);
     expect(await screen.findByDisplayValue(catalogProduct.name)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Updated basket" } });
+    fireEvent.change(screen.getByLabelText("Product name *"), {
+      target: { value: "Updated basket" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(navigation.replace).toHaveBeenCalledWith(
@@ -757,7 +810,9 @@ describe("Membership administration", () => {
     navigation.replace.mockClear();
     providers(<MembershipPackageEditor packageId={catalogPackage.id} />);
     expect(await screen.findByDisplayValue(catalogPackage.name)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Updated CSA" } });
+    fireEvent.change(screen.getByLabelText("Package name *"), {
+      target: { value: "Updated CSA" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(navigation.replace).toHaveBeenCalledWith(
@@ -776,6 +831,7 @@ describe("Membership administration", () => {
         id: membershipRequest.package.items[0].product_id,
         name: "Vegetable basket",
         short_description: "Fresh vegetables",
+        translations: catalogProduct.translations,
         unit_size: "0.500",
         unit_label_vi: "kg",
         unit_label_en: "kg",
@@ -787,6 +843,10 @@ describe("Membership administration", () => {
         id: "7d67184a-fddf-4a26-916c-516481d18f43",
         name: "Herb basket",
         short_description: "Fresh herbs",
+        translations: [
+          { locale: "vi", name: "Giỏ rau thơm", short_description: "Rau thơm tươi" },
+          { locale: "en", name: "Herb basket", short_description: "Fresh herbs" },
+        ],
         unit_size: "0.250",
         unit_label_vi: "kg",
         unit_label_en: "kg",
@@ -802,13 +862,24 @@ describe("Membership administration", () => {
     vi.mocked(api).mockResolvedValue(catalogPackage);
     providers(<MembershipPackageEditor />);
 
-    await screen.findByLabelText("Name *");
-    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "CSA package" } });
-    const price = screen.getByLabelText("One-time payment *");
+    await screen.findByLabelText("Package name *");
+    fireEvent.change(screen.getByLabelText("Package name *"), {
+      target: { value: "CSA package" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
+    fireEvent.change(screen.getByLabelText("Package name *"), {
+      target: { value: "Gói CSA" },
+    });
+    const price = screen.getByLabelText("Package price *");
     const duration = screen.getByLabelText("Months *");
     expect(price).toHaveAttribute("type", "text");
     expect(price).toHaveAttribute("inputmode", "numeric");
+    fireEvent.focus(price);
     fireEvent.change(price, { target: { value: "abc6000000e+" } });
+    expect(price).toHaveValue("6000000");
+    fireEvent.blur(price);
+    expect(price).toHaveValue("₫6,000,000");
+    fireEvent.focus(price);
     expect(price).toHaveValue("6000000");
     fireEvent.change(duration, { target: { value: "+121" } });
     expect(duration).toHaveValue("121");
@@ -845,6 +916,10 @@ describe("Membership administration", () => {
       .mocked(api)
       .mock.calls.find(([path]) => path === "admin/membership-packages");
     expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+      translations: [
+        { locale: "vi", name: "Gói CSA" },
+        { locale: "en", name: "CSA package" },
+      ],
       upfront_price: 6000000,
       duration_months: 12,
       items: [
@@ -862,6 +937,10 @@ describe("Membership administration", () => {
       ...catalogProduct,
       id: "7d67184a-fddf-4a26-916c-516481d18f43",
       name: "Herbs",
+      translations: [
+        { locale: "vi" as const, name: "Rau thơm", short_description: "" },
+        { locale: "en" as const, name: "Herbs", short_description: "" },
+      ],
     };
     vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
       const query = new URLSearchParams(path.split("?")[1]);
@@ -924,7 +1003,13 @@ describe("Membership administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByText(/decimal number greater than 0/i)).toBeVisible();
 
-    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Vegetable basket" } });
+    fireEvent.change(screen.getByLabelText("Product name *"), {
+      target: { value: "Vegetable basket" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
+    fireEvent.change(screen.getByLabelText("Product name *"), {
+      target: { value: "Giỏ rau" },
+    });
     fireEvent.change(screen.getByLabelText("Vietnamese unit label *"), {
       target: { value: "kg" },
     });
@@ -979,7 +1064,7 @@ describe("Membership administration", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-requests?page=1"),
+      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-requests?page=1&locale=en"),
     );
     expect(screen.getByRole("searchbox")).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "Filter by status" })).toHaveValue("");
@@ -1039,7 +1124,18 @@ describe("Membership administration", () => {
 
     await act(async () =>
       resolveFiltered({
-        data: [{ ...catalogProduct, id: "filtered-product", name: "Filtered product" }],
+        data: [
+          {
+            ...catalogProduct,
+            id: "filtered-product",
+            name: "Filtered product",
+            translations: catalogProduct.translations.map((translation) =>
+              translation.locale === "en"
+                ? { ...translation, name: "Filtered product" }
+                : translation,
+            ),
+          },
+        ],
         meta: { page: 1, page_size: 30, total: 1 },
       }),
     );
@@ -1095,7 +1191,7 @@ describe("Membership administration", () => {
           ? membershipRequest
           : { ...membershipRequest, status: "approved", approved_at: "2026-07-21T02:00:00Z" };
       }
-      if (path.endsWith("/approve")) return approvePromise;
+      if (path.endsWith("/approve?locale=en")) return approvePromise;
       throw new Error("unexpected_request");
     });
     providers(<MembershipRequestDetail requestId={membershipRequest.id} />);
@@ -1114,14 +1210,56 @@ describe("Membership administration", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(confirm).toBeDisabled();
-    expect(vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/approve"))).toHaveLength(1);
+    expect(
+      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/approve?locale=en")),
+    ).toHaveLength(1);
 
     await act(async () => resolveApprove({ data: membership }));
     await waitFor(() => expect(screen.getByText("Approved")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
-    const actionCall = vi.mocked(api).mock.calls.find(([path]) => path.endsWith("/approve"));
-    expect(actionCall?.[0]).toBe(`admin/membership-requests/${membershipRequest.id}/approve`);
+    const actionCall = vi
+      .mocked(api)
+      .mock.calls.find(([path]) => path.endsWith("/approve?locale=en"));
+    expect(actionCall?.[0]).toBe(
+      `admin/membership-requests/${membershipRequest.id}/approve?locale=en`,
+    );
     expect(JSON.parse(String(actionCall?.[1]?.body))).toEqual({ start_date: "2026-08-15" });
+  });
+
+  it("warns when legacy request and Membership snapshots have no English content", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...membershipRequest,
+      package: {
+        ...membershipRequest.package,
+        snapshot_complete: false,
+        items: membershipRequest.package.items.map((item) => ({
+          ...item,
+          snapshot_complete: false,
+        })),
+      },
+    });
+    const requestView = providers(<MembershipRequestDetail requestId={membershipRequest.id} />);
+    expect(
+      (await screen.findAllByText("Legacy snapshot has no English content")).length,
+    ).toBeGreaterThan(1);
+    requestView.unmount();
+
+    vi.mocked(api).mockResolvedValue({
+      ...membership,
+      snapshot_complete: false,
+      quota: membership.quota?.map((item) => ({
+        ...item,
+        snapshot_complete: false,
+      })),
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [],
+      meta: { page: 1, page_size: 30, total: 0 },
+    });
+    providers(<MembershipDetail membershipId={membership.id} />);
+    expect(
+      (await screen.findAllByText("Legacy snapshot has no English content")).length,
+    ).toBeGreaterThan(1);
   });
 
   it("prevents approving a CSA request with a past start date", async () => {
@@ -1155,7 +1293,9 @@ describe("Membership administration", () => {
     expect(
       await within(dialog).findByText("The start date must be today or a future date."),
     ).toBeVisible();
-    expect(vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/approve"))).toHaveLength(0);
+    expect(
+      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/approve?locale=en")),
+    ).toHaveLength(0);
   });
 
   it("confirms payment instruction once, disables actions, and keeps errors retryable", async () => {
@@ -1172,7 +1312,7 @@ describe("Membership administration", () => {
     let issueAttempts = 0;
     vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
       if (!init) return contactedRequest;
-      if (path.endsWith("/issue-payment-instruction") && init.method === "POST") {
+      if (path.endsWith("/issue-payment-instruction?locale=en") && init.method === "POST") {
         issueAttempts += 1;
         if (issueAttempts === 1) return firstIssue;
         return {
@@ -1190,14 +1330,18 @@ describe("Membership administration", () => {
     const dialog = screen.getByRole("dialog", { name: "Confirm payment instruction" });
     expect(dialog).toHaveTextContent("creates and finalizes the payment instruction");
     expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction")),
+      vi
+        .mocked(api)
+        .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction?locale=en")),
     ).toHaveLength(0);
 
     const confirm = within(dialog).getByRole("button", { name: "Issue payment instruction" });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction")),
+      vi
+        .mocked(api)
+        .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction?locale=en")),
     ).toHaveLength(1);
     expect(within(dialog).getByRole("button", { name: "Processing…" })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
@@ -1214,10 +1358,10 @@ describe("Membership administration", () => {
     expect(screen.getByText("Payment instructions were issued.")).toBeInTheDocument();
     const issueCalls = vi
       .mocked(api)
-      .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction"));
+      .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction?locale=en"));
     expect(issueCalls).toHaveLength(2);
     expect(issueCalls[0][0]).toBe(
-      `admin/membership-requests/${membershipRequest.id}/issue-payment-instruction`,
+      `admin/membership-requests/${membershipRequest.id}/issue-payment-instruction?locale=en`,
     );
     expect(issueCalls[0][1]?.method).toBe("POST");
     expect(JSON.parse(String(issueCalls[0][1]?.body))).toEqual({});
@@ -1256,8 +1400,8 @@ describe("Membership administration", () => {
   it("keeps one usage idempotency key for a failed request retry and blocks rapid submit", async () => {
     let createAttempts = 0;
     vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (path === `admin/memberships/${membership.id}`) return membership;
-      if (path === "admin/membership-usage" && init?.method === "POST") {
+      if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
+      if (path === "admin/membership-usage?locale=en" && init?.method === "POST") {
         createAttempts += 1;
         if (createAttempts === 1) throw new Error("network_error");
         return {
@@ -1291,26 +1435,26 @@ describe("Membership administration", () => {
     fireEvent.click(confirm);
     expect(within(dialog).getByText(/whole number greater than 0/i)).toBeVisible();
     expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage"),
+      vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en"),
     ).toHaveLength(0);
     fireEvent.change(units, { target: { value: "0002" } });
     expect(units).toHaveValue("0002");
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage"),
+      vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en"),
     ).toHaveLength(1);
     expect(await within(dialog).findByText(/could not connect/i)).toBeInTheDocument();
 
     fireEvent.click(confirm);
     await waitFor(() =>
       expect(
-        vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage"),
+        vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en"),
       ).toHaveLength(2),
     );
     const calls = vi
       .mocked(api)
-      .mock.calls.filter(([path]) => path === "admin/membership-usage")
+      .mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en")
       .map(([, init]) => JSON.parse(String(init?.body)));
     expect(calls[0].idempotency_key).toMatch(/^[0-9a-f-]{36}$/i);
     expect(calls[1].idempotency_key).toBe(calls[0].idempotency_key);
@@ -1343,8 +1487,8 @@ describe("Membership administration", () => {
       ],
     };
     vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (path === `admin/memberships/${membership.id}`) return membership;
-      if (path.endsWith("/undo") && init?.method === "POST") return undoPromise;
+      if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
+      if (path.endsWith("/undo?locale=en") && init?.method === "POST") return undoPromise;
       throw new Error("unexpected_request");
     });
     vi.mocked(apiEnvelope).mockResolvedValue({
@@ -1362,9 +1506,11 @@ describe("Membership administration", () => {
     });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
-    expect(vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/undo"))).toHaveLength(1);
-    const undoCall = vi.mocked(api).mock.calls.find(([path]) => path.endsWith("/undo"));
-    expect(undoCall?.[0]).toBe(`admin/membership-usage/${usage.id}/undo`);
+    expect(
+      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/undo?locale=en")),
+    ).toHaveLength(1);
+    const undoCall = vi.mocked(api).mock.calls.find(([path]) => path.endsWith("/undo?locale=en"));
+    expect(undoCall?.[0]).toBe(`admin/membership-usage/${usage.id}/undo?locale=en`);
     expect(JSON.parse(String(undoCall?.[1]?.body))).toEqual({ reason: "Wrong delivery" });
 
     await act(async () => resolveUndo({ ...usage, status: "reversed" }));

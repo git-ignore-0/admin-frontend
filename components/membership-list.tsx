@@ -15,18 +15,18 @@ import type { AdminMembership, PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function MembershipList() {
-  const { t } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const fetchPage = useCallback(
     (page: number) => {
-      const params = new URLSearchParams({ page: String(page) });
+      const params = new URLSearchParams({ page: String(page), locale });
       if (search) params.set("search", search);
       return apiEnvelope<AdminMembership[], PaginationMeta>(
         `admin/memberships?${params.toString()}`,
       );
     },
-    [search],
+    [locale, search],
   );
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({

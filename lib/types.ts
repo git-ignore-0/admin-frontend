@@ -35,6 +35,11 @@ export type MembershipProduct = {
   id: string;
   name: string;
   short_description: string;
+  translations: Array<{
+    locale: "vi" | "en";
+    name: string;
+    short_description: string;
+  }>;
   unit_size: string;
   unit_label_vi: string;
   unit_label_en: string;
@@ -47,16 +52,26 @@ export type MembershipPackageItem = {
   product_id: string;
   product_name: string;
   short_description: string;
+  product_translations?: MembershipProduct["translations"];
   unit_size: string;
   unit_label_vi: string;
   unit_label_en: string;
   quota_units: number;
+  requested_locale?: "vi" | "en";
+  content_locale?: "vi" | "en";
+  is_fallback?: boolean;
+  snapshot_complete?: boolean;
 };
 
 export type MembershipPackage = {
   id: string;
   name: string;
   description: string;
+  translations: Array<{
+    locale: "vi" | "en";
+    name: string;
+    description: string;
+  }>;
   upfront_price: string;
   duration_months: number;
   quota_policy: MembershipQuotaPolicy;
@@ -116,6 +131,10 @@ export type MembershipRequest = {
     duration_months: number;
     quota_policy: MembershipQuotaPolicy;
     items: MembershipPackageItem[];
+    requested_locale?: "vi" | "en";
+    content_locale?: "vi" | "en";
+    is_fallback?: boolean;
+    snapshot_complete?: boolean;
   };
   payment_instruction: MembershipPaymentInstruction | null;
   return_reason: string;
@@ -138,6 +157,10 @@ export type MembershipQuota = {
   unit_label_en: string;
   quota_units_per_cycle: number;
   remaining_units: number;
+  requested_locale?: "vi" | "en";
+  content_locale?: "vi" | "en";
+  is_fallback?: boolean;
+  snapshot_complete?: boolean;
 };
 
 export type MembershipCycle = {
@@ -151,6 +174,7 @@ export type MembershipCycle = {
     granted_units: number;
     remaining_units: number;
     expired_units: number;
+    snapshot_complete?: boolean;
   }>;
 };
 
@@ -162,6 +186,10 @@ export type AdminMembership = {
   status: MembershipStatus;
   package_name: string;
   package_description: string;
+  requested_locale?: "vi" | "en";
+  content_locale?: "vi" | "en";
+  is_fallback?: boolean;
+  snapshot_complete?: boolean;
   upfront_price: string;
   duration_months: number;
   quota_policy: MembershipQuotaPolicy;
@@ -183,6 +211,10 @@ export type MembershipUsage = {
   lines: Array<{
     product_id: string;
     product_name: string;
+    requested_locale?: "vi" | "en";
+    content_locale?: "vi" | "en";
+    is_fallback?: boolean;
+    snapshot_complete?: boolean;
     units: number;
     allocations?: Array<{ cycle: number; units: number }>;
   }>;

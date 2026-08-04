@@ -62,9 +62,7 @@ export function PointLedger({
     setError("");
     const parsedAmount = parsePositiveInteger(amount);
     if (parsedAmount.error) {
-      setAmountError(
-        numericInputErrorMessage(parsedAmount.error, t.common.numericInput),
-      );
+      setAmountError(numericInputErrorMessage(parsedAmount.error, t.common.numericInput));
       return;
     }
     setAmountError("");

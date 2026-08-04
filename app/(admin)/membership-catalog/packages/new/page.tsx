@@ -7,7 +7,12 @@ export default async function NewPackagePage() {
   const t = adminDictionaries[await getAdminLocale()];
   return (
     <>
-      <DetailPageHeading backHref="/membership-catalog/packages" backLabel={t.membershipCatalog.backToPackages} description={t.membershipCatalog.newPackageDescription} title={t.membershipCatalog.newPackage} />
+      <DetailPageHeading
+        backHref="/membership-catalog/packages"
+        backLabel={t.membershipCatalog.backToPackages}
+        description={t.membershipCatalog.newPackageDescription}
+        title={t.membershipCatalog.newPackage}
+      />
       <MembershipPackageEditor />
     </>
   );

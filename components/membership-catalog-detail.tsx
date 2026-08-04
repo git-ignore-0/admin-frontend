@@ -12,6 +12,10 @@ import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { formatMembershipMoney } from "@/lib/membership-format";
+import {
+  hasCompleteCatalogTranslations,
+  localizedCatalogTranslation,
+} from "@/lib/membership-translations";
 import type { MembershipPackage, MembershipProduct } from "@/lib/types";
 
 function LoadError({ error, retry }: { error: unknown; retry: () => void }) {
@@ -39,6 +43,36 @@ function Status({ active }: { active: boolean }) {
 
 function formatUnitConversion(template: string, amount: string, label: string) {
   return template.replace("{amount}", amount).replace("{label}", label);
+}
+
+function BilingualReview({
+  translations,
+}: {
+  translations: Array<{ locale: "vi" | "en"; name: string; description: string }>;
+}) {
+  const { t } = useAdminI18n();
+  return (
+    <section className="catalog-bilingual-review">
+      <div className="panel-head">
+        <h3>{t.membershipCatalog.bilingualContent}</h3>
+        {!hasCompleteCatalogTranslations(translations) && (
+          <span className="badge warm">{t.membershipCatalog.translationNeedsReview}</span>
+        )}
+      </div>
+      <div className="catalog-bilingual-grid">
+        {(["vi", "en"] as const).map((locale) => {
+          const translation = translations.find((item) => item.locale === locale);
+          return (
+            <article key={locale}>
+              <h4>{locale === "vi" ? t.common.vietnamese : t.common.english}</h4>
+              <strong>{translation?.name || t.membershipCatalog.incomplete}</strong>
+              <p>{translation?.description || "—"}</p>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function DeleteDialog({
@@ -115,25 +149,28 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
 
   if (error && !item) return <LoadError error={error} retry={() => setAttempt((v) => v + 1)} />;
   if (!item) return <div className="panel">{t.membershipCatalog.loadingProduct}</div>;
+  const selected = localizedCatalogTranslation(item.translations, locale);
 
   return (
     <>
       <DetailPageHeading
         backHref="/membership-catalog/products"
         backLabel={t.membershipCatalog.backToProducts}
-        title={item.name}
+        title={selected?.name || item.name}
       />
       <section className="panel catalog-detail">
         <div className="panel-head">
           <h2>{t.membershipCatalog.productDetails}</h2>
           <div className="row-actions">
-            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">{t.membershipCatalog.delete}</button>
-            <Link className="button" href={`/membership-catalog/products/${item.id}/edit`}>{t.membershipCatalog.editProduct}</Link>
+            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">
+              {t.membershipCatalog.delete}
+            </button>
+            <Link className="button" href={`/membership-catalog/products/${item.id}/edit`}>
+              {t.membershipCatalog.editProduct}
+            </Link>
           </div>
         </div>
         <dl className="detail-list">
-          <div><dt>{t.membershipCatalog.name}</dt><dd>{item.name}</dd></div>
-          <div><dt>{t.membershipCatalog.shortDescription}</dt><dd>{item.short_description || "—"}</dd></div>
           <div>
             <dt>{t.membershipCatalog.unitConversion}</dt>
             <dd>
@@ -144,14 +181,53 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
               )}
             </dd>
           </div>
-          <div><dt>{t.membershipCatalog.unitVi}</dt><dd>{item.unit_label_vi}</dd></div>
-          <div><dt>{t.membershipCatalog.unitEn}</dt><dd>{item.unit_label_en}</dd></div>
-          <div><dt>{t.membershipCatalog.status}</dt><dd><Status active={item.is_active} /></dd></div>
-          {item.created_at && <div><dt>{t.membershipCatalog.createdAt}</dt><dd>{formatAdminDateTime(item.created_at)}</dd></div>}
-          {item.updated_at && <div><dt>{t.membershipCatalog.updatedAt}</dt><dd>{formatAdminDateTime(item.updated_at)}</dd></div>}
+          <div>
+            <dt>{t.membershipCatalog.unitVi}</dt>
+            <dd>{item.unit_label_vi}</dd>
+          </div>
+          <div>
+            <dt>{t.membershipCatalog.unitEn}</dt>
+            <dd>{item.unit_label_en}</dd>
+          </div>
+          <div>
+            <dt>{t.membershipCatalog.status}</dt>
+            <dd>
+              <Status active={item.is_active} />
+            </dd>
+          </div>
+          {item.created_at && (
+            <div>
+              <dt>{t.membershipCatalog.createdAt}</dt>
+              <dd>{formatAdminDateTime(item.created_at)}</dd>
+            </div>
+          )}
+          {item.updated_at && (
+            <div>
+              <dt>{t.membershipCatalog.updatedAt}</dt>
+              <dd>{formatAdminDateTime(item.updated_at)}</dd>
+            </div>
+          )}
         </dl>
+        <BilingualReview
+          translations={item.translations.map((translation) => ({
+            locale: translation.locale,
+            name: translation.name,
+            description: translation.short_description,
+          }))}
+        />
       </section>
-      {deleteOpen && <DeleteDialog busy={deleteBusy} error={deleteError} name={item.name} onCancel={() => { setDeleteOpen(false); setDeleteError(""); }} onConfirm={remove} />}
+      {deleteOpen && (
+        <DeleteDialog
+          busy={deleteBusy}
+          error={deleteError}
+          name={selected?.name || item.name}
+          onCancel={() => {
+            setDeleteOpen(false);
+            setDeleteError("");
+          }}
+          onConfirm={remove}
+        />
+      )}
     </>
   );
 }
@@ -199,41 +275,90 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
 
   if (error && !item) return <LoadError error={error} retry={() => setAttempt((v) => v + 1)} />;
   if (!item) return <div className="panel">{t.membershipCatalog.loadingPackage}</div>;
+  const selected = localizedCatalogTranslation(item.translations, locale);
 
   return (
     <>
       <DetailPageHeading
         backHref="/membership-catalog/packages"
         backLabel={t.membershipCatalog.backToPackages}
-        title={item.name}
+        title={selected?.name || item.name}
       />
       <section className="panel catalog-detail">
         <div className="panel-head">
           <h2>{t.membershipCatalog.packageDetails}</h2>
           <div className="row-actions">
-            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">{t.membershipCatalog.delete}</button>
-            <Link className="button" href={`/membership-catalog/packages/${item.id}/edit`}>{t.membershipCatalog.editPackage}</Link>
+            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">
+              {t.membershipCatalog.delete}
+            </button>
+            <Link className="button" href={`/membership-catalog/packages/${item.id}/edit`}>
+              {t.membershipCatalog.editPackage}
+            </Link>
           </div>
         </div>
         <dl className="detail-list catalog-package-summary">
-          <div><dt>{t.membershipCatalog.name}</dt><dd>{item.name}</dd></div>
-          <div><dt>{t.membershipCatalog.upfrontPrice}</dt><dd>{formatMembershipMoney(item.upfront_price, locale)}</dd></div>
-          <div><dt>{t.membershipCatalog.duration}</dt><dd>{item.duration_months}</dd></div>
-          <div><dt>{t.membershipCatalog.policy}</dt><dd>{item.quota_policy === "expire" ? t.membershipCatalog.expire : t.membershipCatalog.rollover}</dd></div>
-          <div><dt>{t.membershipCatalog.status}</dt><dd><Status active={item.is_active} /></dd></div>
-          <div><dt>{t.membershipCatalog.description}</dt><dd>{item.description || "—"}</dd></div>
-          {item.created_at && <div><dt>{t.membershipCatalog.createdAt}</dt><dd>{formatAdminDateTime(item.created_at)}</dd></div>}
-          {item.updated_at && <div><dt>{t.membershipCatalog.updatedAt}</dt><dd>{formatAdminDateTime(item.updated_at)}</dd></div>}
+          <div>
+            <dt>{t.membershipCatalog.upfrontPrice}</dt>
+            <dd>{formatMembershipMoney(item.upfront_price, locale)}</dd>
+          </div>
+          <div>
+            <dt>{t.membershipCatalog.duration}</dt>
+            <dd>{item.duration_months}</dd>
+          </div>
+          <div>
+            <dt>{t.membershipCatalog.policy}</dt>
+            <dd>
+              {item.quota_policy === "expire"
+                ? t.membershipCatalog.expire
+                : t.membershipCatalog.rollover}
+            </dd>
+          </div>
+          <div>
+            <dt>{t.membershipCatalog.status}</dt>
+            <dd>
+              <Status active={item.is_active} />
+            </dd>
+          </div>
+          {item.created_at && (
+            <div>
+              <dt>{t.membershipCatalog.createdAt}</dt>
+              <dd>{formatAdminDateTime(item.created_at)}</dd>
+            </div>
+          )}
+          {item.updated_at && (
+            <div>
+              <dt>{t.membershipCatalog.updatedAt}</dt>
+              <dd>{formatAdminDateTime(item.updated_at)}</dd>
+            </div>
+          )}
         </dl>
+        <BilingualReview translations={item.translations} />
         <div className="catalog-package-products">
           <h3>{t.membershipCatalog.packageProducts}</h3>
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>{t.membershipCatalog.product}</th><th>{t.membershipCatalog.quotaUnits}</th><th>{t.membershipCatalog.unitConversion}</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>{t.membershipCatalog.product}</th>
+                  <th>{t.membershipCatalog.quotaUnits}</th>
+                  <th>{t.membershipCatalog.unitConversion}</th>
+                </tr>
+              </thead>
               <tbody>
                 {item.items.map((line) => (
                   <tr key={line.product_id}>
-                    <td><strong>{line.product_name}</strong><small className="table-secondary">{line.short_description || "—"}</small></td>
+                    <td>
+                      <strong>
+                        {localizedCatalogTranslation(line.product_translations ?? [], locale)
+                          ?.name || line.product_name}
+                      </strong>
+                      <small className="table-secondary">
+                        {localizedCatalogTranslation(line.product_translations ?? [], locale)
+                          ?.short_description ||
+                          line.short_description ||
+                          "—"}
+                      </small>
+                    </td>
                     <td>{line.quota_units}</td>
                     <td>
                       {formatUnitConversion(
@@ -249,7 +374,18 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
           </div>
         </div>
       </section>
-      {deleteOpen && <DeleteDialog busy={deleteBusy} error={deleteError} name={item.name} onCancel={() => { setDeleteOpen(false); setDeleteError(""); }} onConfirm={remove} />}
+      {deleteOpen && (
+        <DeleteDialog
+          busy={deleteBusy}
+          error={deleteError}
+          name={selected?.name || item.name}
+          onCancel={() => {
+            setDeleteOpen(false);
+            setDeleteError("");
+          }}
+          onConfirm={remove}
+        />
+      )}
     </>
   );
 }

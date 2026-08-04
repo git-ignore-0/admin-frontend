@@ -52,9 +52,7 @@ export function WorkshopList() {
                 <td>
                   <strong>{title}</strong>
                 </td>
-                <td>
-                  {formatAdminDateTimeInZone(item.start_at, item.event_timezone)}
-                </td>
+                <td>{formatAdminDateTimeInZone(item.start_at, item.event_timezone)}</td>
                 <td>
                   {item.translations.map((t) => (
                     <span className={`badge ${t.is_ready ? "" : "warm"}`} key={t.locale}>

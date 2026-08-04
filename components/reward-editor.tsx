@@ -118,9 +118,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
     setError("");
     const parsedPointCost = parsePositiveInteger(pointCost);
     if (parsedPointCost.error) {
-      setPointCostError(
-        numericInputErrorMessage(parsedPointCost.error, t.common.numericInput),
-      );
+      setPointCostError(numericInputErrorMessage(parsedPointCost.error, t.common.numericInput));
       return;
     }
     setPointCostError("");

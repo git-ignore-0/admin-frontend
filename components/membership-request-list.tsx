@@ -24,20 +24,20 @@ const statuses: MembershipRequestStatus[] = [
 ];
 
 export function MembershipRequestList() {
-  const { t } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<MembershipRequestStatus | "">("");
   const fetchPage = useCallback(
     (page: number) => {
-      const params = new URLSearchParams({ page: String(page) });
+      const params = new URLSearchParams({ page: String(page), locale });
       if (search) params.set("search", search);
       if (status) params.set("status", status);
       return apiEnvelope<MembershipRequest[], PaginationMeta>(
         `admin/membership-requests?${params.toString()}`,
       );
     },
-    [search, status],
+    [locale, search, status],
   );
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({

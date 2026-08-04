@@ -23,20 +23,14 @@ function validDate(value: Date) {
   return !Number.isNaN(value.getTime());
 }
 
-export function formatAdminDateTime(
-  value: string | null | undefined,
-  fallback = "—",
-): string {
+export function formatAdminDateTime(value: string | null | undefined, fallback = "—"): string {
   if (!value) return fallback;
   const date = new Date(value);
   if (!validDate(date)) return fallback;
   return partsFor(date, ADMIN_TIME_ZONE, true);
 }
 
-export function formatAdminDate(
-  value: string | null | undefined,
-  fallback = "—",
-): string {
+export function formatAdminDate(value: string | null | undefined, fallback = "—"): string {
   if (!value) return fallback;
   const match = DATE_ONLY_PATTERN.exec(value);
   if (match) {

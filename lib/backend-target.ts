@@ -56,8 +56,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
 
   if (resource === "membership-payment-settings" && id === undefined)
     return new Set(["GET", "PUT", "PATCH"]).has(normalizedMethod);
-  if (resource === "membership-banks" && id === undefined)
-    return normalizedMethod === "GET";
+  if (resource === "membership-banks" && id === undefined) return normalizedMethod === "GET";
 
   if (["membership-products", "membership-packages"].includes(resource)) {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
