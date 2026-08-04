@@ -1,11 +1,12 @@
 import type { AdminLocale } from "@/lib/admin-i18n";
 
 export function formatMembershipMoney(value: string, locale: AdminLocale) {
+  const amount = /^\d+$/.test(value) ? BigInt(value) : 0n;
   return new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US", {
     style: "currency",
     currency: "VND",
     maximumFractionDigits: 0,
-  }).format(Number(value));
+  }).format(amount);
 }
 
 function parseDecimal(value: string) {

@@ -13,7 +13,7 @@ type NavigationGroup = "pointsRewards" | "csa" | "website";
 
 const groupRoutes: Record<NavigationGroup, readonly string[]> = {
   pointsRewards: ["/points", "/rewards", "/redemptions"],
-  csa: ["/membership-catalog", "/membership-requests", "/memberships"],
+  csa: ["/membership-catalog", "/memberships"],
   website: ["/settings", "/workshops"],
 };
 
@@ -49,7 +49,6 @@ export function AdminShell({ user, children }: Props) {
       label: t.common.csa,
       links: [
         ["/membership-catalog", t.common.membershipCatalog],
-        ["/membership-requests", t.common.membershipRequests],
         ["/memberships", t.common.memberships],
       ],
     },

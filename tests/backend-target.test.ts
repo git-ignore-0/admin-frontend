@@ -26,19 +26,19 @@ describe("backend API target", () => {
   });
 
   it("allowlists Membership routes by exact method and path", () => {
-    expect(isAllowedBackendRequest("GET", ["admin", "membership-requests"])).toBe(true);
-    expect(isAllowedBackendRequest("GET", ["admin", "membership-banks"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "membership-requests"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "membership-banks"])).toBe(false);
     expect(isAllowedBackendRequest("POST", ["admin", "membership-banks"])).toBe(false);
     expect(isAllowedBackendRequest("GET", ["admin", "membership-products"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "membership-packages"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "membership-categories"])).toBe(false);
     expect(
       isAllowedBackendRequest("POST", ["admin", "membership-requests", "request-id", "approve"]),
-    ).toBe(true);
+    ).toBe(false);
     expect(isAllowedBackendRequest("POST", ["admin", "membership-usage", "usage-id", "undo"])).toBe(
       true,
     );
-    expect(isAllowedBackendRequest("POST", ["admin", "memberships"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "memberships"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["memberships", "current"])).toBe(false);
   });
 });

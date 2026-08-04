@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { MembershipList } from "@/components/membership-list";
 import { PageHeading } from "@/components/page-heading";
 import { adminDictionaries } from "@/lib/admin-i18n";
@@ -11,7 +13,15 @@ export default async function MembershipsPage() {
   const t = adminDictionaries[await getAdminLocale()];
   return (
     <>
-      <PageHeading description={t.page.membershipsDescription} title={t.common.memberships} />
+      <PageHeading
+        action={
+          <Link className="button" href="/memberships/assign">
+            {t.memberships.assign}
+          </Link>
+        }
+        description={t.page.membershipsDescription}
+        title={t.common.memberships}
+      />
       <MembershipList />
     </>
   );

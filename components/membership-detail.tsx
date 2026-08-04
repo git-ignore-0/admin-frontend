@@ -253,12 +253,20 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <dl className="detail-list">
             <DetailRow label={t.memberships.package} value={item.package_name} />
             <DetailRow
-              label={t.membershipRequests.price}
-              value={formatMembershipMoney(item.upfront_price, locale)}
+              label={t.memberships.monthlyPrice}
+              value={formatMembershipMoney(item.monthly_price_vnd, locale)}
             />
-            <DetailRow label={t.membershipRequests.duration} value={String(item.duration_months)} />
             <DetailRow
-              label={t.membershipRequests.policy}
+              label={t.memberships.totalPrice}
+              value={formatMembershipMoney(item.total_price_vnd, locale)}
+            />
+            <DetailRow label={t.memberships.duration} value={String(item.duration_months)} />
+            <DetailRow
+              label={t.memberships.farmbriteReference}
+              value={item.farmbrite_order_reference}
+            />
+            <DetailRow
+              label={t.memberships.policy}
               value={
                 item.quota_policy === "expire"
                   ? t.membershipCatalog.expire

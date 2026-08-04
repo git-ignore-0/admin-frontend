@@ -298,14 +298,6 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
         </div>
         <dl className="detail-list catalog-package-summary">
           <div>
-            <dt>{t.membershipCatalog.upfrontPrice}</dt>
-            <dd>{formatMembershipMoney(item.upfront_price, locale)}</dd>
-          </div>
-          <div>
-            <dt>{t.membershipCatalog.duration}</dt>
-            <dd>{item.duration_months}</dd>
-          </div>
-          <div>
             <dt>{t.membershipCatalog.policy}</dt>
             <dd>
               {item.quota_policy === "expire"
@@ -332,6 +324,40 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
             </div>
           )}
         </dl>
+        <section className="catalog-price-options">
+          <h3>{t.membershipCatalog.priceOptions}</h3>
+          {([true, false] as const).map((active) => {
+            const options = item.price_options.filter((option) => option.is_active === active);
+            if (!options.length) return null;
+            return (
+              <div className="price-option-group" key={String(active)}>
+                <h4>
+                  {active ? t.membershipCatalog.activeOptions : t.membershipCatalog.inactiveOptions}
+                </h4>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>{t.membershipCatalog.duration}</th>
+                        <th>{t.membershipCatalog.monthlyPrice}</th>
+                        <th>{t.membershipCatalog.totalPreview}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {options.map((option) => (
+                        <tr key={option.id}>
+                          <td>{option.duration_months}</td>
+                          <td>{formatMembershipMoney(option.monthly_price_vnd, locale)}</td>
+                          <td>{formatMembershipMoney(option.total_price_vnd, locale)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+        </section>
         <BilingualReview translations={item.translations} />
         <div className="catalog-package-products">
           <h3>{t.membershipCatalog.packageProducts}</h3>

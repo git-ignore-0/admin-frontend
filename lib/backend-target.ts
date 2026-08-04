@@ -54,30 +54,14 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     return ["mark-contacted", "complete", "reject"].includes(action) && normalizedMethod === "POST";
   }
 
-  if (resource === "membership-payment-settings" && id === undefined)
-    return new Set(["GET", "PUT", "PATCH"]).has(normalizedMethod);
-  if (resource === "membership-banks" && id === undefined) return normalizedMethod === "GET";
-
   if (["membership-products", "membership-packages"].includes(resource)) {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
     return action === undefined && CRUD_DETAIL.has(normalizedMethod);
   }
 
-  if (resource === "membership-requests") {
-    if (id === undefined || action === undefined) return READ.has(normalizedMethod);
-    return (
-      [
-        "contact",
-        "issue-payment-instruction",
-        "return-payment-pending",
-        "reject",
-        "approve",
-      ].includes(action) && normalizedMethod === "POST"
-    );
-  }
-
   if (resource === "memberships") {
-    if (id === undefined || action === undefined) return READ.has(normalizedMethod);
+    if (id === undefined) return new Set(["GET", "POST"]).has(normalizedMethod);
+    if (action === undefined) return READ.has(normalizedMethod);
     return action === "history" && normalizedMethod === "GET";
   }
 

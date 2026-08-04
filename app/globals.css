@@ -428,6 +428,150 @@ h3 {
   outline-offset: 2px;
 }
 
+.price-option-group + .price-option-group {
+  margin-top: 24px;
+}
+
+.price-option-group h3,
+.price-option-group h4 {
+  margin: 0 0 12px;
+}
+
+.price-option-list {
+  display: grid;
+  gap: 14px;
+}
+
+.price-option-card {
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.price-option-card legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.price-option-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.price-option-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.price-total-preview output {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+}
+
+.catalog-price-options {
+  margin-top: 24px;
+}
+
+.assignment-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.assignment-layout .panel {
+  min-width: 0;
+}
+
+.assignment-user-results,
+.assignment-package-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.assignment-user,
+.assignment-package {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.assignment-user.selected,
+.assignment-package.selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.assignment-user span,
+.assignment-user small,
+.assignment-package span,
+.assignment-package small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.assignment-selection-summary {
+  display: grid;
+  gap: 3px;
+  margin-top: 16px;
+  padding: 12px;
+  border-left: 3px solid var(--primary);
+  border-radius: 6px;
+  background: var(--primary-soft);
+  overflow-wrap: anywhere;
+}
+
+.assignment-selection-summary small,
+.assignment-selection-summary span {
+  color: var(--text-muted);
+}
+
+.assignment-order-fields {
+  margin-top: 20px;
+}
+
+.assignment-confirmation dd {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .assignment-layout,
+  .price-option-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .price-options-section .panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .price-option-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .price-option-actions .button,
+  .price-options-section .panel-head .button {
+    width: 100%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .detail-back-link svg {
     transition: none;
@@ -1505,54 +1649,6 @@ h3 {
   }
 }
 
-.membership-settings-form {
-  max-width: 720px;
-  margin-top: 32px;
-}
-
-.membership-payment-toggle {
-  align-items: flex-start;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-}
-
-.membership-payment-toggle span,
-.membership-payment-toggle small {
-  display: block;
-}
-
-.membership-payment-toggle small {
-  margin-top: 4px;
-  color: var(--text-muted);
-  font-weight: 400;
-  line-height: 1.45;
-}
-
-.membership-bank-picker {
-  gap: 8px;
-}
-
-.membership-bank-picker .muted-copy {
-  margin: 0;
-}
-
-.bank-options-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-}
-
-.bank-options-error .button {
-  flex: none;
-}
-
 .catalog-overview-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1658,9 +1754,16 @@ h3 {
 }
 
 .catalog-section-help {
-  margin: -8px 0 0;
+  margin: 0;
   color: var(--text-muted);
   font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.price-options-section .panel-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
 }
 
 .catalog-language-tabs {
@@ -1811,20 +1914,6 @@ h3 {
 .package-products-section .add-product-line {
   justify-self: start;
 }
-.package-product-lookup {
-  display: grid;
-  gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-}
-.package-product-search {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 0.75rem;
-}
 .package-product-pagination {
   display: flex;
   align-items: center;
@@ -1844,19 +1933,10 @@ h3 {
   gap: 10px;
 }
 
-.membership-status.scheduled,
-.membership-status.payment_pending,
-.membership-status.consultation_requested {
+.membership-status.scheduled {
   border-color: #edc894;
   background: var(--warning-soft);
   color: var(--warning);
-}
-
-.membership-status.contacted,
-.membership-status.payment_submitted {
-  border-color: #aec7e8;
-  background: #edf4fc;
-  color: #185abc;
 }
 
 .membership-status.ended,
@@ -2230,10 +2310,6 @@ h3 {
   .catalog-bilingual-grid,
   .package-line,
   .usage-line {
-    grid-template-columns: 1fr;
-  }
-
-  .package-product-search {
     grid-template-columns: 1fr;
   }
 

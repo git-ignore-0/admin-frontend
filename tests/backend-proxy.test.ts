@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("admin backend proxy", () => {
-  it("keeps the bearer token server-side for an allowed Membership request", async () => {
+  it("keeps the bearer token server-side for an allowed Membership lookup", async () => {
     const upstream = vi
       .fn()
       .mockResolvedValue(
@@ -43,9 +43,9 @@ describe("admin backend proxy", () => {
 
     const response = await GET(
       new NextRequest(
-        "https://admin.example.test/api/backend/admin/membership-requests?page=1&search=0912",
+        "https://admin.example.test/api/backend/admin/memberships?page=1&search=0912",
       ),
-      { params: Promise.resolve({ path: ["admin", "membership-requests"] }) },
+      { params: Promise.resolve({ path: ["admin", "memberships"] }) },
     );
 
     expect(response.status).toBe(200);
@@ -56,31 +56,27 @@ describe("admin backend proxy", () => {
     expect(await response.json()).toEqual({ data: [] });
   });
 
-  it("proxies the admin-only VietQR bank options without exposing the token", async () => {
-    const upstream = vi.fn().mockResolvedValue(
-      Response.json({
-        data: [
-          {
-            bin: "970436",
-            name: "Ngân hàng TMCP Ngoại Thương Việt Nam",
-            short_name: "Vietcombank",
-            code: "VCB",
-          },
-        ],
-      }),
-    );
+  it("allows manual assignment and rejects removed payment/request paths", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: "membership-id" } }));
     vi.stubGlobal("fetch", upstream);
 
+    const allowed = await POST(
+      new NextRequest("https://admin.example.test/api/backend/admin/memberships", {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path: ["admin", "memberships"] }) },
+    );
+    expect(allowed.status).toBe(200);
+
+    upstream.mockClear();
     const response = await GET(
-      new NextRequest("https://admin.example.test/api/backend/admin/membership-banks"),
-      { params: Promise.resolve({ path: ["admin", "membership-banks"] }) },
+      new NextRequest("https://admin.example.test/api/backend/admin/membership-payment-settings"),
+      { params: Promise.resolve({ path: ["admin", "membership-payment-settings"] }) },
     );
 
-    expect(response.status).toBe(200);
-    expect(
-      new Headers((upstream.mock.calls[0][1] as RequestInit).headers).get("authorization"),
-    ).toBe("Bearer access-token");
-    expect(response.headers.get("authorization")).toBeNull();
+    expect(response.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("rejects non-allowlisted proxy paths before forwarding", async () => {
@@ -88,11 +84,11 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const response = await POST(
-      new NextRequest("https://admin.example.test/api/backend/admin/memberships", {
+      new NextRequest("https://admin.example.test/api/backend/admin/membership-requests", {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
-      { params: Promise.resolve({ path: ["admin", "memberships"] }) },
+      { params: Promise.resolve({ path: ["admin", "membership-requests"] }) },
     );
 
     expect(response.status).toBe(404);

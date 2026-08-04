@@ -15,13 +15,6 @@ export type Dashboard = {
 export type PaginationMeta = { page: number; page_size: number; total: number };
 
 export type MembershipStatus = "scheduled" | "active" | "ended";
-export type MembershipRequestStatus =
-  | "consultation_requested"
-  | "contacted"
-  | "payment_pending"
-  | "payment_submitted"
-  | "approved"
-  | "rejected";
 export type MembershipQuotaPolicy = "expire" | "rollover";
 
 export type MembershipCustomer = {
@@ -72,8 +65,7 @@ export type MembershipPackage = {
     name: string;
     description: string;
   }>;
-  upfront_price: string;
-  duration_months: number;
+  price_options: MembershipPackagePriceOption[];
   quota_policy: MembershipQuotaPolicy;
   items: MembershipPackageItem[];
   is_active: boolean;
@@ -81,72 +73,15 @@ export type MembershipPackage = {
   updated_at: string;
 };
 
-export type MembershipPaymentSettings = {
-  direct_transfer_enabled: boolean;
-  bank_bin: string;
-  bank_name: string;
-  account_number: string;
-  account_name: string;
-  version: number;
-  updated_at: string;
-};
-
-export type MembershipBankOption = {
-  bin: string;
-  name: string;
-  short_name: string;
-  code: string;
-};
-
-export type MembershipPaymentInstruction = {
-  bank_bin: string;
-  bank_name: string;
-  bank_code?: string;
-  account_number: string;
-  account_name: string;
-  amount: string;
-  phone_snapshot: string;
-  transfer_content: string;
-  issued_at: string;
-};
-
-export type MembershipRequestEvent = {
+export type MembershipPackagePriceOption = {
   id: string;
-  action: string;
-  actor: { id: string; name: string } | null;
-  reason: string;
-  created_at: string;
-};
-
-export type MembershipRequest = {
-  id: string;
-  short_code: string;
-  status: MembershipRequestStatus;
-  user: MembershipCustomer;
-  package: {
-    id: string;
-    name: string;
-    description: string;
-    upfront_price: string;
-    duration_months: number;
-    quota_policy: MembershipQuotaPolicy;
-    items: MembershipPackageItem[];
-    requested_locale?: "vi" | "en";
-    content_locale?: "vi" | "en";
-    is_fallback?: boolean;
-    snapshot_complete?: boolean;
-  };
-  payment_instruction: MembershipPaymentInstruction | null;
-  return_reason: string;
-  rejection_reason: string;
-  contacted_at: string | null;
-  payment_submitted_at: string | null;
-  returned_at: string | null;
-  approved_at: string | null;
-  rejected_at: string | null;
+  duration_months: number;
+  monthly_price_vnd: string;
+  total_price_vnd: string;
+  is_active: boolean;
+  sort_order: number;
   created_at: string;
   updated_at: string;
-  events?: MembershipRequestEvent[];
 };
 
 export type MembershipQuota = {
@@ -181,7 +116,8 @@ export type MembershipCycle = {
 export type AdminMembership = {
   id: string;
   user_id: string;
-  request_id: string;
+  package_id: string;
+  price_option_id: string;
   user: MembershipCustomer;
   status: MembershipStatus;
   package_name: string;
@@ -190,8 +126,14 @@ export type AdminMembership = {
   content_locale?: "vi" | "en";
   is_fallback?: boolean;
   snapshot_complete?: boolean;
-  upfront_price: string;
+  price_option: Pick<
+    MembershipPackagePriceOption,
+    "duration_months" | "monthly_price_vnd" | "total_price_vnd"
+  >;
   duration_months: number;
+  monthly_price_vnd: string;
+  total_price_vnd: string;
+  farmbrite_order_reference: string;
   quota_policy: MembershipQuotaPolicy;
   start_date: string;
   end_date: string;

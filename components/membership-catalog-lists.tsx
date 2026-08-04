@@ -237,8 +237,7 @@ export function MembershipPackageList() {
             <thead>
               <tr>
                 <th>{t.membershipCatalog.package}</th>
-                <th>{t.membershipCatalog.upfrontPrice}</th>
-                <th>{t.membershipCatalog.duration}</th>
+                <th>{t.membershipCatalog.priceOptions}</th>
                 <th>{t.membershipCatalog.status}</th>
               </tr>
             </thead>
@@ -268,14 +267,19 @@ export function MembershipPackageList() {
                           .join(" · ") || "—"}
                       </small>
                     </td>
-                    <td data-label={t.membershipCatalog.upfrontPrice}>
-                      {formatMembershipMoney(item.upfront_price, locale)}
-                    </td>
-                    <td data-label={t.membershipCatalog.duration}>
-                      {t.membershipCatalog.monthCount.replace(
-                        "{count}",
-                        String(item.duration_months),
-                      )}
+                    <td data-label={t.membershipCatalog.priceOptions}>
+                      {item.price_options
+                        .filter((option) => option.is_active)
+                        .map((option) => (
+                          <small className="table-secondary" key={option.id}>
+                            {t.membershipCatalog.priceOptionSummary
+                              .replace("{months}", String(option.duration_months))
+                              .replace(
+                                "{price}",
+                                formatMembershipMoney(option.monthly_price_vnd, locale),
+                              )}
+                          </small>
+                        ))}
                     </td>
                     <td data-label={t.membershipCatalog.status}>
                       <Status active={item.is_active} />

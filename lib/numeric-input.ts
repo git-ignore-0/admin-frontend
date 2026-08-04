@@ -1,5 +1,5 @@
 export const MAX_POSITIVE_INTEGER = 2_147_483_647;
-export const MAX_MEMBERSHIP_PRICE = 99_999_999_999_999;
+export const MAX_POSITIVE_BIG_INTEGER = 9_223_372_036_854_775_807n;
 export const MAX_UNIT_SIZE = 9_999_999.999;
 
 export type NumericInputError =
@@ -15,6 +15,16 @@ export type NumericInputResult =
 
 export function sanitizeIntegerInput(value: string) {
   return value.replace(/\D/g, "");
+}
+
+export function parsePositiveBigInteger(value: string) {
+  if (!value) return { error: "required" as const };
+  if (!/^\d+$/.test(value)) return { error: "positive_integer" as const };
+  const normalized = value.replace(/^0+/, "") || "0";
+  if (normalized === "0") return { error: "positive_integer" as const };
+  const parsed = BigInt(normalized);
+  if (parsed > MAX_POSITIVE_BIG_INTEGER) return { error: "integer_range" as const };
+  return { value: parsed };
 }
 
 export function sanitizeDecimalInput(value: string) {

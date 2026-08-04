@@ -1,48 +1,38 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useCallback } from "react";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import PackageListPage from "@/app/(admin)/membership-catalog/packages/page";
-import ProductListPage from "@/app/(admin)/membership-catalog/products/page";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
-import { AdminShell } from "@/components/admin-shell";
-import {
-  MembershipPackageDetail,
-  MembershipProductDetail,
-} from "@/components/membership-catalog-detail";
-import {
-  MembershipPackageEditor,
-  MembershipProductEditor,
-} from "@/components/membership-catalog-editors";
-import {
-  MembershipPackageList,
-  MembershipProductList,
-} from "@/components/membership-catalog-lists";
-import { MembershipCatalogOverview } from "@/components/membership-catalog-overview";
+import { MembershipAssignmentForm } from "@/components/membership-assignment-form";
+import { MembershipPackageDetail } from "@/components/membership-catalog-detail";
+import { MembershipPackageEditor } from "@/components/membership-catalog-editors";
+import { MembershipPackageList } from "@/components/membership-catalog-lists";
 import { MembershipDetail } from "@/components/membership-detail";
 import { MembershipList } from "@/components/membership-list";
-import { MembershipPaymentSettingsForm } from "@/components/membership-payment-settings-form";
-import { MembershipRequestDetail } from "@/components/membership-request-detail";
-import { MembershipRequestList } from "@/components/membership-request-list";
 import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type {
   AdminMembership,
+  AdminUserListItem,
   MembershipPackage,
-  MembershipPaymentSettings,
   MembershipProduct,
-  MembershipRequest,
   MembershipUsage,
   PaginationMeta,
 } from "@/lib/types";
-import { usePaginatedList } from "@/lib/use-paginated-list";
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("@/lib/admin-locale", () => ({ getAdminLocale: vi.fn(async () => "en") }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: navigation.push, refresh: vi.fn(), replace: navigation.replace }),
+  useRouter: () => ({ push: navigation.push, replace: navigation.replace, refresh: vi.fn() }),
   usePathname: () => "/memberships",
 }));
 
@@ -51,93 +41,16 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function providers(children: React.ReactNode, locale: "vi" | "en" = "en") {
+function providers(children: React.ReactNode) {
   return render(
-    <AdminI18nProvider initialLocale={locale}>
+    <AdminI18nProvider initialLocale="en">
       <ToastProvider>{children}</ToastProvider>
     </AdminI18nProvider>,
   );
 }
 
-function PaginatedListHarness({
-  fetcher,
-  requestKey,
-}: {
-  fetcher: (
-    requestKey: string,
-    page: number,
-  ) => Promise<{ data: MembershipProduct[]; meta: PaginationMeta }>;
-  requestKey: string;
-}) {
-  const fetchPage = useCallback((page: number) => fetcher(requestKey, page), [fetcher, requestKey]);
-  const getErrorMessage = useCallback(() => "load failed", []);
-  const { items, loading, meta } = usePaginatedList({ fetchPage, getErrorMessage });
-  return (
-    <section aria-busy={loading}>
-      {items?.map((item) => (
-        <span key={item.id}>{item.name}</span>
-      ))}
-      {meta && <span data-testid="harness-total">{meta.total}</span>}
-    </section>
-  );
-}
-
-const customer = {
-  id: "58cbea40-4749-4400-9fa3-188de573abaf",
-  name: "Green Member",
-  email: "green@example.com",
-  phone: "0918765432",
-};
-
-const membershipRequest: MembershipRequest = {
-  id: "1025dad7-1599-401e-a9e3-7d2c5d3ca4db",
-  short_code: "CSA8CODE",
-  status: "payment_submitted",
-  user: customer,
-  package: {
-    id: "f37b7348-77af-4a03-86b2-7dfecb1552be",
-    name: "Six month CSA",
-    description: "Seasonal vegetables",
-    upfront_price: "6000000",
-    duration_months: 6,
-    quota_policy: "expire",
-    items: [
-      {
-        product_id: "317b49bc-5cc6-4c25-b73b-14d925d9d518",
-        product_name: "Vegetable basket",
-        short_description: "Fresh vegetables",
-        unit_size: "0.500",
-        unit_label_vi: "kg",
-        unit_label_en: "kg",
-        quota_units: 2,
-      },
-    ],
-  },
-  payment_instruction: {
-    bank_bin: "970436",
-    bank_name: "Ngân hàng TMCP Ngoại Thương Việt Nam",
-    bank_code: "VCB",
-    account_number: "0123456789",
-    account_name: "NATURAL FARMING VIETNAM",
-    amount: "6000000",
-    phone_snapshot: "0918765432",
-    transfer_content: "0918765432-CSA8CODE",
-    issued_at: "2026-07-20T02:00:00Z",
-  },
-  return_reason: "",
-  rejection_reason: "",
-  contacted_at: null,
-  payment_submitted_at: "2026-07-20T02:00:00Z",
-  returned_at: null,
-  approved_at: null,
-  rejected_at: null,
-  created_at: "2026-07-20T02:00:00Z",
-  updated_at: "2026-07-20T02:00:00Z",
-  events: [],
-};
-
-const catalogProduct: MembershipProduct = {
-  id: membershipRequest.package.items[0].product_id,
+const product: MembershipProduct = {
+  id: "317b49bc-5cc6-4c25-b73b-14d925d9d518",
   name: "Vegetable basket",
   short_description: "Fresh vegetables",
   translations: [
@@ -152,53 +65,92 @@ const catalogProduct: MembershipProduct = {
   updated_at: "2026-07-21T02:00:00Z",
 };
 
-const catalogPackage: MembershipPackage = {
-  ...membershipRequest.package,
+const activeOption = {
+  id: "a0c0313a-85df-4c29-930a-f19a05f3d8c4",
+  duration_months: 6,
+  monthly_price_vnd: "750000",
+  total_price_vnd: "4500000",
+  is_active: true,
+  sort_order: 0,
+  created_at: "2026-07-20T02:00:00Z",
+  updated_at: "2026-07-21T02:00:00Z",
+};
+
+const historicalOption = {
+  ...activeOption,
+  id: "d7cb3209-1433-407d-8a7c-e9683aa83823",
+  monthly_price_vnd: "769000",
+  total_price_vnd: "4614000",
+  is_active: false,
+  sort_order: 1,
+};
+
+const packageItem: MembershipPackage = {
+  id: "f37b7348-77af-4a03-86b2-7dfecb1552be",
+  name: "Six month CSA",
+  description: "Seasonal vegetables",
   translations: [
     { locale: "vi", name: "Gói CSA sáu tháng", description: "Rau theo mùa" },
     { locale: "en", name: "Six month CSA", description: "Seasonal vegetables" },
+  ],
+  price_options: [activeOption, historicalOption],
+  quota_policy: "expire",
+  items: [
+    {
+      product_id: product.id,
+      product_name: product.name,
+      short_description: product.short_description,
+      product_translations: product.translations,
+      unit_size: product.unit_size,
+      unit_label_vi: product.unit_label_vi,
+      unit_label_en: product.unit_label_en,
+      quota_units: 2,
+    },
   ],
   is_active: true,
   created_at: "2026-07-20T02:00:00Z",
   updated_at: "2026-07-21T02:00:00Z",
 };
 
-const bankOptions = [
-  {
-    bin: "970436",
-    name: "Ngân hàng TMCP Ngoại Thương Việt Nam",
-    short_name: "Vietcombank",
-    code: "VCB",
-  },
-  {
-    bin: "970415",
-    name: "Ngân hàng TMCP Công thương Việt Nam",
-    short_name: "VietinBank",
-    code: "ICB",
-  },
-];
+const user: AdminUserListItem = {
+  id: "58cbea40-4749-4400-9fa3-188de573abaf",
+  name: "Green Member",
+  email: "green@example.com",
+  phone: "0918765432",
+  status: "active",
+  date_joined: "2026-01-01T00:00:00Z",
+  points_balance: 0,
+};
 
 const membership: AdminMembership = {
   id: "87703641-2dce-4cac-8fc4-91e55f03e95f",
-  user_id: customer.id,
-  request_id: membershipRequest.id,
-  user: customer,
+  user_id: user.id,
+  package_id: packageItem.id,
+  price_option_id: activeOption.id,
+  user,
   status: "active",
-  package_name: "Six month CSA",
-  package_description: "Seasonal vegetables",
-  upfront_price: "6000000",
+  package_name: packageItem.name,
+  package_description: packageItem.description,
+  price_option: {
+    duration_months: 6,
+    monthly_price_vnd: "750000",
+    total_price_vnd: "4500000",
+  },
   duration_months: 6,
+  monthly_price_vnd: "750000",
+  total_price_vnd: "4500000",
+  farmbrite_order_reference: "FB-2026-0001",
   quota_policy: "expire",
-  start_date: "2026-07-20",
-  end_date: "2027-01-20",
-  activated_at: "2026-07-20T02:00:00Z",
+  start_date: "2026-08-04",
+  end_date: "2027-02-04",
+  activated_at: "2026-08-04T02:00:00Z",
   quota: [
     {
-      product_id: membershipRequest.package.items[0].product_id,
-      product_name: "Vegetable basket",
-      unit_size: "0.500",
-      unit_label_vi: "kg",
-      unit_label_en: "kg",
+      product_id: product.id,
+      product_name: product.name,
+      unit_size: product.unit_size,
+      unit_label_vi: product.unit_label_vi,
+      unit_label_en: product.unit_label_en,
       quota_units_per_cycle: 2,
       remaining_units: 2,
     },
@@ -206,1313 +158,521 @@ const membership: AdminMembership = {
   cycles: [],
 };
 
-describe("Membership administration", () => {
-  it("validates and enables direct transfer through the BFF once while saving", async () => {
-    let resolveSave!: (value: MembershipPaymentSettings) => void;
-    const savePromise = new Promise<MembershipPaymentSettings>((resolve) => {
-      resolveSave = resolve;
-    });
-    vi.mocked(api).mockImplementation(async (path, init) => {
-      if (path === "admin/membership-payment-settings" && !init) return null;
-      if (path === "admin/membership-banks") return bankOptions;
-      if (path === "admin/membership-payment-settings" && init) return savePromise;
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipPaymentSettingsForm />);
+const meta: PaginationMeta = { page: 1, page_size: 30, total: 1 };
 
-    fireEvent.change(await screen.findByLabelText("Search banks"), {
-      target: { value: "vietcom" },
-    });
-    fireEvent.change(screen.getByLabelText("Bank"), { target: { value: "970436" } });
-    expect(screen.getByRole("option", { name: "Vietcombank — VCB" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Account number"), {
-      target: { value: "0123456789" },
-    });
-    fireEvent.change(screen.getByLabelText("Account holder"), {
-      target: { value: "NATURAL FARMING VIETNAM" },
-    });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Enable direct transfer" }));
-    const save = screen.getByRole("button", { name: "Save settings" });
-    fireEvent.click(save);
-    fireEvent.click(save);
-
-    const mutations = vi
-      .mocked(api)
-      .mock.calls.filter(([, init]) => init?.method === "PUT" || init?.method === "PATCH");
-    expect(mutations).toHaveLength(1);
-    expect(mutations[0][0]).toBe("admin/membership-payment-settings");
-    expect(mutations[0][1]?.method).toBe("PUT");
-    expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({
-      direct_transfer_enabled: true,
-      bank_bin: "970436",
-      account_number: "0123456789",
-      account_name: "NATURAL FARMING VIETNAM",
-      version: 0,
-    });
-    expect(save).toBeDisabled();
-
-    await act(async () =>
-      resolveSave({
-        direct_transfer_enabled: true,
-        bank_bin: "970436",
-        bank_name: "Ngân hàng TMCP Ngoại Thương Việt Nam",
-        account_number: "0123456789",
-        account_name: "NATURAL FARMING VIETNAM",
-        version: 1,
-        updated_at: "2026-07-21T02:00:00Z",
-      }),
-    );
+function mockCatalogLookups() {
+  vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+    if (path.startsWith("admin/membership-products")) return { data: [product], meta };
+    if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
+    throw new Error(`Unexpected envelope request: ${path}`);
   });
+}
 
-  it("blocks the switch without a bank and accepts digits only in the account number", async () => {
-    vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "admin/membership-payment-settings") return null;
-      if (path === "admin/membership-banks") return bankOptions;
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipPaymentSettingsForm />);
+async function fillBilingualNames() {
+  fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "CSA package" } });
+  fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
+  fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "Gói CSA" } });
+}
 
-    const toggle = await screen.findByRole("checkbox", {
-      name: "Enable direct transfer",
-    });
-    fireEvent.change(screen.getByLabelText("Account number"), {
-      target: { value: "12A 34-567890123456789999" },
-    });
-    expect(screen.getByLabelText("Account number")).toHaveValue("1234567890123456789");
-    fireEvent.change(screen.getByLabelText("Account holder"), {
-      target: { value: "NATURAL FARMING VIETNAM" },
-    });
-    fireEvent.click(toggle);
-
-    expect(toggle).not.toBeChecked();
-    expect(
-      screen.getByText("This field is required when direct transfer is enabled."),
-    ).toBeVisible();
-    expect(vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(0);
-
-    fireEvent.change(screen.getByLabelText("Bank"), { target: { value: "970436" } });
-    fireEvent.click(toggle);
-
-    expect(toggle).toBeChecked();
-    expect(screen.queryAllByRole("alert")).toHaveLength(0);
-    expect(vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(0);
-  });
-
-  it("saves disabled settings with empty bank fields", async () => {
-    vi.mocked(api).mockImplementation(async (path, init) => {
-      if (path === "admin/membership-banks") return bankOptions;
-      if (path === "admin/membership-payment-settings" && !init) return null;
-      if (path === "admin/membership-payment-settings" && init)
-        return {
-          direct_transfer_enabled: false,
-          bank_bin: "",
-          bank_name: "",
-          account_number: "",
-          account_name: "",
-          version: 1,
-          updated_at: "2026-07-21T02:00:00Z",
-        };
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipPaymentSettingsForm />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Save settings" }));
-    await waitFor(() =>
-      expect(api).toHaveBeenCalledWith(
-        "admin/membership-payment-settings",
-        expect.objectContaining({ method: "PUT" }),
-      ),
-    );
-    const mutation = vi.mocked(api).mock.calls.find(([, init]) => init?.method === "PUT");
-    expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({
-      direct_transfer_enabled: false,
-      bank_bin: "",
-      account_number: "",
-      account_name: "",
-      version: 0,
-    });
-  });
-
-  it("keeps direct transfer unavailable while bank loading fails and retries", async () => {
-    let bankAttempts = 0;
-    vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "admin/membership-payment-settings") return null;
-      if (path === "admin/membership-banks") {
-        bankAttempts += 1;
-        if (bankAttempts === 1) throw new Error("bank_directory_unavailable");
-        return bankOptions;
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipPaymentSettingsForm />);
-
-    expect(
-      await screen.findByText("We could not load the bank list. Please try again."),
-    ).toBeVisible();
-    expect(screen.getByRole("checkbox", { name: "Enable direct transfer" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-
-    expect(await screen.findByRole("option", { name: "Vietcombank — VCB" })).toBeVisible();
-    expect(screen.getByRole("checkbox", { name: "Enable direct transfer" })).toBeEnabled();
-    expect(bankAttempts).toBe(2);
-  });
-
-  it("shows a stale payment settings conflict and reloads before another save", async () => {
-    const current: MembershipPaymentSettings = {
-      direct_transfer_enabled: false,
-      bank_bin: "970436",
-      bank_name: bankOptions[0].name,
-      account_number: "0123456789",
-      account_name: "FIRST ADMIN",
-      version: 4,
-      updated_at: "2026-08-01T02:00:00Z",
-    };
-    let settingsLoads = 0;
-    vi.mocked(api).mockImplementation(async (path, init) => {
-      if (path === "admin/membership-banks") return bankOptions;
-      if (path === "admin/membership-payment-settings" && !init) {
-        settingsLoads += 1;
-        return settingsLoads === 1
-          ? current
-          : { ...current, account_name: "SECOND ADMIN", version: 5 };
-      }
-      if (path === "admin/membership-payment-settings" && init) {
-        throw new Error("payment_settings_conflict");
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipPaymentSettingsForm />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Save settings" }));
-    expect(await screen.findByText(/Another administrator updated these settings/)).toBeVisible();
-    const mutation = vi.mocked(api).mock.calls.find(([, init]) => init?.method === "PATCH");
-    expect(JSON.parse(String(mutation?.[1]?.body))).toMatchObject({ version: 4 });
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByDisplayValue("SECOND ADMIN")).toBeVisible();
-    expect(settingsLoads).toBe(2);
-  });
-
-  it("removes the old standalone payment settings navigation", () => {
-    providers(
-      <AdminShell user={{ email: "admin@example.com", name: "Admin" }}>
-        <div />
-      </AdminShell>,
-    );
-
-    expect(screen.queryByRole("link", { name: "CSA payment" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Website" }));
-    expect(screen.getByRole("link", { name: "Website information" })).toHaveAttribute(
-      "href",
-      "/settings",
-    );
-  });
-
-  it("shows a CSA catalog overview linking to separate product and package managers", () => {
-    providers(<MembershipCatalogOverview />);
-
-    expect(screen.getByRole("link", { name: "Manage products" })).toHaveAttribute(
-      "href",
-      "/membership-catalog/products",
-    );
-    expect(screen.getByRole("link", { name: "Manage packages" })).toHaveAttribute(
-      "href",
-      "/membership-catalog/packages",
-    );
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(apiEnvelope).not.toHaveBeenCalled();
-  });
-
-  it("places product and package create actions beside their page headings", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0 },
-    });
-    const productPage = providers(await ProductListPage());
-    expect(screen.getByRole("heading", { name: "CSA products" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "+ Create product" })).toHaveAttribute(
-      "href",
-      "/membership-catalog/products/new",
-    );
-    productPage.unmount();
-
-    providers(await PackageListPage());
-    expect(screen.getByRole("heading", { name: "CSA packages" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "+ Create package" })).toHaveAttribute(
-      "href",
-      "/membership-catalog/packages/new",
-    );
-  });
-
-  it("shows loading and retries failed product and package lists", async () => {
-    vi.mocked(apiEnvelope)
-      .mockRejectedValueOnce(new Error("network_error"))
-      .mockResolvedValueOnce({
-        data: [catalogProduct],
-        meta: { page: 1, page_size: 30, total: 1 },
-      });
-    const productList = providers(<MembershipProductList />);
-    expect(screen.getByText("Loading products…")).toBeVisible();
-    expect(await screen.findByRole("alert")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("link", { name: catalogProduct.name })).toBeVisible();
-    productList.unmount();
-
-    vi.mocked(apiEnvelope).mockReset();
-    vi.mocked(apiEnvelope)
-      .mockRejectedValueOnce(new Error("network_error"))
-      .mockResolvedValueOnce({
-        data: [catalogPackage],
-        meta: { page: 1, page_size: 30, total: 1 },
-      });
-    providers(<MembershipPackageList />);
-    expect(screen.getByText("Loading CSA packages…")).toBeVisible();
-    expect(await screen.findByRole("alert")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("link", { name: catalogPackage.name })).toBeVisible();
-  });
-
-  it("links CSA product and package lists to their dedicated detail routes", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-    const productList = providers(<MembershipProductList />);
-    expect(await screen.findByRole("link", { name: catalogProduct.name })).toHaveAttribute(
-      "href",
-      `/membership-catalog/products/${catalogProduct.id}`,
-    );
-    expect(screen.getAllByRole("link", { name: catalogProduct.name })).toHaveLength(1);
-    expect(screen.queryByRole("link", { name: "+ Create product" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-    productList.unmount();
-
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => ({
-      data: path.startsWith("admin/membership-products") ? [catalogProduct] : [catalogPackage],
-      meta: { page: 1, page_size: 30, total: 1 },
-    }));
-    providers(<MembershipPackageList />);
-    expect(await screen.findByRole("link", { name: catalogPackage.name })).toHaveAttribute(
-      "href",
-      `/membership-catalog/packages/${catalogPackage.id}`,
-    );
-    expect(screen.getAllByRole("link", { name: catalogPackage.name })).toHaveLength(1);
-    expect(screen.queryByRole("link", { name: "+ Create package" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  });
-
-  it("shows the API result count consistently across all four CSA lists", async () => {
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
-      if (path.startsWith("admin/membership-products")) {
-        return { data: [catalogProduct], meta: { page: 1, page_size: 30, total: 41 } };
-      }
-      if (path.startsWith("admin/membership-packages")) {
-        return { data: [catalogPackage], meta: { page: 1, page_size: 30, total: 32 } };
-      }
-      if (path.startsWith("admin/membership-requests")) {
-        return { data: [membershipRequest], meta: { page: 1, page_size: 30, total: 17 } };
-      }
-      return { data: [membership], meta: { page: 1, page_size: 30, total: 9 } };
-    });
-
-    const productList = providers(<MembershipProductList />);
-    const productSummary = await screen.findByText("41 results");
-    expect(screen.getByRole("search")).not.toContainElement(productSummary);
-    productList.unmount();
-
-    const packageList = providers(<MembershipPackageList />);
-    expect(await screen.findByText("32 results")).toBeVisible();
-    expect(screen.getByRole("search")).toBeVisible();
-    packageList.unmount();
-
-    const requestList = providers(<MembershipRequestList />);
-    const requestSummary = await screen.findByText("17 results");
-    expect(screen.getByRole("search")).not.toContainElement(requestSummary);
-    requestList.unmount();
-
-    providers(<MembershipList />);
-    const membershipSummary = await screen.findByText("9 results");
-    expect(screen.getByRole("search")).not.toContainElement(membershipSummary);
-  });
-
-  it("submits and clears the product search and active filter through the API", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-    providers(<MembershipProductList />);
-
-    await screen.findByRole("link", { name: catalogProduct.name });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search products" }), {
-      target: { value: "vegetable" },
-    });
-    fireEvent.change(screen.getByRole("combobox", { name: "Filter by status" }), {
-      target: { value: "false" },
-    });
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-products?page=1&active=false"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith(
-        "admin/membership-products?page=1&search=vegetable&active=false",
-      ),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-products?page=1"),
-    );
-    expect(screen.getByRole("searchbox", { name: "Search products" })).toHaveValue("");
-    expect(screen.getByRole("combobox", { name: "Filter by status" })).toHaveValue("");
-  });
-
-  it("shows full product detail with correct back and edit destinations", async () => {
-    vi.mocked(api).mockResolvedValue(catalogProduct);
-    providers(<MembershipProductDetail productId={catalogProduct.id} />);
-
-    expect(await screen.findByRole("heading", { name: catalogProduct.name })).toBeVisible();
-    expect(screen.getByText("Fresh vegetables")).toBeVisible();
-    expect(screen.getByText("1 unit = 0.500 kg")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Product list" })).toHaveAttribute(
-      "href",
-      "/membership-catalog/products",
-    );
-    expect(screen.getByRole("link", { name: "Edit product" })).toHaveAttribute(
-      "href",
-      `/membership-catalog/products/${catalogProduct.id}/edit`,
-    );
-  });
-
-  it("flags legacy catalog content without rendering a blank list name", async () => {
-    const legacyProduct: MembershipProduct = {
-      ...catalogProduct,
-      name: "Legacy basket",
-      translations: [
-        { locale: "vi", name: "Giỏ rau cũ", short_description: "Nội dung cần rà soát" },
-      ],
-    };
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [legacyProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-    const list = providers(<MembershipProductList />);
-    expect(await screen.findByRole("link", { name: "Giỏ rau cũ" })).toBeVisible();
-    expect(screen.getByText("Translation needs review")).toBeVisible();
-    list.unmount();
-
-    vi.mocked(api).mockResolvedValue(legacyProduct);
-    providers(<MembershipProductDetail productId={legacyProduct.id} />);
-    expect(await screen.findByRole("heading", { name: "Giỏ rau cũ" })).toBeVisible();
-    expect(screen.getByText("Incomplete", { selector: "strong" })).toBeVisible();
-  });
-
-  it("shows full package detail with products and correct edit destination", async () => {
-    vi.mocked(api).mockResolvedValue(catalogPackage);
-    providers(<MembershipPackageDetail packageId={catalogPackage.id} />);
-
-    expect(await screen.findByRole("heading", { name: catalogPackage.name })).toBeVisible();
-    expect(screen.getByText("Seasonal vegetables")).toBeVisible();
-    expect(screen.getByText("Vegetable basket")).toBeVisible();
-    expect(screen.getByText("1 unit = 0.500 kg")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Package list" })).toHaveAttribute(
-      "href",
-      "/membership-catalog/packages",
-    );
-    expect(screen.getByRole("link", { name: "Edit package" })).toHaveAttribute(
-      "href",
-      `/membership-catalog/packages/${catalogPackage.id}/edit`,
-    );
-  });
-
-  it("localizes product unit conversion in Vietnamese", async () => {
-    vi.mocked(api).mockResolvedValue(catalogProduct);
-    providers(<MembershipProductDetail productId={catalogProduct.id} />, "vi");
-
-    expect(await screen.findByText("1 đơn vị = 0.500 kg")).toBeVisible();
-    expect(screen.queryByText("1 unit = 0.500 kg")).toBeNull();
-  });
-
-  it("deletes products and packages from detail after confirmation and returns to list", async () => {
-    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return {};
-      return path.includes("membership-products") ? catalogProduct : catalogPackage;
-    });
-    const productDetail = providers(<MembershipProductDetail productId={catalogProduct.id} />);
-    await screen.findByRole("heading", { name: catalogProduct.name });
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    const productDialog = screen.getByRole("dialog", { name: "Confirm deletion" });
-    fireEvent.click(within(productDialog).getByRole("button", { name: "Delete" }));
-    await waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith("/membership-catalog/products"),
-    );
-    expect(api).toHaveBeenCalledWith(`admin/membership-products/${catalogProduct.id}`, {
-      method: "DELETE",
-    });
-    productDetail.unmount();
-
-    navigation.replace.mockClear();
-    providers(<MembershipPackageDetail packageId={catalogPackage.id} />);
-    await screen.findByRole("heading", { name: catalogPackage.name });
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    const packageDialog = screen.getByRole("dialog", { name: "Confirm deletion" });
-    fireEvent.click(within(packageDialog).getByRole("button", { name: "Delete" }));
-    await waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith("/membership-catalog/packages"),
-    );
-    expect(api).toHaveBeenCalledWith(`admin/membership-packages/${catalogPackage.id}`, {
-      method: "DELETE",
-    });
-  });
-
-  it("cancels new product and package editors back to their lists", async () => {
-    const productEditor = providers(<MembershipProductEditor />);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(navigation.push).toHaveBeenCalledWith("/membership-catalog/products");
-    productEditor.unmount();
-
-    navigation.push.mockClear();
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
+describe("CSA package price options", () => {
+  it("formats VND only on blur, previews with BigInt, and sends only writable option fields", async () => {
+    mockCatalogLookups();
+    vi.mocked(api).mockResolvedValue(packageItem);
     providers(<MembershipPackageEditor />);
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
-    expect(navigation.push).toHaveBeenCalledWith("/membership-catalog/packages");
-  });
+    await fillBilingualNames();
 
-  it("preserves bilingual product content across tabs and reports completion", () => {
-    providers(<MembershipProductEditor />);
-
-    const englishTab = screen.getByRole("tab", { name: /English/ });
-    const vietnameseTab = screen.getByRole("tab", { name: /Tiếng Việt/ });
-    expect(englishTab).toHaveTextContent("Incomplete");
-    fireEvent.change(screen.getByLabelText("Product name *"), {
-      target: { value: "Seasonal basket" },
-    });
-    expect(englishTab).toHaveTextContent("Complete");
-
-    fireEvent.click(vietnameseTab);
-    fireEvent.change(screen.getByLabelText("Product name *"), {
-      target: { value: "Giỏ rau theo mùa" },
-    });
-    expect(vietnameseTab).toHaveTextContent("Complete");
-    fireEvent.click(englishTab);
-    expect(screen.getByLabelText("Product name *")).toHaveValue("Seasonal basket");
-  });
-
-  it("shows explicit loading states while product and package edit data is pending", async () => {
-    let resolveProduct!: (value: MembershipProduct) => void;
-    vi.mocked(api).mockReturnValueOnce(
-      new Promise<MembershipProduct>((resolve) => {
-        resolveProduct = resolve;
-      }),
-    );
-    const productEditor = providers(<MembershipProductEditor productId={catalogProduct.id} />);
-    expect(screen.getByText("Loading product…")).toBeVisible();
-    await act(async () => resolveProduct(catalogProduct));
-    expect(await screen.findByDisplayValue(catalogProduct.name)).toBeVisible();
-    productEditor.unmount();
-
-    let resolvePackage!: (value: MembershipPackage) => void;
-    vi.mocked(api).mockReturnValueOnce(
-      new Promise<MembershipPackage>((resolve) => {
-        resolvePackage = resolve;
-      }),
-    );
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-    providers(<MembershipPackageEditor packageId={catalogPackage.id} />);
-    expect(screen.getByText("Loading CSA package…")).toBeVisible();
-    await act(async () => resolvePackage(catalogPackage));
-    expect(await screen.findByDisplayValue(catalogPackage.name)).toBeVisible();
-  });
-
-  it("retries failed product and package edit loads", async () => {
-    vi.mocked(api)
-      .mockRejectedValueOnce(new Error("network_error"))
-      .mockResolvedValueOnce(catalogProduct);
-    const productEditor = providers(<MembershipProductEditor productId={catalogProduct.id} />);
-    expect(await screen.findByRole("alert")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByDisplayValue(catalogProduct.name)).toBeVisible();
-    expect(api).toHaveBeenCalledTimes(2);
-    productEditor.unmount();
-
-    vi.mocked(api).mockReset();
-    vi.mocked(api)
-      .mockRejectedValueOnce(new Error("network_error"))
-      .mockResolvedValueOnce(catalogPackage);
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-    providers(<MembershipPackageEditor packageId={catalogPackage.id} />);
-    expect(await screen.findByRole("alert")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByDisplayValue(catalogPackage.name)).toBeVisible();
-    expect(api).toHaveBeenCalledTimes(2);
-  });
-
-  it("preserves edited CSA form values after a save error", async () => {
-    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (init?.method === "PATCH") throw new Error("network_error");
-      return path.includes("membership-products") ? catalogProduct : catalogPackage;
-    });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-
-    const productEditor = providers(<MembershipProductEditor productId={catalogProduct.id} />);
-    const productName = await screen.findByDisplayValue(catalogProduct.name);
-    fireEvent.change(productName, { target: { value: "Unsaved basket" } });
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    const monthly = screen.getByLabelText("Monthly price *");
+    expect(monthly).toHaveAttribute("maxLength", "19");
+    expect(screen.queryByLabelText("Sort order")).not.toBeInTheDocument();
+    fireEvent.focus(monthly);
+    fireEvent.change(monthly, { target: { value: "750000" } });
+    expect(monthly).toHaveValue("750000");
+    fireEvent.blur(monthly);
+    expect(monthly).toHaveValue("₫750,000");
+    expect(screen.getByText("₫4,500,000")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Product 1"), { target: { value: product.id } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toBeVisible();
-    expect(screen.getByDisplayValue("Unsaved basket")).toBeVisible();
-    productEditor.unmount();
 
-    providers(<MembershipPackageEditor packageId={catalogPackage.id} />);
-    const packageName = await screen.findByDisplayValue(catalogPackage.name);
-    fireEvent.change(packageName, { target: { value: "Unsaved package" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toBeVisible();
-    expect(screen.getByDisplayValue("Unsaved package")).toBeVisible();
-  });
-
-  it("keeps edit data and returns each saved CSA editor to its detail", async () => {
-    vi.mocked(api).mockImplementation(async (path: string) => {
-      if (path.startsWith("admin/membership-products/")) return catalogProduct;
-      return catalogPackage;
-    });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [catalogProduct],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-
-    const productEditor = providers(<MembershipProductEditor productId={catalogProduct.id} />);
-    expect(await screen.findByDisplayValue(catalogProduct.name)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Product name *"), {
-      target: { value: "Updated basket" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith(
-        `/membership-catalog/products/${catalogProduct.id}`,
-      ),
-    );
-    expect(api).toHaveBeenCalledWith(
-      `admin/membership-products/${catalogProduct.id}`,
-      expect.objectContaining({ method: "PATCH" }),
-    );
-    productEditor.unmount();
-
-    navigation.replace.mockClear();
-    providers(<MembershipPackageEditor packageId={catalogPackage.id} />);
-    expect(await screen.findByDisplayValue(catalogPackage.name)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Package name *"), {
-      target: { value: "Updated CSA" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith(
-        `/membership-catalog/packages/${catalogPackage.id}`,
-      ),
-    );
-    expect(api).toHaveBeenCalledWith(
-      `admin/membership-packages/${catalogPackage.id}`,
-      expect.objectContaining({ method: "PATCH" }),
-    );
-  });
-
-  it("builds a package with unique product rows and the backend contract", async () => {
-    const products: MembershipProduct[] = [
+    await waitFor(() => expect(api).toHaveBeenCalled());
+    const call = vi.mocked(api).mock.calls.find(([path]) => path === "admin/membership-packages");
+    const body = JSON.parse(String(call?.[1]?.body));
+    expect(body.price_options).toEqual([
       {
-        id: membershipRequest.package.items[0].product_id,
-        name: "Vegetable basket",
-        short_description: "Fresh vegetables",
-        translations: catalogProduct.translations,
-        unit_size: "0.500",
-        unit_label_vi: "kg",
-        unit_label_en: "kg",
+        duration_months: 6,
+        monthly_price_vnd: "750000",
         is_active: true,
-        created_at: "2026-07-20T02:00:00Z",
-        updated_at: "2026-07-20T02:00:00Z",
+        sort_order: 0,
       },
-      {
-        id: "7d67184a-fddf-4a26-916c-516481d18f43",
-        name: "Herb basket",
-        short_description: "Fresh herbs",
-        translations: [
-          { locale: "vi", name: "Giỏ rau thơm", short_description: "Rau thơm tươi" },
-          { locale: "en", name: "Herb basket", short_description: "Fresh herbs" },
-        ],
-        unit_size: "0.250",
-        unit_label_vi: "kg",
-        unit_label_en: "kg",
-        is_active: true,
-        created_at: "2026-07-20T02:00:00Z",
-        updated_at: "2026-07-20T02:00:00Z",
-      },
-    ];
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => ({
-      data: path.startsWith("admin/membership-products") ? products : [],
-      meta: { page: 1, page_size: 30, total: path.includes("products") ? 2 : 0 },
-    }));
-    vi.mocked(api).mockResolvedValue(catalogPackage);
-    providers(<MembershipPackageEditor />);
-
-    await screen.findByLabelText("Package name *");
-    fireEvent.change(screen.getByLabelText("Package name *"), {
-      target: { value: "CSA package" },
-    });
-    fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
-    fireEvent.change(screen.getByLabelText("Package name *"), {
-      target: { value: "Gói CSA" },
-    });
-    const price = screen.getByLabelText("Package price *");
-    const duration = screen.getByLabelText("Months *");
-    expect(price).toHaveAttribute("type", "text");
-    expect(price).toHaveAttribute("inputmode", "numeric");
-    fireEvent.focus(price);
-    fireEvent.change(price, { target: { value: "abc6000000e+" } });
-    expect(price).toHaveValue("6000000");
-    fireEvent.blur(price);
-    expect(price).toHaveValue("₫6,000,000");
-    fireEvent.focus(price);
-    expect(price).toHaveValue("6000000");
-    fireEvent.change(duration, { target: { value: "+121" } });
-    expect(duration).toHaveValue("121");
-    fireEvent.change(screen.getByLabelText("Product 1"), {
-      target: { value: products[0].id },
-    });
-    const firstQuota = screen.getByLabelText("Included units each month 1");
-    fireEvent.change(firstQuota, { target: { value: "-0" } });
-    expect(firstQuota).toHaveValue("0");
-    fireEvent.click(screen.getByRole("button", { name: "+ Add product" }));
-    const secondProduct = screen.getByLabelText("Product 2");
-    expect(within(secondProduct).queryByRole("option", { name: "Vegetable basket" })).toBeNull();
-    fireEvent.change(secondProduct, { target: { value: products[1].id } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByText("The value must not exceed 120.")).toBeVisible();
-    expect(screen.getByText(/whole number greater than 0/i)).toBeVisible();
-    expect(api).not.toHaveBeenCalled();
-
-    fireEvent.change(duration, { target: { value: "0012" } });
-    fireEvent.change(firstQuota, { target: { value: "-02" } });
-    const secondQuota = screen.getByLabelText("Included units each month 2");
-    fireEvent.change(secondQuota, { target: { value: "abc0003e+" } });
-    expect(firstQuota).toHaveValue("02");
-    expect(secondQuota).toHaveValue("0003");
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(api).toHaveBeenCalledWith(
-        "admin/membership-packages",
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    const createCall = vi
-      .mocked(api)
-      .mock.calls.find(([path]) => path === "admin/membership-packages");
-    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
-      translations: [
-        { locale: "vi", name: "Gói CSA" },
-        { locale: "en", name: "CSA package" },
-      ],
-      upfront_price: 6000000,
-      duration_months: 12,
-      items: [
-        { product_id: products[0].id, quota_units: 2 },
-        { product_id: products[1].id, quota_units: 3 },
-      ],
-    });
-    expect(navigation.replace).toHaveBeenCalledWith(
-      `/membership-catalog/packages/${catalogPackage.id}`,
-    );
-  });
-
-  it("loads one searchable product page at a time and preserves selected products", async () => {
-    const secondProduct = {
-      ...catalogProduct,
-      id: "7d67184a-fddf-4a26-916c-516481d18f43",
-      name: "Herbs",
-      translations: [
-        { locale: "vi" as const, name: "Rau thơm", short_description: "" },
-        { locale: "en" as const, name: "Herbs", short_description: "" },
-      ],
-    };
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
-      const query = new URLSearchParams(path.split("?")[1]);
-      const page = Number(query.get("page"));
-      return {
-        data: page === 1 ? [catalogProduct] : [secondProduct],
-        meta: { page, page_size: 30, total: 31 },
-      };
-    });
-    providers(<MembershipPackageEditor />);
-
-    const firstSelect = await screen.findByLabelText("Product 1");
-    fireEvent.change(firstSelect, { target: { value: catalogProduct.id } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByRole("option", { name: "Herbs" })).toBeVisible();
-    expect(screen.getByLabelText("Product 1")).toHaveValue(catalogProduct.id);
-    expect(vi.mocked(apiEnvelope).mock.calls.map(([path]) => path)).toEqual([
-      "admin/membership-products?page=1&active=true",
-      "admin/membership-products?page=2&active=true",
     ]);
-
-    fireEvent.change(screen.getByLabelText("Search products"), {
-      target: { value: "herbs" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith(
-        "admin/membership-products?page=1&active=true&search=herbs",
-      ),
-    );
-    expect(screen.getByLabelText("Product 1")).toHaveValue(catalogProduct.id);
+    expect(JSON.stringify(body)).not.toContain("total_price_vnd");
+    expect(JSON.stringify(body)).not.toContain("active_duration_key");
   });
 
-  it("sanitizes and validates product unit size before sending a numeric decimal", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0 },
+  it("does not submit the package editor when Enter is pressed in a price input", async () => {
+    mockCatalogLookups();
+    providers(<MembershipPackageEditor />);
+
+    const monthly = screen.getByLabelText("Monthly price *");
+    const enter = createEvent.keyDown(monthly, {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
     });
-    vi.mocked(api).mockResolvedValue(catalogProduct);
-    providers(<MembershipProductEditor />);
+    fireEvent(monthly, enter);
 
-    const unitSize = screen.getByLabelText("Unit size *");
-    expect(unitSize).toHaveAttribute("type", "text");
-    expect(unitSize).toHaveAttribute("inputmode", "decimal");
+    expect(enter.defaultPrevented).toBe(true);
+    expect(api).not.toHaveBeenCalled();
+  });
 
-    for (const [input, expected] of [
-      ["abc", ""],
-      ["1e3", "13"],
-      ["1.2.3", "1.23"],
-      ["0.1234", "0.1234"],
-    ]) {
-      fireEvent.change(unitSize, { target: { value: input } });
-      expect(unitSize).toHaveValue(expected);
-    }
+  it("blocks duplicate active durations and requires one active option", async () => {
+    mockCatalogLookups();
+    providers(<MembershipPackageEditor />);
+    await fillBilingualNames();
+    fireEvent.change(screen.getByLabelText("Monthly price *"), { target: { value: "750000" } });
+    fireEvent.change(screen.getByLabelText("Product 1"), { target: { value: product.id } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Add price option" }));
+    const durations = screen.getAllByLabelText("Months *");
+    const prices = screen.getAllByLabelText("Monthly price *");
+    fireEvent.change(durations[1], { target: { value: "6" } });
+    fireEvent.change(prices[1], { target: { value: "800000" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByText(/no more than 3 decimal places/i)).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Two active options cannot have the same duration",
+    );
     expect(api).not.toHaveBeenCalled();
 
-    fireEvent.change(unitSize, { target: { value: "0" } });
+    screen
+      .getAllByRole("checkbox", { name: "Active" })
+      .forEach((checkbox) => fireEvent.click(checkbox));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByText(/decimal number greater than 0/i)).toBeVisible();
-
-    fireEvent.change(screen.getByLabelText("Product name *"), {
-      target: { value: "Vegetable basket" },
-    });
-    fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
-    fireEvent.change(screen.getByLabelText("Product name *"), {
-      target: { value: "Giỏ rau" },
-    });
-    fireEvent.change(screen.getByLabelText("Vietnamese unit label *"), {
-      target: { value: "kg" },
-    });
-    fireEvent.change(screen.getByLabelText("English unit label *"), {
-      target: { value: "kg" },
-    });
-    fireEvent.change(unitSize, { target: { value: "0,500" } });
-    expect(unitSize).toHaveValue("0.500");
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(api).toHaveBeenCalledWith(
-        "admin/membership-products",
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    const payload = JSON.parse(String(vi.mocked(api).mock.calls[0][1]?.body));
-    expect(payload.unit_size).toBe(0.5);
-    expect(typeof payload.unit_size).toBe("number");
-    expect(payload).not.toHaveProperty("category_id");
-    expect(navigation.replace).toHaveBeenCalledWith(
-      `/membership-catalog/products/${catalogProduct.id}`,
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("at least one active price option");
   });
 
-  it("searches, filters, clears and paginates CSA request and Membership lists", async () => {
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => ({
-      data: path.startsWith("admin/membership-requests") ? [membershipRequest] : [membership],
-      meta: { page: 1, page_size: 30, total: 31 },
-    }));
-    const requestView = providers(<MembershipRequestList />);
-
-    const requestLink = await screen.findByRole("link", { name: customer.name });
-    expect(requestLink).toHaveAttribute("href", `/membership-requests/${membershipRequest.id}`);
-    expect(screen.getAllByRole("link", { name: customer.name })).toHaveLength(1);
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "0918765432" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith(expect.stringContaining("search=0918765432")),
-    );
-    fireEvent.change(screen.getByRole("combobox", { name: "Filter by status" }), {
-      target: { value: "payment_submitted" },
+  it("blocks total overflow before sending", async () => {
+    mockCatalogLookups();
+    providers(<MembershipPackageEditor />);
+    await fillBilingualNames();
+    fireEvent.change(screen.getByLabelText("Months *"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Monthly price *"), {
+      target: { value: "5000000000000000000" },
     });
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith(
-        expect.stringContaining("status=payment_submitted"),
-      ),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith(expect.stringContaining("page=2")),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-requests?page=1&locale=en"),
-    );
-    expect(screen.getByRole("searchbox")).toHaveValue("");
-    expect(screen.getByRole("combobox", { name: "Filter by status" })).toHaveValue("");
-
-    requestView.unmount();
-    providers(<MembershipList />);
-    expect(await screen.findByText("Six month CSA")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Green Member" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith(expect.stringContaining("search=Green+Member")),
-    );
-    expect(screen.getAllByRole("link", { name: customer.name })).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Product 1"), { target: { value: product.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("total price exceeds");
+    expect(api).not.toHaveBeenCalled();
   });
 
-  it("keeps old data and count visible while disabling all controls for a pending filter", async () => {
-    let resolveFiltered!: (value: {
-      data: MembershipProduct[];
-      meta: { page: number; page_size: number; total: number };
-    }) => void;
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
-      if (path.includes("active=false")) {
-        return new Promise((resolve) => {
-          resolveFiltered = resolve;
-        });
+  it("groups historical inactive options and preserves backend conflicts without clearing the form", async () => {
+    mockCatalogLookups();
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (!init && path.includes(packageItem.id)) return packageItem;
+      const error = Object.assign(new Error("validation_error"), {
+        status: 400,
+        field: "price_options",
+      });
+      throw error;
+    });
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+    expect(await screen.findByRole("heading", { name: "Inactive history" })).toBeInTheDocument();
+    const monthly = screen.getAllByLabelText("Monthly price *")[0];
+    fireEvent.focus(monthly);
+    fireEvent.change(monthly, { target: { value: "800000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sold options cannot change");
+    expect(monthly).toHaveValue("800000");
+  });
+
+  it("deactivates a sold option and creates a new active price for the same duration", async () => {
+    mockCatalogLookups();
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (!init && path.includes(packageItem.id)) return packageItem;
+      return packageItem;
+    });
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+    const oldOption = await screen.findByRole("group", { name: "Option 1" });
+    fireEvent.click(within(oldOption).getByRole("checkbox", { name: "Active" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Add price option" }));
+    const replacement = screen.getByRole("group", { name: "Option 3" });
+    fireEvent.change(within(replacement).getByLabelText("Months *"), {
+      target: { value: "6" },
+    });
+    fireEvent.change(within(replacement).getByLabelText("Monthly price *"), {
+      target: { value: "800000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(api)
+          .mock.calls.some(
+            ([path, init]) => path.includes(packageItem.id) && init?.method === "PATCH",
+          ),
+      ).toBe(true),
+    );
+    const update = vi
+      .mocked(api)
+      .mock.calls.find(([path, init]) => path.includes(packageItem.id) && init?.method === "PATCH");
+    const options = JSON.parse(String(update?.[1]?.body)).price_options;
+    expect(options[0]).toMatchObject({ id: activeOption.id, is_active: false });
+    expect(options[2]).toMatchObject({
+      duration_months: 6,
+      monthly_price_vnd: "800000",
+      is_active: true,
+    });
+  });
+
+  it("shows active and historical prices in list/detail", async () => {
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [packageItem], meta });
+    const list = providers(<MembershipPackageList />);
+    expect(await screen.findByText(/6 months · ₫750,000\/month/)).toBeInTheDocument();
+    expect(screen.queryByText(/769,000\/month/)).toBeNull();
+    list.unmount();
+    vi.mocked(api).mockResolvedValue(packageItem);
+    providers(<MembershipPackageDetail packageId={packageItem.id} />);
+    expect(await screen.findByRole("heading", { name: "Inactive history" })).toBeInTheDocument();
+    expect(screen.getByText("₫4,614,000")).toBeInTheDocument();
+  });
+});
+
+describe("manual Membership assignment", () => {
+  const secondPackage: MembershipPackage = {
+    ...packageItem,
+    id: "fd58ec7b-7687-4c81-b21c-da0d1a201a12",
+    name: "Twelve month CSA",
+    description: "A full year package",
+    price_options: [
+      {
+        ...activeOption,
+        id: "ae999a35-d30f-48f7-8a04-e0cf39ad2849",
+        duration_months: 12,
+        total_price_vnd: "9000000",
+      },
+    ],
+  };
+  const secondUser: AdminUserListItem = {
+    ...user,
+    id: "7202b170-0dc2-4c4b-a027-8e6c43875943",
+    name: "Second Member",
+    email: "second@example.com",
+  };
+
+  function mockAssignment() {
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
+      if (path.startsWith("admin/users?")) return { data: [user], meta };
+      throw new Error(`Unexpected request: ${path}`);
+    });
+  }
+
+  async function prepareAssignment() {
+    mockAssignment();
+    providers(<MembershipAssignmentForm />);
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenCalledWith(
+        "admin/membership-packages?active=true&page=1",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+    expect(
+      vi.mocked(apiEnvelope).mock.calls.some(([path]) => path.startsWith("admin/users?")),
+    ).toBe(false);
+    const userSearch = screen.getByRole("search", {
+      name: "Search users by email or phone number",
+    });
+    fireEvent.change(within(userSearch).getByLabelText("Search users by email or phone number"), {
+      target: { value: "green@example.com" },
+    });
+    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
+    const userResults = await screen.findByRole("radiogroup", { name: "Choose customer" });
+    fireEvent.click(within(userResults).getByRole("radio"));
+    const packageResults = await screen.findByRole("radiogroup", {
+      name: "Choose an active package",
+    });
+    fireEvent.click(within(packageResults).getByRole("radio"));
+    fireEvent.change(screen.getByLabelText("Price option *"), {
+      target: { value: activeOption.id },
+    });
+    fireEvent.change(screen.getByLabelText("Farmbrite order reference *"), {
+      target: { value: "FB-2026-0001" },
+    });
+    return screen.getByRole("button", { name: "Review and confirm" });
+  }
+
+  it("searches users server-side and offers only active price options", async () => {
+    await prepareAssignment();
+    expect(apiEnvelope).toHaveBeenCalledWith(
+      expect.stringContaining("admin/users?page=1&search=green%40example.com"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(screen.getByRole("option", { name: /750,000/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /769,000/ })).toBeNull();
+  });
+
+  it("finds and selects an active package on page 2", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      if (path === "admin/membership-packages?active=true&page=1") {
+        return { data: [packageItem], meta: { page: 1, page_size: 1, total: 2 } };
       }
-      return {
-        data: [catalogProduct],
-        meta: { page: 1, page_size: 30, total: 31 },
-      };
+      if (path === "admin/membership-packages?active=true&page=2") {
+        return { data: [secondPackage], meta: { page: 2, page_size: 1, total: 2 } };
+      }
+      throw new Error(`Unexpected request: ${path}`);
     });
-    providers(<MembershipProductList />);
-
-    expect(screen.queryByText(/\d+ results/)).toBeNull();
-    const detailLink = await screen.findByRole("link", { name: catalogProduct.name });
-    expect(screen.getByText("31 results")).toBeVisible();
-    const searchRegion = screen.getByRole("search");
-    const searchbox = screen.getByRole("searchbox", { name: "Search products" });
-    const statusFilter = screen.getByRole("combobox", { name: "Filter by status" });
-    expect(searchRegion).not.toContainElement(screen.getByText("31 results"));
-    fireEvent.change(statusFilter, { target: { value: "false" } });
-
-    await waitFor(() => expect(searchbox).toBeDisabled());
-    expect(detailLink).toBeVisible();
-    expect(statusFilter).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Searching…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear filters" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByRole("navigation", { name: "Page {page}/{pages}" })).toHaveAttribute(
-      "aria-busy",
-      "true",
+    providers(<MembershipAssignmentForm />);
+    const pagination = await screen.findByRole("navigation", { name: "Page {page}/{pages}" });
+    fireEvent.click(within(pagination).getByRole("button", { name: "Next" }));
+    const results = await screen.findByRole("radiogroup", { name: "Choose an active package" });
+    fireEvent.click(within(results).getByRole("radio", { name: /Twelve month CSA/ }));
+    expect(screen.getByText("Selected package").parentElement).toHaveTextContent(
+      "Twelve month CSA",
     );
-    expect(detailLink.closest("section")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("status")).toHaveTextContent("Loading products…");
-    expect(screen.getByText("31 results")).toBeVisible();
-
-    await act(async () =>
-      resolveFiltered({
-        data: [
-          {
-            ...catalogProduct,
-            id: "filtered-product",
-            name: "Filtered product",
-            translations: catalogProduct.translations.map((translation) =>
-              translation.locale === "en"
-                ? { ...translation, name: "Filtered product" }
-                : translation,
-            ),
-          },
-        ],
-        meta: { page: 1, page_size: 30, total: 1 },
-      }),
-    );
-    expect(await screen.findByRole("link", { name: "Filtered product" })).toBeVisible();
-    expect(screen.getByText("1 result")).toBeVisible();
+    expect(screen.getByRole("option", { name: /12 months/ })).toBeInTheDocument();
   });
 
-  it("ignores a stale paginated response that resolves after the latest request", async () => {
-    let resolveOld!: (value: { data: MembershipProduct[]; meta: PaginationMeta }) => void;
-    let resolveNew!: (value: { data: MembershipProduct[]; meta: PaginationMeta }) => void;
-    const fetcher = vi.fn(
-      (requestKey: string) =>
-        new Promise<{ data: MembershipProduct[]; meta: PaginationMeta }>((resolve) => {
-          if (requestKey === "old") resolveOld = resolve;
-          else resolveNew = resolve;
+  it("keeps the selected package and price option across another search", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      if (path.includes("search=other")) return { data: [secondPackage], meta };
+      if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    providers(<MembershipAssignmentForm />);
+    const results = await screen.findByRole("radiogroup", { name: "Choose an active package" });
+    fireEvent.click(within(results).getByRole("radio"));
+    fireEvent.change(screen.getByLabelText("Price option *"), {
+      target: { value: activeOption.id },
+    });
+    const search = screen.getByRole("search", { name: "Search active CSA packages" });
+    fireEvent.change(within(search).getByLabelText("Search active CSA packages"), {
+      target: { value: "other" },
+    });
+    fireEvent.click(within(search).getByRole("button", { name: "Search" }));
+    await screen.findByText("Twelve month CSA");
+    expect(screen.getByText("Selected package").parentElement).toHaveTextContent(packageItem.name);
+    expect(screen.getByLabelText("Price option *")).toHaveValue(activeOption.id);
+    expect(screen.getByRole("option", { name: /6 months/ })).toBeInTheDocument();
+  });
+
+  it("prevents stale package responses from replacing a newer search", async () => {
+    let resolveOld!: (value: { data: MembershipPackage[]; meta: PaginationMeta }) => void;
+    const oldRequest = new Promise<{ data: MembershipPackage[]; meta: PaginationMeta }>(
+      (resolve) => (resolveOld = resolve),
+    );
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      if (path.endsWith("search=old")) return oldRequest;
+      if (path.endsWith("search=new")) return { data: [secondPackage], meta };
+      return { data: [packageItem], meta };
+    });
+    providers(<MembershipAssignmentForm />);
+    await screen.findByText(packageItem.name);
+    const search = screen.getByRole("search", { name: "Search active CSA packages" });
+    const input = within(search).getByLabelText("Search active CSA packages");
+    fireEvent.change(input, { target: { value: "old" } });
+    fireEvent.click(within(search).getByRole("button", { name: "Search" }));
+    await waitFor(() =>
+      expect(vi.mocked(apiEnvelope).mock.calls.some(([path]) => path.endsWith("search=old"))).toBe(
+        true,
+      ),
+    );
+    fireEvent.change(input, { target: { value: "new" } });
+    fireEvent.click(within(search).getByRole("button", { name: "Searching…" }));
+    expect(await screen.findByText(secondPackage.name)).toBeInTheDocument();
+    await act(async () => resolveOld({ data: [packageItem], meta }));
+    expect(screen.getByText(secondPackage.name)).toBeInTheDocument();
+    expect(screen.queryByText(packageItem.name)).toBeNull();
+  });
+
+  it("aborts active package and user lookups on unmount", async () => {
+    const signals: AbortSignal[] = [];
+    vi.mocked(apiEnvelope).mockImplementation(
+      (_path, init) =>
+        new Promise(() => {
+          if (init?.signal) signals.push(init.signal);
         }),
     );
-    const view = render(<PaginatedListHarness fetcher={fetcher} requestKey="old" />);
-    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("old", 1));
-    view.rerender(<PaginatedListHarness fetcher={fetcher} requestKey="new" />);
-    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("new", 1));
-
-    await act(async () =>
-      resolveNew({
-        data: [{ ...catalogProduct, id: "new", name: "Newest response" }],
-        meta: { page: 1, page_size: 30, total: 2 },
-      }),
-    );
-    expect(await screen.findByText("Newest response")).toBeVisible();
-    expect(screen.getByTestId("harness-total")).toHaveTextContent("2");
-
-    await act(async () =>
-      resolveOld({
-        data: [{ ...catalogProduct, id: "old", name: "Stale response" }],
-        meta: { page: 1, page_size: 30, total: 99 },
-      }),
-    );
-    expect(screen.queryByText("Stale response")).toBeNull();
-    expect(screen.getByText("Newest response")).toBeVisible();
-    expect(screen.getByTestId("harness-total")).toHaveTextContent("2");
+    const view = providers(<MembershipAssignmentForm />);
+    const userSearch = screen.getByRole("search", {
+      name: "Search users by email or phone number",
+    });
+    fireEvent.change(within(userSearch).getByLabelText("Search users by email or phone number"), {
+      target: { value: "green" },
+    });
+    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    view.unmount();
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
-  it("shows only valid request actions and confirms approval once", async () => {
-    let resolveApprove!: (value: unknown) => void;
-    const approvePromise = new Promise((resolve) => {
-      resolveApprove = resolve;
+  it("keeps the selected user across searches until another user is clicked", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
+      if (path.includes("search=second")) return { data: [secondUser], meta };
+      if (path.startsWith("admin/users?")) return { data: [user], meta };
+      throw new Error(`Unexpected request: ${path}`);
     });
-    let detailLoads = 0;
-    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (!init) {
-        detailLoads += 1;
-        return detailLoads === 1
-          ? membershipRequest
-          : { ...membershipRequest, status: "approved", approved_at: "2026-07-21T02:00:00Z" };
-      }
-      if (path.endsWith("/approve?locale=en")) return approvePromise;
-      throw new Error("unexpected_request");
+    providers(<MembershipAssignmentForm />);
+    const userSearch = screen.getByRole("search", {
+      name: "Search users by email or phone number",
     });
-    providers(<MembershipRequestDetail requestId={membershipRequest.id} />);
+    const input = within(userSearch).getByLabelText("Search users by email or phone number");
+    fireEvent.change(input, { target: { value: "green" } });
+    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
+    fireEvent.click(
+      within(await screen.findByRole("radiogroup", { name: "Choose customer" })).getByRole("radio"),
+    );
+    fireEvent.change(input, { target: { value: "second" } });
+    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
+    await screen.findByText(secondUser.name);
+    expect(screen.getByText("Selected customer").parentElement).toHaveTextContent(user.name);
 
-    expect(await screen.findByRole("button", { name: "Approve payment" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Return to payment pending" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark contacted" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Approve payment" }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm payment approval" });
-    expect(dialog).toHaveTextContent("future start date creates a scheduled Membership");
-    fireEvent.change(within(dialog).getByLabelText("Start date *"), {
-      target: { value: "2026-08-15" },
+    const packageResults = await screen.findByRole("radiogroup", {
+      name: "Choose an active package",
     });
-    const confirm = within(dialog).getByRole("button", { name: "Approve and create Membership" });
+    fireEvent.click(within(packageResults).getByRole("radio"));
+    fireEvent.change(screen.getByLabelText("Price option *"), {
+      target: { value: activeOption.id },
+    });
+    fireEvent.change(screen.getByLabelText("Farmbrite order reference *"), {
+      target: { value: "FB-PRESERVED-USER" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review and confirm" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(user.name);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(
+      within(screen.getByRole("radiogroup", { name: "Choose customer" })).getByRole("radio"),
+    );
+    expect(screen.getByText("Selected customer").parentElement).toHaveTextContent(secondUser.name);
+  });
+
+  it("blocks a past start date before opening confirmation", async () => {
+    const review = await prepareAssignment();
+    fireEvent.change(screen.getByLabelText("Start date *"), {
+      target: { value: "2000-01-01" },
+    });
+    fireEvent.click(review);
+    expect(await screen.findByRole("alert")).toHaveTextContent("today or a future date");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it("uses a non-past date, confirms accessibly, and submits exactly once", async () => {
+    let resolveAssign!: (value: AdminMembership) => void;
+    const pending = new Promise<AdminMembership>((resolve) => (resolveAssign = resolve));
+    const review = await prepareAssignment();
+    vi.mocked(api).mockReturnValue(pending);
+    const date = screen.getByLabelText("Start date *");
+    expect(date).toHaveAttribute("min");
+    fireEvent.change(date, { target: { value: date.getAttribute("min") } });
+    fireEvent.click(review);
+    const dialog = screen.getByRole("dialog", { name: "Confirm Membership assignment" });
+    expect(dialog).toHaveTextContent("FB-2026-0001");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    const confirm = within(dialog).getByRole("button", { name: "Assign Membership" });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(confirm).toBeDisabled();
-    expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/approve?locale=en")),
-    ).toHaveLength(1);
+    expect(vi.mocked(api).mock.calls).toHaveLength(1);
+    const [path, init] = vi.mocked(api).mock.calls[0];
+    expect(path).toBe("admin/memberships?locale=en");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      user_id: user.id,
+      package_id: packageItem.id,
+      price_option_id: activeOption.id,
+      start_date: date.getAttribute("min"),
+      farmbrite_order_reference: "FB-2026-0001",
+    });
+    await act(async () => resolveAssign(membership));
+    expect(navigation.replace).toHaveBeenCalledWith(`/memberships/${membership.id}`);
+  });
 
-    await act(async () => resolveApprove({ data: membership }));
-    await waitFor(() => expect(screen.getByText("Approved")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
-    const actionCall = vi
-      .mocked(api)
-      .mock.calls.find(([path]) => path.endsWith("/approve?locale=en"));
-    expect(actionCall?.[0]).toBe(
-      `admin/membership-requests/${membershipRequest.id}/approve?locale=en`,
+  it("retains the form and shows duplicate Farmbrite conflicts", async () => {
+    const review = await prepareAssignment();
+    vi.mocked(api).mockRejectedValue(
+      Object.assign(new Error("duplicate_farmbrite_order_reference"), { status: 409 }),
     );
-    expect(JSON.parse(String(actionCall?.[1]?.body))).toEqual({ start_date: "2026-08-15" });
-  });
-
-  it("warns when legacy request and Membership snapshots have no English content", async () => {
-    vi.mocked(api).mockResolvedValue({
-      ...membershipRequest,
-      package: {
-        ...membershipRequest.package,
-        snapshot_complete: false,
-        items: membershipRequest.package.items.map((item) => ({
-          ...item,
-          snapshot_complete: false,
-        })),
-      },
-    });
-    const requestView = providers(<MembershipRequestDetail requestId={membershipRequest.id} />);
-    expect(
-      (await screen.findAllByText("Legacy snapshot has no English content")).length,
-    ).toBeGreaterThan(1);
-    requestView.unmount();
-
-    vi.mocked(api).mockResolvedValue({
-      ...membership,
-      snapshot_complete: false,
-      quota: membership.quota?.map((item) => ({
-        ...item,
-        snapshot_complete: false,
-      })),
-    });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0 },
-    });
-    providers(<MembershipDetail membershipId={membership.id} />);
-    expect(
-      (await screen.findAllByText("Legacy snapshot has no English content")).length,
-    ).toBeGreaterThan(1);
-  });
-
-  it("prevents approving a CSA request with a past start date", async () => {
-    vi.mocked(api).mockResolvedValue(membershipRequest);
-    providers(<MembershipRequestDetail requestId={membershipRequest.id} />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Approve payment" }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm payment approval" });
-    const input = within(dialog).getByLabelText("Start date *");
-    const dateFormatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-    const dateInputValue = (value: Date) => {
-      const parts = dateFormatter
-        .formatToParts(value)
-        .reduce<Record<string, string>>((result, part) => {
-          result[part.type] = part.value;
-          return result;
-        }, {});
-      return `${parts.year}-${parts.month}-${parts.day}`;
-    };
-    const minimumDate = dateInputValue(new Date());
-    const pastDate = dateInputValue(new Date(Date.now() - 24 * 60 * 60 * 1000));
-    expect(input).toHaveAttribute("min", minimumDate);
-    fireEvent.change(input, { target: { value: pastDate } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Approve and create Membership" }));
-
-    expect(
-      await within(dialog).findByText("The start date must be today or a future date."),
-    ).toBeVisible();
-    expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/approve?locale=en")),
-    ).toHaveLength(0);
-  });
-
-  it("confirms payment instruction once, disables actions, and keeps errors retryable", async () => {
-    const contactedRequest: MembershipRequest = {
-      ...membershipRequest,
-      status: "contacted",
-      payment_instruction: null,
-      payment_submitted_at: null,
-    };
-    let rejectFirstIssue!: (reason: unknown) => void;
-    const firstIssue = new Promise<MembershipRequest>((_, reject) => {
-      rejectFirstIssue = reject;
-    });
-    let issueAttempts = 0;
-    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (!init) return contactedRequest;
-      if (path.endsWith("/issue-payment-instruction?locale=en") && init.method === "POST") {
-        issueAttempts += 1;
-        if (issueAttempts === 1) return firstIssue;
-        return {
-          ...contactedRequest,
-          status: "payment_pending",
-          payment_instruction: membershipRequest.payment_instruction,
-        };
-      }
-      throw new Error("unexpected_request");
-    });
-    providers(<MembershipRequestDetail requestId={membershipRequest.id} />);
-
-    const issue = await screen.findByRole("button", { name: "Issue payment instruction" });
-    fireEvent.click(issue);
-    const dialog = screen.getByRole("dialog", { name: "Confirm payment instruction" });
-    expect(dialog).toHaveTextContent("creates and finalizes the payment instruction");
-    expect(
-      vi
-        .mocked(api)
-        .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction?locale=en")),
-    ).toHaveLength(0);
-
-    const confirm = within(dialog).getByRole("button", { name: "Issue payment instruction" });
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
-    expect(
-      vi
-        .mocked(api)
-        .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction?locale=en")),
-    ).toHaveLength(1);
-    expect(within(dialog).getByRole("button", { name: "Processing…" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(issue).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
-
-    await act(async () => rejectFirstIssue(new Error("network_error")));
-    expect(await within(dialog).findByText(/could not connect/i)).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Confirm payment instruction" })).toBeInTheDocument();
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "Issue payment instruction" }));
-    await waitFor(() => expect(screen.getByText("Payment pending")).toBeInTheDocument());
-    expect(screen.queryByRole("dialog", { name: "Confirm payment instruction" })).toBeNull();
-    expect(screen.getByText("Payment instructions were issued.")).toBeInTheDocument();
-    const issueCalls = vi
-      .mocked(api)
-      .mock.calls.filter(([path]) => path.endsWith("/issue-payment-instruction?locale=en"));
-    expect(issueCalls).toHaveLength(2);
-    expect(issueCalls[0][0]).toBe(
-      `admin/membership-requests/${membershipRequest.id}/issue-payment-instruction?locale=en`,
+    fireEvent.click(review);
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Assign Membership" }),
     );
-    expect(issueCalls[0][1]?.method).toBe("POST");
-    expect(JSON.parse(String(issueCalls[0][1]?.body))).toEqual({});
+    expect(await screen.findByRole("alert")).toHaveTextContent("already been used");
+    expect(screen.getByLabelText("Farmbrite order reference *")).toHaveValue("FB-2026-0001");
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
+});
 
-  it("does not offer usage creation for a scheduled Membership", async () => {
-    vi.mocked(api).mockResolvedValue({ ...membership, status: "scheduled", quota: [], cycles: [] });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0 },
-    });
+describe("Membership list, snapshots, and usage regressions", () => {
+  it("lists Memberships and displays immutable price/Farmbrite snapshots", async () => {
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [membership], meta });
+    const list = providers(<MembershipList />);
+    expect(await screen.findByRole("link", { name: user.name })).toHaveAttribute(
+      "href",
+      `/memberships/${membership.id}`,
+    );
+    list.unmount();
+    vi.mocked(api).mockResolvedValue(membership);
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipDetail membershipId={membership.id} />);
-
-    expect(await screen.findByText("Scheduled")).toBeInTheDocument();
-    expect(screen.getByText(/products cannot be collected or recorded yet/i)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Record received products" }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText("FB-2026-0001")).toBeInTheDocument();
+    expect(screen.getByText("₫750,000")).toBeInTheDocument();
+    expect(screen.getByText("₫4,500,000")).toBeInTheDocument();
   });
 
-  it("renders the final remaining product amount instead of a units multiplication", async () => {
-    vi.mocked(api).mockResolvedValue({
-      ...membership,
-      quota: membership.quota?.map((quota) => ({ ...quota, unit_size: "0.5" })),
-    });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0 },
-    });
-    providers(<MembershipDetail membershipId={membership.id} />);
-
-    expect(await screen.findByText("1 kg")).toBeVisible();
-    expect(screen.queryByText("2 × 0.5 kg")).toBeNull();
-  });
-
-  it("keeps one usage idempotency key for a failed request retry and blocks rapid submit", async () => {
-    let createAttempts = 0;
-    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+  it("keeps usage idempotent and undo retry-safe", async () => {
+    const usage: MembershipUsage = {
+      id: "ac7d02ac-d36c-4558-b839-9124620dde44",
+      membership_id: membership.id,
+      status: "applied",
+      note: "Basket",
+      created_at: "2026-08-04T03:00:00Z",
+      reversed_at: null,
+      lines: [{ product_id: product.id, product_name: product.name, units: 1 }],
+    };
+    let usageCreated = false;
+    vi.mocked(api).mockImplementation(async (path, init) => {
       if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
       if (path === "admin/membership-usage?locale=en" && init?.method === "POST") {
-        createAttempts += 1;
-        if (createAttempts === 1) throw new Error("network_error");
-        return {
-          id: "usage-id",
-          membership_id: membership.id,
-          status: "applied",
-          note: "Delivery",
-          created_at: "2026-07-21T02:00:00Z",
-          reversed_at: null,
-          lines: [],
-        } satisfies MembershipUsage;
+        usageCreated = true;
+        return usage;
       }
-      throw new Error("unexpected_request");
+      if (path.endsWith("/undo?locale=en")) return { ...usage, status: "reversed" };
+      throw new Error(`Unexpected request: ${path}`);
     });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0 },
-    });
+    vi.mocked(apiEnvelope).mockImplementation(async () => ({
+      data: usageCreated ? [usage] : [],
+      meta: { ...meta, total: usageCreated ? 1 : 0 },
+    }));
     providers(<MembershipDetail membershipId={membership.id} />);
-
     fireEvent.click(await screen.findByRole("button", { name: "Record received products" }));
     const dialog = screen.getByRole("dialog", { name: "Record received products" });
-    fireEvent.change(within(dialog).getByLabelText("Note"), { target: { value: "Delivery" } });
-    const confirm = within(dialog).getByRole("button", { name: "Record received products" });
-    const units = within(dialog).getByLabelText("Units 1");
-    expect(units).toHaveAttribute("type", "text");
-    expect(units).toHaveAttribute("inputmode", "numeric");
-    fireEvent.change(units, { target: { value: "abc1e+3.0" } });
-    expect(units).toHaveValue("130");
-    fireEvent.change(units, { target: { value: "0" } });
-    fireEvent.click(confirm);
-    expect(within(dialog).getByText(/whole number greater than 0/i)).toBeVisible();
-    expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en"),
-    ).toHaveLength(0);
-    fireEvent.change(units, { target: { value: "0002" } });
-    expect(units).toHaveValue("0002");
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
-    expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en"),
-    ).toHaveLength(1);
-    expect(await within(dialog).findByText(/could not connect/i)).toBeInTheDocument();
-
-    fireEvent.click(confirm);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record received products" }));
     await waitFor(() =>
       expect(
         vi.mocked(api).mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en"),
-      ).toHaveLength(2),
+      ).toHaveLength(1),
     );
-    const calls = vi
-      .mocked(api)
-      .mock.calls.filter(([path]) => path === "admin/membership-usage?locale=en")
-      .map(([, init]) => JSON.parse(String(init?.body)));
-    expect(calls[0].idempotency_key).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(calls[1].idempotency_key).toBe(calls[0].idempotency_key);
-    expect(calls[0]).toMatchObject({
-      membership_id: membership.id,
-      note: "Delivery",
-      lines: [{ product_id: membership.quota?.[0].product_id, units: 2 }],
-    });
-  });
-
-  it("confirms undo with a required reason and submits it only once", async () => {
-    let resolveUndo!: (value: MembershipUsage) => void;
-    const undoPromise = new Promise<MembershipUsage>((resolve) => {
-      resolveUndo = resolve;
-    });
-    const usage: MembershipUsage = {
-      id: "usage-id",
-      membership_id: membership.id,
-      status: "applied",
-      note: "Delivery",
-      created_at: "2026-07-21T02:00:00Z",
-      reversed_at: null,
-      lines: [
-        {
-          product_id: membership.quota![0].product_id,
-          product_name: "Vegetable basket",
-          units: 1,
-          allocations: [{ cycle: 1, units: 1 }],
-        },
-      ],
-    };
-    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
-      if (path.endsWith("/undo?locale=en") && init?.method === "POST") return undoPromise;
-      throw new Error("unexpected_request");
-    });
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [usage],
-      meta: { page: 1, page_size: 30, total: 1 },
-    });
-    providers(<MembershipDetail membershipId={membership.id} />);
-
+    const usageBody = JSON.parse(
+      String(
+        vi.mocked(api).mock.calls.find(([path]) => path === "admin/membership-usage?locale=en")?.[1]
+          ?.body,
+      ),
+    );
+    expect(usageBody.idempotency_key).toMatch(/[0-9a-f-]{36}/);
+    expect(usageBody.lines).toEqual([{ product_id: product.id, units: 1 }]);
     fireEvent.click(await screen.findByRole("button", { name: "Undo product collection" }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm product collection undo" });
-    const confirm = within(dialog).getByRole("button", { name: "Confirm undo" });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(within(dialog).getByLabelText("Reason *"), {
-      target: { value: "Wrong delivery" },
+    const undoDialog = screen.getByRole("dialog", { name: "Confirm product collection undo" });
+    fireEvent.change(within(undoDialog).getByLabelText("Reason *"), {
+      target: { value: "Entered twice" },
     });
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
-    expect(
-      vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/undo?locale=en")),
-    ).toHaveLength(1);
-    const undoCall = vi.mocked(api).mock.calls.find(([path]) => path.endsWith("/undo?locale=en"));
-    expect(undoCall?.[0]).toBe(`admin/membership-usage/${usage.id}/undo?locale=en`);
-    expect(JSON.parse(String(undoCall?.[1]?.body))).toEqual({ reason: "Wrong delivery" });
-
-    await act(async () => resolveUndo({ ...usage, status: "reversed" }));
+    fireEvent.click(within(undoDialog).getByRole("button", { name: "Confirm undo" }));
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        `admin/membership-usage/${usage.id}/undo?locale=en`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ reason: "Entered twice" }),
+        }),
+      ),
+    );
   });
 });

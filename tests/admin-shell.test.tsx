@@ -63,10 +63,21 @@ describe("admin sidebar navigation", () => {
     expect(screen.queryByRole("link", { name: "Rewards" })).toBeNull();
   });
 
+  it("does not expose removed CSA request or payment navigation", () => {
+    renderShell();
+    fireEvent.click(group("CSA"));
+    expect(screen.queryByRole("link", { name: /CSA requests/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /payment/i })).toBeNull();
+    expect(screen.getByRole("link", { name: "CSA memberships" })).toHaveAttribute(
+      "href",
+      "/memberships",
+    );
+  });
+
   it.each([
     ["/membership-catalog", "CSA", "CSA catalog"],
     ["/membership-catalog/packages/123/edit", "CSA", "CSA catalog"],
-    ["/membership-requests", "CSA", "CSA requests"],
+    ["/memberships/assign", "CSA", "CSA memberships"],
     ["/rewards", "Points & rewards", "Rewards"],
     ["/settings", "Website", "Website information"],
   ])("opens the owning group for %s and highlights its item", (pathname, groupName, linkName) => {
@@ -80,18 +91,18 @@ describe("admin sidebar navigation", () => {
 
   it("keeps the grouped navigation usable and closable at a mobile viewport", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
-    renderShell("/membership-requests/123");
+    renderShell("/memberships/assign");
 
     const navigationRegion = screen.getByRole("navigation", { name: "Administration" });
     const csaToggle = within(navigationRegion).getByRole("button", { name: "CSA" });
     expect(csaToggle).toHaveAttribute("aria-expanded", "true");
-    expect(within(navigationRegion).getByRole("link", { name: "CSA requests" })).toHaveAttribute(
+    expect(within(navigationRegion).getByRole("link", { name: "CSA memberships" })).toHaveAttribute(
       "aria-current",
       "page",
     );
 
     fireEvent.click(csaToggle);
     expect(csaToggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(navigationRegion).queryByRole("link", { name: "CSA requests" })).toBeNull();
+    expect(within(navigationRegion).queryByRole("link", { name: "CSA memberships" })).toBeNull();
   });
 });
