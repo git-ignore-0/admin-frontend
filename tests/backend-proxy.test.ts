@@ -144,7 +144,9 @@ describe("admin backend proxy", () => {
       },
     );
 
-    expect([blockedGet.status, blockedDelete.status, blockedAction.status]).toEqual([404, 404, 404]);
+    expect([blockedGet.status, blockedDelete.status, blockedAction.status]).toEqual([
+      404, 404, 404,
+    ]);
     expect(upstream).not.toHaveBeenCalled();
   });
 
