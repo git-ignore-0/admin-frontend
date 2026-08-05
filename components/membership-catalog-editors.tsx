@@ -769,9 +769,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
           );
         })}
       </section>
-      <section
-        className="catalog-editor-section package-products-section"
-      >
+      <section className="catalog-editor-section package-products-section">
         <h2>{t.membershipCatalog.packageProducts}</h2>
         {productsLoading ? (
           <p className="muted-copy" aria-live="polite">
