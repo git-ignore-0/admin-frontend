@@ -15,6 +15,8 @@ export default async function ProductListPage() {
             {t.membershipCatalog.addProduct}
           </Link>
         }
+        backHref="/membership-catalog"
+        backLabel={t.membershipCatalog.catalogTitle}
         description={t.page.membershipProductsDescription}
         title={t.membershipCatalog.products}
       />
