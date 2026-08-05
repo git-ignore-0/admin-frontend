@@ -13,6 +13,7 @@ type Props = {
   confirmDisabled?: boolean;
   error?: string;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   onCancel: () => void;
   onConfirm: () => void;
 };
@@ -31,6 +32,7 @@ export function ConfirmationDialog({
   confirmDisabled = false,
   error,
   fallbackFocusRef,
+  returnFocusRef,
   onCancel,
   onConfirm,
 }: Props) {
@@ -44,6 +46,7 @@ export function ConfirmationDialog({
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const fallbackFocus = fallbackFocusRef?.current;
+    const returnFocus = returnFocusRef?.current;
     const dialog = dialogRef.current;
     const focusables = () =>
       Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
@@ -71,10 +74,11 @@ export function ConfirmationDialog({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      if (returnFocus?.isConnected) returnFocus.focus();
+      else if (previouslyFocused?.isConnected) previouslyFocused.focus();
       else fallbackFocus?.focus();
     };
-  }, [fallbackFocusRef]);
+  }, [fallbackFocusRef, returnFocusRef]);
 
   return (
     <div

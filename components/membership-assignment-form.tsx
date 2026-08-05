@@ -454,6 +454,7 @@ export function MembershipAssignmentForm() {
               <dd>{startDate}</dd>
             </div>
           </dl>
+          <p className="notice-box">{t.memberships.assignNewAfterRevoke}</p>
         </ConfirmationDialog>
       )}
     </div>

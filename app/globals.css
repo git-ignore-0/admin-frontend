@@ -1946,10 +1946,15 @@ h3 {
   color: var(--text-muted);
 }
 
-.membership-status.rejected {
+.membership-status.rejected,
+.membership-status.revoked {
   border-color: #efb5b1;
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.membership-detail-heading {
+  margin-bottom: 12px;
 }
 
 .membership-hero {
@@ -1963,14 +1968,74 @@ h3 {
   background: var(--surface);
 }
 
-.membership-hero h2 {
-  margin-top: 10px;
-  font-size: 1.35rem;
+.membership-hero-summary {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
-.membership-hero p {
+.membership-hero-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.membership-hero-title-row h1 {
+  min-width: 0;
+  margin: 0;
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+
+.membership-hero-metadata {
   margin: 5px 0 0;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.membership-snapshot-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 7px 0 0;
+  color: var(--warning);
+  font-size: 0.86rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.membership-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.membership-revoke-audit {
+  min-width: 0;
+  margin-top: 14px;
+  padding: 13px 2px 0;
+  border-top: 1px solid var(--border);
+}
+
+.membership-revoke-summary,
+.membership-revoke-reason {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.membership-revoke-summary {
+  display: grid;
+  gap: 2px;
+}
+
+.membership-revoke-reason {
+  margin-top: 6px;
+}
+
+.membership-revoke-reason strong {
+  margin-right: 0.35em;
 }
 
 .membership-actions {
@@ -2299,6 +2364,19 @@ h3 {
   .membership-hero {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .membership-hero-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .membership-hero-title-row {
+    gap: 7px;
+  }
+
+  .membership-hero-actions {
+    width: 100%;
   }
 
   .membership-actions {

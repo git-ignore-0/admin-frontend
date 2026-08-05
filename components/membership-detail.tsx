@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DetailPageHeading } from "@/components/detail-page-heading";
 import { MembershipStatusBadge } from "@/components/membership-status-badge";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
@@ -27,6 +27,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const savingRef = useRef(false);
   const attemptedUsageRef = useRef("");
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const revokeButtonRef = useRef<HTMLButtonElement>(null);
   const [item, setItem] = useState<AdminMembership | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -41,6 +42,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [undoItem, setUndoItem] = useState<MembershipUsage | null>(null);
   const [undoReason, setUndoReason] = useState("");
+  const [revokeOpen, setRevokeOpen] = useState(false);
+  const [revokeReason, setRevokeReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState("");
 
@@ -93,8 +96,10 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     if (saving) return;
     setCreateOpen(false);
     setUndoItem(null);
+    setRevokeOpen(false);
     setActionError("");
     setUndoReason("");
+    setRevokeReason("");
     setUsageUnitErrors({});
   }
 
@@ -184,6 +189,41 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     }
   }
 
+  async function revokeMembership() {
+    if (!item || savingRef.current || !revokeReason.trim()) return;
+    savingRef.current = true;
+    setSaving(true);
+    setActionError("");
+    try {
+      const revoked = await api<AdminMembership>(
+        `admin/memberships/${membershipId}/revoke?locale=${locale}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: revokeReason.trim() }),
+        },
+      );
+      setItem((current) =>
+        current
+          ? {
+              ...current,
+              ...revoked,
+              quota: revoked.quota ?? current.quota,
+              cycles: revoked.cycles ?? current.cycles,
+            }
+          : revoked,
+      );
+      await loadMembership();
+      setRevokeOpen(false);
+      setRevokeReason("");
+      toast(t.memberships.revokeSuccess);
+    } catch (caught) {
+      setActionError(requestErrorMessage(caught, t));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
   if (loadError && !item)
     return (
       <div className="panel load-error-state">
@@ -201,38 +241,103 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     );
   if (!item) return <div className="panel">{t.memberships.loadingDetail}</div>;
   const selected = new Set(usageLines.map((line) => line.productId).filter(Boolean));
+  const revokedActor = item.revoked_by
+    ? [item.revoked_by.name, item.revoked_by.email].filter(Boolean).join(" · ")
+    : "";
 
   return (
     <>
-      <DetailPageHeading
-        backHref="/memberships"
-        backLabel={t.memberships.backLabel}
-        description={`${item.user.name} · ${item.package_name}`}
-        title={t.memberships.detailTitle}
-      />
+      <div className="detail-page-heading membership-detail-heading">
+        <Link className="detail-back-link" href="/memberships">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M19 12H5m6-6-6 6 6 6" />
+          </svg>
+          <span>{t.memberships.backLabel}</span>
+        </Link>
+      </div>
       {loadError && (
-        <p className="error-box" role="alert">
-          {requestErrorMessage(loadError, t)}
-        </p>
-      )}
-      <section className="membership-hero">
-        <div>
-          <MembershipStatusBadge status={item.status} />
-          <h2 ref={headingRef} tabIndex={-1}>
-            {item.package_name}
-          </h2>
-          {item.snapshot_complete === false && (
-            <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
-          )}
-          <p>
-            {formatAdminDate(item.start_date)} – {formatAdminDate(item.end_date)}
+        <div className="load-error-state">
+          <p className="error-box" role="alert">
+            {requestErrorMessage(loadError, t)}
           </p>
-        </div>
-        {item.status === "active" && (
-          <button className="button" disabled={saving || !item.quota?.length} onClick={openCreate}>
-            {t.memberships.createUsage}
+          <button
+            className="button secondary"
+            disabled={loading}
+            onClick={() => void loadMembership()}
+            type="button"
+          >
+            {t.common.retry}
           </button>
-        )}
+        </div>
+      )}
+      <section className="membership-hero" aria-labelledby="membership-summary-title">
+        <div className="membership-hero-summary">
+          <div className="membership-hero-title-row">
+            <h1 id="membership-summary-title" ref={headingRef} tabIndex={-1}>
+              {item.package_name}
+            </h1>
+            <MembershipStatusBadge status={item.status} />
+          </div>
+          <p className="membership-hero-metadata">
+            {item.user.name} · {formatAdminDate(item.start_date)} – {formatAdminDate(item.end_date)}
+          </p>
+          {item.snapshot_complete === false && (
+            <p className="membership-snapshot-warning">
+              <span aria-hidden="true">⚠</span>
+              <span>{t.memberships.legacySnapshotWarning}</span>
+            </p>
+          )}
+          {item.status === "revoked" && (
+            <section
+              className="membership-revoke-audit"
+              aria-label={t.memberships.revokeAuditLabel}
+            >
+              <p className="membership-revoke-summary">
+                <span>
+                  {t.memberships.revokeAuditTime.replace(
+                    "{time}",
+                    formatAdminDateTime(item.revoked_at),
+                  )}
+                </span>
+                <span>
+                  {t.memberships.revokeAuditActor.replace(
+                    "{actor}",
+                    revokedActor || t.memberships.revokeAuditActorFallback,
+                  )}
+                </span>
+              </p>
+              <p className="membership-revoke-reason">
+                <strong>{t.memberships.revokeAuditReason}</strong>
+                <span>{item.revoke_reason || "—"}</span>
+              </p>
+            </section>
+          )}
+        </div>
+        <div className="membership-hero-actions">
+          {item.status === "active" && (
+            <button
+              className="button"
+              disabled={saving || !item.quota?.length}
+              onClick={openCreate}
+            >
+              {t.memberships.createUsage}
+            </button>
+          )}
+          {(item.status === "active" || item.status === "scheduled") && (
+            <button
+              className="button danger"
+              disabled={saving}
+              onClick={() => {
+                setRevokeReason("");
+                setActionError("");
+                setRevokeOpen(true);
+              }}
+              ref={revokeButtonRef}
+            >
+              {t.memberships.revokeButton}
+            </button>
+          )}
+        </div>
       </section>
       {item.status === "scheduled" && <p className="notice-box">{t.memberships.scheduledNotice}</p>}
       <div className="membership-detail-grid">
@@ -387,7 +492,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     </span>
                     <time>{formatAdminDateTime(usage.created_at)}</time>
                   </div>
-                  {usage.status === "applied" && (
+                  {usage.status === "applied" && item.status !== "revoked" && (
                     <button
                       className="button secondary"
                       disabled={saving}
@@ -578,6 +683,45 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
               onChange={(event) => setUndoReason(event.target.value)}
               value={undoReason}
             />
+          </label>
+        </ConfirmationDialog>
+      )}
+      {revokeOpen && (
+        <ConfirmationDialog
+          busy={saving}
+          busyLabel={t.memberships.revoking}
+          cancelLabel={t.memberships.cancel}
+          confirmDisabled={!revokeReason.trim()}
+          confirmLabel={t.memberships.confirmRevoke}
+          danger
+          error={actionError}
+          fallbackFocusRef={headingRef}
+          returnFocusRef={revokeButtonRef}
+          onCancel={closeDialogs}
+          onConfirm={revokeMembership}
+          title={t.memberships.revokeTitle}
+        >
+          <p>
+            {t.memberships.revokeBody
+              .replace("{user}", item.user.name)
+              .replace("{package}", item.package_name)}
+          </p>
+          <label className="field">
+            <span>{t.memberships.revokeReason}</span>
+            <textarea
+              autoFocus
+              className="textarea"
+              disabled={saving}
+              maxLength={500}
+              onChange={(event) => setRevokeReason(event.target.value)}
+              required
+              value={revokeReason}
+            />
+            {!revokeReason.trim() && actionError && (
+              <small className="field-error" role="alert">
+                {t.memberships.revokeReasonRequired}
+              </small>
+            )}
           </label>
         </ConfirmationDialog>
       )}

@@ -41,9 +41,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function providers(children: React.ReactNode) {
+function providers(children: React.ReactNode, locale: "vi" | "en" = "en") {
   return render(
-    <AdminI18nProvider initialLocale="en">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>{children}</ToastProvider>
     </AdminI18nProvider>,
   );
@@ -674,5 +674,350 @@ describe("Membership list, snapshots, and usage regressions", () => {
         }),
       ),
     );
+  });
+
+  it.each([
+    {
+      locale: "en" as const,
+      auditLabel: "Membership revocation details",
+      time: "Revoked at 05/08/2026 09:00",
+      actor: "by Website Admin · admin@example.com",
+      reasonLabel: "Reason:",
+      status: "Revoked",
+      warning: "Legacy snapshot has no English content",
+    },
+    {
+      locale: "vi" as const,
+      auditLabel: "Thông tin thu hồi Membership",
+      time: "Thu hồi lúc 05/08/2026 09:00",
+      actor: "bởi Website Admin · admin@example.com",
+      reasonLabel: "Lý do:",
+      status: "Đã thu hồi",
+      warning: "Snapshot cũ chưa có nội dung tiếng Anh",
+    },
+  ])(
+    "shows the compact $locale revoke audit and hides undo for applied history",
+    async ({ locale, auditLabel, time, actor, reasonLabel, status, warning }) => {
+      const usage: MembershipUsage = {
+        id: "ac7d02ac-d36c-4558-b839-9124620dde44",
+        membership_id: membership.id,
+        status: "applied",
+        note: "Closed delivery",
+        created_at: "2026-08-04T03:00:00Z",
+        reversed_at: null,
+        lines: [{ product_id: product.id, product_name: product.name, units: 1 }],
+      };
+      vi.mocked(api).mockResolvedValue({
+        ...membership,
+        status: "revoked",
+        snapshot_complete: false,
+        current_slot: null,
+        revoked_at: "2026-08-05T02:00:00Z",
+        revoked_by: {
+          id: "10d3127f-34cf-443d-b6b4-eafe7391bd24",
+          name: "Website Admin",
+          email: "admin@example.com",
+        },
+        revoke_reason: "Close audit record",
+      });
+      vi.mocked(apiEnvelope).mockResolvedValue({ data: [usage], meta });
+
+      providers(<MembershipDetail membershipId={membership.id} />, locale);
+
+      expect(await screen.findByText(locale === "vi" ? "Đã ghi nhận" : "Recorded")).toBeVisible();
+      const audit = screen.getByRole("region", { name: auditLabel });
+      expect(within(audit).getByText(time)).toBeVisible();
+      expect(within(audit).getByText(actor)).toBeVisible();
+      expect(within(audit).getByText(reasonLabel)).toBeVisible();
+      expect(within(audit).getByText("Close audit record")).toBeVisible();
+      expect(within(audit).queryByText(packageItem.name)).toBeNull();
+      expect(audit).not.toHaveClass("error-box");
+      expect(audit).not.toHaveClass("revoke-info-box");
+      const heroes = document.querySelectorAll(".membership-hero");
+      expect(heroes).toHaveLength(1);
+      expect(heroes[0]).toContainElement(audit);
+      expect(
+        within(heroes[0] as HTMLElement).getByRole("heading", { name: packageItem.name }),
+      ).toBeVisible();
+      expect(
+        within(heroes[0] as HTMLElement)
+          .getByText(warning)
+          .closest("p"),
+      ).toHaveClass("membership-snapshot-warning");
+      expect(screen.getAllByText(status, { selector: ".membership-status" })).toHaveLength(1);
+      expect(
+        screen.queryByRole("button", {
+          name: locale === "vi" ? "Hoàn tác lần nhận hàng" : "Undo product collection",
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("uses a localized fallback when a revoked Membership has no audit actor", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...membership,
+      status: "revoked",
+      current_slot: null,
+      revoked_at: null,
+      revoked_by: null,
+      revoke_reason: "Legacy audit",
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta });
+
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    const audit = await screen.findByRole("region", {
+      name: "Membership revocation details",
+    });
+    expect(within(audit).getByText("Revoked at —")).toBeVisible();
+    expect(within(audit).getByText("by unknown actor")).toBeVisible();
+  });
+
+  it("keeps a stale undo dialog open when the backend rejects it after revoke", async () => {
+    const usage: MembershipUsage = {
+      id: "ac7d02ac-d36c-4558-b839-9124620dde44",
+      membership_id: membership.id,
+      status: "applied",
+      note: "Open delivery",
+      created_at: "2026-08-04T03:00:00Z",
+      reversed_at: null,
+      lines: [{ product_id: product.id, product_name: product.name, units: 1 }],
+    };
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
+      if (path === `admin/membership-usage/${usage.id}/undo?locale=en` && init?.method === "POST") {
+        throw Object.assign(new Error("usage_undo_conflict"), { status: 409 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [usage], meta });
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Undo product collection" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm product collection undo" });
+    fireEvent.change(within(dialog).getByLabelText("Reason *"), {
+      target: { value: "Stale open dialog" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm undo" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "The request failed. Please try again.",
+    );
+    expect(api).toHaveBeenCalledWith(
+      `admin/membership-usage/${usage.id}/undo?locale=en`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(screen.getByRole("dialog", { name: "Confirm product collection undo" })).toBeVisible();
+  });
+
+  it.each(["active", "scheduled"] as const)("shows revoke for a %s Membership", async (status) => {
+    vi.mocked(api).mockResolvedValue({ ...membership, status });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    expect(await screen.findByRole("button", { name: "Revoke Membership" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Membership revocation details" })).toBeNull();
+  });
+
+  it.each(["ended", "revoked"] as const)("hides revoke for a %s Membership", async (status) => {
+    vi.mocked(api).mockResolvedValue({
+      ...membership,
+      status,
+      ...(status === "revoked"
+        ? {
+            revoked_at: "2026-08-05T02:00:00Z",
+            revoked_by: {
+              id: "10d3127f-34cf-443d-b6b4-eafe7391bd24",
+              name: "Website Admin",
+              email: "admin@example.com",
+            },
+            revoke_reason: "Audit reason",
+          }
+        : {}),
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    await waitFor(() => expect(api).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Revoke Membership" })).toBeNull();
+    if (status === "ended") {
+      expect(screen.queryByRole("region", { name: "Membership revocation details" })).toBeNull();
+    }
+  });
+
+  it("returns focus to the revoke trigger when Escape closes the dialog", async () => {
+    vi.mocked(api).mockResolvedValue(membership);
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    const trigger = await screen.findByRole("button", { name: "Revoke Membership" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByLabelText("Revoke reason")).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "Confirm Membership Revocation" })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("requires a reason, submits revoke once, and reloads the revoked detail", async () => {
+    const revoked = {
+      ...membership,
+      status: "revoked" as const,
+      current_slot: null,
+      revoked_at: "2026-08-05T02:00:00Z",
+      revoked_by: {
+        id: "10d3127f-34cf-443d-b6b4-eafe7391bd24",
+        name: "Website Admin",
+        email: "admin@example.com",
+      },
+      revoke_reason: "Assigned by mistake",
+    };
+    let current = membership;
+    let resolveRevoke!: (value: AdminMembership) => void;
+    const pending = new Promise<AdminMembership>((resolve) => (resolveRevoke = resolve));
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`) return current;
+      if (
+        path === `admin/memberships/${membership.id}/revoke?locale=en` &&
+        init?.method === "POST"
+      ) {
+        current = revoked;
+        return pending;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke Membership" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm Membership Revocation" });
+    const confirm = within(dialog).getByRole("button", { name: "Revoke Membership" });
+    expect(within(dialog).getByLabelText("Revoke reason")).toBeRequired();
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Revoke reason"), {
+      target: { value: "Assigned by mistake" },
+    });
+    expect(confirm).toBeEnabled();
+
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(
+      vi
+        .mocked(api)
+        .mock.calls.filter(
+          ([path]) => path === `admin/memberships/${membership.id}/revoke?locale=en`,
+        ),
+    ).toHaveLength(1);
+    expect(api).toHaveBeenCalledWith(`admin/memberships/${membership.id}/revoke?locale=en`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Assigned by mistake" }),
+    });
+
+    await act(async () => resolveRevoke(revoked));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Revoke Membership" })).toBeNull();
+    expect(screen.getByRole("heading", { name: packageItem.name })).toHaveFocus();
+    expect(
+      vi
+        .mocked(api)
+        .mock.calls.filter(([path]) => path === `admin/memberships/${membership.id}?locale=en`),
+    ).toHaveLength(2);
+  });
+
+  it("keeps the authoritative revoked state when the detail reload fails", async () => {
+    const usage: MembershipUsage = {
+      id: "ac7d02ac-d36c-4558-b839-9124620dde44",
+      membership_id: membership.id,
+      status: "applied",
+      note: "Open delivery",
+      created_at: "2026-08-04T03:00:00Z",
+      reversed_at: null,
+      lines: [{ product_id: product.id, product_name: product.name, units: 1 }],
+    };
+    const revoked: AdminMembership = {
+      ...membership,
+      status: "revoked",
+      current_slot: null,
+      revoked_at: "2026-08-05T02:00:00Z",
+      revoked_by: {
+        id: "10d3127f-34cf-443d-b6b4-eafe7391bd24",
+        name: "Website Admin",
+        email: "admin@example.com",
+      },
+      revoke_reason: "Assigned by mistake",
+      quota: undefined,
+      cycles: undefined,
+    };
+    let detailRequests = 0;
+    let revokeRequests = 0;
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`) {
+        detailRequests += 1;
+        if (detailRequests === 1) return membership;
+        throw Object.assign(new Error("server_error"), { status: 500 });
+      }
+      if (
+        path === `admin/memberships/${membership.id}/revoke?locale=en` &&
+        init?.method === "POST"
+      ) {
+        revokeRequests += 1;
+        return revoked;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [usage], meta });
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke Membership" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm Membership Revocation" });
+    fireEvent.change(within(dialog).getByLabelText("Revoke reason"), {
+      target: { value: "Assigned by mistake" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke Membership" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
+    expect(screen.getByText("Assigned by mistake")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Revoke Membership" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Record received products" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Undo product collection" })).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The backend encountered an error. Check the Django terminal.",
+    );
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(revokeRequests).toBe(1);
+    expect(detailRequests).toBe(2);
+  });
+
+  it("keeps the revoke dialog open and shows an error after a 409", async () => {
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
+      if (
+        path === `admin/memberships/${membership.id}/revoke?locale=en` &&
+        init?.method === "POST"
+      ) {
+        throw Object.assign(new Error("membership_not_revocable"), { status: 409 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke Membership" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm Membership Revocation" });
+    fireEvent.change(within(dialog).getByLabelText("Revoke reason"), {
+      target: { value: "Assigned by mistake" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke Membership" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "The request failed. Please try again.",
+    );
+    expect(screen.getByRole("dialog", { name: "Confirm Membership Revocation" })).toBeVisible();
   });
 });

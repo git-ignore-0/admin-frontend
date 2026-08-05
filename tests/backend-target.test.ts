@@ -39,6 +39,18 @@ describe("backend API target", () => {
       true,
     );
     expect(isAllowedBackendRequest("POST", ["admin", "memberships"])).toBe(true);
+    expect(
+      isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "revoke"]),
+    ).toBe(true);
+    expect(
+      isAllowedBackendRequest("GET", ["admin", "memberships", "membership-id", "revoke"]),
+    ).toBe(false);
+    expect(
+      isAllowedBackendRequest("DELETE", ["admin", "memberships", "membership-id", "revoke"]),
+    ).toBe(false);
+    expect(
+      isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "unknown"]),
+    ).toBe(false);
     expect(isAllowedBackendRequest("GET", ["memberships", "current"])).toBe(false);
   });
 });

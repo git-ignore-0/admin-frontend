@@ -23,7 +23,7 @@ vi.mock("@/lib/session", () => ({
   writeSession: vi.fn(),
 }));
 
-import { GET, POST } from "@/app/api/backend/[...path]/route";
+import { DELETE, GET, POST } from "@/app/api/backend/[...path]/route";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { clearSession, readSession, writeSession } from "@/lib/session";
 
@@ -93,6 +93,58 @@ describe("admin backend proxy", () => {
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "backend_route_not_allowed" });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("only proxies POST for the Membership revoke action", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "revoked" } }));
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "memberships", "membership-id", "revoke"];
+    const mutationHeaders = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+    };
+
+    const allowed = await POST(
+      new NextRequest(
+        "https://admin.example.test/api/backend/admin/memberships/membership-id/revoke",
+        { method: "POST", headers: mutationHeaders, body: JSON.stringify({ reason: "test" }) },
+      ),
+      { params: Promise.resolve({ path }) },
+    );
+    expect(allowed.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      "https://auth.example.test/api/v1/admin/memberships/membership-id/revoke",
+    );
+
+    upstream.mockClear();
+    const blockedGet = await GET(
+      new NextRequest(
+        "https://admin.example.test/api/backend/admin/memberships/membership-id/revoke",
+      ),
+      { params: Promise.resolve({ path }) },
+    );
+    const blockedDelete = await DELETE(
+      new NextRequest(
+        "https://admin.example.test/api/backend/admin/memberships/membership-id/revoke",
+        { method: "DELETE", headers: mutationHeaders },
+      ),
+      { params: Promise.resolve({ path }) },
+    );
+    const blockedAction = await POST(
+      new NextRequest(
+        "https://admin.example.test/api/backend/admin/memberships/membership-id/unknown",
+        { method: "POST", headers: mutationHeaders },
+      ),
+      {
+        params: Promise.resolve({
+          path: ["admin", "memberships", "membership-id", "unknown"],
+        }),
+      },
+    );
+
+    expect([blockedGet.status, blockedDelete.status, blockedAction.status]).toEqual([404, 404, 404]);
     expect(upstream).not.toHaveBeenCalled();
   });
 

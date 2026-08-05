@@ -14,7 +14,7 @@ export type Dashboard = {
 
 export type PaginationMeta = { page: number; page_size: number; total: number };
 
-export type MembershipStatus = "scheduled" | "active" | "ended";
+export type MembershipStatus = "scheduled" | "active" | "ended" | "revoked";
 export type MembershipQuotaPolicy = "expire" | "rollover";
 
 export type MembershipCustomer = {
@@ -23,6 +23,8 @@ export type MembershipCustomer = {
   email: string;
   phone: string;
 };
+
+export type MembershipAuditActor = Pick<MembershipCustomer, "id" | "name" | "email">;
 
 export type MembershipProduct = {
   id: string;
@@ -138,6 +140,10 @@ export type AdminMembership = {
   start_date: string;
   end_date: string;
   activated_at: string;
+  current_slot?: boolean | null;
+  revoked_at?: string | null;
+  revoked_by?: MembershipAuditActor | null;
+  revoke_reason?: string;
   quota?: MembershipQuota[];
   cycles?: MembershipCycle[];
 };

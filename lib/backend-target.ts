@@ -62,7 +62,8 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (resource === "memberships") {
     if (id === undefined) return new Set(["GET", "POST"]).has(normalizedMethod);
     if (action === undefined) return READ.has(normalizedMethod);
-    return action === "history" && normalizedMethod === "GET";
+    if (action === "history") return normalizedMethod === "GET";
+    return action === "revoke" && normalizedMethod === "POST";
   }
 
   if (resource === "membership-usage") {
