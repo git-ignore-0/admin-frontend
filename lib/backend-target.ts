@@ -3,7 +3,8 @@ export function buildBackendTarget(origin: string, path: string[], search: strin
   // DRF router endpoints use a trailing slash. Next.js normalizes the incoming
   // proxy URL before this handler runs, so the original slash cannot be used
   // to infer the upstream URL shape.
-  const trailingSlash = path[0] === "admin" && path[1] === "workshops" ? "/" : "";
+  const trailingSlash =
+    path[0] === "admin" && ["testimonials", "workshops"].includes(path[1]) ? "/" : "";
   const encodedPath = path.map((segment) => encodeURIComponent(segment)).join("/");
 
   target.pathname = `/api/v1/${encodedPath}${trailingSlash}`;
@@ -35,6 +36,13 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     return (
       ["publish", "unpublish", "preview-token"].includes(action) && normalizedMethod === "POST"
     );
+  }
+
+  if (resource === "testimonials") {
+    if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
+    if (id === "media" && action === undefined) return normalizedMethod === "POST";
+    if (action === undefined) return new Set(["GET", "PATCH"]).has(normalizedMethod);
+    return ["publish", "hide", "unpublish"].includes(action) && normalizedMethod === "POST";
   }
 
   if (resource === "users") {

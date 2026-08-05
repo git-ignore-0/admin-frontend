@@ -27,6 +27,12 @@ export default function DashboardPage() {
     "workshop.archive": t.dashboard.actions.workshopArchive,
     "workshop.delete_draft": t.dashboard.actions.workshopDeleteDraft,
     "media.upload": t.dashboard.actions.mediaUpload,
+    "testimonial.create": t.dashboard.actions.testimonialCreate,
+    "testimonial.update": t.dashboard.actions.testimonialUpdate,
+    "testimonial.publish": t.dashboard.actions.testimonialPublish,
+    "testimonial.hide": t.dashboard.actions.testimonialHide,
+    "testimonial.unpublish": t.dashboard.actions.testimonialUnpublish,
+    "testimonial.media.upload": t.dashboard.actions.testimonialMediaUpload,
   };
   return (
     <>

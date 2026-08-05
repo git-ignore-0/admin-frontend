@@ -14,7 +14,7 @@ type NavigationGroup = "pointsRewards" | "csa" | "website";
 const groupRoutes: Record<NavigationGroup, readonly string[]> = {
   pointsRewards: ["/points", "/rewards", "/redemptions"],
   csa: ["/membership-catalog", "/memberships"],
-  website: ["/settings", "/workshops"],
+  website: ["/settings", "/workshops", "/testimonials"],
 };
 
 function isActiveRoute(pathname: string, href: string) {
@@ -58,6 +58,7 @@ export function AdminShell({ user, children }: Props) {
       links: [
         ["/settings", t.common.settings],
         ["/workshops", t.common.workshops],
+        ["/testimonials", t.common.testimonials],
       ],
     },
   ] as const satisfies readonly {

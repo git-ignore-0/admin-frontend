@@ -222,6 +222,36 @@ export type Reward = {
   updated_at: string;
 };
 
+export type TestimonialType = "customer" | "farmer";
+export type TestimonialStatus = "draft" | "published" | "hidden";
+
+export type TestimonialTranslation = {
+  locale: Locale;
+  role: string;
+  location: string;
+  quote: string;
+  full_story: string;
+  is_complete: boolean;
+};
+
+export type Testimonial = {
+  id: string;
+  version: number;
+  type: TestimonialType;
+  status: TestimonialStatus;
+  display_name: string;
+  image: MediaAsset | null;
+  featured: boolean;
+  sort_order: number;
+  published_at: string | null;
+  consent_confirmed: boolean;
+  translations: TestimonialTranslation[];
+  created_by: { id: string; name: string; email: string } | null;
+  updated_by: { id: string; name: string; email: string } | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RedemptionStatus = "pending" | "contacted" | "completed" | "rejected";
 
 export type RedemptionTransaction = {

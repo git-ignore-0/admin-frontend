@@ -23,7 +23,7 @@ vi.mock("@/lib/session", () => ({
   writeSession: vi.fn(),
 }));
 
-import { DELETE, GET, POST } from "@/app/api/backend/[...path]/route";
+import { DELETE, GET, PATCH, POST } from "@/app/api/backend/[...path]/route";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { clearSession, readSession, writeSession } from "@/lib/session";
 
@@ -164,6 +164,40 @@ describe("admin backend proxy", () => {
     expect(response.status).toBe(504);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({ error: "upstream_timeout" });
+  });
+
+  it("forwards exact Testimonial routes and blocks hard delete", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: "testimonial-id" } }));
+    vi.stubGlobal("fetch", upstream);
+    const mutationHeaders = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+    };
+    const detailPath = ["admin", "testimonials", "testimonial-id"];
+
+    const patched = await PATCH(
+      new NextRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
+        method: "PATCH",
+        headers: mutationHeaders,
+        body: JSON.stringify({ featured: true }),
+      }),
+      { params: Promise.resolve({ path: detailPath }) },
+    );
+    expect(patched.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      "https://auth.example.test/api/v1/admin/testimonials/testimonial-id/",
+    );
+
+    upstream.mockClear();
+    const removed = await DELETE(
+      new NextRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
+        method: "DELETE",
+        headers: mutationHeaders,
+      }),
+      { params: Promise.resolve({ path: detailPath }) },
+    );
+    expect(removed.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("keeps the encrypted session when token refresh has a transient outage", async () => {

@@ -80,6 +80,7 @@ describe("admin sidebar navigation", () => {
     ["/memberships/assign", "CSA", "CSA memberships"],
     ["/rewards", "Points & rewards", "Rewards"],
     ["/settings", "Website", "Website information"],
+    ["/testimonials/testimonial-id/edit", "Website", "Testimonials"],
   ])("opens the owning group for %s and highlights its item", (pathname, groupName, linkName) => {
     renderShell(pathname);
 

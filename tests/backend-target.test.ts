@@ -19,6 +19,19 @@ describe("backend API target", () => {
     );
   });
 
+  it("adds DRF trailing slashes to all Testimonial router routes", () => {
+    expect(buildBackendTarget(origin, ["admin", "testimonials"], "").toString()).toBe(
+      "http://127.0.0.1:8000/api/v1/admin/testimonials/",
+    );
+    expect(
+      buildBackendTarget(
+        origin,
+        ["admin", "testimonials", "testimonial-id", "publish"],
+        "",
+      ).toString(),
+    ).toBe("http://127.0.0.1:8000/api/v1/admin/testimonials/testimonial-id/publish/");
+  });
+
   it("does not add a slash to endpoints that intentionally omit it", () => {
     const target = buildBackendTarget(origin, ["admin", "media"], "?locale=vi");
 
@@ -52,5 +65,34 @@ describe("backend API target", () => {
       isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "unknown"]),
     ).toBe(false);
     expect(isAllowedBackendRequest("GET", ["memberships", "current"])).toBe(false);
+  });
+
+  it("allowlists only the required Testimonial methods and exact actions", () => {
+    expect(isAllowedBackendRequest("GET", ["admin", "testimonials"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials"])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "testimonials"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", "item-id"])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "testimonials", "item-id"])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "testimonials", "item-id"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "media"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", "media"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "publish"])).toBe(
+      true,
+    );
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "hide"])).toBe(
+      true,
+    );
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "unpublish"])).toBe(
+      true,
+    );
+    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", "item-id", "publish"])).toBe(
+      false,
+    );
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "delete"])).toBe(
+      false,
+    );
+    expect(
+      isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "publish", "extra"]),
+    ).toBe(false);
   });
 });
