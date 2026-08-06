@@ -113,7 +113,6 @@ const vi = {
     linkLabels: {
       facebook: "Facebook",
       youtube: "YouTube",
-      store: "Cửa hàng",
       forum: "Diễn đàn",
       other: "Liên kết khác",
     },
@@ -825,7 +824,6 @@ const en: AdminDictionary = {
     linkLabels: {
       facebook: "Facebook",
       youtube: "YouTube",
-      store: "Store",
       forum: "Forum",
       other: "Other link",
     },

@@ -8,7 +8,11 @@ import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { ExternalLink, SiteSettings } from "@/lib/types";
 
-const kinds: ExternalLink["kind"][] = ["facebook", "youtube", "store", "forum"];
+// Store is now an internal public page with its own fixed Farmbrite destinations.
+// It must not be configurable through site settings.
+const editableLinkKinds = ["facebook", "youtube", "forum"] as const;
+type EditableLinkKind = (typeof editableLinkKinds)[number];
+type ConfigurableLinkKind = Exclude<ExternalLink["kind"], "store">;
 
 export function SiteSettingsForm() {
   const { t } = useAdminI18n();
@@ -17,21 +21,21 @@ export function SiteSettingsForm() {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const kindLabels: Record<ExternalLink["kind"], string> = t.settings.linkLabels;
+  const kindLabels: Record<ConfigurableLinkKind, string> = t.settings.linkLabels;
   useEffect(() => {
     api<SiteSettings>("admin/site-settings")
       .then(setData)
       .catch((caught) => setLoadError(requestErrorMessage(caught, t)));
   }, [t]);
   if (!data) return <div className="panel">{loadError || t.settings.loading}</div>;
-  function updateLink(kind: ExternalLink["kind"], patch: Partial<ExternalLink>) {
+  function updateLink(kind: EditableLinkKind, patch: Partial<ExternalLink>) {
     setData((current) => {
       if (!current) return current;
       const existing = current.links.find((item) => item.kind === kind) ?? {
         kind,
         label: kindLabels[kind],
         url: "",
-        position: kinds.indexOf(kind),
+        position: editableLinkKinds.indexOf(kind),
         is_enabled: false,
       };
       return {
@@ -46,7 +50,10 @@ export function SiteSettingsForm() {
     const currentData = data;
     if (!currentData) return;
 
-    const invalidLink = currentData.links.find((link) => {
+    const submittedLinks = currentData.links.filter(
+      (link): link is ExternalLink & { kind: ConfigurableLinkKind } => link.kind !== "store",
+    );
+    const invalidLink = submittedLinks.find((link) => {
       if (!link.url) return link.is_enabled;
       try {
         const parsed = new URL(link.url);
@@ -63,7 +70,7 @@ export function SiteSettingsForm() {
     savingRef.current = true;
     setSaving(true);
     try {
-      const links = currentData.links
+      const links = submittedLinks
         .map((link) => ({
           kind: link.kind,
           label: link.label,
@@ -146,19 +153,20 @@ export function SiteSettingsForm() {
           <h2>{t.settings.links}</h2>
         </div>
         <div className="form-grid one">
-          {kinds.map((kind) => {
+          {editableLinkKinds.map((kind) => {
             const link = data.links.find((item) => item.kind === kind) ?? {
               kind,
               label: kindLabels[kind],
               url: "",
-              position: kinds.indexOf(kind),
+              position: editableLinkKinds.indexOf(kind),
               is_enabled: false,
             };
             return (
               <div className="link-row" key={kind}>
                 <div className="field">
-                  <label>{kindLabels[kind]}</label>
+                  <label htmlFor={`link-${kind}`}>{kindLabels[kind]}</label>
                   <input
+                    id={`link-${kind}`}
                     className="input"
                     type="url"
                     placeholder="https://"
