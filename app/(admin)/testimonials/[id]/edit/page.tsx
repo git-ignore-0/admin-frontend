@@ -16,7 +16,6 @@ export default async function EditTestimonialPage({ params }: { params: Promise<
       <DetailPageHeading
         backHref={`/testimonials/${id}`}
         backLabel={t.testimonials.detailTitle}
-        description={t.testimonials.editDescription}
         title={t.testimonials.editTitle}
       />
       <TestimonialEditor testimonialId={id} />

@@ -8,6 +8,7 @@ import { TestimonialEditor } from "@/components/testimonial-editor";
 import { TestimonialList } from "@/components/testimonial-list";
 import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { adminDictionaries } from "@/lib/admin-i18n";
 import type { PaginationMeta, Testimonial, TestimonialStatus } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
@@ -202,11 +203,30 @@ function fillCompleteEditor() {
   ["Câu chuyện VI", "English story"].forEach((value, index) =>
     fireEvent.change(stories[index], { target: { value } }),
   );
-  fireEvent.click(screen.getByLabelText(/Ưu tiên testimonial/));
-  fireEvent.click(screen.getByLabelText(/Đã xác nhận đồng ý/));
+  fireEvent.click(screen.getByLabelText("Đánh dấu là câu chuyện nổi bật"));
+  fireEvent.click(screen.getByLabelText("Đã có sự đồng ý sử dụng"));
 }
 
 describe("testimonial editor", () => {
+  it("uses concise consent labels without the removed editor explanations", () => {
+    expect(adminDictionaries.vi.testimonials.consent).toBe("Đã có sự đồng ý sử dụng");
+    expect(adminDictionaries.en.testimonials.consent).toBe("Consent confirmed");
+    expect(adminDictionaries.vi.testimonials.featuredHelp).toBe("Đánh dấu là câu chuyện nổi bật");
+    expect(adminDictionaries.en.testimonials.featuredHelp).toBe("Mark as a featured story");
+    expect(adminDictionaries.vi.testimonials).not.toHaveProperty("editDescription");
+    expect(adminDictionaries.vi.testimonials).not.toHaveProperty("basicsHelp");
+    expect(adminDictionaries.en.testimonials).not.toHaveProperty("editDescription");
+    expect(adminDictionaries.en.testimonials).not.toHaveProperty("basicsHelp");
+
+    render(
+      <Providers>
+        <TestimonialEditor />
+      </Providers>,
+    );
+
+    expect(screen.getByLabelText("Đã có sự đồng ý sử dụng")).toBeInTheDocument();
+  });
+
   it("saves an incomplete bilingual draft without attempting to publish", async () => {
     vi.mocked(api).mockResolvedValue(sampleTestimonial({ consent_confirmed: false }));
     render(

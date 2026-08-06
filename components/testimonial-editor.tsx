@@ -388,10 +388,7 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
         )}
         <section className="panel testimonial-basics" aria-labelledby="testimonial-basics-title">
           <div className="panel-head">
-            <div>
-              <h2 id="testimonial-basics-title">{t.testimonials.basics}</h2>
-              <p className="muted-copy">{t.testimonials.basicsHelp}</p>
-            </div>
+            <h2 id="testimonial-basics-title">{t.testimonials.basics}</h2>
           </div>
           <div className="testimonial-image-field">
             <div className="testimonial-image-preview">
