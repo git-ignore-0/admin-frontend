@@ -1,4 +1,13 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -250,6 +259,25 @@ describe("testimonial editor", () => {
     expect(vi.mocked(api).mock.calls.some(([path]) => String(path).endsWith("/publish"))).toBe(
       false,
     );
+  });
+
+  it("prevents Enter in an input from implicitly saving", () => {
+    vi.mocked(api).mockResolvedValue(sampleTestimonial());
+    render(
+      <Providers>
+        <TestimonialEditor />
+      </Providers>,
+    );
+
+    const displayName = screen.getByLabelText("Tên hiển thị *");
+    fireEvent.change(displayName, {
+      target: { value: "Chưa muốn lưu" },
+    });
+    const enter = createEvent.keyDown(displayName, { key: "Enter" });
+    fireEvent(displayName, enter);
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("creates a bilingual draft with only backend contract fields", async () => {

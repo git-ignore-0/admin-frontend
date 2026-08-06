@@ -10,6 +10,7 @@ import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
+import { isSupportedImageFile } from "@/lib/image-validation";
 import {
   numericInputErrorMessage,
   parsePositiveInteger,
@@ -104,7 +105,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    if (!isSupportedImageFile(file)) {
       setError(t.rewards.imageTypeError);
       return;
     }

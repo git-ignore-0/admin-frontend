@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
@@ -11,6 +11,7 @@ import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
+import { isSupportedImageFile } from "@/lib/image-validation";
 import type {
   Locale,
   MediaAsset,
@@ -163,11 +164,21 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
     }));
   }
 
+  function preventImplicitSubmit(event: KeyboardEvent<HTMLFormElement>) {
+    if (event.key !== "Enter") return;
+    if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLButtonElement) {
+      return;
+    }
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
+      event.preventDefault();
+    }
+  }
+
   function selectImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    if (!isSupportedImageFile(file)) {
       setError(t.testimonials.imageTypeError);
       return;
     }
@@ -352,7 +363,12 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
 
   return (
     <>
-      <form className="testimonial-editor" noValidate onSubmit={saveDraft}>
+      <form
+        className="testimonial-editor"
+        noValidate
+        onKeyDown={preventImplicitSubmit}
+        onSubmit={saveDraft}
+      >
         {error && (
           <div className="error-box retry-error" role="alert">
             <span>{error}</span>
