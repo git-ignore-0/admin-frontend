@@ -292,7 +292,7 @@ export type PointHistoryMeta = PaginationMeta & { balance: number };
 
 export type ExternalLink = {
   id?: number;
-  kind: "facebook" | "youtube" | "store" | "forum" | "other";
+  kind: "facebook" | "youtube" | "store" | "forum" | "farms" | "other";
   label: string;
   url: string;
   position: number;

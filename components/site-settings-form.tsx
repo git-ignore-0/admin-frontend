@@ -10,7 +10,7 @@ import type { ExternalLink, SiteSettings } from "@/lib/types";
 
 // Store is now an internal public page with its own fixed Farmbrite destinations.
 // It must not be configurable through site settings.
-const editableLinkKinds = ["facebook", "youtube", "forum"] as const;
+const editableLinkKinds = ["facebook", "youtube", "forum", "farms"] as const;
 type EditableLinkKind = (typeof editableLinkKinds)[number];
 type ConfigurableLinkKind = Exclude<ExternalLink["kind"], "store">;
 
