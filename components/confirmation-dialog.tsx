@@ -11,6 +11,8 @@ type Props = {
   busy: boolean;
   danger?: boolean;
   confirmDisabled?: boolean;
+  alternateLabel?: string;
+  onAlternate?: () => void;
   error?: string;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
@@ -30,6 +32,8 @@ export function ConfirmationDialog({
   busy,
   danger = false,
   confirmDisabled = false,
+  alternateLabel,
+  onAlternate,
   error,
   fallbackFocusRef,
   returnFocusRef,
@@ -107,6 +111,16 @@ export function ConfirmationDialog({
           <button className="button secondary" disabled={busy} onClick={onCancel} type="button">
             {cancelLabel}
           </button>
+          {alternateLabel && onAlternate ? (
+            <button
+              className="button secondary"
+              disabled={busy}
+              onClick={onAlternate}
+              type="button"
+            >
+              {alternateLabel}
+            </button>
+          ) : null}
           <button
             className={`button ${danger ? "danger" : ""}`}
             disabled={busy || confirmDisabled}

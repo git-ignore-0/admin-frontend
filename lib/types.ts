@@ -315,6 +315,9 @@ export type TrackerFarm = {
   name_vi: string;
   location_en: string;
   location_vi: string;
+  description_en: string;
+  description_vi: string;
+  image: MediaAsset | null;
   signup_count: number;
   is_visible: boolean;
   sort_order: number;

@@ -32,6 +32,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
 
   if (resource === "tracker-farms") {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
+    if (id === "media" && action === undefined) return normalizedMethod === "POST";
     if (id === "reorder" && action === undefined) return normalizedMethod === "PATCH";
     return action === undefined && new Set(["PATCH", "DELETE"]).has(normalizedMethod);
   }

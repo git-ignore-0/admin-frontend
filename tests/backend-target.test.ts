@@ -103,6 +103,8 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", "farm-id"])).toBe(true);
     expect(isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", "farm-id"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "farm-id"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms", "media"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "media"])).toBe(false);
     expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", "reorder"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms", "reorder"])).toBe(false);
     expect(buildBackendTarget(origin, ["admin", "tracker-farms", "reorder"], "").toString()).toBe(

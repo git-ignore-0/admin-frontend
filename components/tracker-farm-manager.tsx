@@ -1,8 +1,11 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  ClipboardEvent,
   DragEvent,
+  MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -17,75 +20,50 @@ import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import { mediaUrlForWidth } from "@/lib/media";
 import type { AdminDictionary } from "@/lib/admin-i18n";
 import type { TrackerFarm } from "@/lib/types";
 
-type FarmDraft = {
-  id?: string;
-  version?: number;
-  name_en: string;
-  name_vi: string;
-  location_en: string;
-  location_vi: string;
-  signup_count: string;
-  is_visible: boolean;
-};
-
-type FarmField = "name_en" | "name_vi" | "location_en" | "location_vi" | "signup_count";
-type FarmErrors = Partial<Record<FarmField, string>>;
-
-const emptyDraft: FarmDraft = {
-  name_en: "",
-  name_vi: "",
-  location_en: "",
-  location_vi: "",
-  signup_count: "0",
-  is_visible: true,
-};
-
-export function trackerMilestone(signupCount: number) {
-  if (signupCount >= 30) return "communityLeader" as const;
-  if (signupCount >= 20) return "providingForFamily" as const;
-  if (signupCount >= 10) return "gettingStarted" as const;
+export function trackerMilestone(count: number) {
+  if (count >= 30) return "communityLeader" as const;
+  if (count >= 20) return "providingForFamily" as const;
+  if (count >= 10) return "gettingStarted" as const;
   return "seedPlanted" as const;
 }
 
-function milestoneLabel(signupCount: number, t: AdminDictionary) {
-  return t.trackerFarms[trackerMilestone(signupCount)];
+function milestoneLabel(count: number, t: AdminDictionary) {
+  return t.trackerFarms[trackerMilestone(count)];
 }
 
-function draftForFarm(farm: TrackerFarm): FarmDraft {
-  return {
-    id: farm.id,
-    version: farm.version,
-    name_en: farm.name_en,
-    name_vi: farm.name_vi,
-    location_en: farm.location_en,
-    location_vi: farm.location_vi,
-    signup_count: String(farm.signup_count),
-    is_visible: farm.is_visible,
-  };
+function milestoneTreeIcon(count: number) {
+  if (count >= 30) return "🌳 🌱";
+  if (count >= 20) return "🌳";
+  if (count >= 10) return "🌱";
+  return "🌰";
 }
 
-function validateDraft(draft: FarmDraft, t: AdminDictionary) {
-  const errors: FarmErrors = {};
-  for (const field of ["name_en", "name_vi", "location_en", "location_vi"] as const) {
-    if (!draft[field].trim()) errors[field] = t.trackerFarms.required;
+function FarmThumbnail({ farm, name }: { farm: TrackerFarm; name: string }) {
+  if (farm.image) {
+    return (
+      <Image
+        alt={name}
+        className="reward-thumbnail"
+        height={56}
+        src={mediaUrlForWidth(farm.image, 144)}
+        unoptimized
+        width={72}
+      />
+    );
   }
-  const signupCountError = getSignupCountError(draft.signup_count, t);
-  if (signupCountError) errors.signup_count = signupCountError;
-  return errors;
-}
 
-function getSignupCountError(value: string, t: AdminDictionary) {
-  if (!value) return t.trackerFarms.required;
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
-    return t.trackerFarms.signupInvalid;
-  }
-  return null;
+  return (
+    <span aria-label={name} className="reward-thumbnail tracker-farm-thumbnail-fallback" role="img">
+      {milestoneTreeIcon(farm.signup_count)}
+    </span>
+  );
 }
-
 function sameOrder(current: TrackerFarm[], saved: TrackerFarm[]) {
+  if (!Array.isArray(current) || !Array.isArray(saved)) return false;
   return (
     current.length === saved.length &&
     current.every(
@@ -95,28 +73,24 @@ function sameOrder(current: TrackerFarm[], saved: TrackerFarm[]) {
 }
 
 export function TrackerFarmManager() {
-  const { t } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
+  const router = useRouter();
   const toast = useToast();
   const [farms, setFarms] = useState<TrackerFarm[] | null>(null);
   const [savedFarms, setSavedFarms] = useState<TrackerFarm[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [draft, setDraft] = useState<FarmDraft | null>(null);
-  const [formErrors, setFormErrors] = useState<FarmErrors>({});
-  const [formError, setFormError] = useState("");
-  const [savingFarm, setSavingFarm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TrackerFarm | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [draggedId, setDraggedId] = useState("");
   const [reorderError, setReorderError] = useState("");
   const [savingOrder, setSavingOrder] = useState(false);
-  const savingFarmRef = useRef(false);
+  const [pendingNavigation, setPendingNavigation] = useState("");
   const deletingRef = useRef(false);
   const savingOrderRef = useRef(false);
   const dictionaryRef = useRef(t);
   dictionaryRef.current = t;
-
   const loadFarms = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     setLoadError("");
@@ -132,132 +106,93 @@ export function TrackerFarmManager() {
       if (showLoading) setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     void loadFarms();
   }, [loadFarms]);
-
   const orderDirty = useMemo(
     () => Boolean(farms && !sameOrder(farms, savedFarms)),
     [farms, savedFarms],
   );
-  const orderLocked = savingOrder || savingFarm || deleting;
+  const orderLocked = savingOrder || deleting;
   const mutationLocked = orderDirty || orderLocked;
-
-  function openCreate() {
-    if (mutationLocked) return;
-    setFormErrors({});
-    setFormError("");
-    setDraft({ ...emptyDraft });
+  function moveFarm(sourceId: string, targetIndex: number) {
+    if (orderLocked) return;
+    setFarms((current) => {
+      if (!current) return current;
+      const sourceIndex = current.findIndex((farm) => farm.id === sourceId);
+      if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= current.length) return current;
+      const reordered = [...current];
+      const [moved] = reordered.splice(sourceIndex, 1);
+      reordered.splice(targetIndex, 0, moved);
+      return reordered.map((farm, index) => ({ ...farm, sort_order: index }));
+    });
+    setReorderError("");
   }
-
-  function openEdit(farm: TrackerFarm) {
-    if (mutationLocked) return;
-    setFormErrors({});
-    setFormError("");
-    setDraft(draftForFarm(farm));
-  }
-
-  function updateDraft(field: keyof FarmDraft, value: string | boolean) {
-    setDraft((current) => (current ? { ...current, [field]: value } : current));
-    if (field in formErrors) {
-      setFormErrors((current) => ({ ...current, [field]: undefined }));
-    }
-    setFormError("");
-  }
-
-  function updateSignupCount(value: string) {
-    const error = getSignupCountError(value, t);
-    if (error && value) {
-      setFormErrors((current) => ({ ...current, signup_count: error }));
-      setFormError("");
+  function startDragging(event: DragEvent<HTMLButtonElement>, farmId: string) {
+    if (orderLocked) {
+      event.preventDefault();
       return;
     }
-    updateDraft("signup_count", value);
-    if (error) setFormErrors((current) => ({ ...current, signup_count: error }));
+    setDraggedId(farmId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", farmId);
   }
-
-  function rejectInvalidSignupPaste(event: ClipboardEvent<HTMLInputElement>) {
-    if (/^\d+$/.test(event.clipboardData.getData("text"))) return;
-    event.preventDefault();
-    setFormErrors((current) => ({ ...current, signup_count: t.trackerFarms.signupInvalid }));
-    setFormError("");
-  }
-
-  async function saveFarm() {
-    if (!draft || savingFarmRef.current) return;
-    const errors = {
-      ...validateDraft(draft, t),
-      ...(formErrors.signup_count ? { signup_count: formErrors.signup_count } : {}),
-    };
-    setFormErrors(errors);
-    if (Object.keys(errors).length > 0) return;
-
-    const payload = {
-      name_en: draft.name_en.trim(),
-      name_vi: draft.name_vi.trim(),
-      location_en: draft.location_en.trim(),
-      location_vi: draft.location_vi.trim(),
-      signup_count: Number(draft.signup_count),
-      is_visible: draft.is_visible,
-    };
-    savingFarmRef.current = true;
-    setSavingFarm(true);
-    setFormError("");
+  async function saveOrderChanges() {
+    if (!farms || !orderDirty || savingOrderRef.current) return false;
+    savingOrderRef.current = true;
+    setSavingOrder(true);
+    setReorderError("");
     try {
-      if (draft.id) {
-        const updated = await api<TrackerFarm>(`admin/tracker-farms/${draft.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ ...payload, version: draft.version }),
-        });
-        setFarms(
-          (current) => current?.map((farm) => (farm.id === updated.id ? updated : farm)) ?? [],
-        );
-        setSavedFarms((current) =>
-          current.map((farm) => (farm.id === updated.id ? updated : farm)),
-        );
-        setDraft(null);
-        toast(t.trackerFarms.updated);
-      } else {
-        await api<TrackerFarm>("admin/tracker-farms", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        setDraft(null);
-        toast(t.trackerFarms.created);
-        await loadFarms(false);
-      }
+      const saved = await api<TrackerFarm[]>("admin/tracker-farms/reorder", {
+        method: "PATCH",
+        body: JSON.stringify({
+          items: farms.map((farm, index) => ({
+            id: farm.id,
+            sort_order: index,
+            version: farm.version,
+          })),
+        }),
+      });
+      setFarms(saved);
+      setSavedFarms(saved);
+      toast(t.trackerFarms.orderSaved);
+      return true;
     } catch (caught) {
       const status = caught instanceof Error ? (caught as Error & { status?: number }).status : 0;
-      if (status === 409 && draft.id) {
-        setFormError(t.trackerFarms.conflict);
+      if (status === 409) {
+        if (await loadFarms(false)) setReorderError(t.trackerFarms.conflict);
         toast(t.trackerFarms.conflict, "error");
-        const latest = await loadFarms(false);
-        const refreshed = latest?.find((farm) => farm.id === draft.id);
-        if (refreshed) setDraft(draftForFarm(refreshed));
-      } else {
-        setFormError(
-          requestErrorMessage(caught, t, {
-            name_en: t.trackerFarms.nameEn,
-            name_vi: t.trackerFarms.nameVi,
-            location_en: t.trackerFarms.locationEn,
-            location_vi: t.trackerFarms.locationVi,
-            signup_count: t.trackerFarms.totalSignups,
-          }),
-        );
-      }
+      } else setReorderError(requestErrorMessage(caught, t));
+      return false;
     } finally {
-      savingFarmRef.current = false;
-      setSavingFarm(false);
+      savingOrderRef.current = false;
+      setSavingOrder(false);
+      setDraggedId("");
     }
   }
-
-  function requestDelete(farm: TrackerFarm) {
-    if (mutationLocked) return;
-    setDeleteError("");
-    setDeleteTarget(farm);
+  function guardNavigation(event: ReactMouseEvent<HTMLAnchorElement>, href: string) {
+    if (!mutationLocked) return;
+    event.preventDefault();
+    if (orderDirty && !orderLocked) {
+      setReorderError("");
+      setPendingNavigation(href);
+    }
   }
-
+  async function saveOrderAndNavigate() {
+    const href = pendingNavigation;
+    if (!href || !(await saveOrderChanges())) return;
+    setPendingNavigation("");
+    router.push(href);
+  }
+  function discardOrderAndNavigate() {
+    const href = pendingNavigation;
+    if (!href) return;
+    setFarms(savedFarms);
+    setDraggedId("");
+    setReorderError("");
+    setPendingNavigation("");
+    router.push(href);
+  }
   async function confirmDelete() {
     if (!deleteTarget || deletingRef.current) return;
     deletingRef.current = true;
@@ -276,83 +211,18 @@ export function TrackerFarmManager() {
       setDeleting(false);
     }
   }
-
-  function moveFarm(sourceId: string, targetIndex: number) {
-    if (orderLocked) return;
-    setFarms((current) => {
-      if (!current) return current;
-      const sourceIndex = current.findIndex((farm) => farm.id === sourceId);
-      if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= current.length) return current;
-      const reordered = [...current];
-      const [moved] = reordered.splice(sourceIndex, 1);
-      reordered.splice(targetIndex, 0, moved);
-      return reordered.map((farm, index) => ({ ...farm, sort_order: index }));
-    });
-    setReorderError("");
-  }
-
-  function startDragging(event: DragEvent<HTMLButtonElement>, farmId: string) {
-    if (orderLocked) {
-      event.preventDefault();
-      return;
-    }
-    setDraggedId(farmId);
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", farmId);
-  }
-
-  function cancelOrder() {
-    if (savingOrder) return;
-    setFarms(savedFarms);
-    setDraggedId("");
-    setReorderError("");
-  }
-
-  async function saveOrderChanges() {
-    if (!farms || !orderDirty || savingOrderRef.current) return;
-    savingOrderRef.current = true;
-    setSavingOrder(true);
-    setReorderError("");
-    try {
-      const saved = await api<TrackerFarm[]>("admin/tracker-farms/reorder", {
-        method: "PATCH",
-        body: JSON.stringify({
-          items: farms.map((farm, index) => ({
-            id: farm.id,
-            sort_order: index,
-            version: farm.version,
-          })),
-        }),
-      });
-      setFarms(saved);
-      setSavedFarms(saved);
-      toast(t.trackerFarms.orderSaved);
-    } catch (caught) {
-      const status = caught instanceof Error ? (caught as Error & { status?: number }).status : 0;
-      if (status === 409) {
-        const latest = await loadFarms(false);
-        if (latest) setReorderError(t.trackerFarms.conflict);
-        toast(t.trackerFarms.conflict, "error");
-      } else {
-        setReorderError(requestErrorMessage(caught, t));
-      }
-    } finally {
-      savingOrderRef.current = false;
-      setSavingOrder(false);
-      setDraggedId("");
-    }
-  }
-
-  const parsedSignupCount =
-    draft && /^\d+$/.test(draft.signup_count) ? Number(draft.signup_count) : null;
-
   return (
     <>
       <PageHeading
         action={
-          <button className="button" disabled={mutationLocked} onClick={openCreate} type="button">
+          <Link
+            aria-haspopup={orderDirty ? "dialog" : undefined}
+            className="button"
+            href="/tracker-farms/new"
+            onClick={(event) => guardNavigation(event, "/tracker-farms/new")}
+          >
             {t.trackerFarms.create}
-          </button>
+          </Link>
         }
         description={t.page.trackerFarmsDescription}
         title={t.common.trackerFarms}
@@ -380,7 +250,11 @@ export function TrackerFarmManager() {
                   <button
                     className="button secondary"
                     disabled={savingOrder}
-                    onClick={cancelOrder}
+                    onClick={() => {
+                      setFarms(savedFarms);
+                      setDraggedId("");
+                      setReorderError("");
+                    }}
                     type="button"
                   >
                     {t.trackerFarms.cancelOrder}
@@ -403,205 +277,141 @@ export function TrackerFarmManager() {
             )}
             <div className="table-wrap admin-list-wrap">
               <table className="table admin-list-table tracker-farm-table">
+                <colgroup>
+                  <col className="tracker-farm-order-column" />
+                  <col className="tracker-farm-image-column" />
+                  <col className="tracker-farm-details-column" />
+                  <col className="tracker-farm-details-column" />
+                  <col className="tracker-farm-signups-column" />
+                  <col className="tracker-farm-milestone-column" />
+                  <col className="tracker-farm-visibility-column" />
+                  <col className="tracker-farm-actions-column" />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th aria-label={t.trackerFarms.order} />
-                    <th>{t.trackerFarms.nameEn}</th>
-                    <th>{t.trackerFarms.locationEn}</th>
-                    <th>{t.trackerFarms.signups}</th>
-                    <th>{t.trackerFarms.milestone}</th>
-                    <th>{t.trackerFarms.visibility}</th>
-                    <th>{t.trackerFarms.actions}</th>
+                    <th aria-label={t.trackerFarms.order} scope="col" />
+                    <th aria-label={t.trackerFarms.image} scope="col" />
+                    <th scope="col">{t.trackerFarms.farmName}</th>
+                    <th scope="col">{t.trackerFarms.location}</th>
+                    <th scope="col">{t.trackerFarms.signups}</th>
+                    <th scope="col">{t.trackerFarms.milestone}</th>
+                    <th scope="col">{t.trackerFarms.visibility}</th>
+                    <th scope="col">{t.trackerFarms.actions}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {farms.map((farm, index) => (
-                    <tr
-                      className={draggedId === farm.id ? "is-dragging" : undefined}
-                      key={farm.id}
-                      onDragOver={(event) => {
-                        if (!orderLocked && draggedId && draggedId !== farm.id) {
+                  {farms.map((farm, index) => {
+                    const name = locale === "vi" ? farm.name_vi : farm.name_en;
+                    const location = locale === "vi" ? farm.location_vi : farm.location_en;
+
+                    return (
+                      <tr
+                        className={draggedId === farm.id ? "is-dragging" : undefined}
+                        key={farm.id}
+                        onDragOver={(event) => {
+                          if (!orderLocked && draggedId && draggedId !== farm.id) {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                          }
+                        }}
+                        onDrop={(event) => {
                           event.preventDefault();
-                          event.dataTransfer.dropEffect = "move";
-                        }
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        const sourceId = draggedId || event.dataTransfer.getData("text/plain");
-                        moveFarm(sourceId, index);
-                        setDraggedId("");
-                      }}
-                    >
-                      <td data-label={t.trackerFarms.order}>
-                        <div className="tracker-order-controls">
-                          <button
-                            aria-label={t.trackerFarms.drag.replace("{name}", farm.name_en)}
-                            className="tracker-drag-handle"
-                            disabled={orderLocked}
-                            draggable={!orderLocked}
-                            onDragEnd={() => setDraggedId("")}
-                            onDragStart={(event) => startDragging(event, farm.id)}
-                            type="button"
-                          >
-                            <span aria-hidden="true">⠿</span>
-                          </button>
-                          <div className="tracker-order-buttons">
+                          moveFarm(draggedId || event.dataTransfer.getData("text/plain"), index);
+                          setDraggedId("");
+                        }}
+                      >
+                        <td data-label={t.trackerFarms.order}>
+                          <div className="tracker-order-controls">
                             <button
-                              aria-label={t.trackerFarms.moveUp.replace("{name}", farm.name_en)}
-                              disabled={orderLocked || index === 0}
-                              onClick={() => moveFarm(farm.id, index - 1)}
+                              aria-label={t.trackerFarms.drag.replace("{name}", name)}
+                              className="tracker-drag-handle"
+                              disabled={orderLocked}
+                              draggable={!orderLocked}
+                              onDragEnd={() => setDraggedId("")}
+                              onDragStart={(event) => startDragging(event, farm.id)}
                               type="button"
                             >
-                              <span aria-hidden="true">↑</span>
+                              <span aria-hidden="true">⠿</span>
                             </button>
+                            <div className="tracker-order-buttons">
+                              <button
+                                aria-label={t.trackerFarms.moveUp.replace("{name}", name)}
+                                disabled={orderLocked || index === 0}
+                                onClick={() => moveFarm(farm.id, index - 1)}
+                                type="button"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                aria-label={t.trackerFarms.moveDown.replace("{name}", name)}
+                                disabled={orderLocked || index === farms.length - 1}
+                                onClick={() => moveFarm(farm.id, index + 1)}
+                                type="button"
+                              >
+                                ↓
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                        <td
+                          className="tracker-farm-thumbnail-cell"
+                          data-label={t.trackerFarms.image}
+                        >
+                          <FarmThumbnail farm={farm} name={name} />
+                        </td>
+                        <td data-label={t.trackerFarms.farmName}>
+                          <strong lang={locale}>{name}</strong>
+                        </td>
+                        <td data-label={t.trackerFarms.location}>
+                          <span lang={locale}>{location}</span>
+                        </td>
+                        <td data-label={t.trackerFarms.signups}>
+                          <strong>{farm.signup_count}</strong>
+                        </td>
+                        <td data-label={t.trackerFarms.milestone}>
+                          {milestoneLabel(farm.signup_count, t)}
+                        </td>
+                        <td data-label={t.trackerFarms.visibility}>
+                          <span className={`badge ${farm.is_visible ? "" : "warm"}`}>
+                            {farm.is_visible ? t.trackerFarms.visible : t.trackerFarms.hidden}
+                          </span>
+                        </td>
+                        <td data-label={t.trackerFarms.actions}>
+                          <div className="tracker-row-actions">
+                            <Link
+                              aria-label={t.trackerFarms.edit.replace("{name}", name)}
+                              aria-haspopup={orderDirty ? "dialog" : undefined}
+                              className="button secondary"
+                              href={`/tracker-farms/${farm.id}`}
+                              onClick={(event) =>
+                                guardNavigation(event, `/tracker-farms/${farm.id}`)
+                              }
+                            >
+                              {t.trackerFarms.edit.replace(" {name}", "")}
+                            </Link>
                             <button
-                              aria-label={t.trackerFarms.moveDown.replace("{name}", farm.name_en)}
-                              disabled={orderLocked || index === farms.length - 1}
-                              onClick={() => moveFarm(farm.id, index + 1)}
+                              aria-label={t.trackerFarms.delete.replace("{name}", name)}
+                              className="button danger"
+                              disabled={mutationLocked}
+                              onClick={() => {
+                                setDeleteError("");
+                                setDeleteTarget(farm);
+                              }}
                               type="button"
                             >
-                              <span aria-hidden="true">↓</span>
+                              {t.trackerFarms.delete.replace(" {name}", "")}
                             </button>
                           </div>
-                        </div>
-                      </td>
-                      <td data-label={t.trackerFarms.nameEn}>
-                        <strong lang="en">{farm.name_en}</strong>
-                        <span className="table-secondary" lang="vi">
-                          VI · {farm.name_vi}
-                        </span>
-                      </td>
-                      <td data-label={t.trackerFarms.locationEn}>
-                        <span lang="en">{farm.location_en}</span>
-                        <span className="table-secondary" lang="vi">
-                          VI · {farm.location_vi}
-                        </span>
-                      </td>
-                      <td data-label={t.trackerFarms.signups}>
-                        <strong>{farm.signup_count}</strong>
-                      </td>
-                      <td data-label={t.trackerFarms.milestone}>
-                        {milestoneLabel(farm.signup_count, t)}
-                      </td>
-                      <td data-label={t.trackerFarms.visibility}>
-                        <span className={`badge ${farm.is_visible ? "" : "warm"}`}>
-                          {farm.is_visible ? t.trackerFarms.visible : t.trackerFarms.hidden}
-                        </span>
-                      </td>
-                      <td data-label={t.trackerFarms.actions}>
-                        <div className="tracker-row-actions">
-                          <button
-                            aria-label={t.trackerFarms.edit.replace("{name}", farm.name_en)}
-                            className="button secondary"
-                            disabled={mutationLocked}
-                            onClick={() => openEdit(farm)}
-                            type="button"
-                          >
-                            {t.trackerFarms.edit.replace(" {name}", "")}
-                          </button>
-                          <button
-                            aria-label={t.trackerFarms.delete.replace("{name}", farm.name_en)}
-                            className="button danger"
-                            disabled={mutationLocked}
-                            onClick={() => requestDelete(farm)}
-                            type="button"
-                          >
-                            {t.trackerFarms.delete.replace(" {name}", "")}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </>
         )}
       </section>
-
-      {draft && (
-        <ConfirmationDialog
-          busy={savingFarm}
-          busyLabel={t.trackerFarms.saving}
-          cancelLabel={t.trackerFarms.cancel}
-          confirmLabel={draft.id ? t.trackerFarms.saveAction : t.trackerFarms.createAction}
-          error={formError}
-          onCancel={() => !savingFarm && setDraft(null)}
-          onConfirm={() => void saveFarm()}
-          title={draft.id ? t.trackerFarms.editTitle : t.trackerFarms.createTitle}
-        >
-          <div className="form-grid tracker-farm-form">
-            {(
-              [
-                ["name_en", t.trackerFarms.nameEn, "en"],
-                ["name_vi", t.trackerFarms.nameVi, "vi"],
-                ["location_en", t.trackerFarms.locationEn, "en"],
-                ["location_vi", t.trackerFarms.locationVi, "vi"],
-              ] as const
-            ).map(([field, label, language]) => {
-              const errorId = `${field}-error`;
-              return (
-                <div className="field" key={field}>
-                  <label htmlFor={`tracker-${field}`}>{label} *</label>
-                  <input
-                    aria-describedby={formErrors[field] ? errorId : undefined}
-                    aria-invalid={Boolean(formErrors[field])}
-                    className="input"
-                    disabled={savingFarm}
-                    id={`tracker-${field}`}
-                    lang={language}
-                    onChange={(event) => updateDraft(field, event.target.value)}
-                    value={draft[field]}
-                  />
-                  {formErrors[field] && (
-                    <p className="field-error" id={errorId}>
-                      {formErrors[field]}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-            <div className="field">
-              <label htmlFor="tracker-signup-count">{t.trackerFarms.totalSignups} *</label>
-              <input
-                aria-describedby={formErrors.signup_count ? "signup-count-error" : undefined}
-                aria-invalid={Boolean(formErrors.signup_count)}
-                className="input"
-                disabled={savingFarm}
-                id="tracker-signup-count"
-                inputMode="numeric"
-                onChange={(event) => updateSignupCount(event.target.value)}
-                onPaste={rejectInvalidSignupPaste}
-                type="text"
-                value={draft.signup_count}
-              />
-              {formErrors.signup_count && (
-                <p className="field-error" id="signup-count-error">
-                  {formErrors.signup_count}
-                </p>
-              )}
-            </div>
-            <div className="tracker-milestone-preview" role="status">
-              {parsedSignupCount !== null && Number.isSafeInteger(parsedSignupCount)
-                ? t.trackerFarms.milestonePreview.replace(
-                    "{milestone}",
-                    milestoneLabel(parsedSignupCount, t),
-                  )
-                : t.trackerFarms.signupInvalid}
-            </div>
-            <label className="checkbox tracker-visibility-field">
-              <input
-                checked={draft.is_visible}
-                disabled={savingFarm}
-                onChange={(event) => updateDraft("is_visible", event.target.checked)}
-                type="checkbox"
-              />
-              {t.trackerFarms.visibleToggle}
-            </label>
-          </div>
-        </ConfirmationDialog>
-      )}
-
       {deleteTarget && (
         <ConfirmationDialog
           busy={deleting}
@@ -614,7 +424,28 @@ export function TrackerFarmManager() {
           onConfirm={() => void confirmDelete()}
           title={t.trackerFarms.deleteTitle}
         >
-          <p>{t.trackerFarms.deleteBody.replace("{name}", deleteTarget.name_en)}</p>
+          <p>
+            {t.trackerFarms.deleteBody.replace(
+              "{name}",
+              locale === "vi" ? deleteTarget.name_vi : deleteTarget.name_en,
+            )}
+          </p>
+        </ConfirmationDialog>
+      )}
+      {pendingNavigation && (
+        <ConfirmationDialog
+          alternateLabel={t.trackerFarms.discardOrder}
+          busy={savingOrder}
+          busyLabel={t.trackerFarms.savingOrder}
+          cancelLabel={t.trackerFarms.stayOnList}
+          confirmLabel={t.trackerFarms.saveOrder}
+          error={reorderError}
+          onAlternate={discardOrderAndNavigate}
+          onCancel={() => !savingOrder && setPendingNavigation("")}
+          onConfirm={() => void saveOrderAndNavigate()}
+          title={t.trackerFarms.unsavedOrderTitle}
+        >
+          <p>{t.trackerFarms.unsavedOrderBody}</p>
         </ConfirmationDialog>
       )}
     </>
