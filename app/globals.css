@@ -1118,6 +1118,148 @@ h3 {
   opacity: 0.38;
 }
 
+.tracker-order-toolbar {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 2px 12px;
+}
+
+.tracker-order-toolbar .muted-copy {
+  max-width: 680px;
+  margin: 0;
+}
+
+.tracker-order-actions,
+.tracker-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tracker-order-actions {
+  flex: 0 0 auto;
+}
+
+.tracker-farm-table th:first-child {
+  width: 90px;
+}
+
+.tracker-farm-table th:nth-child(2),
+.tracker-farm-table th:nth-child(3) {
+  width: 19%;
+}
+
+.tracker-farm-table th:nth-child(4) {
+  width: 10%;
+}
+
+.tracker-farm-table th:nth-child(5) {
+  width: 15%;
+}
+
+.tracker-farm-table th:nth-child(6) {
+  width: 12%;
+}
+
+.tracker-farm-table th:last-child {
+  width: 154px;
+}
+
+.tracker-farm-table tr.is-dragging td {
+  background: var(--primary-soft);
+  opacity: 0.62;
+}
+
+.tracker-order-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tracker-drag-handle,
+.tracker-order-buttons button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.tracker-drag-handle {
+  width: 40px;
+  height: 40px;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: grab;
+}
+
+.tracker-drag-handle:active {
+  cursor: grabbing;
+}
+
+.tracker-order-buttons {
+  display: grid;
+  gap: 2px;
+}
+
+.tracker-order-buttons button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.tracker-drag-handle:hover:not(:disabled),
+.tracker-order-buttons button:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.tracker-drag-handle:focus-visible,
+.tracker-order-buttons button:focus-visible {
+  outline: 3px solid rgba(26, 115, 232, 0.3);
+  outline-offset: 2px;
+}
+
+.tracker-drag-handle:disabled,
+.tracker-order-buttons button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.tracker-row-actions .button {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.tracker-farm-form {
+  margin-top: 18px;
+}
+
+.tracker-milestone-preview {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 9px 11px;
+  border: 1px solid #bfd5c5;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.tracker-visibility-field {
+  grid-column: 1 / -1;
+}
+
+.confirmation-dialog:has(.tracker-farm-form) {
+  width: min(100%, 720px);
+}
+
 .reward-cell {
   min-width: 0;
   display: flex;
@@ -2691,6 +2833,81 @@ h3 {
   .link-row {
     align-items: start;
   }
+
+  .tracker-order-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tracker-order-actions {
+    align-self: flex-start;
+  }
+
+  .tracker-farm-section .admin-list-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .tracker-farm-table,
+  .tracker-farm-table tbody,
+  .tracker-farm-table tr,
+  .tracker-farm-table td {
+    width: 100%;
+    display: block;
+  }
+
+  .tracker-farm-table thead {
+    display: none;
+  }
+
+  .tracker-farm-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .tracker-farm-table tr {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .tracker-farm-table td,
+  .tracker-farm-table tbody tr:first-child td {
+    padding: 11px 13px;
+    border-top: 1px solid var(--border);
+  }
+
+  .tracker-farm-table td:first-child,
+  .tracker-farm-table tbody tr:first-child td:first-child {
+    border-top: 0;
+  }
+
+  .tracker-farm-table td::before {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    content: attr(data-label);
+    font-size: 0.75rem;
+    font-weight: 650;
+  }
+
+  .tracker-farm-table tr:hover td {
+    background: transparent;
+  }
+
+  .tracker-drag-handle,
+  .tracker-order-buttons button,
+  .tracker-row-actions .button {
+    min-height: 44px;
+  }
+
+  .tracker-drag-handle,
+  .tracker-order-buttons button {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 @media (max-width: 680px) {
@@ -2907,6 +3124,19 @@ h3 {
   .package-line .button,
   .usage-line .button {
     width: 100%;
+  }
+
+  .tracker-order-actions,
+  .tracker-order-actions .button,
+  .tracker-row-actions,
+  .tracker-row-actions .button {
+    width: 100%;
+  }
+
+  .tracker-order-actions,
+  .tracker-row-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .editor-link-controls {

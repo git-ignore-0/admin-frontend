@@ -150,6 +150,44 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it("forwards exact tracker farm collection, reorder, and permanent-delete routes", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const mutationHeaders = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+    };
+
+    const list = await GET(
+      new NextRequest("https://admin.example.test/api/backend/admin/tracker-farms"),
+      { params: Promise.resolve({ path: ["admin", "tracker-farms"] }) },
+    );
+    const reorder = await PATCH(
+      new NextRequest("https://admin.example.test/api/backend/admin/tracker-farms/reorder", {
+        method: "PATCH",
+        headers: mutationHeaders,
+        body: JSON.stringify({ items: [] }),
+      }),
+      { params: Promise.resolve({ path: ["admin", "tracker-farms", "reorder"] }) },
+    );
+    const removed = await DELETE(
+      new NextRequest("https://admin.example.test/api/backend/admin/tracker-farms/farm-id", {
+        method: "DELETE",
+        headers: mutationHeaders,
+      }),
+      { params: Promise.resolve({ path: ["admin", "tracker-farms", "farm-id"] }) },
+    );
+
+    expect([list.status, reorder.status, removed.status]).toEqual([200, 200, 200]);
+    expect(upstream.mock.calls.map(([target]) => String(target))).toEqual([
+      "https://auth.example.test/api/v1/admin/tracker-farms",
+      "https://auth.example.test/api/v1/admin/tracker-farms/reorder",
+      "https://auth.example.test/api/v1/admin/tracker-farms/farm-id",
+    ]);
+    expect((upstream.mock.calls[1][1] as RequestInit).method).toBe("PATCH");
+    expect((upstream.mock.calls[2][1] as RequestInit).method).toBe("DELETE");
+  });
+
   it("returns a bounded timeout with no-store caching", async () => {
     vi.stubGlobal(
       "fetch",

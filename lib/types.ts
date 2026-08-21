@@ -309,6 +309,20 @@ export type SiteSettings = {
   updated_at: string;
 };
 
+export type TrackerFarm = {
+  id: string;
+  name_en: string;
+  name_vi: string;
+  location_en: string;
+  location_vi: string;
+  signup_count: number;
+  is_visible: boolean;
+  sort_order: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MediaAsset = {
   id: string;
   url: string;

@@ -95,4 +95,18 @@ describe("backend API target", () => {
       isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "publish", "extra"]),
     ).toBe(false);
   });
+
+  it("allowlists only the tracker farm CRUD and reorder routes", () => {
+    expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms"])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms"])).toBe(false);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", "farm-id"])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", "farm-id"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "farm-id"])).toBe(false);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", "reorder"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms", "reorder"])).toBe(false);
+    expect(buildBackendTarget(origin, ["admin", "tracker-farms", "reorder"], "").toString()).toBe(
+      "http://127.0.0.1:8000/api/v1/admin/tracker-farms/reorder",
+    );
+  });
 });

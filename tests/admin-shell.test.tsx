@@ -72,12 +72,17 @@ describe("admin sidebar navigation", () => {
       "href",
       "/memberships",
     );
+    expect(screen.getByRole("link", { name: "Growth Tracker farms" })).toHaveAttribute(
+      "href",
+      "/tracker-farms",
+    );
   });
 
   it.each([
     ["/membership-catalog", "CSA", "CSA catalog"],
     ["/membership-catalog/packages/123/edit", "CSA", "CSA catalog"],
     ["/memberships/assign", "CSA", "CSA memberships"],
+    ["/tracker-farms", "CSA", "Growth Tracker farms"],
     ["/rewards", "Points & rewards", "Rewards"],
     ["/settings", "Website", "Website information"],
     ["/testimonials/testimonial-id/edit", "Website", "Testimonials"],
