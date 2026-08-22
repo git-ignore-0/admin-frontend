@@ -43,13 +43,14 @@ function milestoneTreeIcon(count: number) {
 }
 
 function FarmThumbnail({ farm, name }: { farm: TrackerFarm; name: string }) {
-  if (farm.image) {
+  const primaryPhoto = farm.photos?.[0] ?? farm.image;
+  if (primaryPhoto) {
     return (
       <Image
         alt={name}
         className="reward-thumbnail"
         height={56}
-        src={mediaUrlForWidth(farm.image, 144)}
+        src={mediaUrlForWidth(primaryPhoto, 144)}
         unoptimized
         width={72}
       />
@@ -303,6 +304,8 @@ export function TrackerFarmManager() {
                   {farms.map((farm, index) => {
                     const name = locale === "vi" ? farm.name_vi : farm.name_en;
                     const location = locale === "vi" ? farm.location_vi : farm.location_en;
+                    const editLabel = t.trackerFarms.edit.replace("{name}", name);
+                    const deleteLabel = t.trackerFarms.delete.replace("{name}", name);
 
                     return (
                       <tr
@@ -379,27 +382,51 @@ export function TrackerFarmManager() {
                         <td data-label={t.trackerFarms.actions}>
                           <div className="tracker-row-actions">
                             <Link
-                              aria-label={t.trackerFarms.edit.replace("{name}", name)}
+                              aria-label={editLabel}
                               aria-haspopup={orderDirty ? "dialog" : undefined}
-                              className="button secondary"
+                              className="button secondary icon-only-action"
                               href={`/tracker-farms/${farm.id}`}
                               onClick={(event) =>
                                 guardNavigation(event, `/tracker-farms/${farm.id}`)
                               }
+                              title={editLabel}
                             >
-                              {t.trackerFarms.edit.replace(" {name}", "")}
+                              <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                                <path
+                                  d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
+                                  stroke="currentColor"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="1.8"
+                                />
+                                <path
+                                  d="m13.5 8.5 3 3"
+                                  stroke="currentColor"
+                                  strokeLinecap="round"
+                                  strokeWidth="1.8"
+                                />
+                              </svg>
                             </Link>
                             <button
-                              aria-label={t.trackerFarms.delete.replace("{name}", name)}
-                              className="button danger"
+                              aria-label={deleteLabel}
+                              className="button danger icon-only-action"
                               disabled={mutationLocked}
                               onClick={() => {
                                 setDeleteError("");
                                 setDeleteTarget(farm);
                               }}
+                              title={deleteLabel}
                               type="button"
                             >
-                              {t.trackerFarms.delete.replace(" {name}", "")}
+                              <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                                <path
+                                  d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
+                                  stroke="currentColor"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="1.8"
+                                />
+                              </svg>
                             </button>
                           </div>
                         </td>

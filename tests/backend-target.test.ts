@@ -97,6 +97,7 @@ describe("backend API target", () => {
   });
 
   it("allowlists only the tracker farm CRUD and reorder routes", () => {
+    const mediaId = "11111111-1111-4111-8111-111111111111";
     expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms"])).toBe(true);
     expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms"])).toBe(false);
@@ -105,6 +106,15 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "farm-id"])).toBe(false);
     expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms", "media"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "media"])).toBe(false);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", "media", mediaId])).toBe(
+      true,
+    );
+    expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "media", mediaId])).toBe(
+      false,
+    );
+    expect(
+      isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", "media", "not-a-uuid"]),
+    ).toBe(false);
     expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", "reorder"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms", "reorder"])).toBe(false);
     expect(buildBackendTarget(origin, ["admin", "tracker-farms", "reorder"], "").toString()).toBe(

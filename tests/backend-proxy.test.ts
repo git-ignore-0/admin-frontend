@@ -151,6 +151,7 @@ describe("admin backend proxy", () => {
   });
 
   it("forwards exact tracker farm collection, reorder, and permanent-delete routes", async () => {
+    const mediaId = "11111111-1111-4111-8111-111111111111";
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
     vi.stubGlobal("fetch", upstream);
     const mutationHeaders = {
@@ -177,15 +178,33 @@ describe("admin backend proxy", () => {
       }),
       { params: Promise.resolve({ path: ["admin", "tracker-farms", "farm-id"] }) },
     );
+    const temporaryMedia = await DELETE(
+      new NextRequest(
+        `https://admin.example.test/api/backend/admin/tracker-farms/media/${mediaId}`,
+        {
+          method: "DELETE",
+          headers: mutationHeaders,
+        },
+      ),
+      {
+        params: Promise.resolve({
+          path: ["admin", "tracker-farms", "media", mediaId],
+        }),
+      },
+    );
 
-    expect([list.status, reorder.status, removed.status]).toEqual([200, 200, 200]);
+    expect([list.status, reorder.status, removed.status, temporaryMedia.status]).toEqual([
+      200, 200, 200, 200,
+    ]);
     expect(upstream.mock.calls.map(([target]) => String(target))).toEqual([
       "https://auth.example.test/api/v1/admin/tracker-farms",
       "https://auth.example.test/api/v1/admin/tracker-farms/reorder",
       "https://auth.example.test/api/v1/admin/tracker-farms/farm-id",
+      `https://auth.example.test/api/v1/admin/tracker-farms/media/${mediaId}`,
     ]);
     expect((upstream.mock.calls[1][1] as RequestInit).method).toBe("PATCH");
     expect((upstream.mock.calls[2][1] as RequestInit).method).toBe("DELETE");
+    expect((upstream.mock.calls[3][1] as RequestInit).method).toBe("DELETE");
   });
 
   it("returns a bounded timeout with no-store caching", async () => {

@@ -48,6 +48,16 @@ const farmImage: MediaAsset = {
   height: 900,
   variants: [],
 };
+const secondFarmImage: MediaAsset = {
+  ...farmImage,
+  id: "image-2",
+  url: "https://example.test/farms/river-farm.webp",
+};
+const thirdFarmImage: MediaAsset = {
+  ...farmImage,
+  id: "image-3",
+  url: "https://example.test/farms/hill-farm.webp",
+};
 const secondFarm: TrackerFarm = {
   ...farm,
   id: "farm-2",
@@ -91,9 +101,16 @@ it("uses routes for create and edit instead of a farm form dialog", async () => 
   expect((await screen.findByRole("link", { name: "+ Add farm" })).getAttribute("href")).toBe(
     "/tracker-farms/new",
   );
-  expect(screen.getByRole("link", { name: "Edit Green Valley" }).getAttribute("href")).toBe(
-    "/tracker-farms/farm-1",
-  );
+  const edit = screen.getByRole("link", { name: "Edit Green Valley" });
+  expect(edit.getAttribute("href")).toBe("/tracker-farms/farm-1");
+  expect(edit).toHaveAttribute("title", "Edit Green Valley");
+  expect(edit).toHaveTextContent("");
+  expect(edit.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+
+  const remove = screen.getByRole("button", { name: "Delete Green Valley" });
+  expect(remove).toHaveAttribute("title", "Delete Green Valley");
+  expect(remove).toHaveTextContent("");
+  expect(remove.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   expect(screen.queryByRole("dialog", { name: "Edit farm" })).toBeNull();
 });
 
@@ -122,10 +139,17 @@ it("renders only the active admin locale's name and location in the list", async
   expect(screen.queryByText("Getting Started")).toBeNull();
   expect(screen.queryByText("Green Valley")).toBeNull();
   expect(screen.queryByText("Da Lat")).toBeNull();
-  expect(screen.getByRole("link", { name: "Chỉnh sửa Thung lũng Xanh" })).toBeVisible();
+  const vietnameseEdit = screen.getByRole("link", { name: "Chỉnh sửa Thung lũng Xanh" });
+  expect(vietnameseEdit).toBeVisible();
+  expect(vietnameseEdit).toHaveAttribute("title", "Chỉnh sửa Thung lũng Xanh");
+  expect(vietnameseEdit).toHaveTextContent("");
+  expect(screen.getByRole("button", { name: "Xóa Thung lũng Xanh" })).toHaveAttribute(
+    "title",
+    "Xóa Thung lũng Xanh",
+  );
 });
 
-it("keeps Edit and Delete on one equal-width action row at every breakpoint", async () => {
+it("keeps icon-only Edit and Delete on one equal square action row at every breakpoint", async () => {
   vi.mocked(api).mockResolvedValueOnce([farm]);
   renderWithProviders(<TrackerFarmManager />);
 
@@ -133,12 +157,17 @@ it("keeps Edit and Delete on one equal-width action row at every breakpoint", as
   const remove = screen.getByRole("button", { name: "Delete Green Valley" });
   expect(edit.parentElement).toHaveClass("tracker-row-actions");
   expect(remove.parentElement).toBe(edit.parentElement);
+  expect(edit).toHaveClass("icon-only-action", "secondary");
+  expect(remove).toHaveClass("icon-only-action", "danger");
+  expect(within(edit).queryByText("Edit")).toBeNull();
+  expect(within(remove).queryByText("Delete")).toBeNull();
 
   const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
   expect(css).toMatch(/\.tracker-row-actions \{[\s\S]*?display: flex;[\s\S]*?align-items: center;/);
   expect(css).toMatch(
-    /\.tracker-row-actions \.button \{[\s\S]*?height: 44px;[\s\S]*?flex: 1 1 0;[\s\S]*?overflow: hidden;[\s\S]*?text-overflow: ellipsis;/,
+    /\.button\.icon-only-action \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;[\s\S]*?flex: 0 0 44px;/,
   );
+  expect(css).toMatch(/\.icon-only-action svg \{[\s\S]*?width: 19px;[\s\S]*?height: 19px;/);
   expect(css).toMatch(
     /@media \(max-width: 480px\) \{[\s\S]*?\.tracker-row-actions \{[\s\S]*?display: flex;[\s\S]*?flex-wrap: nowrap;/,
   );
@@ -146,16 +175,17 @@ it("keeps Edit and Delete on one equal-width action row at every breakpoint", as
 
 it("renders a Rewards-style farm thumbnail or milestone fallback in EN and VI list rows", async () => {
   vi.mocked(api).mockResolvedValueOnce([
-    { ...farm, image: farmImage },
+    { ...farm, image: farmImage, photos: [secondFarmImage, farmImage] },
     { ...farm, id: "farm-2", name_en: "River Farm", name_vi: "Nông trại Sông" },
   ]);
   const view = renderWithProviders(<TrackerFarmManager />);
 
   const photo = await screen.findByAltText("Green Valley");
   expect(photo).toHaveClass("reward-thumbnail");
-  expect(photo).toHaveAttribute("src", expect.stringContaining("green-valley.webp"));
+  expect(photo).toHaveAttribute("src", expect.stringContaining("river-farm.webp"));
   expect(screen.getByRole("columnheader", { name: "Farm image" })).toBeVisible();
   expect(screen.getAllByAltText("Green Valley")).toHaveLength(1);
+  expect(document.querySelector('img[src*="green-valley"]')).toBeNull();
   expect(screen.getAllByRole("img", { name: "River Farm" })).toHaveLength(1);
   expect(screen.getByRole("img", { name: "River Farm" })).toHaveClass(
     "tracker-farm-thumbnail-fallback",
@@ -224,14 +254,31 @@ it("localizes editor copy and keeps the signup cluster compact on desktop", () =
   expect(screen.getByLabelText("Location *")).toBeVisible();
   expect(screen.getByLabelText("Description")).toBeVisible();
   expect(screen.queryByLabelText("Farm name — English *")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Photos" })).toBeVisible();
+  expect(screen.getByText("0 / 12 photos")).toBeVisible();
+  expect(screen.getByText("Choose photos")).toBeVisible();
+  expect(screen.getByText("JPEG, PNG, or WebP; maximum 8 MB per image.")).toBeVisible();
 
   const signup = screen.getByLabelText("Total signups *");
-  expect(signup.closest(".tracker-farm-signup-cluster")).not.toBeNull();
+  const basicsLayout = signup.closest(".tracker-farm-basics-layout");
+  expect(basicsLayout).not.toBeNull();
+  expect(basicsLayout?.children).toHaveLength(3);
+  expect(basicsLayout?.children[0]).toHaveClass("tracker-farm-signup-field");
+  expect(basicsLayout?.children[1]).toHaveClass("tracker-milestone-preview");
+  expect(basicsLayout?.children[2]).toHaveClass("tracker-farm-visibility");
+  expect(document.querySelector(".tracker-farm-signup-cluster")).toBeNull();
   const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
   expect(css).toMatch(
-    /\.tracker-farm-basics-layout \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) minmax\(180px, 220px\);/,
+    /\.tracker-farm-basics-layout \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?align-items: stretch;/,
   );
-  expect(css).toMatch(/\.tracker-farm-signup-cluster \{[\s\S]*?width: min\(220px, 100%\);/);
+  expect(css).toMatch(
+    /@media \(min-width: 1100px\) \{[\s\S]*?\.tracker-farm-basics-layout \{[\s\S]*?grid-template-columns: minmax\(180px, 220px\) minmax\(0, 1fr\) max-content;[\s\S]*?align-items: end;/,
+  );
+  expect(css).toMatch(
+    /\.tracker-farm-signup-field \.input \{[\s\S]*?width: 100%;[\s\S]*?min-height: 44px;/,
+  );
+  expect(css).not.toContain(".tracker-farm-basics-layout .reward-image-field");
+  expect(css).not.toContain(".tracker-farm-signup-cluster");
 
   view.unmount();
   renderWithProviders(<TrackerFarmEditor />, "vi");
@@ -242,6 +289,10 @@ it("localizes editor copy and keeps the signup cluster compact on desktop", () =
   expect(screen.getByLabelText("Địa điểm *")).toBeVisible();
   expect(screen.getByLabelText("Mô tả")).toBeVisible();
   expect(screen.queryByLabelText("Tên nông trại — Tiếng Việt *")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Ảnh nông trại" })).toBeVisible();
+  expect(screen.getByText("0 / 12 ảnh")).toBeVisible();
+  expect(screen.getByText("Chọn ảnh")).toBeVisible();
+  expect(screen.getByText("JPEG, PNG hoặc WebP; tối đa 8 MB cho mỗi ảnh.")).toBeVisible();
 });
 
 it("keeps the bilingual fields and image controls on the localized detail form", async () => {
@@ -255,26 +306,42 @@ it("keeps the bilingual fields and image controls on the localized detail form",
 });
 
 it("keeps a stale editor draft and reloads authoritative data only on request", async () => {
-  const fresh = { ...farm, name_en: "Server Farm", signup_count: 18, version: 2 };
+  const draftFarm = { ...farm, photos: [farmImage, secondFarmImage] };
+  const fresh = {
+    ...farm,
+    name_en: "Server Farm",
+    signup_count: 18,
+    version: 2,
+    photos: [thirdFarmImage],
+  };
   const conflict = Object.assign(new Error("version_conflict"), { status: 409 });
   vi.mocked(api)
-    .mockResolvedValueOnce([farm])
+    .mockResolvedValueOnce([draftFarm])
     .mockRejectedValueOnce(conflict)
     .mockResolvedValueOnce([fresh]);
   renderWithProviders(<TrackerFarmEditor farmId="farm-1" />);
 
   const name = await screen.findByDisplayValue("Green Valley");
   fireEvent.change(name, { target: { value: "Stale draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Move photo 2 earlier" }));
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
   expect((await screen.findAllByText(/Your draft is unchanged/))[0]).toBeVisible();
   expect(name).toHaveValue("Stale draft");
+  expect(document.querySelector(".tracker-photo-preview img")).toHaveAttribute(
+    "src",
+    expect.stringContaining("river-farm.webp"),
+  );
   expect(api).toHaveBeenCalledTimes(2);
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
 
   fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
   await waitFor(() => expect(name).toHaveValue("Server Farm"));
   expect(screen.getByLabelText("Total signups *")).toHaveValue("18");
+  expect(document.querySelector(".tracker-photo-preview img")).toHaveAttribute(
+    "src",
+    expect.stringContaining("hill-farm.webp"),
+  );
   expect(screen.queryByRole("button", { name: "Reload latest" })).toBeNull();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
   expect(api).toHaveBeenNthCalledWith(3, "admin/tracker-farms");
@@ -310,46 +377,88 @@ it("validates numeric typing, paste, empty values, and submits a normalized inte
   });
 });
 
-it("uploads an image and sends the uploaded id with trimmed descriptions", async () => {
+it("uploads photos sequentially, marks the primary, reorders, and sends photo_ids", async () => {
+  const firstUpload = deferred<MediaAsset>();
   vi.mocked(api)
-    .mockResolvedValueOnce(farmImage)
-    .mockResolvedValueOnce({ ...farm, image: farmImage });
+    .mockReturnValueOnce(firstUpload.promise)
+    .mockResolvedValueOnce(secondFarmImage)
+    .mockResolvedValueOnce({ ...farm, image: secondFarmImage });
   const { container } = renderWithProviders(<TrackerFarmEditor />);
   fillRequiredEditorFields();
   fireEvent.change(screen.getByLabelText("Description"), {
     target: { value: "  English description  " },
   });
   fireEvent.change(screen.getByLabelText("Mô tả"), { target: { value: "  Mô tả Việt  " } });
-  const file = new File(["image"], "farm.png", { type: "image/png" });
-  fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+  const firstFile = new File(["first"], "first.png", { type: "image/png" });
+  const secondFile = new File(["second"], "second.webp", { type: "image/webp" });
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [firstFile, secondFile] },
+  });
+
+  expect(screen.getByRole("button", { name: "Add farm" })).toBeDisabled();
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+  expect(screen.getByText("Waiting to upload second.webp")).toBeVisible();
+  await act(async () => firstUpload.resolve(farmImage));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByText("2 / 12 photos")).toBeVisible());
+  expect(screen.getByText("Primary")).toBeVisible();
+  expect(document.querySelector(".tracker-photo-preview img")).toHaveAttribute(
+    "src",
+    expect.stringContaining("green-valley.webp"),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Move photo 2 earlier" }));
+  expect(document.querySelector(".tracker-photo-preview img")).toHaveAttribute(
+    "src",
+    expect.stringContaining("river-farm.webp"),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Add farm" }));
 
-  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(3));
   expect(api).toHaveBeenNthCalledWith(1, "admin/tracker-farms/media", {
     method: "POST",
     body: expect.any(FormData),
   });
-  expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body))).toMatchObject({
+  expect(api).toHaveBeenNthCalledWith(2, "admin/tracker-farms/media", {
+    method: "POST",
+    body: expect.any(FormData),
+  });
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[2][1]?.body))).toMatchObject({
     description_en: "English description",
     description_vi: "Mô tả Việt",
-    image_id: "image-1",
+    photo_ids: ["image-2", "image-1"],
   });
+  expect(apiEnvelope).not.toHaveBeenCalled();
 });
 
-it("keeps the selected image draft and blocks farm submission when upload fails", async () => {
-  vi.mocked(api).mockRejectedValueOnce(new Error("upload_failed"));
+it("keeps successful draft photos visible when another upload fails", async () => {
+  vi.mocked(api)
+    .mockRejectedValueOnce(new Error("upload_failed"))
+    .mockResolvedValueOnce(secondFarmImage);
   const { container } = renderWithProviders(<TrackerFarmEditor />);
   fillRequiredEditorFields();
-  const file = new File(["image"], "farm.png", { type: "image/png" });
-  fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
-  fireEvent.click(screen.getByRole("button", { name: "Add farm" }));
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: {
+      files: [
+        new File(["bad"], "broken.png", { type: "image/png" }),
+        new File(["good"], "working.webp", { type: "image/webp" }),
+      ],
+    },
+  });
 
-  expect(await screen.findByText(/current image is unchanged/)).toBeVisible();
-  expect(screen.getByText("Change image")).toBeVisible();
-  expect(api).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText(/Could not upload broken.png/)).toBeVisible();
+  expect(await screen.findByText("1 / 12 photos")).toBeVisible();
+  expect(screen.getByAltText("Green Valley")).toHaveAttribute(
+    "src",
+    expect.stringContaining("river-farm.webp"),
+  );
+  expect(screen.getByRole("button", { name: "Add farm" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss upload error for broken.png" }));
+  expect(screen.getByRole("button", { name: "Add farm" })).toBeEnabled();
+  expect(api).toHaveBeenCalledTimes(2);
 });
 
-it("removes an existing image by submitting image_id null", async () => {
+it("normalizes a legacy image, removes photos, and clears with photo_ids", async () => {
   vi.mocked(api)
     .mockResolvedValueOnce([{ ...farm, image: farmImage }])
     .mockResolvedValueOnce({ ...farm, image: null, version: 2 });
@@ -359,13 +468,255 @@ it("removes an existing image by submitting image_id null", async () => {
     "src",
     expect.stringContaining("green-valley.webp"),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Remove image" }));
+  expect(screen.getByText("Primary")).toBeVisible();
+  expect(screen.getByText("1 / 12 photos")).toBeVisible();
+  const removePhoto = await screen.findByRole("button", { name: "Remove photo 1" });
+  expect(removePhoto).toHaveAttribute("title", "Remove photo 1");
+  expect(removePhoto).toHaveClass("icon-only-action", "danger");
+  expect(removePhoto).toHaveTextContent("");
+  expect(removePhoto.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  expect(screen.queryByText("Remove image")).toBeNull();
+  fireEvent.click(removePhoto);
+  expect(screen.getByText("0 / 12 photos")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
   expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body))).toMatchObject({
-    image_id: null,
+    photo_ids: [],
     version: 1,
   });
+});
+
+it("localizes the icon-only photo removal control in Vietnamese", async () => {
+  vi.mocked(api).mockResolvedValueOnce([{ ...farm, photos: [farmImage] }]);
+  renderWithProviders(<TrackerFarmEditor farmId="farm-1" />, "vi");
+
+  const removePhoto = await screen.findByRole("button", { name: "Xóa ảnh 1" });
+  expect(removePhoto).toHaveAttribute("title", "Xóa ảnh 1");
+  expect(removePhoto).toHaveTextContent("");
+  expect(removePhoto.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  expect(screen.queryByText("Xóa ảnh")).toBeNull();
+});
+
+it("removes one gallery photo and promotes the next photo to primary", async () => {
+  vi.mocked(api)
+    .mockResolvedValueOnce([{ ...farm, photos: [farmImage, secondFarmImage] }])
+    .mockResolvedValueOnce({ ...farm, photos: [secondFarmImage], version: 2 });
+  renderWithProviders(<TrackerFarmEditor farmId="farm-1" />);
+
+  await screen.findByText("2 / 12 photos");
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo 1" }));
+  expect(screen.getByText("1 / 12 photos")).toBeVisible();
+  expect(document.querySelector(".tracker-photo-preview img")).toHaveAttribute(
+    "src",
+    expect.stringContaining("river-farm.webp"),
+  );
+  expect(screen.getAllByText("Primary")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body))).toMatchObject({
+    photo_ids: ["image-2"],
+    version: 1,
+  });
+});
+
+it("cleans a session-uploaded photo when it is removed from a new farm draft", async () => {
+  vi.mocked(api).mockResolvedValueOnce(farmImage);
+  vi.mocked(apiEnvelope).mockResolvedValueOnce({ data: undefined });
+  const { container } = renderWithProviders(<TrackerFarmEditor />);
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(["image"], "temporary.png", { type: "image/png" })] },
+  });
+
+  await screen.findByText("1 / 12 photos");
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo 1" }));
+
+  expect(screen.getByText("0 / 12 photos")).toBeVisible();
+  await waitFor(() =>
+    expect(apiEnvelope).toHaveBeenCalledWith("admin/tracker-farms/media/image-1", {
+      method: "DELETE",
+    }),
+  );
+});
+
+it("cleans every session-uploaded photo before Cancel navigates to the farm list", async () => {
+  vi.mocked(api).mockResolvedValueOnce(farmImage).mockResolvedValueOnce(secondFarmImage);
+  vi.mocked(apiEnvelope).mockResolvedValue({ data: undefined });
+  const { container } = renderWithProviders(<TrackerFarmEditor />);
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: {
+      files: [
+        new File(["first"], "first.png", { type: "image/png" }),
+        new File(["second"], "second.webp", { type: "image/webp" }),
+      ],
+    },
+  });
+
+  await screen.findByText("2 / 12 photos");
+  fireEvent.click(screen.getByRole("link", { name: "Cancel" }));
+
+  await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(apiEnvelope).mock.calls).toEqual([
+    ["admin/tracker-farms/media/image-1", { method: "DELETE" }],
+    ["admin/tracker-farms/media/image-2", { method: "DELETE" }],
+  ]);
+  await waitFor(() => expect(push).toHaveBeenCalledWith("/tracker-farms"));
+});
+
+it("does not clean persisted photos when Remove is followed by Cancel", async () => {
+  vi.mocked(api).mockResolvedValueOnce([{ ...farm, photos: [farmImage] }]);
+  renderWithProviders(<TrackerFarmEditor farmId="farm-1" />);
+
+  await screen.findByText("1 / 12 photos");
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo 1" }));
+  fireEvent.click(screen.getByRole("link", { name: "Cancel" }));
+
+  await waitFor(() => expect(push).toHaveBeenCalledWith("/tracker-farms"));
+  expect(apiEnvelope).not.toHaveBeenCalled();
+});
+
+it("does not clean submitted session uploads after a successful Save", async () => {
+  vi.mocked(api)
+    .mockResolvedValueOnce(farmImage)
+    .mockResolvedValueOnce({
+      ...farm,
+      image: farmImage,
+      photos: [farmImage],
+    });
+  const view = renderWithProviders(<TrackerFarmEditor />);
+  const { container } = view;
+  fillRequiredEditorFields();
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(["image"], "submitted.png", { type: "image/png" })] },
+  });
+
+  await screen.findByText("1 / 12 photos");
+  fireEvent.click(screen.getByRole("button", { name: "Add farm" }));
+
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/tracker-farms"));
+  view.unmount();
+  expect(apiEnvelope).not.toHaveBeenCalled();
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body))).toMatchObject({
+    photo_ids: ["image-1"],
+  });
+});
+
+it("cleans an upload that resolves after the editor unmounts without setting state", async () => {
+  const upload = deferred<MediaAsset>();
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.mocked(api).mockReturnValueOnce(upload.promise);
+  vi.mocked(apiEnvelope).mockResolvedValueOnce({ data: undefined });
+  const view = renderWithProviders(<TrackerFarmEditor />);
+  fireEvent.change(view.container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(["image"], "late.png", { type: "image/png" })] },
+  });
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+
+  view.unmount();
+  await act(async () => upload.resolve(farmImage));
+
+  await waitFor(() =>
+    expect(apiEnvelope).toHaveBeenCalledWith("admin/tracker-farms/media/image-1", {
+      method: "DELETE",
+    }),
+  );
+  expect(consoleError).not.toHaveBeenCalled();
+  consoleError.mockRestore();
+});
+
+it("cleans a successful session upload when the editor later unmounts", async () => {
+  vi.mocked(api).mockResolvedValueOnce(farmImage);
+  vi.mocked(apiEnvelope).mockResolvedValueOnce({ data: undefined });
+  const view = renderWithProviders(<TrackerFarmEditor />);
+  fireEvent.change(view.container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(["image"], "temporary.png", { type: "image/png" })] },
+  });
+  await screen.findByText("1 / 12 photos");
+
+  view.unmount();
+
+  await waitFor(() =>
+    expect(apiEnvelope).toHaveBeenCalledWith("admin/tracker-farms/media/image-1", {
+      method: "DELETE",
+    }),
+  );
+});
+
+it("does not clean an existing loaded photo when the editor unmounts", async () => {
+  vi.mocked(api).mockResolvedValueOnce([{ ...farm, photos: [farmImage] }]);
+  const view = renderWithProviders(<TrackerFarmEditor farmId="farm-1" />);
+  await screen.findByText("1 / 12 photos");
+
+  view.unmount();
+
+  await act(async () => undefined);
+  expect(apiEnvelope).not.toHaveBeenCalled();
+});
+
+it("does not block Remove or Cancel when temporary cleanup returns a conflict", async () => {
+  const referenced = Object.assign(new Error("media_asset_referenced"), { status: 409 });
+  vi.mocked(api).mockResolvedValueOnce(farmImage);
+  vi.mocked(apiEnvelope).mockRejectedValue(referenced);
+  const { container } = renderWithProviders(<TrackerFarmEditor />);
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(["image"], "shared.png", { type: "image/png" })] },
+  });
+
+  await screen.findByText("1 / 12 photos");
+  fireEvent.click(screen.getByRole("button", { name: "Remove photo 1" }));
+  expect(screen.getByText("0 / 12 photos")).toBeVisible();
+  await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(1));
+
+  fireEvent.click(screen.getByRole("link", { name: "Cancel" }));
+  await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
+  expect(push).toHaveBeenCalledWith("/tracker-farms");
+});
+
+it("rejects a selection beyond the remaining photo capacity without uploading", async () => {
+  const photos = Array.from({ length: 11 }, (_value, index) => ({
+    ...farmImage,
+    id: `existing-${index}`,
+    url: `https://example.test/farms/existing-${index}.webp`,
+  }));
+  vi.mocked(api).mockResolvedValueOnce([{ ...farm, photos }]);
+  const { container } = renderWithProviders(<TrackerFarmEditor farmId="farm-1" />);
+  await screen.findByText("11 / 12 photos");
+
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: {
+      files: [
+        new File(["one"], "one.png", { type: "image/png" }),
+        new File(["two"], "two.png", { type: "image/png" }),
+      ],
+    },
+  });
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("up to 12 photos");
+  expect(api).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("11 / 12 photos")).toBeVisible();
+});
+
+it("disables upload at 12 photos and keeps gallery controls within responsive CSS", async () => {
+  const photos = Array.from({ length: 12 }, (_value, index) => ({
+    ...farmImage,
+    id: `full-${index}`,
+    url: `https://example.test/farms/full-${index}.webp`,
+  }));
+  vi.mocked(api).mockResolvedValueOnce([{ ...farm, photos }]);
+  const { container } = renderWithProviders(<TrackerFarmEditor farmId="farm-1" />);
+
+  await screen.findByText("12 / 12 photos");
+  expect(container.querySelector('input[type="file"]')).toBeDisabled();
+  const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
+  expect(css).toMatch(
+    /\.tracker-photo-gallery \{[\s\S]*?grid-template-columns: repeat\(auto-fill, minmax\(190px, 1fr\)\);/,
+  );
+  expect(css).toMatch(
+    /@media \(max-width: 480px\) \{[\s\S]*?\.tracker-photo-gallery \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/,
+  );
+  expect(css).toMatch(/\.tracker-photo-actions \.button \{[\s\S]*?min-height: 44px;/);
+  expect(css).toMatch(
+    /\.tracker-photo-actions \{[\s\S]*?grid-template-columns: repeat\(3, 44px\);/,
+  );
 });
 
 it("saves and cancels local reorder changes without duplicate requests", async () => {

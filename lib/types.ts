@@ -318,6 +318,7 @@ export type TrackerFarm = {
   description_en: string;
   description_vi: string;
   image: MediaAsset | null;
+  photos?: MediaAsset[];
   signup_count: number;
   is_visible: boolean;
   sort_order: number;

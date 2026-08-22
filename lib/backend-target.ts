@@ -17,6 +17,8 @@ export function buildBackendTarget(origin: string, path: string[], search: strin
 const READ = new Set(["GET"]);
 const CRUD_COLLECTION = new Set(["GET", "POST"]);
 const CRUD_DETAIL = new Set(["GET", "PATCH", "DELETE"]);
+const UUID_PATH_SEGMENT =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function isAllowedBackendRequest(method: string, path: string[]) {
   const normalizedMethod = method.toUpperCase();
@@ -32,7 +34,10 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
 
   if (resource === "tracker-farms") {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
-    if (id === "media" && action === undefined) return normalizedMethod === "POST";
+    if (id === "media") {
+      if (action === undefined) return normalizedMethod === "POST";
+      return normalizedMethod === "DELETE" && UUID_PATH_SEGMENT.test(action);
+    }
     if (id === "reorder" && action === undefined) return normalizedMethod === "PATCH";
     return action === undefined && new Set(["PATCH", "DELETE"]).has(normalizedMethod);
   }
