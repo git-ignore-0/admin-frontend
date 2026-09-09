@@ -52,6 +52,7 @@ describe("backend API target", () => {
       true,
     );
     expect(isAllowedBackendRequest("POST", ["admin", "memberships"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "memberships"])).toBe(false);
     expect(
       isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "revoke"]),
     ).toBe(true);
@@ -65,6 +66,27 @@ describe("backend API target", () => {
       isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "unknown"]),
     ).toBe(false);
     expect(isAllowedBackendRequest("GET", ["memberships", "current"])).toBe(false);
+  });
+
+  it("allowlists only CSA customer collection, detail, and one-way linking", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    expect(isAllowedBackendRequest("GET", ["admin", "csa-customers"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-customers"])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "csa-customers", id])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "csa-customers", id])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-customers", id, "link-user"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-customers", id, "unlink-user"])).toBe(
+      false,
+    );
+    expect(isAllowedBackendRequest("GET", ["admin", "csa-customers", "not-a-uuid"])).toBe(false);
+  });
+
+  it("allowlists only read access to the Auth administrative-unit source", () => {
+    expect(isAllowedBackendRequest("GET", ["administrative-units", "provinces"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["administrative-units", "wards"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["administrative-units", "provinces"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["administrative-units", "unknown"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["administrative-units", "wards", "extra"])).toBe(false);
   });
 
   it("allowlists only the required Testimonial methods and exact actions", () => {

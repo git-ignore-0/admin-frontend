@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { adminDictionaries } from "@/lib/admin-i18n";
-import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate, formatAdminDateTime, membershipLastReceiptDate } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { firstValidationField } from "@/lib/client-api";
 import { isTrustedAdminRequest } from "@/lib/csrf";
@@ -51,6 +51,10 @@ describe("admin date display", () => {
 
   it("formats date-only values without timezone date shifts", () => {
     expect(formatAdminDate("2026-08-01")).toBe("01/08/2026");
+  });
+
+  it("shows the day before an exclusive Membership end boundary", () => {
+    expect(membershipLastReceiptDate("2027-01-01")).toBe("2026-12-31");
   });
 
   it("uses the requested fallback for missing or invalid values", () => {

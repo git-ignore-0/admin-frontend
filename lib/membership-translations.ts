@@ -9,7 +9,6 @@ export function localizedCatalogTranslation<T extends NamedTranslation>(
   return (
     translations.find((item) => item.locale === locale && item.name.trim()) ??
     translations.find((item) => item.locale === "vi" && item.name.trim()) ??
-    translations.find((item) => item.locale === "en" && item.name.trim()) ??
     null
   );
 }

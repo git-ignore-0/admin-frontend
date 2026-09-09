@@ -71,7 +71,7 @@ export function TestimonialList() {
         busy={loading}
         clearLabel={t.common.clearFilters}
         filter={
-          <div className="testimonial-list-filters">
+          <div className="list-toolbar-filters">
             <label className="field">
               <span>{t.testimonials.filterStatus}</span>
               <select

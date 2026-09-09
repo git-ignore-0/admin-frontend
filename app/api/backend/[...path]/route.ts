@@ -48,6 +48,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const target = buildBackendTarget(authOrigin(), path, request.nextUrl.search);
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${session.accessToken}`);
+  const acceptLanguage = request.headers.get("accept-language");
+  if (acceptLanguage) headers.set("Accept-Language", acceptLanguage);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
   const method = request.method;

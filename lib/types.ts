@@ -17,14 +17,40 @@ export type PaginationMeta = { page: number; page_size: number; total: number };
 export type MembershipStatus = "scheduled" | "active" | "ended" | "revoked";
 export type MembershipQuotaPolicy = "expire" | "rollover";
 
-export type MembershipCustomer = {
+export type WebsiteAccount = {
   id: string;
   name: string;
   email: string;
-  phone: string;
 };
 
-export type MembershipAuditActor = Pick<MembershipCustomer, "id" | "name" | "email">;
+export type CSACustomerStatus = "active" | "scheduled" | "history_only" | "new";
+
+export type CSAMembershipSummary = {
+  id: string;
+  status: MembershipStatus;
+  start_date?: string;
+};
+
+export type MembershipCustomer = {
+  id: string;
+  name: string;
+  phone: string | null;
+  user: WebsiteAccount | null;
+};
+
+export type CSACustomer = MembershipCustomer & {
+  province_code: string | null;
+  ward_code: string | null;
+  address: string;
+  created_at: string;
+  updated_at: string;
+  current_membership: CSAMembershipSummary | null;
+  next_scheduled_membership: CSAMembershipSummary | null;
+  status: CSACustomerStatus;
+  memberships?: AdminMembership[];
+};
+
+export type MembershipAuditActor = WebsiteAccount;
 
 export type MembershipProduct = {
   id: string;
@@ -117,10 +143,11 @@ export type MembershipCycle = {
 
 export type AdminMembership = {
   id: string;
-  user_id: string;
+  customer_id: string;
+  user_id: string | null;
   package_id: string;
   price_option_id: string;
-  user: MembershipCustomer;
+  customer: MembershipCustomer;
   status: MembershipStatus;
   package_name: string;
   package_description: string;
@@ -173,9 +200,18 @@ export type AdminUserListItem = {
   name: string;
   email: string;
   phone: string;
+  province_code: string;
+  ward_code: string;
+  address: string;
+  has_csa_customer: boolean;
   status: string;
   date_joined: string;
   points_balance: number;
+};
+
+export type AdministrativeUnit = {
+  code: string;
+  name: string;
 };
 
 export type InvitedAdminUser = {

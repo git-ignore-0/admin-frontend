@@ -68,21 +68,23 @@ describe("admin sidebar navigation", () => {
     fireEvent.click(group("CSA"));
     expect(screen.queryByRole("link", { name: /CSA requests/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /payment/i })).toBeNull();
-    expect(screen.getByRole("link", { name: "CSA memberships" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "CSA customers" })).toHaveAttribute(
       "href",
-      "/memberships",
+      "/csa-customers",
     );
-    expect(screen.getByRole("link", { name: "Growth Tracker farms" })).toHaveAttribute(
+    expect(screen.queryByRole("link", { name: /memberships/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Growth Tracker farms" })).toBeNull();
+    expect(screen.getByRole("link", { name: "CSA package catalog" })).toHaveAttribute(
       "href",
-      "/tracker-farms",
+      "/membership-catalog",
     );
   });
 
   it.each([
-    ["/membership-catalog", "CSA", "CSA catalog"],
-    ["/membership-catalog/packages/123/edit", "CSA", "CSA catalog"],
-    ["/memberships/assign", "CSA", "CSA memberships"],
-    ["/tracker-farms", "CSA", "Growth Tracker farms"],
+    ["/csa-customers/24803641-2dce-4cac-8fc4-91e55f03e95f", "CSA", "CSA customers"],
+    ["/membership-catalog", "CSA", "CSA package catalog"],
+    ["/membership-catalog/packages/123/edit", "CSA", "CSA package catalog"],
+    ["/tracker-farms", "Website", "Growth Tracker farms"],
     ["/rewards", "Points & rewards", "Rewards"],
     ["/settings", "Website", "Website information"],
     ["/testimonials/testimonial-id/edit", "Website", "Testimonials"],
@@ -97,18 +99,18 @@ describe("admin sidebar navigation", () => {
 
   it("keeps the grouped navigation usable and closable at a mobile viewport", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
-    renderShell("/memberships/assign");
+    renderShell("/csa-customers/new");
 
     const navigationRegion = screen.getByRole("navigation", { name: "Administration" });
     const csaToggle = within(navigationRegion).getByRole("button", { name: "CSA" });
     expect(csaToggle).toHaveAttribute("aria-expanded", "true");
-    expect(within(navigationRegion).getByRole("link", { name: "CSA memberships" })).toHaveAttribute(
+    expect(within(navigationRegion).getByRole("link", { name: "CSA customers" })).toHaveAttribute(
       "aria-current",
       "page",
     );
 
     fireEvent.click(csaToggle);
     expect(csaToggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(navigationRegion).queryByRole("link", { name: "CSA memberships" })).toBeNull();
+    expect(within(navigationRegion).queryByRole("link", { name: "CSA customers" })).toBeNull();
   });
 });

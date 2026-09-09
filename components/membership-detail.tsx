@@ -1,25 +1,61 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { DetailBackLink } from "@/components/detail-back-link";
 import { MembershipStatusBadge } from "@/components/membership-status-badge";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
-import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate, formatAdminDateTime, membershipLastReceiptDate } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
-import { formatMembershipMoney, formatMembershipUnits } from "@/lib/membership-format";
+import { formatMembershipMoney } from "@/lib/membership-format";
 import {
   numericInputErrorMessage,
   parsePositiveInteger,
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
-import type { AdminMembership, MembershipUsage, PaginationMeta } from "@/lib/types";
+import type {
+  AdminMembership,
+  MembershipCycle,
+  MembershipUsage,
+  PaginationMeta,
+} from "@/lib/types";
 
 type UsageLineForm = { productId: string; units: string };
+type CycleQuantities = { granted: number; received: number; remaining: number };
+
+function cycleQuantities(cycle: MembershipCycle): CycleQuantities | null {
+  if (!cycle.quotas.length) return null;
+  const quantities = cycle.quotas.reduce<CycleQuantities | null>(
+    (total, quota) => {
+      if (!total) return null;
+      const values = [quota.granted_units, quota.remaining_units, quota.expired_units];
+      if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) return null;
+      const received = quota.granted_units - quota.remaining_units - quota.expired_units;
+      if (received < 0) return null;
+      return {
+        granted: total.granted + quota.granted_units,
+        received: total.received + received,
+        remaining: total.remaining + quota.remaining_units,
+      };
+    },
+    { granted: 0, received: 0, remaining: 0 },
+  );
+  if (
+    !quantities ||
+    ![quantities.granted, quantities.received, quantities.remaining].every(Number.isSafeInteger)
+  ) {
+    return null;
+  }
+  return quantities;
+}
+
+function quantity(value: number | undefined): string {
+  return value === undefined ? "—" : String(value);
+}
 
 export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const { locale, t } = useAdminI18n();
@@ -244,16 +280,35 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const revokedActor = item.revoked_by
     ? [item.revoked_by.name, item.revoked_by.email].filter(Boolean).join(" · ")
     : "";
+  const cycleRows = (item.cycles ?? []).map((cycle) => ({
+    cycle,
+    quantities: cycleQuantities(cycle),
+  }));
+  const cycleTotalCandidate = cycleRows.reduce<CycleQuantities | null>(
+    (total, row) => {
+      if (!total || !row.quantities) return null;
+      return {
+        granted: total.granted + row.quantities.granted,
+        received: total.received + row.quantities.received,
+        remaining: total.remaining + row.quantities.remaining,
+      };
+    },
+    cycleRows.length ? { granted: 0, received: 0, remaining: 0 } : null,
+  );
+  const cycleTotal =
+    cycleTotalCandidate &&
+    [
+      cycleTotalCandidate.granted,
+      cycleTotalCandidate.received,
+      cycleTotalCandidate.remaining,
+    ].every(Number.isSafeInteger)
+      ? cycleTotalCandidate
+      : null;
 
   return (
     <>
       <div className="detail-page-heading membership-detail-heading">
-        <Link className="detail-back-link" href="/memberships">
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <path d="M19 12H5m6-6-6 6 6 6" />
-          </svg>
-          <span>{t.memberships.backLabel}</span>
-        </Link>
+        <DetailBackLink href={`/csa-customers/${item.customer_id}`} label={t.csaCustomers.back} />
       </div>
       {loadError && (
         <div className="load-error-state">
@@ -279,7 +334,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
             <MembershipStatusBadge status={item.status} />
           </div>
           <p className="membership-hero-metadata">
-            {item.user.name} · {formatAdminDate(item.start_date)} – {formatAdminDate(item.end_date)}
+            {formatAdminDate(item.start_date)} –{" "}
+            {formatAdminDate(membershipLastReceiptDate(item.end_date))}
           </p>
           {item.snapshot_complete === false && (
             <p className="membership-snapshot-warning">
@@ -341,17 +397,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
       </section>
       {item.status === "scheduled" && <p className="notice-box">{t.memberships.scheduledNotice}</p>}
       <div className="membership-detail-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>{t.memberships.customer}</h2>
-          </div>
-          <dl className="detail-list">
-            <DetailRow label={t.users.name} value={item.user.name} />
-            <DetailRow label={t.users.email} value={item.user.email} />
-            <DetailRow label={t.users.phone} value={item.user.phone || "—"} />
-          </dl>
-        </section>
-        <section className="panel">
+        <section className="panel membership-wide">
           <div className="panel-head">
             <h2>{t.memberships.packageSnapshot}</h2>
           </div>
@@ -379,7 +425,10 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
               }
             />
             <DetailRow label={t.memberships.startDate} value={formatAdminDate(item.start_date)} />
-            <DetailRow label={t.memberships.endDate} value={formatAdminDate(item.end_date)} />
+            <DetailRow
+              label={t.memberships.lastReceiptDate}
+              value={formatAdminDate(membershipLastReceiptDate(item.end_date))}
+            />
           </dl>
           {item.package_description && (
             <p className="snapshot-description">{item.package_description}</p>
@@ -387,81 +436,52 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
         </section>
         <section className="panel membership-wide">
           <div className="panel-head">
-            <h2>{t.memberships.quota}</h2>
+            <h2>{t.memberships.cycles}</h2>
           </div>
-          {!item.quota?.length ? (
-            <div className="empty compact">{t.memberships.noQuota}</div>
+          {!cycleRows.length ? (
+            <div className="empty compact">{t.memberships.noCycles}</div>
           ) : (
             <div className="table-wrap">
-              <table className="table quota-table">
+              <table aria-label={t.memberships.cycles} className="table cycle-quota-table">
                 <thead>
                   <tr>
-                    <th>{t.memberships.product}</th>
-                    <th>{t.memberships.quotaPerCycle}</th>
+                    <th>{t.memberships.cycleReceipt}</th>
+                    <th>{t.memberships.cycleRange}</th>
+                    <th>{t.memberships.granted}</th>
+                    <th>{t.memberships.received}</th>
                     <th>{t.memberships.remaining}</th>
-                    <th>{t.memberships.displayAmount}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {item.quota.map((quota) => (
-                    <tr key={quota.product_id}>
+                  {cycleRows.map(({ cycle, quantities }) => (
+                    <tr key={cycle.sequence}>
                       <td>
-                        {quota.product_name}
-                        {quota.snapshot_complete === false && (
-                          <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
-                        )}
-                      </td>
-                      <td>{quota.quota_units_per_cycle}</td>
-                      <td>
-                        <strong>{quota.remaining_units}</strong>
+                        <strong>
+                          {t.memberships.cycle.replace("{number}", String(cycle.sequence))}
+                        </strong>
                       </td>
                       <td>
-                        {formatMembershipUnits(quota.unit_size, quota.remaining_units, locale)}{" "}
-                        {locale === "vi" ? quota.unit_label_vi : quota.unit_label_en}
+                        {formatAdminDate(cycle.start_date)} –{" "}
+                        {formatAdminDate(membershipLastReceiptDate(cycle.end_date))}
+                      </td>
+                      <td>{quantity(quantities?.granted)}</td>
+                      <td>{quantity(quantities?.received)}</td>
+                      <td>
+                        <strong>{quantity(quantities?.remaining)}</strong>
                       </td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr>
+                    <th scope="row">{t.memberships.total}</th>
+                    <td />
+                    <td>{quantity(cycleTotal?.granted)}</td>
+                    <td>{quantity(cycleTotal?.received)}</td>
+                    <td>{quantity(cycleTotal?.remaining)}</td>
+                  </tr>
+                </tfoot>
               </table>
-            </div>
-          )}
-        </section>
-        <section className="panel membership-wide">
-          <div className="panel-head">
-            <h2>{t.memberships.cycles}</h2>
-          </div>
-          {!item.cycles?.length ? (
-            <div className="empty compact">{t.memberships.noCycles}</div>
-          ) : (
-            <div className="cycle-grid">
-              {item.cycles.map((cycle) => (
-                <article className="cycle-card" key={cycle.sequence}>
-                  <div>
-                    <strong>
-                      {t.memberships.cycle.replace("{number}", String(cycle.sequence))}
-                    </strong>
-                    <span>
-                      {formatAdminDate(cycle.start_date)} – {formatAdminDate(cycle.end_date)}
-                    </span>
-                  </div>
-                  <ul>
-                    {cycle.quotas.map((quota) => (
-                      <li key={quota.product_id}>
-                        <span>{quota.product_name}</span>
-                        {quota.snapshot_complete === false && (
-                          <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
-                        )}
-                        <span>
-                          {t.memberships.cycleBalance
-                            .replace("{remaining}", String(quota.remaining_units))
-                            .replace("{granted}", String(quota.granted_units))
-                            .replace("{expired}", String(quota.expired_units))}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </article>
-              ))}
             </div>
           )}
         </section>
@@ -701,11 +721,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           onConfirm={revokeMembership}
           title={t.memberships.revokeTitle}
         >
-          <p>
-            {t.memberships.revokeBody
-              .replace("{user}", item.user.name)
-              .replace("{package}", item.package_name)}
-          </p>
+          <p>{t.memberships.revokeBody.replace("{package}", item.package_name)}</p>
           <label className="field">
             <span>{t.memberships.revokeReason}</span>
             <textarea

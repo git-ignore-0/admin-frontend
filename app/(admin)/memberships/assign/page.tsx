@@ -3,17 +3,25 @@ import { DetailPageHeading } from "@/components/detail-page-heading";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { getAdminLocale } from "@/lib/admin-locale";
 
-export default async function AssignMembershipPage() {
+export default async function AssignMembershipPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ customerId?: string | string[] }>;
+}) {
   const t = adminDictionaries[await getAdminLocale()];
+  const rawCustomerId = (await searchParams).customerId;
+  const customerId = typeof rawCustomerId === "string" ? rawCustomerId : undefined;
   return (
     <>
       <DetailPageHeading
-        backHref="/memberships"
-        backLabel={t.memberships.backLabel}
+        backHref={
+          customerId ? `/csa-customers/${encodeURIComponent(customerId)}` : "/csa-customers"
+        }
+        backLabel={customerId ? t.memberships.backToCustomer : t.csaCustomers.back}
         description={t.memberships.assignmentDescription}
         title={t.memberships.assignmentTitle}
       />
-      <MembershipAssignmentForm />
+      <MembershipAssignmentForm customerId={customerId} />
     </>
   );
 }

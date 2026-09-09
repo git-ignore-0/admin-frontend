@@ -1,196 +1,197 @@
 "use client";
-
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
+import { formatAdminDate, membershipLastReceiptDate } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
-import type {
-  AdminMembership,
-  AdminUserListItem,
-  MembershipPackage,
-  PaginationMeta,
-} from "@/lib/types";
+import { localizedCatalogTranslation } from "@/lib/membership-translations";
+import {
+  addMonthsToDate,
+  membershipWouldOverlap,
+  suggestedMembershipStart,
+} from "@/lib/membership-schedule";
+import type { AdminMembership, CSACustomer, MembershipPackage, PaginationMeta } from "@/lib/types";
+import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
 function todayInVietnam() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(new Date());
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${value("year")}-${value("month")}-${value("day")}`;
+  }).format(new Date());
 }
 
-type AssignmentError = Error & { status?: number };
+const ORDER_REFERENCE_ERROR_ID = "membership-order-reference-error";
 
-export function MembershipAssignmentForm() {
+export function MembershipAssignmentForm({ customerId }: { customerId?: string }) {
   const { locale, t } = useAdminI18n();
   const router = useRouter();
   const toast = useToast();
-  const submitRef = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const userRequestId = useRef(0);
-  const packageRequestId = useRef(0);
-  const [userQuery, setUserQuery] = useState("");
-  const [userSearch, setUserSearch] = useState("");
-  const [userPage, setUserPage] = useState(1);
-  const [users, setUsers] = useState<AdminUserListItem[] | null>(null);
-  const [userMeta, setUserMeta] = useState<PaginationMeta | null>(null);
-  const [usersLoading, setUsersLoading] = useState(false);
-  const [usersError, setUsersError] = useState("");
-  const [selectedUser, setSelectedUser] = useState<AdminUserListItem | null>(null);
-  const [packageQuery, setPackageQuery] = useState("");
-  const [packageSearch, setPackageSearch] = useState("");
-  const [packagePage, setPackagePage] = useState(1);
+  const orderReferenceRef = useRef<HTMLInputElement>(null);
+  const submitRef = useRef(false);
+  const dictionaryRef = useRef(t);
+  dictionaryRef.current = t;
+  const [customer, setCustomer] = useState<CSACustomer | null>(null);
+  const [customerLoading, setCustomerLoading] = useState(Boolean(customerId));
+  const [customerError, setCustomerError] = useState("");
   const [packages, setPackages] = useState<MembershipPackage[] | null>(null);
-  const [packageMeta, setPackageMeta] = useState<PaginationMeta | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<MembershipPackage | null>(null);
   const [packagesLoading, setPackagesLoading] = useState(true);
   const [packagesError, setPackagesError] = useState("");
-  const [selectedPackage, setSelectedPackage] = useState<MembershipPackage | null>(null);
   const [priceOptionId, setPriceOptionId] = useState("");
-  const [farmbriteReference, setFarmbriteReference] = useState("");
-  const [startDate, setStartDate] = useState(todayInVietnam);
+  const [orderReference, setOrderReference] = useState("");
+  const [orderReferenceError, setOrderReferenceError] = useState("");
+  const [startDate, setStartDate] = useState("");
   const [formError, setFormError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { provinceName, wardName } = useAdministrativeUnitNames(
+    customer?.province_code ?? null,
+    customer?.ward_code ?? null,
+    locale,
+  );
 
   useEffect(() => {
+    if (!customerId) return;
     const controller = new AbortController();
-    const currentRequest = ++packageRequestId.current;
+    setCustomer(null);
+    setCustomerLoading(true);
+    setCustomerError("");
+    api<CSACustomer>(`admin/csa-customers/${encodeURIComponent(customerId)}`, {
+      signal: controller.signal,
+    })
+      .then(setCustomer)
+      .catch((caught) => {
+        if (!controller.signal.aborted) {
+          setCustomerError(requestErrorMessage(caught, dictionaryRef.current));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCustomerLoading(false);
+      });
+    return () => controller.abort();
+  }, [customerId]);
+
+  useEffect(() => {
+    if (!customer) return;
+    const controller = new AbortController();
+    setPackages(null);
+    setSelectedPackage(null);
+    setPriceOptionId("");
     setPackagesLoading(true);
     setPackagesError("");
-    const params = new URLSearchParams({ active: "true", page: String(packagePage) });
-    if (packageSearch) params.set("search", packageSearch);
-    apiEnvelope<MembershipPackage[], PaginationMeta>(`admin/membership-packages?${params}`, {
-      signal: controller.signal,
-    })
-      .then((payload) => {
-        if (controller.signal.aborted || currentRequest !== packageRequestId.current) return;
-        setPackages(payload.data.filter((item) => item.is_active));
-        setPackageMeta(payload.meta ?? null);
-      })
+    apiEnvelope<MembershipPackage[], PaginationMeta>(
+      "admin/membership-packages?active=true&page=1",
+      {
+        signal: controller.signal,
+      },
+    )
+      .then((result) => setPackages(result.data.filter((item) => item.is_active)))
       .catch((caught) => {
-        if (controller.signal.aborted || currentRequest !== packageRequestId.current) return;
-        setPackagesError(requestErrorMessage(caught, t));
+        if (!controller.signal.aborted) {
+          setPackagesError(requestErrorMessage(caught, dictionaryRef.current));
+        }
       })
       .finally(() => {
-        if (!controller.signal.aborted && currentRequest === packageRequestId.current) {
-          setPackagesLoading(false);
-        }
+        if (!controller.signal.aborted) setPackagesLoading(false);
       });
-    return () => {
-      controller.abort();
-      if (currentRequest === packageRequestId.current) packageRequestId.current += 1;
-    };
-  }, [packagePage, packageSearch, t]);
+    return () => controller.abort();
+  }, [customer]);
 
-  useEffect(() => {
-    if (!userSearch) return;
-    const controller = new AbortController();
-    const currentRequest = ++userRequestId.current;
-    setUsersLoading(true);
-    setUsersError("");
-    const params = new URLSearchParams({ page: String(userPage), search: userSearch });
-    apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`, {
-      signal: controller.signal,
-    })
-      .then((payload) => {
-        if (controller.signal.aborted || currentRequest !== userRequestId.current) return;
-        setUsers(payload.data);
-        setUserMeta(payload.meta ?? null);
-      })
-      .catch((caught) => {
-        if (controller.signal.aborted || currentRequest !== userRequestId.current) return;
-        setUsersError(requestErrorMessage(caught, t));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted && currentRequest === userRequestId.current) {
-          setUsersLoading(false);
-        }
-      });
-    return () => {
-      controller.abort();
-      if (currentRequest === userRequestId.current) userRequestId.current += 1;
-    };
-  }, [t, userPage, userSearch]);
-
-  const activeOptions = useMemo(
+  const options = useMemo(
     () => selectedPackage?.price_options.filter((option) => option.is_active) ?? [],
     [selectedPackage],
   );
-  const selectedOption = activeOptions.find((option) => option.id === priceOptionId);
-
-  function searchUsers(event: FormEvent) {
-    event.preventDefault();
-    if (!userQuery.trim()) return;
-    setUserPage(1);
-    setUserSearch(userQuery.trim());
-  }
-
-  function searchPackages(event: FormEvent) {
-    event.preventDefault();
-    setPackagePage(1);
-    setPackageSearch(packageQuery.trim());
-  }
+  const selectedOption = options.find((option) => option.id === priceOptionId);
+  const selectedPackageTranslation = selectedPackage
+    ? localizedCatalogTranslation(selectedPackage.translations, locale)
+    : null;
+  const selectedPackageName = selectedPackageTranslation?.name || selectedPackage?.name || "";
+  const existingMemberships = customer?.memberships ?? [];
+  const today = todayInVietnam();
+  const suggestedStart = suggestedMembershipStart(existingMemberships, today);
+  const exclusiveEnd =
+    selectedOption && startDate ? addMonthsToDate(startDate, selectedOption.duration_months) : null;
+  const overlaps = Boolean(
+    startDate &&
+    exclusiveEnd &&
+    membershipWouldOverlap(existingMemberships, startDate, exclusiveEnd),
+  );
+  const startDateBeforeMinimum = Boolean(startDate && startDate < suggestedStart);
+  const selectedPackageIsValid = Boolean(selectedPackage?.is_active && options.length > 0);
+  const formReady = Boolean(
+    customerId &&
+    customer &&
+    packages &&
+    !packagesLoading &&
+    !packagesError &&
+    selectedPackageIsValid &&
+    selectedOption?.is_active &&
+    orderReference.trim() &&
+    startDate &&
+    !startDateBeforeMinimum &&
+    !overlaps,
+  );
 
   function validate() {
-    if (
-      !selectedUser ||
-      !selectedPackage ||
-      !priceOptionId ||
-      !farmbriteReference.trim() ||
-      !startDate
-    ) {
-      setFormError(t.memberships.assignmentRequired);
+    if (!orderReference.trim()) {
+      setOrderReferenceError(t.memberships.orderReferenceRequired);
+      window.setTimeout(() => orderReferenceRef.current?.focus(), 0);
       return false;
     }
-    if (startDate < todayInVietnam()) {
-      setFormError(t.memberships.startDatePast);
+    if (!formReady) {
       return false;
     }
+    setOrderReferenceError("");
     setFormError("");
     return true;
   }
-
   async function assign() {
-    if (submitRef.current || !validate() || !selectedUser || !selectedPackage) return;
+    if (!validate() || !customer || !selectedPackage || !selectedOption || submitRef.current)
+      return;
     submitRef.current = true;
     setSaving(true);
-    setFormError("");
     try {
-      const membership = await api<AdminMembership>(`admin/memberships?locale=${locale}`, {
+      const body: Record<string, string> = {
+        customer_id: customer.id,
+        package_id: selectedPackage.id,
+        price_option_id: selectedOption.id,
+        start_date: startDate,
+        farmbrite_order_reference: orderReference.trim(),
+      };
+      await api<AdminMembership>(`admin/memberships?locale=${locale}`, {
         method: "POST",
-        body: JSON.stringify({
-          user_id: selectedUser.id,
-          package_id: selectedPackage.id,
-          price_option_id: priceOptionId,
-          start_date: startDate,
-          farmbrite_order_reference: farmbriteReference.trim(),
-        }),
+        body: JSON.stringify(body),
       });
       toast(t.memberships.assignmentCreated);
-      router.replace(`/memberships/${membership.id}`);
+      router.replace(`/csa-customers/${customer.id}`);
     } catch (caught) {
-      const error = caught as AssignmentError;
-      const message =
-        error.message === "duplicate_farmbrite_order_reference"
-          ? t.memberships.duplicateFarmbriteReference
-          : error.message === "active_membership_exists"
-            ? t.memberships.activeMembershipConflict
-            : error.message === "price_option_unavailable"
+      const code = caught instanceof Error ? caught.message : "";
+      if (code === "duplicate_farmbrite_order_reference") {
+        setFormError("");
+        setOrderReferenceError(t.memberships.duplicateOrderReference);
+        setConfirmOpen(false);
+        window.setTimeout(() => orderReferenceRef.current?.focus(), 0);
+        return;
+      }
+      setFormError(
+        code === "membership_overlap"
+          ? t.memberships.activeMembershipConflict
+          : code === "csa_customer_incomplete"
+            ? t.memberships.customerIncomplete
+            : code === "price_option_unavailable"
               ? t.memberships.inactivePriceConflict
-              : error.message === "package_unavailable"
+              : code === "package_unavailable"
                 ? t.memberships.packageUnavailable
-                : requestErrorMessage(caught, t);
-      setFormError(message);
+                : requestErrorMessage(caught, t),
+      );
       setConfirmOpen(false);
     } finally {
       submitRef.current = false;
@@ -198,185 +199,151 @@ export function MembershipAssignmentForm() {
     }
   }
 
+  if (!customerId) {
+    return (
+      <section className="panel empty" role="status">
+        <p>{t.memberships.customerRequired}</p>
+        <Link className="button" href="/csa-customers">
+          {t.memberships.backToCustomers}
+        </Link>
+      </section>
+    );
+  }
+
+  if (customerLoading) {
+    return (
+      <section className="panel" aria-busy="true">
+        <p>{t.csaCustomers.detailLoading}</p>
+      </section>
+    );
+  }
+
+  if (!customer) {
+    return (
+      <section className="panel empty" role="alert">
+        <p>{customerError}</p>
+        <Link className="button" href="/csa-customers">
+          {t.memberships.backToCustomers}
+        </Link>
+      </section>
+    );
+  }
+
   return (
-    <div className="assignment-layout">
-      <section className="panel assignment-user-search" aria-busy={usersLoading}>
+    <div className="form-grid one">
+      <section className="panel assignment-customer-summary">
         <h2 ref={headingRef} tabIndex={-1}>
-          {t.memberships.chooseCustomer}
+          {t.memberships.customer}
         </h2>
-        <form
-          aria-label={t.memberships.userSearchLabel}
-          className="list-toolbar"
-          onSubmit={searchUsers}
-          role="search"
-        >
-          <label className="field">
-            <span>{t.memberships.userSearchLabel}</span>
-            <input
-              className="input"
-              disabled={saving}
-              onChange={(event) => setUserQuery(event.target.value)}
-              placeholder={t.memberships.userSearchPlaceholder}
-              type="search"
-              value={userQuery}
-            />
-          </label>
-          <button className="button secondary" disabled={saving || !userQuery.trim()}>
-            {usersLoading ? t.memberships.searching : t.memberships.search}
-          </button>
-        </form>
-        {usersError && (
-          <p className="error-box" role="alert">
-            {usersError}
-          </p>
-        )}
-        {selectedUser && (
-          <div className="assignment-selection-summary" aria-live="polite">
-            <small>{t.memberships.selectedCustomer}</small>
-            <strong>{selectedUser.name}</strong>
-            <span>
-              {selectedUser.email} · {selectedUser.phone || "—"}
-            </span>
+        <dl className="detail-list customer-account-list">
+          <div>
+            <dt>{t.csaCustomers.name}</dt>
+            <dd>{customer.name || "—"}</dd>
           </div>
-        )}
-        {users && !users.length && <p className="empty compact">{t.memberships.noUsers}</p>}
-        {users && users.length > 0 && (
-          <div
-            className="assignment-user-results"
-            role="radiogroup"
-            aria-label={t.memberships.chooseCustomer}
-          >
-            {users.map((user) => (
-              <label
-                className={`assignment-user ${selectedUser?.id === user.id ? "selected" : ""}`}
-                key={user.id}
-              >
-                <input
-                  checked={selectedUser?.id === user.id}
-                  disabled={saving}
-                  name="membership-user"
-                  onChange={() => setSelectedUser(user)}
-                  type="radio"
-                />
-                <span>
-                  <strong>{user.name}</strong>
-                  <small>
-                    {user.email} · {user.phone || "—"}
-                  </small>
-                </span>
-              </label>
-            ))}
+          <div>
+            <dt>{t.csaCustomers.phone}</dt>
+            <dd>{customer.phone || "—"}</dd>
           </div>
-        )}
-        {userMeta && (
-          <Pagination
-            disabled={usersLoading || saving}
-            nextLabel={t.common.next}
-            onPage={setUserPage}
-            page={userMeta.page}
-            pageSize={userMeta.page_size}
-            previousLabel={t.common.previous}
-            summary={t.common.pagination}
-            total={userMeta.total}
-          />
-        )}
+          <div>
+            <dt>{t.csaCustomers.websiteAccount}</dt>
+            <dd>
+              <span className={`badge ${customer.user ? "customer-account-linked" : "warm"}`}>
+                {customer.user ? t.memberships.linkedCustomer : t.memberships.managedCustomer}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>{t.csaCustomers.province}</dt>
+            <dd>{provinceName || "—"}</dd>
+          </div>
+          <div>
+            <dt>{t.csaCustomers.ward}</dt>
+            <dd>{wardName || "—"}</dd>
+          </div>
+          <div>
+            <dt>{t.csaCustomers.deliveryAddress}</dt>
+            <dd>{customer.address || "—"}</dd>
+          </div>
+        </dl>
       </section>
       <section className="panel assignment-fields" aria-busy={packagesLoading}>
         <h2>{t.memberships.assignmentDetails}</h2>
         {formError && (
-          <p className="error-box" role="alert">
-            {formError}
-          </p>
+          <div className="error-box" role="alert">
+            <p>{formError}</p>
+          </div>
         )}
         {packagesError && (
           <p className="error-box" role="alert">
             {packagesError}
           </p>
         )}
-        <form
-          aria-label={t.memberships.packageSearchLabel}
-          className="list-toolbar"
-          onSubmit={searchPackages}
-          role="search"
-        >
-          <label className="field">
-            <span>{t.memberships.packageSearchLabel}</span>
-            <input
-              className="input"
-              disabled={saving}
-              onChange={(event) => setPackageQuery(event.target.value)}
-              placeholder={t.memberships.packageSearchPlaceholder}
-              type="search"
-              value={packageQuery}
-            />
-          </label>
-          <button className="button secondary" disabled={saving}>
-            {packagesLoading ? t.memberships.searching : t.memberships.search}
-          </button>
-        </form>
-        {selectedPackage && (
-          <div className="assignment-selection-summary" aria-live="polite">
-            <small>{t.memberships.selectedPackage}</small>
-            <strong>{selectedPackage.name}</strong>
-            <span>{selectedPackage.description || "—"}</span>
+        {packagesLoading && <p>{t.memberships.loadingPackages}</p>}
+        {packages?.length === 0 && <p className="empty compact">{t.memberships.noPackages}</p>}
+        {packages && (
+          <div className="assignment-package-results" role="radiogroup">
+            {packages.map((item) => {
+              const activeOptions = item.price_options.filter((option) => option.is_active);
+              const selectable = item.is_active && activeOptions.length > 0;
+              const translation = localizedCatalogTranslation(item.translations, locale);
+              const packageName = translation?.name || item.name;
+              const packageDescription = translation?.description || item.description;
+              return (
+                <label
+                  className={`assignment-package ${selectedPackage?.id === item.id ? "selected" : ""} ${selectable ? "" : "disabled"}`}
+                  key={item.id}
+                >
+                  <input
+                    checked={selectedPackage?.id === item.id}
+                    disabled={!selectable}
+                    name="membership-package"
+                    onChange={() => {
+                      setSelectedPackage(item);
+                      setPriceOptionId("");
+                      setFormError("");
+                    }}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>{packageName}</strong>
+                    {packageDescription && <small>{packageDescription}</small>}
+                    {selectable ? (
+                      activeOptions.map((option) => (
+                        <small key={option.id}>
+                          {t.membershipCatalog.priceOptionSummary
+                            .replace("{months}", String(option.duration_months))
+                            .replace(
+                              "{price}",
+                              formatMembershipMoney(option.monthly_price_vnd, locale),
+                            )}{" "}
+                          · {t.membershipCatalog.totalPreview}:{" "}
+                          {formatMembershipMoney(option.total_price_vnd, locale)}
+                        </small>
+                      ))
+                    ) : (
+                      <small className="field-error">{t.memberships.packageNoActiveOptions}</small>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
           </div>
-        )}
-        {packages && !packages.length && (
-          <p className="empty compact">{t.memberships.noPackages}</p>
-        )}
-        {packages && packages.length > 0 && (
-          <div
-            className="assignment-package-results"
-            role="radiogroup"
-            aria-label={t.memberships.choosePackage}
-          >
-            {packages.map((item) => (
-              <label
-                className={`assignment-package ${selectedPackage?.id === item.id ? "selected" : ""}`}
-                key={item.id}
-              >
-                <input
-                  checked={selectedPackage?.id === item.id}
-                  disabled={saving}
-                  name="membership-package"
-                  onChange={() => {
-                    setSelectedPackage(item);
-                    setPriceOptionId("");
-                  }}
-                  type="radio"
-                />
-                <span>
-                  <strong>{item.name}</strong>
-                  <small>{item.description || "—"}</small>
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-        {packageMeta && (
-          <Pagination
-            disabled={packagesLoading || saving}
-            nextLabel={t.common.next}
-            onPage={setPackagePage}
-            page={packageMeta.page}
-            pageSize={packageMeta.page_size}
-            previousLabel={t.common.previous}
-            summary={t.common.pagination}
-            total={packageMeta.total}
-          />
         )}
         <div className="form-grid one assignment-order-fields">
           <label className="field">
             <span>{t.memberships.priceOption} *</span>
             <select
               className="input"
-              disabled={saving || !selectedPackage}
-              onChange={(event) => setPriceOptionId(event.target.value)}
+              disabled={!selectedPackageIsValid}
               value={priceOptionId}
+              onChange={(e) => {
+                setPriceOptionId(e.target.value);
+                setFormError("");
+              }}
             >
               <option value="">{t.memberships.choosePriceOption}</option>
-              {activeOptions.map((option) => (
-                <option key={option.id} value={option.id}>
+              {options.map((option) => (
+                <option value={option.id} key={option.id}>
                   {t.membershipCatalog.priceOptionSummary
                     .replace("{months}", String(option.duration_months))
                     .replace("{price}", formatMembershipMoney(option.monthly_price_vnd, locale))}
@@ -385,39 +352,97 @@ export function MembershipAssignmentForm() {
             </select>
           </label>
           <label className="field">
-            <span>{t.memberships.farmbriteReference} *</span>
+            <span>{t.memberships.orderReference}</span>
             <input
+              aria-describedby={orderReferenceError ? ORDER_REFERENCE_ERROR_ID : undefined}
+              aria-invalid={Boolean(orderReferenceError)}
+              aria-label={t.memberships.orderReference}
               className="input"
-              disabled={saving}
               maxLength={120}
-              onChange={(event) => setFarmbriteReference(event.target.value)}
-              value={farmbriteReference}
+              ref={orderReferenceRef}
+              required
+              value={orderReference}
+              onBlur={() => {
+                if (!orderReference.trim()) {
+                  setOrderReferenceError(t.memberships.orderReferenceRequired);
+                }
+              }}
+              onChange={(e) => {
+                setOrderReference(e.target.value);
+                setOrderReferenceError("");
+              }}
             />
+            {orderReferenceError ? (
+              <small className="field-error" id={ORDER_REFERENCE_ERROR_ID} role="alert">
+                {orderReferenceError}
+              </small>
+            ) : (
+              <small>{t.memberships.orderReferenceHelp}</small>
+            )}
           </label>
           <label className="field">
-            <span>{t.memberships.startDate} *</span>
+            <span>{t.memberships.startDate}</span>
             <input
               className="input"
-              disabled={saving}
-              min={todayInVietnam()}
-              onChange={(event) => setStartDate(event.target.value)}
+              aria-invalid={startDateBeforeMinimum || overlaps}
+              disabled={!selectedOption}
+              min={suggestedStart}
               type="date"
               value={startDate}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                setFormError("");
+              }}
             />
+            <small>
+              {t.memberships.suggestedStartDate.replace("{date}", formatAdminDate(suggestedStart))}
+            </small>
+            {startDateBeforeMinimum && (
+              <small className="field-error">
+                {t.memberships.startDateMinimum.replace("{date}", formatAdminDate(suggestedStart))}
+              </small>
+            )}
           </label>
-        </div>
-        <div className="form-actions">
-          <button
-            className="button"
-            disabled={saving}
-            onClick={() => validate() && setConfirmOpen(true)}
-            type="button"
-          >
-            {t.memberships.reviewAssignment}
-          </button>
+          {selectedOption && exclusiveEnd && (
+            <div className={`schedule-preview ${overlaps ? "invalid" : ""}`} role="status">
+              <span>{t.csaCustomers.schedulePreview}</span>
+              <strong>
+                {formatAdminDate(startDate)} →{" "}
+                {formatAdminDate(membershipLastReceiptDate(exclusiveEnd))}
+              </strong>
+              <small>
+                {overlaps ? t.csaCustomers.overlapConflict : t.csaCustomers.manualSchedule}
+              </small>
+            </div>
+          )}
         </div>
       </section>
-      {confirmOpen && selectedUser && selectedPackage && selectedOption && (
+      <section className="panel assignment-membership-history">
+        <h2>{t.csaCustomers.existingPackages}</h2>
+        {existingMemberships.length > 0 ? (
+          <div className="assignment-existing-packages">
+            {existingMemberships.map((membership) => (
+              <span key={membership.id}>
+                {membership.package_name} · {formatAdminDate(membership.start_date)} –{" "}
+                {formatAdminDate(membershipLastReceiptDate(membership.end_date))}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="empty compact">{t.csaCustomers.noHistory}</p>
+        )}
+      </section>
+      <div className="form-actions">
+        <button
+          className="button"
+          disabled={!formReady || saving}
+          onClick={() => validate() && setConfirmOpen(true)}
+          type="button"
+        >
+          {t.memberships.confirmAssignment}
+        </button>
+      </div>
+      {confirmOpen && selectedPackage && selectedOption && (
         <ConfirmationDialog
           busy={saving}
           busyLabel={t.memberships.assigning}
@@ -429,32 +454,24 @@ export function MembershipAssignmentForm() {
           onConfirm={assign}
           title={t.memberships.assignmentDialogTitle}
         >
-          <dl className="detail-list assignment-confirmation">
+          <dl className="detail-list">
             <div>
               <dt>{t.memberships.customer}</dt>
-              <dd>{selectedUser.name}</dd>
+              <dd>{customer.name}</dd>
             </div>
             <div>
               <dt>{t.memberships.package}</dt>
-              <dd>{selectedPackage.name}</dd>
+              <dd>{selectedPackageName}</dd>
             </div>
             <div>
               <dt>{t.memberships.priceOption}</dt>
-              <dd>
-                {selectedOption.duration_months} ·{" "}
-                {formatMembershipMoney(selectedOption.total_price_vnd, locale)}
-              </dd>
-            </div>
-            <div>
-              <dt>{t.memberships.farmbriteReference}</dt>
-              <dd>{farmbriteReference.trim()}</dd>
+              <dd>{formatMembershipMoney(selectedOption.total_price_vnd, locale)}</dd>
             </div>
             <div>
               <dt>{t.memberships.startDate}</dt>
-              <dd>{startDate}</dd>
+              <dd>{formatAdminDate(startDate)}</dd>
             </div>
           </dl>
-          <p className="notice-box">{t.memberships.assignNewAfterRevoke}</p>
         </ConfirmationDialog>
       )}
     </div>

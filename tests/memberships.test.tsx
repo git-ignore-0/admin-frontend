@@ -11,17 +11,16 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
-import { MembershipAssignmentForm } from "@/components/membership-assignment-form";
 import { MembershipPackageDetail } from "@/components/membership-catalog-detail";
 import { MembershipPackageEditor } from "@/components/membership-catalog-editors";
 import { MembershipPackageList } from "@/components/membership-catalog-lists";
 import { MembershipDetail } from "@/components/membership-detail";
-import { MembershipList } from "@/components/membership-list";
 import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type {
   AdminMembership,
   AdminUserListItem,
+  MembershipCycle,
   MembershipPackage,
   MembershipProduct,
   MembershipUsage,
@@ -34,6 +33,7 @@ vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: navigation.push, replace: navigation.replace, refresh: vi.fn() }),
   usePathname: () => "/memberships",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 afterEach(() => {
@@ -117,6 +117,10 @@ const user: AdminUserListItem = {
   name: "Green Member",
   email: "green@example.com",
   phone: "0918765432",
+  province_code: "79",
+  ward_code: "26734",
+  address: "12 Main Street",
+  has_csa_customer: false,
   status: "active",
   date_joined: "2026-01-01T00:00:00Z",
   points_balance: 0,
@@ -124,10 +128,16 @@ const user: AdminUserListItem = {
 
 const membership: AdminMembership = {
   id: "87703641-2dce-4cac-8fc4-91e55f03e95f",
+  customer_id: "24803641-2dce-4cac-8fc4-91e55f03e95f",
   user_id: user.id,
   package_id: packageItem.id,
   price_option_id: activeOption.id,
-  user,
+  customer: {
+    id: "24803641-2dce-4cac-8fc4-91e55f03e95f",
+    name: user.name,
+    phone: user.phone,
+    user: { id: user.id, name: user.name, email: user.email },
+  },
   status: "active",
   package_name: packageItem.name,
   package_description: packageItem.description,
@@ -157,6 +167,31 @@ const membership: AdminMembership = {
   ],
   cycles: [],
 };
+
+function membershipCycle(
+  sequence: number,
+  startDate: string,
+  endDate: string,
+  granted: number,
+  remaining: number,
+  expired = 0,
+): MembershipCycle {
+  return {
+    sequence,
+    start_date: startDate,
+    end_date: endDate,
+    granted_at: `${startDate}T00:00:00Z`,
+    quotas: [
+      {
+        product_id: product.id,
+        product_name: product.name,
+        granted_units: granted,
+        remaining_units: remaining,
+        expired_units: expired,
+      },
+    ],
+  };
+}
 
 const meta: PaginationMeta = { page: 1, page_size: 30, total: 1 };
 
@@ -335,287 +370,82 @@ describe("CSA package price options", () => {
   });
 });
 
-describe("manual Membership assignment", () => {
-  const secondPackage: MembershipPackage = {
-    ...packageItem,
-    id: "fd58ec7b-7687-4c81-b21c-da0d1a201a12",
-    name: "Twelve month CSA",
-    description: "A full year package",
-    price_options: [
-      {
-        ...activeOption,
-        id: "ae999a35-d30f-48f7-8a04-e0cf39ad2849",
-        duration_months: 12,
-        total_price_vnd: "9000000",
-      },
-    ],
-  };
-  const secondUser: AdminUserListItem = {
-    ...user,
-    id: "7202b170-0dc2-4c4b-a027-8e6c43875943",
-    name: "Second Member",
-    email: "second@example.com",
-  };
-
-  function mockAssignment() {
-    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
-      if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
-      if (path.startsWith("admin/users?")) return { data: [user], meta };
-      throw new Error(`Unexpected request: ${path}`);
-    });
-  }
-
-  async function prepareAssignment() {
-    mockAssignment();
-    providers(<MembershipAssignmentForm />);
-    await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenCalledWith(
-        "admin/membership-packages?active=true&page=1",
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      ),
-    );
-    expect(
-      vi.mocked(apiEnvelope).mock.calls.some(([path]) => path.startsWith("admin/users?")),
-    ).toBe(false);
-    const userSearch = screen.getByRole("search", {
-      name: "Search users by email or phone number",
-    });
-    fireEvent.change(within(userSearch).getByLabelText("Search users by email or phone number"), {
-      target: { value: "green@example.com" },
-    });
-    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
-    const userResults = await screen.findByRole("radiogroup", { name: "Choose customer" });
-    fireEvent.click(within(userResults).getByRole("radio"));
-    const packageResults = await screen.findByRole("radiogroup", {
-      name: "Choose an active package",
-    });
-    fireEvent.click(within(packageResults).getByRole("radio"));
-    fireEvent.change(screen.getByLabelText("Price option *"), {
-      target: { value: activeOption.id },
-    });
-    fireEvent.change(screen.getByLabelText("Farmbrite order reference *"), {
-      target: { value: "FB-2026-0001" },
-    });
-    return screen.getByRole("button", { name: "Review and confirm" });
-  }
-
-  it("searches users server-side and offers only active price options", async () => {
-    await prepareAssignment();
-    expect(apiEnvelope).toHaveBeenCalledWith(
-      expect.stringContaining("admin/users?page=1&search=green%40example.com"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(screen.getByRole("option", { name: /750,000/ })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /769,000/ })).toBeNull();
-  });
-
-  it("finds and selects an active package on page 2", async () => {
-    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
-      if (path === "admin/membership-packages?active=true&page=1") {
-        return { data: [packageItem], meta: { page: 1, page_size: 1, total: 2 } };
-      }
-      if (path === "admin/membership-packages?active=true&page=2") {
-        return { data: [secondPackage], meta: { page: 2, page_size: 1, total: 2 } };
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipAssignmentForm />);
-    const pagination = await screen.findByRole("navigation", { name: "Page {page}/{pages}" });
-    fireEvent.click(within(pagination).getByRole("button", { name: "Next" }));
-    const results = await screen.findByRole("radiogroup", { name: "Choose an active package" });
-    fireEvent.click(within(results).getByRole("radio", { name: /Twelve month CSA/ }));
-    expect(screen.getByText("Selected package").parentElement).toHaveTextContent(
-      "Twelve month CSA",
-    );
-    expect(screen.getByRole("option", { name: /12 months/ })).toBeInTheDocument();
-  });
-
-  it("keeps the selected package and price option across another search", async () => {
-    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
-      if (path.includes("search=other")) return { data: [secondPackage], meta };
-      if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipAssignmentForm />);
-    const results = await screen.findByRole("radiogroup", { name: "Choose an active package" });
-    fireEvent.click(within(results).getByRole("radio"));
-    fireEvent.change(screen.getByLabelText("Price option *"), {
-      target: { value: activeOption.id },
-    });
-    const search = screen.getByRole("search", { name: "Search active CSA packages" });
-    fireEvent.change(within(search).getByLabelText("Search active CSA packages"), {
-      target: { value: "other" },
-    });
-    fireEvent.click(within(search).getByRole("button", { name: "Search" }));
-    await screen.findByText("Twelve month CSA");
-    expect(screen.getByText("Selected package").parentElement).toHaveTextContent(packageItem.name);
-    expect(screen.getByLabelText("Price option *")).toHaveValue(activeOption.id);
-    expect(screen.getByRole("option", { name: /6 months/ })).toBeInTheDocument();
-  });
-
-  it("prevents stale package responses from replacing a newer search", async () => {
-    let resolveOld!: (value: { data: MembershipPackage[]; meta: PaginationMeta }) => void;
-    const oldRequest = new Promise<{ data: MembershipPackage[]; meta: PaginationMeta }>(
-      (resolve) => (resolveOld = resolve),
-    );
-    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
-      if (path.endsWith("search=old")) return oldRequest;
-      if (path.endsWith("search=new")) return { data: [secondPackage], meta };
-      return { data: [packageItem], meta };
-    });
-    providers(<MembershipAssignmentForm />);
-    await screen.findByText(packageItem.name);
-    const search = screen.getByRole("search", { name: "Search active CSA packages" });
-    const input = within(search).getByLabelText("Search active CSA packages");
-    fireEvent.change(input, { target: { value: "old" } });
-    fireEvent.click(within(search).getByRole("button", { name: "Search" }));
-    await waitFor(() =>
-      expect(vi.mocked(apiEnvelope).mock.calls.some(([path]) => path.endsWith("search=old"))).toBe(
-        true,
-      ),
-    );
-    fireEvent.change(input, { target: { value: "new" } });
-    fireEvent.click(within(search).getByRole("button", { name: "Searching…" }));
-    expect(await screen.findByText(secondPackage.name)).toBeInTheDocument();
-    await act(async () => resolveOld({ data: [packageItem], meta }));
-    expect(screen.getByText(secondPackage.name)).toBeInTheDocument();
-    expect(screen.queryByText(packageItem.name)).toBeNull();
-  });
-
-  it("aborts active package and user lookups on unmount", async () => {
-    const signals: AbortSignal[] = [];
-    vi.mocked(apiEnvelope).mockImplementation(
-      (_path, init) =>
-        new Promise(() => {
-          if (init?.signal) signals.push(init.signal);
-        }),
-    );
-    const view = providers(<MembershipAssignmentForm />);
-    const userSearch = screen.getByRole("search", {
-      name: "Search users by email or phone number",
-    });
-    fireEvent.change(within(userSearch).getByLabelText("Search users by email or phone number"), {
-      target: { value: "green" },
-    });
-    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(signals).toHaveLength(2));
-    view.unmount();
-    expect(signals.every((signal) => signal.aborted)).toBe(true);
-  });
-
-  it("keeps the selected user across searches until another user is clicked", async () => {
-    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
-      if (path.startsWith("admin/membership-packages")) return { data: [packageItem], meta };
-      if (path.includes("search=second")) return { data: [secondUser], meta };
-      if (path.startsWith("admin/users?")) return { data: [user], meta };
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<MembershipAssignmentForm />);
-    const userSearch = screen.getByRole("search", {
-      name: "Search users by email or phone number",
-    });
-    const input = within(userSearch).getByLabelText("Search users by email or phone number");
-    fireEvent.change(input, { target: { value: "green" } });
-    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
-    fireEvent.click(
-      within(await screen.findByRole("radiogroup", { name: "Choose customer" })).getByRole("radio"),
-    );
-    fireEvent.change(input, { target: { value: "second" } });
-    fireEvent.click(within(userSearch).getByRole("button", { name: "Search" }));
-    await screen.findByText(secondUser.name);
-    expect(screen.getByText("Selected customer").parentElement).toHaveTextContent(user.name);
-
-    const packageResults = await screen.findByRole("radiogroup", {
-      name: "Choose an active package",
-    });
-    fireEvent.click(within(packageResults).getByRole("radio"));
-    fireEvent.change(screen.getByLabelText("Price option *"), {
-      target: { value: activeOption.id },
-    });
-    fireEvent.change(screen.getByLabelText("Farmbrite order reference *"), {
-      target: { value: "FB-PRESERVED-USER" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Review and confirm" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent(user.name);
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
-
-    fireEvent.click(
-      within(screen.getByRole("radiogroup", { name: "Choose customer" })).getByRole("radio"),
-    );
-    expect(screen.getByText("Selected customer").parentElement).toHaveTextContent(secondUser.name);
-  });
-
-  it("blocks a past start date before opening confirmation", async () => {
-    const review = await prepareAssignment();
-    fireEvent.change(screen.getByLabelText("Start date *"), {
-      target: { value: "2000-01-01" },
-    });
-    fireEvent.click(review);
-    expect(await screen.findByRole("alert")).toHaveTextContent("today or a future date");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(api).not.toHaveBeenCalled();
-  });
-
-  it("uses a non-past date, confirms accessibly, and submits exactly once", async () => {
-    let resolveAssign!: (value: AdminMembership) => void;
-    const pending = new Promise<AdminMembership>((resolve) => (resolveAssign = resolve));
-    const review = await prepareAssignment();
-    vi.mocked(api).mockReturnValue(pending);
-    const date = screen.getByLabelText("Start date *");
-    expect(date).toHaveAttribute("min");
-    fireEvent.change(date, { target: { value: date.getAttribute("min") } });
-    fireEvent.click(review);
-    const dialog = screen.getByRole("dialog", { name: "Confirm Membership assignment" });
-    expect(dialog).toHaveTextContent("FB-2026-0001");
-    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    const confirm = within(dialog).getByRole("button", { name: "Assign Membership" });
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
-    expect(confirm).toBeDisabled();
-    expect(vi.mocked(api).mock.calls).toHaveLength(1);
-    const [path, init] = vi.mocked(api).mock.calls[0];
-    expect(path).toBe("admin/memberships?locale=en");
-    expect(JSON.parse(String(init?.body))).toEqual({
-      user_id: user.id,
-      package_id: packageItem.id,
-      price_option_id: activeOption.id,
-      start_date: date.getAttribute("min"),
-      farmbrite_order_reference: "FB-2026-0001",
-    });
-    await act(async () => resolveAssign(membership));
-    expect(navigation.replace).toHaveBeenCalledWith(`/memberships/${membership.id}`);
-  });
-
-  it("retains the form and shows duplicate Farmbrite conflicts", async () => {
-    const review = await prepareAssignment();
-    vi.mocked(api).mockRejectedValue(
-      Object.assign(new Error("duplicate_farmbrite_order_reference"), { status: 409 }),
-    );
-    fireEvent.click(review);
-    fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Assign Membership" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent("already been used");
-    expect(screen.getByLabelText("Farmbrite order reference *")).toHaveValue("FB-2026-0001");
-    expect(navigation.replace).not.toHaveBeenCalled();
-  });
-});
-
-describe("Membership list, snapshots, and usage regressions", () => {
-  it("lists Memberships and displays immutable price/Farmbrite snapshots", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({ data: [membership], meta });
-    const list = providers(<MembershipList />);
-    expect(await screen.findByRole("link", { name: user.name })).toHaveAttribute(
-      "href",
-      `/memberships/${membership.id}`,
-    );
-    list.unmount();
+describe("Membership detail snapshots and usage regressions", () => {
+  it("focuses on the package and returns to its CSA customer", async () => {
     vi.mocked(api).mockResolvedValue(membership);
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipDetail membershipId={membership.id} />);
     expect(await screen.findByText("FB-2026-0001")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "CSA customers" })).toHaveAttribute(
+      "href",
+      `/csa-customers/${membership.customer_id}`,
+    );
+    expect(screen.queryByRole("heading", { name: "Customer" })).toBeNull();
+    expect(screen.queryByText(user.name)).toBeNull();
+    expect(screen.queryByText(user.email)).toBeNull();
+    expect(screen.queryByText(user.phone)).toBeNull();
     expect(screen.getByText("₫750,000")).toBeInTheDocument();
     expect(screen.getByText("₫4,500,000")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Remaining quantity" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Quantity tracking by period" })).toBeVisible();
+    expect(screen.queryByRole("table", { name: "Quantity tracking by period" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Product collection history" })).toBeVisible();
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+  });
+
+  it("combines multi-period quantities and totals in one table", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...membership,
+      cycles: [
+        membershipCycle(1, "2026-06-15", "2026-07-15", 10, 2),
+        membershipCycle(2, "2026-07-15", "2026-08-15", 10, 10),
+      ],
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipDetail membershipId={membership.id} />, "vi");
+
+    const table = await screen.findByRole("table", { name: "Theo dõi số lượng theo kỳ" });
+    for (const heading of ["Kỳ nhận", "Khoảng thời gian", "Được nhận", "Đã nhận", "Còn lại"]) {
+      expect(within(table).getByRole("columnheader", { name: heading })).toBeVisible();
+    }
+    expect(within(table).queryByRole("columnheader", { name: "Trạng thái" })).toBeNull();
+    expect(table.querySelector(".membership-status")).toBeNull();
+    expect(screen.getByText("Đang hoạt động")).toBeVisible();
+    expect(
+      within(within(table).getByRole("row", { name: /Kỳ 1/ }))
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Kỳ 1", "15/06/2026 – 14/07/2026", "10", "8", "2"]);
+    expect(
+      within(within(table).getByRole("row", { name: /Kỳ 2/ }))
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Kỳ 2", "15/07/2026 – 14/08/2026", "10", "0", "10"]);
+    const total = within(table).getByRole("row", { name: /Tổng/ });
+    expect(
+      within(total)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["", "20", "8", "12"]);
+    expect(screen.queryByRole("heading", { name: "Số lượng còn lại" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Lịch sử nhận sản phẩm" })).toBeVisible();
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+  });
+
+  it("renders exactly one API-provided period for a one-month package", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...membership,
+      duration_months: 1,
+      cycles: [membershipCycle(1, "2026-06-15", "2026-07-15", 5, 5)],
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    const table = await screen.findByRole("table", { name: "Quantity tracking by period" });
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(within(table).getByText("Period 1")).toBeVisible();
+    expect(within(table).getByText("15/06/2026 – 14/07/2026")).toBeVisible();
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
   });
 
   it("keeps usage idempotent and undo retry-safe", async () => {
@@ -679,21 +509,21 @@ describe("Membership list, snapshots, and usage regressions", () => {
   it.each([
     {
       locale: "en" as const,
-      auditLabel: "Membership revocation details",
+      auditLabel: "CSA package revocation details",
       time: "Revoked at 05/08/2026 09:00",
       actor: "by Website Admin · admin@example.com",
       reasonLabel: "Reason:",
       status: "Revoked",
-      warning: "Legacy snapshot has no English content",
+      warning: "Legacy package data has no English content",
     },
     {
       locale: "vi" as const,
-      auditLabel: "Thông tin thu hồi Membership",
+      auditLabel: "Thông tin thu hồi gói CSA",
       time: "Thu hồi lúc 05/08/2026 09:00",
       actor: "bởi Website Admin · admin@example.com",
       reasonLabel: "Lý do:",
       status: "Đã thu hồi",
-      warning: "Snapshot cũ chưa có nội dung tiếng Anh",
+      warning: "Dữ liệu gói cũ chưa có nội dung tiếng Anh",
     },
   ])(
     "shows the compact $locale revoke audit and hides undo for applied history",
@@ -767,7 +597,7 @@ describe("Membership list, snapshots, and usage regressions", () => {
     providers(<MembershipDetail membershipId={membership.id} />);
 
     const audit = await screen.findByRole("region", {
-      name: "Membership revocation details",
+      name: "CSA package revocation details",
     });
     expect(within(audit).getByText("Revoked at —")).toBeVisible();
     expect(within(audit).getByText("by unknown actor")).toBeVisible();
@@ -816,8 +646,8 @@ describe("Membership list, snapshots, and usage regressions", () => {
 
     providers(<MembershipDetail membershipId={membership.id} />);
 
-    expect(await screen.findByRole("button", { name: "Revoke Membership" })).toBeVisible();
-    expect(screen.queryByRole("region", { name: "Membership revocation details" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Revoke CSA package" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "CSA package revocation details" })).toBeNull();
   });
 
   it.each(["ended", "revoked"] as const)("hides revoke for a %s Membership", async (status) => {
@@ -841,9 +671,9 @@ describe("Membership list, snapshots, and usage regressions", () => {
     providers(<MembershipDetail membershipId={membership.id} />);
 
     await waitFor(() => expect(api).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: "Revoke Membership" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     if (status === "ended") {
-      expect(screen.queryByRole("region", { name: "Membership revocation details" })).toBeNull();
+      expect(screen.queryByRole("region", { name: "CSA package revocation details" })).toBeNull();
     }
   });
 
@@ -852,14 +682,14 @@ describe("Membership list, snapshots, and usage regressions", () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipDetail membershipId={membership.id} />);
 
-    const trigger = await screen.findByRole("button", { name: "Revoke Membership" });
+    const trigger = await screen.findByRole("button", { name: "Revoke CSA package" });
     trigger.focus();
     fireEvent.click(trigger);
     expect(screen.getByLabelText("Revoke reason")).toHaveFocus();
 
     fireEvent.keyDown(document, { key: "Escape" });
 
-    expect(screen.queryByRole("dialog", { name: "Confirm Membership Revocation" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Confirm CSA package revocation" })).toBeNull();
     expect(trigger).toHaveFocus();
   });
 
@@ -893,9 +723,9 @@ describe("Membership list, snapshots, and usage regressions", () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipDetail membershipId={membership.id} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke Membership" }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm Membership Revocation" });
-    const confirm = within(dialog).getByRole("button", { name: "Revoke Membership" });
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke CSA package" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm CSA package revocation" });
+    const confirm = within(dialog).getByRole("button", { name: "Revoke CSA package" });
     expect(within(dialog).getByLabelText("Revoke reason")).toBeRequired();
     expect(confirm).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("Revoke reason"), {
@@ -920,7 +750,7 @@ describe("Membership list, snapshots, and usage regressions", () => {
     await act(async () => resolveRevoke(revoked));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Revoke Membership" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     expect(screen.getByRole("heading", { name: packageItem.name })).toHaveFocus();
     expect(
       vi
@@ -973,17 +803,17 @@ describe("Membership list, snapshots, and usage regressions", () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [usage], meta });
     providers(<MembershipDetail membershipId={membership.id} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke Membership" }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm Membership Revocation" });
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke CSA package" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm CSA package revocation" });
     fireEvent.change(within(dialog).getByLabelText("Revoke reason"), {
       target: { value: "Assigned by mistake" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke Membership" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke CSA package" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
     expect(screen.getByText("Assigned by mistake")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Revoke Membership" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Record received products" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Undo product collection" })).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -1008,16 +838,16 @@ describe("Membership list, snapshots, and usage regressions", () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipDetail membershipId={membership.id} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke Membership" }));
-    const dialog = screen.getByRole("dialog", { name: "Confirm Membership Revocation" });
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke CSA package" }));
+    const dialog = screen.getByRole("dialog", { name: "Confirm CSA package revocation" });
     fireEvent.change(within(dialog).getByLabelText("Revoke reason"), {
       target: { value: "Assigned by mistake" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke Membership" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke CSA package" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "The request failed. Please try again.",
     );
-    expect(screen.getByRole("dialog", { name: "Confirm Membership Revocation" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Confirm CSA package revocation" })).toBeVisible();
   });
 });

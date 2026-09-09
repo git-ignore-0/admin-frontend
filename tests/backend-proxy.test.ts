@@ -33,7 +33,25 @@ afterEach(() => {
 });
 
 describe("admin backend proxy", () => {
-  it("keeps the bearer token server-side for an allowed Membership lookup", async () => {
+  it("proxies the Auth administrative-unit source with the requested locale", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(
+      new NextRequest("https://admin.example.test/api/backend/administrative-units/provinces", {
+        headers: { "accept-language": "vi" },
+      }),
+      { params: Promise.resolve({ path: ["administrative-units", "provinces"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      "https://auth.example.test/api/v1/administrative-units/provinces",
+    );
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("accept-language")).toBe("vi");
+  });
+
+  it("keeps the bearer token server-side for an allowed Membership detail lookup", async () => {
     const upstream = vi
       .fn()
       .mockResolvedValue(
@@ -43,9 +61,9 @@ describe("admin backend proxy", () => {
 
     const response = await GET(
       new NextRequest(
-        "https://admin.example.test/api/backend/admin/memberships?page=1&search=0912",
+        "https://admin.example.test/api/backend/admin/memberships/membership-id?locale=en",
       ),
-      { params: Promise.resolve({ path: ["admin", "memberships"] }) },
+      { params: Promise.resolve({ path: ["admin", "memberships", "membership-id"] }) },
     );
 
     expect(response.status).toBe(200);

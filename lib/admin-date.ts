@@ -50,6 +50,19 @@ export function formatAdminDate(value: string | null | undefined, fallback = "â€
   return partsFor(date, ADMIN_TIME_ZONE, false);
 }
 
+export function membershipLastReceiptDate(
+  exclusiveEndDate: string | null | undefined,
+): string | null {
+  if (!exclusiveEndDate) return null;
+  const match = DATE_ONLY_PATTERN.exec(exclusiveEndDate);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const value = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (!validDate(value)) return null;
+  value.setUTCDate(value.getUTCDate() - 1);
+  return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`;
+}
+
 export function formatAdminDateTimeInZone(
   value: string | null | undefined,
   timeZone: string,

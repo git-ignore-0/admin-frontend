@@ -22,6 +22,11 @@ const UUID_PATH_SEGMENT =
 
 export function isAllowedBackendRequest(method: string, path: string[]) {
   const normalizedMethod = method.toUpperCase();
+  if (path[0] === "administrative-units") {
+    return (
+      normalizedMethod === "GET" && path.length === 2 && ["provinces", "wards"].includes(path[1])
+    );
+  }
   if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
 
   const [, resource, id, action, extra] = path;
@@ -80,10 +85,17 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   }
 
   if (resource === "memberships") {
-    if (id === undefined) return new Set(["GET", "POST"]).has(normalizedMethod);
+    if (id === undefined) return normalizedMethod === "POST";
     if (action === undefined) return READ.has(normalizedMethod);
     if (action === "history") return normalizedMethod === "GET";
     return action === "revoke" && normalizedMethod === "POST";
+  }
+
+  if (resource === "csa-customers") {
+    if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined) return new Set(["GET", "PATCH"]).has(normalizedMethod);
+    return action === "link-user" && normalizedMethod === "POST";
   }
 
   if (resource === "membership-usage") {

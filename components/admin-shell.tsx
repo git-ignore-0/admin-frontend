@@ -13,8 +13,8 @@ type NavigationGroup = "pointsRewards" | "csa" | "website";
 
 const groupRoutes: Record<NavigationGroup, readonly string[]> = {
   pointsRewards: ["/points", "/rewards", "/redemptions"],
-  csa: ["/membership-catalog", "/memberships", "/tracker-farms"],
-  website: ["/settings", "/workshops", "/testimonials"],
+  csa: ["/csa-customers", "/memberships", "/membership-catalog"],
+  website: ["/settings", "/workshops", "/testimonials", "/tracker-farms"],
 };
 
 function isActiveRoute(pathname: string, href: string) {
@@ -48,9 +48,8 @@ export function AdminShell({ user, children }: Props) {
       key: "csa",
       label: t.common.csa,
       links: [
+        ["/csa-customers", t.common.csaCustomers],
         ["/membership-catalog", t.common.membershipCatalog],
-        ["/memberships", t.common.memberships],
-        ["/tracker-farms", t.common.trackerFarms],
       ],
     },
     {
@@ -60,6 +59,7 @@ export function AdminShell({ user, children }: Props) {
         ["/settings", t.common.settings],
         ["/workshops", t.common.workshops],
         ["/testimonials", t.common.testimonials],
+        ["/tracker-farms", t.common.trackerFarms],
       ],
     },
   ] as const satisfies readonly {
