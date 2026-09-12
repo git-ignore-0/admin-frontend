@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { adminDictionaries } from "@/lib/admin-i18n";
-import { formatAdminDate, formatAdminDateTime, membershipLastReceiptDate } from "@/lib/admin-date";
+import {
+  adminDateInputToIso,
+  formatAdminDate,
+  formatAdminDateInputValue,
+  formatAdminDateTime,
+  isoDateToAdminInput,
+  membershipLastReceiptDate,
+} from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { firstValidationField } from "@/lib/client-api";
 import { isTrustedAdminRequest } from "@/lib/csrf";
@@ -51,6 +58,16 @@ describe("admin date display", () => {
 
   it("formats date-only values without timezone date shifts", () => {
     expect(formatAdminDate("2026-08-01")).toBe("01/08/2026");
+    expect(isoDateToAdminInput("2026-08-01")).toBe("01/08/2026");
+  });
+
+  it("parses only real dd/mm/yyyy dates and returns the ISO API value", () => {
+    expect(formatAdminDateInputValue("01082026")).toBe("01/08/2026");
+    expect(adminDateInputToIso("01/08/2026")).toBe("2026-08-01");
+    expect(adminDateInputToIso("29/02/2028")).toBe("2028-02-29");
+    expect(adminDateInputToIso("2026-08-01")).toBeNull();
+    expect(adminDateInputToIso("31/02/2026")).toBeNull();
+    expect(adminDateInputToIso("29/02/2027")).toBeNull();
   });
 
   it("shows the day before an exclusive Membership end boundary", () => {

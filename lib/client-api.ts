@@ -60,3 +60,34 @@ export async function apiEnvelope<T, M = Record<string, unknown>>(
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (await apiEnvelope<T>(path, init)).data;
 }
+
+export async function apiFile(path: string) {
+  let response: Response;
+  try {
+    response = await fetch(`/api/backend/${path.replace(/^\//, "")}`, {
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error("network_error");
+  }
+  if (response.status === 401) {
+    window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
+    throw new Error("session_expired");
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const code = payload?.errors?.[0]?.code || payload?.error || "request_failed";
+    const error = new Error(code);
+    Object.assign(error, { status: response.status, payload });
+    throw error;
+  }
+  if (!response.headers.get("content-type")?.startsWith("application/pdf")) {
+    throw Object.assign(new Error("csa_contract_pdf_unavailable"), { status: 502 });
+  }
+  return {
+    blob: await response.blob(),
+    filename:
+      response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/i)?.[1] ??
+      "csa-contract.pdf",
+  };
+}

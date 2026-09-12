@@ -16,7 +16,7 @@ import { MembershipPackageEditor } from "@/components/membership-catalog-editors
 import { MembershipPackageList } from "@/components/membership-catalog-lists";
 import { MembershipDetail } from "@/components/membership-detail";
 import { ToastProvider } from "@/components/toast-provider";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { api, apiEnvelope, apiFile } from "@/lib/client-api";
 import type {
   AdminMembership,
   AdminUserListItem,
@@ -29,7 +29,7 @@ import type {
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn(), apiFile: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: navigation.push, replace: navigation.replace, refresh: vi.fn() }),
   usePathname: () => "/memberships",
@@ -38,7 +38,9 @@ vi.mock("next/navigation", () => ({
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 function providers(children: React.ReactNode, locale: "vi" | "en" = "en") {
@@ -371,6 +373,116 @@ describe("CSA package price options", () => {
 });
 
 describe("Membership detail snapshots and usage regressions", () => {
+  it("loads and renders the current contract with only its available PDF locales", async () => {
+    const contract = {
+      id: "77777777-7777-4777-8777-777777777777",
+      reference_code: "CSA-202609-8F3K2M",
+      status: "active" as const,
+      available_locales: ["vi", "en"] as Array<"vi" | "en">,
+      issued_at: "2026-09-10T02:00:00Z",
+      revoked_at: null,
+      revocation_reason: null,
+    };
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`)
+        return { ...membership, contract };
+      if (path === `admin/memberships/${membership.id}/contract`) return contract;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    vi.mocked(apiFile).mockResolvedValue({
+      blob: new Blob(["pdf"], { type: "application/pdf" }),
+      filename: "contract.vi.pdf",
+    });
+    const createObjectURL = vi.fn(() => "blob:contract");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    providers(<MembershipDetail membershipId={membership.id} />);
+
+    expect(await screen.findByText(contract.reference_code)).toBeVisible();
+    expect(screen.getByText("Active", { selector: "dd" })).toBeVisible();
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Download Vietnamese PDF" }));
+    });
+    expect(apiFile).toHaveBeenCalledWith(
+      `admin/memberships/${membership.id}/contract/pdf?locale=vi`,
+    );
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(999));
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Download English PDF" }));
+    });
+    expect(apiFile).toHaveBeenCalledWith(
+      `admin/memberships/${membership.id}/contract/pdf?locale=en`,
+    );
+    expect(click).toHaveBeenCalledTimes(2);
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the empty and localized failure states for Membership contracts", async () => {
+    vi.mocked(api).mockResolvedValue(membership);
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    const empty = providers(<MembershipDetail membershipId={membership.id} />);
+    expect(await screen.findByText("No contract yet")).toBeVisible();
+    expect(api).not.toHaveBeenCalledWith(`admin/memberships/${membership.id}/contract`);
+    empty.unmount();
+
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`)
+        return {
+          ...membership,
+          contract: {
+            id: "77777777-7777-4777-8777-777777777777",
+            reference_code: "CSA-202609-8F3K2M",
+            status: "active",
+          },
+        };
+      if (path.endsWith("/contract")) throw new Error("csa_contract_unavailable");
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    providers(<MembershipDetail membershipId={membership.id} />);
+    expect(
+      await screen.findByText("The contract details could not be loaded. Please try again."),
+    ).toBeVisible();
+  });
+
+  it("shows a localized error when the current contract PDF is unavailable", async () => {
+    const contract = {
+      id: "77777777-7777-4777-8777-777777777777",
+      reference_code: "CSA-202609-8F3K2M",
+      status: "active" as const,
+      available_locales: ["en"] as Array<"vi" | "en">,
+      issued_at: "2026-09-10T02:00:00Z",
+      revoked_at: null,
+      revocation_reason: null,
+    };
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`)
+        return { ...membership, contract };
+      return contract;
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    vi.mocked(apiFile).mockRejectedValue(new Error("internal_storage_key_failure"));
+    providers(<MembershipDetail membershipId={membership.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download English PDF" }));
+    expect(await screen.findByText("The contract PDF is temporarily unavailable.")).toBeVisible();
+    expect(screen.queryByText("internal_storage_key_failure")).toBeNull();
+  });
+
   it("focuses on the package and returns to its CSA customer", async () => {
     vi.mocked(api).mockResolvedValue(membership);
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });

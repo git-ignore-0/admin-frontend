@@ -16,6 +16,20 @@ function jsonError(error: string, status: number) {
   );
 }
 
+function invalidMembershipContractQuery(request: NextRequest, path: string[]) {
+  const [, resource, id, action, extra] = path;
+  if (resource !== "memberships" || !id || action !== "contract") return false;
+  const parameters = request.nextUrl.searchParams;
+  if (extra === undefined) return parameters.size > 0;
+  if (extra !== "pdf") return true;
+  const locales = parameters.getAll("locale");
+  return (
+    locales.length !== 1 ||
+    !["vi", "en"].includes(locales[0]) ||
+    [...parameters.keys()].some((key) => key !== "locale")
+  );
+}
+
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   if (
     !isTrustedAdminRequest(
@@ -45,6 +59,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!isAllowedBackendRequest(request.method, path)) {
     return jsonError("backend_route_not_allowed", 404);
   }
+  if (invalidMembershipContractQuery(request, path)) {
+    return jsonError("backend_route_not_allowed", 404);
+  }
   const target = buildBackendTarget(authOrigin(), path, request.nextUrl.search);
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${session.accessToken}`);
@@ -68,12 +85,17 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     return jsonError(timedOut ? "upstream_timeout" : "upstream_unavailable", timedOut ? 504 : 502);
   }
   if (response.status === 401) await clearSession();
+  const responseHeaders = new Headers({
+    "Content-Type": response.headers.get("content-type") || "application/json",
+    "Cache-Control": "private, no-store",
+  });
+  for (const name of ["content-disposition", "pragma", "x-content-type-options"]) {
+    const value = response.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
   return new NextResponse(response.body, {
     status: response.status,
-    headers: {
-      "Content-Type": response.headers.get("content-type") || "application/json",
-      "Cache-Control": "private, no-store",
-    },
+    headers: responseHeaders,
   });
 }
 

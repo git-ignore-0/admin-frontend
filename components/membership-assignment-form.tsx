@@ -2,10 +2,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AdminDateInput } from "@/components/admin-date-input";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { useToast } from "@/components/toast-provider";
-import { formatAdminDate, membershipLastReceiptDate } from "@/lib/admin-date";
+import {
+  adminDateInputToIso,
+  adminTodayIso,
+  formatAdminDate,
+  membershipLastReceiptDate,
+} from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
@@ -18,16 +24,8 @@ import {
 import type { AdminMembership, CSACustomer, MembershipPackage, PaginationMeta } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
-function todayInVietnam() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
 const ORDER_REFERENCE_ERROR_ID = "membership-order-reference-error";
+const START_DATE_ERROR_ID = "membership-start-date-error";
 
 export function MembershipAssignmentForm({ customerId }: { customerId?: string }) {
   const { locale, t } = useAdminI18n();
@@ -48,7 +46,7 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
   const [priceOptionId, setPriceOptionId] = useState("");
   const [orderReference, setOrderReference] = useState("");
   const [orderReferenceError, setOrderReferenceError] = useState("");
-  const [startDate, setStartDate] = useState("");
+  const [startDateInput, setStartDateInput] = useState("");
   const [formError, setFormError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -115,8 +113,10 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
     : null;
   const selectedPackageName = selectedPackageTranslation?.name || selectedPackage?.name || "";
   const existingMemberships = customer?.memberships ?? [];
-  const today = todayInVietnam();
+  const today = adminTodayIso();
   const suggestedStart = suggestedMembershipStart(existingMemberships, today);
+  const startDate = adminDateInputToIso(startDateInput) ?? "";
+  const startDateInvalid = startDateInput.length === 10 && !startDate;
   const exclusiveEnd =
     selectedOption && startDate ? addMonthsToDate(startDate, selectedOption.duration_months) : null;
   const overlaps = Boolean(
@@ -136,6 +136,7 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
     selectedOption?.is_active &&
     orderReference.trim() &&
     startDate &&
+    !startDateInvalid &&
     !startDateBeforeMinimum &&
     !overlaps,
   );
@@ -380,29 +381,42 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
               <small>{t.memberships.orderReferenceHelp}</small>
             )}
           </label>
-          <label className="field">
-            <span>{t.memberships.startDate}</span>
-            <input
+          <div className="field">
+            <label htmlFor="membership-start-date">{t.memberships.startDate}</label>
+            <AdminDateInput
+              aria-describedby={
+                startDateInvalid || startDateBeforeMinimum || overlaps
+                  ? START_DATE_ERROR_ID
+                  : undefined
+              }
+              aria-invalid={startDateInvalid || startDateBeforeMinimum || overlaps}
               className="input"
-              aria-invalid={startDateBeforeMinimum || overlaps}
               disabled={!selectedOption}
-              min={suggestedStart}
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
+              id="membership-start-date"
+              onValueChange={(value) => {
+                setStartDateInput(value);
                 setFormError("");
               }}
+              pickerLabel={t.memberships.openStartDatePicker}
+              pickerMin={suggestedStart}
+              value={startDateInput}
             />
             <small>
               {t.memberships.suggestedStartDate.replace("{date}", formatAdminDate(suggestedStart))}
             </small>
-            {startDateBeforeMinimum && (
-              <small className="field-error">
-                {t.memberships.startDateMinimum.replace("{date}", formatAdminDate(suggestedStart))}
+            {(startDateInvalid || startDateBeforeMinimum || overlaps) && (
+              <small className="field-error" id={START_DATE_ERROR_ID} role="alert">
+                {startDateInvalid
+                  ? t.memberships.invalidStartDate
+                  : startDateBeforeMinimum
+                    ? t.memberships.startDateMinimum.replace(
+                        "{date}",
+                        formatAdminDate(suggestedStart),
+                      )
+                    : t.csaCustomers.overlapConflict}
               </small>
             )}
-          </label>
+          </div>
           {selectedOption && exclusiveEnd && (
             <div className={`schedule-preview ${overlaps ? "invalid" : ""}`} role="status">
               <span>{t.csaCustomers.schedulePreview}</span>

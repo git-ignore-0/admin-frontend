@@ -1,6 +1,22 @@
 import type { AdminDictionary } from "@/lib/admin-i18n";
 
-type ClientApiError = Error & { field?: string; status?: number };
+export type ClientApiError = Error & {
+  field?: string;
+  status?: number;
+  payload?: {
+    errors?: Array<{ code?: string; context?: unknown; fields?: Record<string, unknown> }>;
+  };
+};
+
+export function apiErrorContext<T>(caught: unknown): T | null {
+  if (!(caught instanceof Error)) return null;
+  return ((caught as ClientApiError).payload?.errors?.[0]?.context as T | undefined) ?? null;
+}
+
+export function apiErrorFields(caught: unknown): Record<string, unknown> {
+  if (!(caught instanceof Error)) return {};
+  return (caught as ClientApiError).payload?.errors?.[0]?.fields ?? {};
+}
 
 export function requestErrorMessage(
   caught: unknown,

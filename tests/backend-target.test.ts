@@ -39,9 +39,13 @@ describe("backend API target", () => {
   });
 
   it("allowlists Membership routes by exact method and path", () => {
+    const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
     expect(isAllowedBackendRequest("GET", ["admin", "membership-requests"])).toBe(false);
-    expect(isAllowedBackendRequest("GET", ["admin", "membership-banks"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "membership-banks"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "membership-banks"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "membership-payment-settings"])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "membership-payment-settings"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "membership-payment-settings"])).toBe(false);
     expect(isAllowedBackendRequest("GET", ["admin", "membership-products"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "membership-packages"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "membership-categories"])).toBe(false);
@@ -65,7 +69,68 @@ describe("backend API target", () => {
     expect(
       isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "unknown"]),
     ).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "memberships", membershipId, "contract"])).toBe(
+      true,
+    );
+    expect(
+      isAllowedBackendRequest("GET", ["admin", "memberships", membershipId, "contract", "pdf"]),
+    ).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "memberships", "not-a-uuid", "contract"])).toBe(
+      false,
+    );
+    expect(
+      isAllowedBackendRequest("GET", [
+        "admin",
+        "memberships",
+        membershipId,
+        "contract",
+        "original",
+      ]),
+    ).toBe(false);
     expect(isAllowedBackendRequest("GET", ["memberships", "current"])).toBe(false);
+  });
+
+  it("allowlists only CSA purchase list, detail, approve, reject and mark-refunded", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    expect(isAllowedBackendRequest("GET", ["admin", "csa-purchase-requests"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-purchase-requests"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "csa-purchase-requests", id])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-purchase-requests", id, "approve"])).toBe(
+      true,
+    );
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-purchase-requests", id, "reject"])).toBe(
+      true,
+    );
+    expect(
+      isAllowedBackendRequest("POST", ["admin", "csa-purchase-requests", id, "mark-refunded"]),
+    ).toBe(true);
+    expect(
+      isAllowedBackendRequest("GET", ["admin", "csa-purchase-requests", id, "mark-refunded"]),
+    ).toBe(false);
+    expect(
+      isAllowedBackendRequest("POST", [
+        "admin",
+        "csa-purchase-requests",
+        "bad-id",
+        "mark-refunded",
+      ]),
+    ).toBe(false);
+    expect(
+      isAllowedBackendRequest("POST", [
+        "admin",
+        "csa-purchase-requests",
+        id,
+        "mark-refunded",
+        "extra",
+      ]),
+    ).toBe(false);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "csa-purchase-requests", id])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "csa-purchase-requests", id, "other"])).toBe(
+      false,
+    );
+    expect(isAllowedBackendRequest("GET", ["admin", "csa-purchase-requests", "bad-id"])).toBe(
+      false,
+    );
   });
 
   it("allowlists only CSA customer collection, detail, and one-way linking", () => {

@@ -17,10 +17,10 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderShell(pathname = "/dashboard") {
+function renderShell(pathname = "/dashboard", locale: "en" | "vi" = "en") {
   navigation.pathname = pathname;
   return render(
-    <AdminI18nProvider initialLocale="en">
+    <AdminI18nProvider initialLocale={locale}>
       <AdminShell user={{ email: "admin@example.com", name: "Admin" }}>
         <div>Page content</div>
       </AdminShell>
@@ -63,11 +63,13 @@ describe("admin sidebar navigation", () => {
     expect(screen.queryByRole("link", { name: "Rewards" })).toBeNull();
   });
 
-  it("does not expose removed CSA request or payment navigation", () => {
+  it("keeps only direct CSA operations in the CSA group", () => {
     renderShell();
     fireEvent.click(group("CSA"));
-    expect(screen.queryByRole("link", { name: /CSA requests/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /payment/i })).toBeNull();
+    expect(screen.getByRole("link", { name: "CSA purchase requests" })).toHaveAttribute(
+      "href",
+      "/csa-purchase-requests",
+    );
     expect(screen.getByRole("link", { name: "CSA customers" })).toHaveAttribute(
       "href",
       "/csa-customers",
@@ -78,10 +80,34 @@ describe("admin sidebar navigation", () => {
       "href",
       "/membership-catalog",
     );
+    expect(screen.queryByRole("link", { name: "Payment settings" })).toBeNull();
+  });
+
+  it("moves payment settings to Website without changing its route", () => {
+    renderShell();
+    fireEvent.click(group("Website"));
+
+    expect(screen.getByRole("link", { name: "Payment settings" })).toHaveAttribute(
+      "href",
+      "/membership-payment-settings",
+    );
+  });
+
+  it("uses the localized payment settings label", () => {
+    renderShell("/dashboard", "vi");
+    fireEvent.click(group("Website"));
+
+    expect(screen.getByRole("link", { name: "Cài đặt thanh toán" })).toHaveAttribute(
+      "href",
+      "/membership-payment-settings",
+    );
+    expect(screen.queryByText("Thanh toán CSA")).toBeNull();
   });
 
   it.each([
     ["/csa-customers/24803641-2dce-4cac-8fc4-91e55f03e95f", "CSA", "CSA customers"],
+    ["/csa-purchase-requests", "CSA", "CSA purchase requests"],
+    ["/membership-payment-settings", "Website", "Payment settings"],
     ["/membership-catalog", "CSA", "CSA package catalog"],
     ["/membership-catalog/packages/123/edit", "CSA", "CSA package catalog"],
     ["/tracker-farms", "Website", "Growth Tracker farms"],

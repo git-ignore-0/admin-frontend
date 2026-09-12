@@ -9,7 +9,7 @@ import { MembershipStatusBadge } from "@/components/membership-status-badge";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDate, formatAdminDateTime, membershipLastReceiptDate } from "@/lib/admin-date";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { api, apiEnvelope, apiFile } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import {
@@ -18,6 +18,7 @@ import {
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
 import type {
+  AdminCSAContract,
   AdminMembership,
   MembershipCycle,
   MembershipUsage,
@@ -71,6 +72,11 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const [historyMeta, setHistoryMeta] = useState<PaginationMeta | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyError, setHistoryError] = useState("");
+  const [contract, setContract] = useState<AdminCSAContract | null>(null);
+  const [contractLoading, setContractLoading] = useState(false);
+  const [contractError, setContractError] = useState("");
+  const [contractPdfError, setContractPdfError] = useState("");
+  const [downloadingContract, setDownloadingContract] = useState<"vi" | "en" | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [usageLines, setUsageLines] = useState<UsageLineForm[]>([]);
   const [usageUnitErrors, setUsageUnitErrors] = useState<Record<number, string>>({});
@@ -114,8 +120,50 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     }
   }, [historyPage, locale, membershipId, t]);
 
+  const contractId = item?.contract?.id ?? "";
+  const loadContract = useCallback(async () => {
+    setContractError("");
+    setContractPdfError("");
+    if (!contractId) {
+      setContract(null);
+      setContractLoading(false);
+      return;
+    }
+    setContractLoading(true);
+    try {
+      setContract(await api<AdminCSAContract>(`admin/memberships/${membershipId}/contract`));
+    } catch {
+      setContract(null);
+      setContractError(t.memberships.contractUnavailable);
+    } finally {
+      setContractLoading(false);
+    }
+  }, [contractId, membershipId, t.memberships.contractUnavailable]);
+
   useEffect(() => void loadMembership(), [loadMembership]);
   useEffect(() => void loadHistory(), [loadHistory]);
+  useEffect(() => void loadContract(), [loadContract]);
+
+  async function downloadContract(localeToDownload: "vi" | "en") {
+    if (!contract?.available_locales.includes(localeToDownload) || downloadingContract) return;
+    setDownloadingContract(localeToDownload);
+    setContractPdfError("");
+    try {
+      const file = await apiFile(
+        `admin/memberships/${membershipId}/contract/pdf?locale=${localeToDownload}`,
+      );
+      const objectUrl = URL.createObjectURL(file.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = file.filename;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+    } catch {
+      setContractPdfError(t.memberships.contractPdfUnavailable);
+    } finally {
+      setDownloadingContract(null);
+    }
+  }
 
   function openCreate() {
     if (!item?.quota?.length || item.status !== "active" || saving) return;
@@ -248,7 +296,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
             }
           : revoked,
       );
-      await loadMembership();
+      await Promise.all([loadMembership(), loadContract()]);
       setRevokeOpen(false);
       setRevokeReason("");
       toast(t.memberships.revokeSuccess);
@@ -432,6 +480,74 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           </dl>
           {item.package_description && (
             <p className="snapshot-description">{item.package_description}</p>
+          )}
+        </section>
+        <section className="panel membership-wide" aria-labelledby="membership-contract-title">
+          <div className="panel-head">
+            <h2 id="membership-contract-title">{t.memberships.contractTitle}</h2>
+          </div>
+          {contractLoading ? (
+            <p>{t.memberships.contractLoading}</p>
+          ) : contractError ? (
+            <div className="load-error-state">
+              <p className="error-box" role="alert">
+                {contractError}
+              </p>
+              <button
+                className="button secondary"
+                onClick={() => void loadContract()}
+                type="button"
+              >
+                {t.common.retry}
+              </button>
+            </div>
+          ) : !contract ? (
+            <div className="empty compact">{t.memberships.contractEmpty}</div>
+          ) : (
+            <>
+              <dl className="detail-list">
+                <DetailRow label={t.memberships.contractCode} value={contract.reference_code} />
+                <DetailRow
+                  label={t.memberships.contractStatus}
+                  value={
+                    contract.status === "active"
+                      ? t.memberships.contractActive
+                      : t.memberships.contractRevoked
+                  }
+                />
+              </dl>
+              <div className="membership-contract-actions">
+                {contract.available_locales.includes("vi") && (
+                  <button
+                    className="button secondary"
+                    disabled={downloadingContract !== null}
+                    onClick={() => void downloadContract("vi")}
+                    type="button"
+                  >
+                    {downloadingContract === "vi"
+                      ? t.memberships.downloadingContract
+                      : t.memberships.downloadContractVi}
+                  </button>
+                )}
+                {contract.available_locales.includes("en") && (
+                  <button
+                    className="button secondary"
+                    disabled={downloadingContract !== null}
+                    onClick={() => void downloadContract("en")}
+                    type="button"
+                  >
+                    {downloadingContract === "en"
+                      ? t.memberships.downloadingContract
+                      : t.memberships.downloadContractEn}
+                  </button>
+                )}
+              </div>
+              {contractPdfError && (
+                <p className="error-box" role="alert">
+                  {contractPdfError}
+                </p>
+              )}
+            </>
           )}
         </section>
         <section className="panel membership-wide">

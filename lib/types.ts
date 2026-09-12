@@ -52,6 +52,19 @@ export type CSACustomer = MembershipCustomer & {
 
 export type MembershipAuditActor = WebsiteAccount;
 
+export type CSAContractSummary = {
+  id: string;
+  reference_code: string;
+  status: "active" | "revoked";
+};
+
+export type AdminCSAContract = CSAContractSummary & {
+  available_locales: Array<"vi" | "en">;
+  issued_at: string;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+};
+
 export type MembershipProduct = {
   id: string;
   name: string;
@@ -173,6 +186,97 @@ export type AdminMembership = {
   revoke_reason?: string;
   quota?: MembershipQuota[];
   cycles?: MembershipCycle[];
+  contract?: CSAContractSummary | null;
+};
+
+export type CSAPurchaseRequestStatus =
+  "pending" | "payment_confirmed" | "approved" | "rejected" | "expired";
+
+export type CSAPurchaseRefundStatus = "not_applicable" | "pending" | "completed";
+
+export type CSAPurchaseCustomerResolution =
+  "keep_existing" | "use_request_data" | "reject_conflict";
+
+export type CSAPurchaseRequest = {
+  id: string;
+  request_code: string;
+  status: CSAPurchaseRequestStatus;
+  user: { id: string; name: string; email: string } | null;
+  customer_id: string | null;
+  membership_id: string | null;
+  name: string;
+  phone: string;
+  province_code: string;
+  ward_code: string;
+  address: string;
+  package_snapshot: { id: string; name: string };
+  price_option_snapshot: { id: string; name: string; duration_months: number };
+  amount: string;
+  currency: string;
+  transfer_content: string;
+  bank_bin: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  payment_config_version: number;
+  expires_at: string | null;
+  expired_at: string | null;
+  expired_reason: string | null;
+  payment_confirmed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  approved_by: { id: string; name: string } | null;
+  rejected_by: { id: string; name: string } | null;
+  rejection_reason: string;
+  refund_status: CSAPurchaseRefundStatus;
+  refund_marked_at: string | null;
+  refund_marked_by: { id: string; name: string } | null;
+  refund_note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CSAPurchaseResolutionContext = {
+  customer: {
+    id: string;
+    name: string;
+    phone: string;
+    province_code: string;
+    ward_code: string;
+    address: string;
+    memberships: Array<{
+      id: string;
+      package_name: string;
+      status: MembershipStatus;
+      start_date: string;
+      end_date: string;
+    }>;
+  };
+  request: {
+    name: string;
+    phone: string;
+    province_code: string;
+    ward_code: string;
+    address: string;
+  };
+};
+
+export type MembershipBank = {
+  bin: string;
+  name: string;
+  short_name: string;
+  code: string;
+};
+
+export type MembershipPaymentSettings = {
+  key: "default";
+  direct_transfer_enabled: boolean;
+  bank_bin: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  version: number;
+  updated_at: string | null;
 };
 
 export type MembershipUsage = {

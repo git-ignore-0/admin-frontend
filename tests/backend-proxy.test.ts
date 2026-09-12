@@ -33,6 +33,138 @@ afterEach(() => {
 });
 
 describe("admin backend proxy", () => {
+  const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
+
+  it("forwards only POST mark-refunded for a valid CSA purchase UUID", async () => {
+    const requestId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(Response.json({ data: { refund_status: "completed" } }));
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "csa-purchase-requests", requestId, "mark-refunded"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const allowed = await POST(
+      new NextRequest(url, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        body: JSON.stringify({ refund_note: "Đã chuyển lại tiền" }),
+      }),
+      { params: Promise.resolve({ path }) },
+    );
+    expect(allowed.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/admin/csa-purchase-requests/${requestId}/mark-refunded`,
+    );
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+
+    upstream.mockClear();
+    const blockedGet = await GET(new NextRequest(url), { params: Promise.resolve({ path }) });
+    const invalidPath = ["admin", "csa-purchase-requests", "invalid-id", "mark-refunded"];
+    const blockedId = await POST(
+      new NextRequest(`https://admin.example.test/api/backend/${invalidPath.join("/")}`, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path: invalidPath }) },
+    );
+    const otherPath = ["admin", "csa-purchase-requests", requestId, "refund-again"];
+    const blockedAction = await POST(
+      new NextRequest(`https://admin.example.test/api/backend/${otherPath.join("/")}`, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path: otherPath }) },
+    );
+    expect([blockedGet.status, blockedId.status, blockedAction.status]).toEqual([404, 404, 404]);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it.each(["vi", "en"])(
+    "streams the current %s Membership contract PDF and preserves safe download headers",
+    async (locale) => {
+      const bytes = new Uint8Array([37, 80, 68, 70]);
+      const upstream = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          `https://auth.example.test/api/v1/admin/memberships/${membershipId}/contract/pdf?locale=${locale}`,
+        );
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+        return new Response(bytes, {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="contract.${locale}.pdf"`,
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      });
+      vi.stubGlobal("fetch", upstream);
+
+      const response = await GET(
+        new NextRequest(
+          `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract/pdf?locale=${locale}`,
+        ),
+        {
+          params: Promise.resolve({
+            path: ["admin", "memberships", membershipId, "contract", "pdf"],
+          }),
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/pdf");
+      expect(response.headers.get("content-disposition")).toContain(`contract.${locale}.pdf`);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([37, 80, 68, 70]);
+    },
+  );
+
+  it.each([`?locale=fr`, `?locale=vi&original=true`, `?locale=vi&locale=en`, ``])(
+    "rejects an unsafe Membership contract PDF query: %s",
+    async (query) => {
+      const upstream = vi.fn();
+      vi.stubGlobal("fetch", upstream);
+      const response = await GET(
+        new NextRequest(
+          `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract/pdf${query}`,
+        ),
+        {
+          params: Promise.resolve({
+            path: ["admin", "memberships", membershipId, "contract", "pdf"],
+          }),
+        },
+      );
+      expect(response.status).toBe(404);
+      expect(upstream).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows only a query-free Membership contract detail request", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "active" } }));
+    vi.stubGlobal("fetch", upstream);
+    const response = await GET(
+      new NextRequest(
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract`,
+      ),
+      { params: Promise.resolve({ path: ["admin", "memberships", membershipId, "contract"] }) },
+    );
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/admin/memberships/${membershipId}/contract`,
+    );
+
+    upstream.mockClear();
+    const rejected = await GET(
+      new NextRequest(
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract?original=true`,
+      ),
+      { params: Promise.resolve({ path: ["admin", "memberships", membershipId, "contract"] }) },
+    );
+    expect(rejected.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("proxies the Auth administrative-unit source with the requested locale", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
     vi.stubGlobal("fetch", upstream);
@@ -74,7 +206,7 @@ describe("admin backend proxy", () => {
     expect(await response.json()).toEqual({ data: [] });
   });
 
-  it("allows manual assignment and rejects removed payment/request paths", async () => {
+  it("allows manual assignment and keeps bank settings credentials server-side", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: "membership-id" } }));
     vi.stubGlobal("fetch", upstream);
 
@@ -93,8 +225,12 @@ describe("admin backend proxy", () => {
       { params: Promise.resolve({ path: ["admin", "membership-payment-settings"] }) },
     );
 
-    expect(response.status).toBe(404);
-    expect(upstream).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    const init = upstream.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer access-token");
+    expect(response.headers.get("authorization")).toBeNull();
+    expect(JSON.stringify(await response.json())).not.toContain("access-token");
   });
 
   it("rejects non-allowlisted proxy paths before forwarding", async () => {

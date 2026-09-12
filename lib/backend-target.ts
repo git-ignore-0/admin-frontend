@@ -30,11 +30,17 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
 
   const [, resource, id, action, extra] = path;
+  if (resource === "memberships" && UUID_PATH_SEGMENT.test(id ?? "") && action === "contract") {
+    return normalizedMethod === "GET" && (extra === undefined || extra === "pdf");
+  }
   if (extra !== undefined) return false;
 
   if (["dashboard"].includes(resource) && id === undefined) return READ.has(normalizedMethod);
   if (resource === "site-settings" && id === undefined)
     return new Set(["GET", "PATCH"]).has(normalizedMethod);
+  if (resource === "membership-payment-settings" && id === undefined)
+    return new Set(["GET", "PATCH"]).has(normalizedMethod);
+  if (resource === "membership-banks" && id === undefined) return normalizedMethod === "GET";
   if (resource === "media" && id === undefined) return normalizedMethod === "POST";
 
   if (resource === "tracker-farms") {
@@ -89,6 +95,13 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (action === undefined) return READ.has(normalizedMethod);
     if (action === "history") return normalizedMethod === "GET";
     return action === "revoke" && normalizedMethod === "POST";
+  }
+
+  if (resource === "csa-purchase-requests") {
+    if (id === undefined) return normalizedMethod === "GET";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined) return normalizedMethod === "GET";
+    return ["approve", "reject", "mark-refunded"].includes(action) && normalizedMethod === "POST";
   }
 
   if (resource === "csa-customers") {

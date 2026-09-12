@@ -842,6 +842,11 @@ describe("CSA customer administration", () => {
     ).toBeVisible();
     const startDateInput = screen.getByLabelText(/Start date/);
     expect(startDateInput).toBeDisabled();
+    expect(startDateInput).toHaveAttribute("type", "text");
+    expect(startDateInput).toHaveAttribute("inputmode", "numeric");
+    expect(startDateInput).toHaveAttribute("placeholder", "dd/mm/yyyy");
+    const pickerButton = screen.getByRole("button", { name: "Open start date picker" });
+    expect(pickerButton).toBeDisabled();
     expect(screen.queryByRole("link", { name: "Customer details" })).toBeNull();
     const assignButton = screen.getByRole("button", { name: "Assign CSA package" });
     expect(assignButton).toBeDisabled();
@@ -849,12 +854,20 @@ describe("CSA customer administration", () => {
     expect(assignButton).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Price option *"), { target: { value: price.id } });
     expect(startDateInput).toBeEnabled();
+    expect(pickerButton).toBeEnabled();
+    const picker = view.container.querySelector<HTMLInputElement>('input[type="date"]');
+    expect(picker).not.toBeNull();
+    expect(picker).toHaveAttribute("min", expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+    fireEvent.change(picker!, { target: { value: "2099-04-30" } });
+    expect(startDateInput).toHaveValue("30/04/2099");
+    fireEvent.change(startDateInput, { target: { value: "" } });
     expect(assignButton).toBeDisabled();
     fireEvent.change(orderReferenceInput, {
       target: { value: "FB-100" },
     });
     expect(assignButton).toBeDisabled();
-    fireEvent.change(startDateInput, { target: { value: "2099-05-01" } });
+    fireEvent.change(startDateInput, { target: { value: "01/05/2099" } });
+    expect(startDateInput).toHaveValue("01/05/2099");
     expect(assignButton).toBeEnabled();
     fireEvent.click(assignButton);
     const dialog = screen.getByRole("dialog");
@@ -939,7 +952,7 @@ describe("CSA customer administration", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Gói ba tháng/ }));
     fireEvent.change(screen.getByLabelText("Lựa chọn giá *"), { target: { value: price.id } });
     fireEvent.change(orderReferenceInput, { target: { value: "ORDER-100" } });
-    fireEvent.change(screen.getByLabelText(/Ngày bắt đầu/), { target: { value: "2099-05-01" } });
+    fireEvent.change(screen.getByLabelText(/Ngày bắt đầu/), { target: { value: "01/05/2099" } });
     fireEvent.click(screen.getByRole("button", { name: "Gán gói CSA" }));
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: "Gán gói CSA" }),
@@ -1097,11 +1110,14 @@ describe("CSA customer administration", () => {
       target: { value: "FB-OVERLAP" },
     });
     const startDateInput = screen.getByLabelText(/Start date/);
-    fireEvent.change(startDateInput, { target: { value: "2020-01-01" } });
+    fireEvent.change(startDateInput, { target: { value: "01/01/2020" } });
+    expect(startDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(/start date must be/i)).toHaveClass("field-error");
     expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeDisabled();
-    fireEvent.change(startDateInput, { target: { value: "2099-02-01" } });
+    fireEvent.change(startDateInput, { target: { value: "01/02/2099" } });
 
     expect(screen.getByRole("status")).toHaveClass("invalid");
+    expect(screen.getByText(/must be .* or later/i)).toHaveClass("field-error");
     expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeDisabled();
     expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith("admin/memberships"))).toBe(
       false,
@@ -1144,7 +1160,7 @@ describe("CSA customer administration", () => {
     fireEvent.change(screen.getByLabelText("Order reference"), {
       target: { value: "FB-INCOMPLETE" },
     });
-    fireEvent.change(screen.getByLabelText(/Start date/), { target: { value: "2099-05-01" } });
+    fireEvent.change(screen.getByLabelText(/Start date/), { target: { value: "01/05/2099" } });
     fireEvent.click(screen.getByRole("button", { name: "Assign CSA package" }));
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: "Assign CSA package" }),
