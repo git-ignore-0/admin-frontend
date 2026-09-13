@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-target";
+import {
+  buildBackendTarget,
+  isAllowedBackendRequest,
+  UUID_PATH_SEGMENT,
+} from "@/lib/backend-target";
 import { adminOrigin, authOrigin } from "@/lib/config";
 import { isTrustedAdminRequest } from "@/lib/csrf";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
@@ -18,15 +22,24 @@ function jsonError(error: string, status: number) {
 
 function invalidMembershipContractQuery(request: NextRequest, path: string[]) {
   const [, resource, id, action, extra] = path;
+  if (resource === "csa-purchase-requests" && action === "payments") {
+    return request.nextUrl.searchParams.size > 0;
+  }
+  if (resource === "membership-price-options" && action === "payment-plans") {
+    return request.nextUrl.searchParams.size > 0;
+  }
   if (resource !== "memberships" || !id || action !== "contract") return false;
   const parameters = request.nextUrl.searchParams;
   if (extra === undefined) return parameters.size > 0;
   if (extra !== "pdf") return true;
   const locales = parameters.getAll("locale");
+  const versions = parameters.getAll("version_id");
   return (
     locales.length !== 1 ||
     !["vi", "en"].includes(locales[0]) ||
-    [...parameters.keys()].some((key) => key !== "locale")
+    versions.length > 1 ||
+    (versions.length === 1 && !UUID_PATH_SEGMENT.test(versions[0])) ||
+    [...parameters.keys()].some((key) => key !== "locale" && key !== "version_id")
   );
 }
 

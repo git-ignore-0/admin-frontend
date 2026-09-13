@@ -244,13 +244,15 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
-  const load = useCallback(() => {
+  const reloadPackage = useCallback(async () => {
+    const updated = await api<MembershipPackage>(`admin/membership-packages/${packageId}`);
+    setItem(updated);
     setError(null);
-    api<MembershipPackage>(`admin/membership-packages/${packageId}`)
-      .then(setItem)
-      .catch((caught) => setError(caught));
   }, [packageId]);
-  useEffect(load, [attempt, load]);
+  useEffect(() => {
+    setError(null);
+    void reloadPackage().catch((caught) => setError(caught));
+  }, [attempt, reloadPackage]);
 
   async function remove() {
     if (!item || deletingRef.current) return;

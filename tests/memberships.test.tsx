@@ -8,6 +8,8 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -246,6 +248,49 @@ describe("CSA package price options", () => {
     expect(JSON.stringify(body)).not.toContain("active_duration_key");
   });
 
+  it("keeps each price option in one desktop row with compact duration and an accessible icon remove action", () => {
+    mockCatalogLookups();
+    providers(<MembershipPackageEditor />);
+
+    const optionCard = screen.getByRole("group", { name: "Option 1" });
+    const row = optionCard.querySelector(".price-option-grid") as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(within(row).getByLabelText("Months *").closest("label")).toHaveClass(
+      "price-option-duration-field",
+    );
+    expect(within(row).getByLabelText("Months *")).toHaveClass("price-option-duration-input");
+    expect(within(row).getByLabelText("Monthly price *")).toHaveClass(
+      "price-option-monthly-price-input",
+    );
+    expect(within(row).getByText("Total price (preview)")).toBeVisible();
+    expect(within(row).getByRole("checkbox", { name: "Active" })).toBeVisible();
+    const remove = within(row).getByRole("button", { name: "Remove price option 1" });
+    expect(remove).toHaveClass("icon-only-action", "price-option-remove-action");
+    expect(remove).toHaveAttribute("title", "Remove price option 1");
+    expect(remove).toHaveTextContent("");
+    expect(remove.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+
+    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
+    expect(css).toMatch(/\.price-option-duration-field \{\s*max-width: 96px;/u);
+    expect(css).toMatch(/\.price-option-grid \{[\s\S]*?minmax\(80px, 96px\)/u);
+    expect(css).toMatch(
+      /\.price-option-monthly-price-input \{[\s\S]*?width: min\(100%, 13\.75rem\);[\s\S]*?field-sizing: content;[\s\S]*?white-space: nowrap;/u,
+    );
+    expect(css).not.toContain("minmax(11rem, 1fr)");
+    expect(css).toMatch(/@media \(max-width: 680px\) \{[\s\S]*?\.price-option-grid/u);
+    expect(css).toMatch(
+      /@media \(max-width: 680px\) \{[\s\S]*?\.price-option-monthly-price-input \{[\s\S]*?width: 100%;/u,
+    );
+
+    cleanup();
+    mockCatalogLookups();
+    providers(<MembershipPackageEditor />, "vi");
+    expect(screen.getByRole("button", { name: "Bỏ lựa chọn giá 1" })).toHaveAttribute(
+      "title",
+      "Bỏ lựa chọn giá 1",
+    );
+  });
+
   it("does not submit the package editor when Enter is pressed in a price input", async () => {
     mockCatalogLookups();
     providers(<MembershipPackageEditor />);
@@ -370,9 +415,326 @@ describe("CSA package price options", () => {
     expect(await screen.findByRole("heading", { name: "Inactive history" })).toBeInTheDocument();
     expect(screen.getByText("₫4,614,000")).toBeInTheDocument();
   });
+
+  it("keeps package detail limited to price options without payment-plan requests", async () => {
+    const oneMonthOption = {
+      ...activeOption,
+      id: "e7cb3209-1433-407d-8a7c-e9683aa83823",
+      duration_months: 1,
+      monthly_price_vnd: "800000",
+      total_price_vnd: "800000",
+    };
+    vi.mocked(api).mockResolvedValue({
+      ...packageItem,
+      price_options: [oneMonthOption, activeOption],
+    });
+
+    providers(<MembershipPackageDetail packageId={packageItem.id} />);
+
+    expect(await screen.findAllByText("₫800,000")).toHaveLength(2);
+    expect(screen.queryByText(/Payment methods/)).toBeNull();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      `admin/membership-packages/${packageItem.id}`,
+    ]);
+  });
+
+  it("renders payment plans only inside saved multi-month price options without N+1 requests", async () => {
+    mockCatalogLookups();
+    const oneMonthOption = {
+      ...activeOption,
+      id: "e7cb3209-1433-407d-8a7c-e9683aa83823",
+      duration_months: 1,
+      monthly_price_vnd: "800000",
+      total_price_vnd: "800000",
+    };
+    vi.mocked(api).mockResolvedValue({
+      ...packageItem,
+      price_options: [oneMonthOption, activeOption],
+    });
+
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+
+    const first = await screen.findByRole("group", { name: "Option 1" });
+    const second = screen.getByRole("group", { name: "Option 2" });
+    expect(within(first).queryByText(/Payment methods/)).toBeNull();
+    expect(within(second).getByRole("heading", { name: "Payment methods" })).toBeVisible();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      `admin/membership-packages/${packageItem.id}`,
+    ]);
+  });
+
+  it("compares savings against the current price option without loading another package", async () => {
+    mockCatalogLookups();
+    const oneMonthOption = {
+      ...activeOption,
+      id: "e7cb3209-1433-407d-8a7c-e9683aa83823",
+      duration_months: 1,
+      monthly_price_vnd: "1000000",
+      total_price_vnd: "1000000",
+    };
+    vi.mocked(api).mockResolvedValue({
+      ...packageItem,
+      price_options: [oneMonthOption, activeOption],
+    });
+
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+    const multiMonth = await screen.findByRole("group", { name: "Option 2" });
+    fireEvent.click(within(multiMonth).getByRole("button", { name: "Add method" }));
+    const comparison = within(multiMonth)
+      .getByRole("heading", { name: "Savings comparison" })
+      .closest(".payment-plan-comparison") as HTMLElement;
+    fireEvent.change(within(multiMonth).getByRole("textbox", { name: /^Package total value/ }), {
+      target: { value: "4000000" },
+    });
+    fireEvent.change(within(multiMonth).getByRole("textbox", { name: /^Amount per payment/ }), {
+      target: { value: "4000000" },
+    });
+    expect(within(comparison).getByText("₫4,500,000")).toBeVisible();
+    expect(within(comparison).getByText(/₫500,000 · 11\.11%/)).toBeVisible();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      `admin/membership-packages/${packageItem.id}`,
+    ]);
+  });
+
+  it("does not use another package price when the current option has its own baseline", async () => {
+    mockCatalogLookups();
+    const otherId = "c0c0313a-85df-4c29-930a-f19a05f3d8c4";
+    const otherOneMonth = {
+      ...activeOption,
+      id: "e7cb3209-1433-407d-8a7c-e9683aa83823",
+      duration_months: 1,
+      monthly_price_vnd: "1000000",
+      total_price_vnd: "1000000",
+    };
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/membership-packages/${packageItem.id}`) {
+        return { ...packageItem, price_options: [activeOption] };
+      }
+      if (path === `admin/membership-packages/${otherId}`) {
+        return { ...packageItem, id: otherId, price_options: [otherOneMonth] };
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+    const multiMonth = await screen.findByRole("group", { name: "Option 1" });
+    fireEvent.click(within(multiMonth).getByRole("button", { name: "Add method" }));
+    const comparison = within(multiMonth)
+      .getByRole("heading", { name: "Savings comparison" })
+      .closest(".payment-plan-comparison") as HTMLElement;
+    fireEvent.change(within(multiMonth).getByRole("textbox", { name: /^Package total value/ }), {
+      target: { value: "4000000" },
+    });
+    fireEvent.change(within(multiMonth).getByRole("textbox", { name: /^Amount per payment/ }), {
+      target: { value: "4000000" },
+    });
+    expect(within(comparison).getByText("₫4,500,000")).toBeVisible();
+    expect(within(comparison).getByText(/₫500,000 · 11\.11%/)).toBeVisible();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      `admin/membership-packages/${packageItem.id}`,
+    ]);
+  });
+
+  it("waits for changed price data to be saved before editing its plans", async () => {
+    mockCatalogLookups();
+    vi.mocked(api).mockResolvedValue(packageItem);
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+    const first = await screen.findByRole("group", { name: "Option 1" });
+    expect(within(first).getByRole("heading", { name: "Payment methods" })).toBeVisible();
+    fireEvent.focus(within(first).getByLabelText("Monthly price *"));
+    fireEvent.change(within(first).getByLabelText("Monthly price *"), {
+      target: { value: "700000" },
+    });
+    expect(within(first).queryByText(/Payment methods/)).toBeNull();
+    expect(
+      within(first).getByText(
+        /Save this duration and price option before configuring payment methods/,
+      ),
+    ).toBeVisible();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      `admin/membership-packages/${packageItem.id}`,
+    ]);
+  });
+
+  it("warns about a legacy one-month installment without allowing edits", async () => {
+    mockCatalogLookups();
+    const oneMonthOption = {
+      ...activeOption,
+      duration_months: 1,
+      monthly_price_vnd: "800000",
+      total_price_vnd: "800000",
+      payment_plans: [
+        {
+          id: "b0c0313a-85df-4c29-930a-f19a05f3d8c4",
+          price_option_id: activeOption.id,
+          name: "Legacy installments",
+          payment_type: "installment" as const,
+          total_amount: "800000",
+          installment_count: 2,
+          sort_order: 0,
+          is_active: false,
+          in_use: true,
+          initial_payment_amount: "400000",
+          installments: [
+            { sequence: 1, amount: "400000", cycle_count: 1 },
+            { sequence: 2, amount: "400000", cycle_count: 1 },
+          ],
+        },
+      ],
+    };
+    vi.mocked(api).mockResolvedValue({ ...packageItem, price_options: [oneMonthOption] });
+
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+
+    const first = await screen.findByRole("group", { name: "Option 1" });
+    expect(
+      within(first).getByText(/Existing payment methods for a one-month option/),
+    ).toBeVisible();
+    expect(within(first).getByText(/2 installments/)).toBeVisible();
+    expect(within(first).queryByRole("button", { name: "Add method" })).toBeNull();
+    expect(within(first).queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([
+      `admin/membership-packages/${packageItem.id}`,
+    ]);
+  });
 });
 
 describe("Membership detail snapshots and usage regressions", () => {
+  it("keeps Contract detail visible while one version PDF is loading or fails", async () => {
+    const version = {
+      id: "11111111-1111-4111-8111-111111111111",
+      version_number: 1,
+      version_reason: "issued",
+      contract_status: "active",
+      created_at: "2026-09-10T02:00:00Z",
+      available_locales: ["vi", "en"],
+    };
+    const contract = {
+      id: "77777777-7777-4777-8777-777777777777",
+      reference_code: "CSA-202609-8F3K2M",
+      status: "active",
+      available_locales: ["vi", "en"],
+      current_version: version,
+      versions: [version],
+    };
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`)
+        return { ...membership, contract };
+      if (path === `admin/memberships/${membership.id}/contract`) return contract;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    let rejectDownload: (reason: Error) => void = () => undefined;
+    vi.mocked(apiFile).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectDownload = reject;
+        }),
+    );
+    providers(<MembershipDetail membershipId={membership.id} />);
+    const versionRow = (await screen.findByRole("heading", { name: "Version 1" })).closest("li")!;
+    const viButton = within(versionRow).getByRole("button", { name: "Download Vietnamese PDF" });
+    fireEvent.click(viButton);
+    expect(viButton).toBeDisabled();
+    expect(within(versionRow).getByRole("button", { name: "Download English PDF" })).toBeEnabled();
+    fireEvent.click(viButton);
+    expect(apiFile).toHaveBeenCalledTimes(1);
+    await act(async () => rejectDownload(new Error("private-storage-secret")));
+    expect(await screen.findByText("The contract PDF is temporarily unavailable.")).toBeVisible();
+    expect(screen.getByText(contract.reference_code)).toBeVisible();
+    expect(screen.queryByText("private-storage-secret")).toBeNull();
+    expect(viButton).toBeEnabled();
+  });
+
+  it("shows ordered Contract versions and downloads old/current PDFs independently", async () => {
+    const oldVersion = {
+      id: "11111111-1111-4111-8111-111111111111",
+      version_number: 1,
+      version_reason: "issued",
+      contract_status: "active",
+      created_at: "2026-09-10T02:00:00Z",
+      available_locales: ["vi"],
+    };
+    const currentVersion = {
+      id: "22222222-2222-4222-8222-222222222222",
+      version_number: 2,
+      version_reason: "membership_revoked",
+      contract_status: "revoked",
+      created_at: "2026-09-12T02:00:00Z",
+      available_locales: ["vi", "en"],
+      paid_amount: "1000000",
+      remaining_amount: "3500000",
+    };
+    const contract = {
+      id: "77777777-7777-4777-8777-777777777777",
+      reference_code: "CSA-202609-8F3K2M",
+      status: "revoked",
+      available_locales: ["vi", "en"],
+      issued_at: "2026-09-10T02:00:00Z",
+      revoked_at: "2026-09-12T02:00:00Z",
+      revocation_reason: "Cancelled",
+      current_version: currentVersion,
+      versions: [currentVersion, oldVersion],
+    };
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`)
+        return { ...membership, contract };
+      if (path === `admin/memberships/${membership.id}/contract`) return contract;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    vi.mocked(apiFile).mockResolvedValue({
+      blob: new Blob(["pdf"], { type: "application/pdf" }),
+      filename: "CSA-CODE.v1.vi.pdf",
+    });
+    const createObjectURL = vi.fn(() => "blob:contract-version");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const downloads: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloads.push(this.download);
+    });
+
+    providers(<MembershipDetail membershipId={membership.id} />);
+    expect(await screen.findByRole("heading", { name: "Contract version history" })).toBeVisible();
+    const rows = screen
+      .getAllByRole("listitem")
+      .filter((row) => row.className === "membership-contract-version");
+    expect(within(rows[0]).getByRole("heading", { name: "Version 1" })).toBeVisible();
+    expect(within(rows[1]).getByRole("heading", { name: "Version 2" })).toBeVisible();
+    expect(within(rows[0]).queryByText("Current version")).toBeNull();
+    expect(within(rows[1]).getByText("Current version")).toBeVisible();
+    expect(within(rows[0]).getByText("VI")).toBeVisible();
+    expect(within(rows[0]).queryByRole("button", { name: "Download English PDF" })).toBeNull();
+    expect(within(rows[1]).getByText("₫1,000,000")).toBeVisible();
+    expect(within(rows[1]).getByText("₫3,500,000")).toBeVisible();
+
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(within(rows[0]).getByRole("button", { name: "Download Vietnamese PDF" }));
+    });
+    expect(apiFile).toHaveBeenCalledWith(
+      `admin/memberships/${membership.id}/contract/pdf?locale=vi&version_id=${oldVersion.id}`,
+    );
+    expect(downloads).toEqual(["CSA-CODE.v1.vi.pdf"]);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:contract-version");
+
+    await act(async () => {
+      fireEvent.click(within(rows[1]).getByRole("button", { name: "Download English PDF" }));
+    });
+    expect(apiFile).toHaveBeenCalledWith(
+      `admin/memberships/${membership.id}/contract/pdf?locale=en&version_id=${currentVersion.id}`,
+    );
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(contract.reference_code)).toBeVisible();
+  });
+
   it("loads and renders the current contract with only its available PDF locales", async () => {
     const contract = {
       id: "77777777-7777-4777-8777-777777777777",
@@ -405,6 +767,11 @@ describe("Membership detail snapshots and usage regressions", () => {
     providers(<MembershipDetail membershipId={membership.id} />);
 
     expect(await screen.findByText(contract.reference_code)).toBeVisible();
+    expect(
+      screen.getByText(
+        "This legacy contract has no version history. Its current PDF is available above.",
+      ),
+    ).toBeVisible();
     expect(screen.getByText("Active", { selector: "dd" })).toBeVisible();
     vi.useFakeTimers();
     await act(async () => {

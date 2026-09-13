@@ -155,6 +155,14 @@ export function CSAPurchaseRequestList() {
                   <td data-label={t.csaPurchases.package}>
                     {item.package_snapshot.name}
                     <small className="table-secondary">{item.price_option_snapshot.name}</small>
+                    <small className="table-secondary">
+                      {item.payment_plan?.payment_type === "installment"
+                        ? t.csaPurchases.installments.installment.replace(
+                            "{count}",
+                            String(item.payment_plan.installment_count),
+                          )
+                        : t.csaPurchases.installments.full}
+                    </small>
                   </td>
                   <td className="csa-purchase-status-cell" data-label={t.csaPurchases.status}>
                     <CSAPurchaseStatusBadge status={item.status} />

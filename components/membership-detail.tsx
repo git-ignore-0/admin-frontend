@@ -20,6 +20,7 @@ import {
 import type {
   AdminCSAContract,
   AdminMembership,
+  CSAContractVersion,
   MembershipCycle,
   MembershipUsage,
   PaginationMeta,
@@ -76,7 +77,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const [contractLoading, setContractLoading] = useState(false);
   const [contractError, setContractError] = useState("");
   const [contractPdfError, setContractPdfError] = useState("");
-  const [downloadingContract, setDownloadingContract] = useState<"vi" | "en" | null>(null);
+  const downloadingContractRef = useRef(new Set<string>());
+  const [downloadingContracts, setDownloadingContracts] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
   const [usageLines, setUsageLines] = useState<UsageLineForm[]>([]);
   const [usageUnitErrors, setUsageUnitErrors] = useState<Record<number, string>>({});
@@ -121,6 +123,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   }, [historyPage, locale, membershipId, t]);
 
   const contractId = item?.contract?.id ?? "";
+  const contractVersions: CSAContractVersion[] = [...(contract?.versions ?? [])].sort(
+    (left, right) => left.version_number - right.version_number,
+  );
   const loadContract = useCallback(async () => {
     setContractError("");
     setContractPdfError("");
@@ -144,13 +149,19 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   useEffect(() => void loadHistory(), [loadHistory]);
   useEffect(() => void loadContract(), [loadContract]);
 
-  async function downloadContract(localeToDownload: "vi" | "en") {
-    if (!contract?.available_locales.includes(localeToDownload) || downloadingContract) return;
-    setDownloadingContract(localeToDownload);
+  async function downloadContract(localeToDownload: "vi" | "en", versionId?: string) {
+    const version = versionId ? contract?.versions?.find((entry) => entry.id === versionId) : null;
+    const available = version
+      ? version.available_locales.includes(localeToDownload)
+      : !versionId && contract?.available_locales.includes(localeToDownload);
+    const downloadKey = `${versionId ?? "current"}:${localeToDownload}`;
+    if (!available || downloadingContractRef.current.has(downloadKey)) return;
+    downloadingContractRef.current.add(downloadKey);
+    setDownloadingContracts(new Set(downloadingContractRef.current));
     setContractPdfError("");
     try {
       const file = await apiFile(
-        `admin/memberships/${membershipId}/contract/pdf?locale=${localeToDownload}`,
+        `admin/memberships/${membershipId}/contract/pdf?locale=${localeToDownload}${versionId ? `&version_id=${encodeURIComponent(versionId)}` : ""}`,
       );
       const objectUrl = URL.createObjectURL(file.blob);
       const anchor = document.createElement("a");
@@ -161,7 +172,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     } catch {
       setContractPdfError(t.memberships.contractPdfUnavailable);
     } finally {
-      setDownloadingContract(null);
+      downloadingContractRef.current.delete(downloadKey);
+      setDownloadingContracts(new Set(downloadingContractRef.current));
     }
   }
 
@@ -520,11 +532,11 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                 {contract.available_locales.includes("vi") && (
                   <button
                     className="button secondary"
-                    disabled={downloadingContract !== null}
+                    disabled={downloadingContracts.has("current:vi")}
                     onClick={() => void downloadContract("vi")}
                     type="button"
                   >
-                    {downloadingContract === "vi"
+                    {downloadingContracts.has("current:vi")
                       ? t.memberships.downloadingContract
                       : t.memberships.downloadContractVi}
                   </button>
@@ -532,14 +544,96 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                 {contract.available_locales.includes("en") && (
                   <button
                     className="button secondary"
-                    disabled={downloadingContract !== null}
+                    disabled={downloadingContracts.has("current:en")}
                     onClick={() => void downloadContract("en")}
                     type="button"
                   >
-                    {downloadingContract === "en"
+                    {downloadingContracts.has("current:en")
                       ? t.memberships.downloadingContract
                       : t.memberships.downloadContractEn}
                   </button>
+                )}
+              </div>
+              <div className="membership-contract-versions">
+                <h3>{t.memberships.contractVersionHistory}</h3>
+                {contractVersions.length === 0 ? (
+                  <p className="muted-copy">{t.memberships.contractNoVersions}</p>
+                ) : (
+                  <ol className="membership-contract-version-list">
+                    {contractVersions.map((version) => {
+                      const current = version.id === contract.current_version?.id;
+                      return (
+                        <li className="membership-contract-version" key={version.id}>
+                          <div className="membership-contract-version-head">
+                            <h4>
+                              {t.memberships.contractVersion} {version.version_number}
+                            </h4>
+                            {current && (
+                              <span className="badge">{t.memberships.contractCurrentVersion}</span>
+                            )}
+                          </div>
+                          <dl className="membership-contract-version-meta">
+                            <DetailRow
+                              label={t.memberships.contractVersionReason}
+                              value={t.memberships.contractVersionReasons[version.version_reason]}
+                            />
+                            <DetailRow
+                              label={t.memberships.contractStatus}
+                              value={
+                                version.contract_status === "active"
+                                  ? t.memberships.contractActive
+                                  : t.memberships.contractRevoked
+                              }
+                            />
+                            <DetailRow
+                              label={t.memberships.contractVersionCreated}
+                              value={formatAdminDateTime(version.created_at)}
+                            />
+                            {version.paid_amount !== undefined && (
+                              <DetailRow
+                                label={t.memberships.contractPaidAmount}
+                                value={formatMembershipMoney(version.paid_amount, locale)}
+                              />
+                            )}
+                            {version.remaining_amount !== undefined && (
+                              <DetailRow
+                                label={t.memberships.contractRemainingAmount}
+                                value={formatMembershipMoney(version.remaining_amount, locale)}
+                              />
+                            )}
+                            <DetailRow
+                              label={t.memberships.contractPdfLocales}
+                              value={
+                                version.available_locales.length
+                                  ? version.available_locales.join(", ").toUpperCase()
+                                  : "—"
+                              }
+                            />
+                          </dl>
+                          <div className="membership-contract-actions">
+                            {version.available_locales.map((pdfLocale) => {
+                              const key = `${version.id}:${pdfLocale}`;
+                              return (
+                                <button
+                                  className="button secondary"
+                                  disabled={downloadingContracts.has(key)}
+                                  key={pdfLocale}
+                                  onClick={() => void downloadContract(pdfLocale, version.id)}
+                                  type="button"
+                                >
+                                  {downloadingContracts.has(key)
+                                    ? t.memberships.downloadingContract
+                                    : pdfLocale === "vi"
+                                      ? t.memberships.downloadContractVi
+                                      : t.memberships.downloadContractEn}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
                 )}
               </div>
               {contractPdfError && (

@@ -5,6 +5,10 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import {
+  MembershipPaymentPlanManager,
+  paymentPlanDisplayName,
+} from "@/components/membership-payment-plan-manager";
+import {
   BilingualContentFields,
   emptyBilingualContent,
   type BilingualContentValue,
@@ -339,6 +343,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
   const router = useRouter();
   const savingRef = useRef(false);
   const [form, setForm] = useState<PackageForm>(structuredClone(emptyPackage));
+  const [loadedPackage, setLoadedPackage] = useState<MembershipPackage | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [visibleProductIds, setVisibleProductIds] = useState<Set<string>>(new Set());
   const [productMeta, setProductMeta] = useState<PaginationMeta | null>(null);
@@ -364,6 +369,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
     api<MembershipPackage>(`admin/membership-packages/${packageId}`)
       .then((item) => {
         setForm(packageForm(item));
+        setLoadedPackage(item);
         setProducts((current) =>
           mergeProductOptions(
             current,
@@ -379,6 +385,12 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
       })
       .catch(setLoadError);
   }, [loadAttempt, packageId]);
+
+  async function reloadPaymentPlans() {
+    if (!packageId) return;
+    const item = await api<MembershipPackage>(`admin/membership-packages/${packageId}`);
+    setLoadedPackage(item);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -665,6 +677,22 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                     ? BigInt(option.monthlyPriceVnd)
                     : 0n;
                   const total = duration * monthly;
+                  const persistedOption = loadedPackage?.price_options.find(
+                    (item) => item.id === option.id,
+                  );
+                  const priceContextSaved =
+                    persistedOption &&
+                    option.durationMonths === String(persistedOption.duration_months) &&
+                    option.monthlyPriceVnd === persistedOption.monthly_price_vnd &&
+                    option.isActive === persistedOption.is_active;
+                  const durationError = inputErrors.priceOptions[index]?.duration;
+                  const monthlyPriceError = inputErrors.priceOptions[index]?.monthlyPrice;
+                  const durationErrorId = `price-option-${option.id ?? index}-duration-error`;
+                  const monthlyPriceErrorId = `price-option-${option.id ?? index}-monthly-price-error`;
+                  const removePriceOptionLabel = t.membershipCatalog.removePriceOption.replace(
+                    "{number}",
+                    String(index + 1),
+                  );
                   return (
                     <fieldset
                       className="price-option-card"
@@ -678,11 +706,12 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                         )}
                       </legend>
                       <div className="price-option-grid">
-                        <label className="field">
+                        <label className="field price-option-duration-field">
                           <span>{t.membershipCatalog.duration} *</span>
                           <input
-                            aria-invalid={Boolean(inputErrors.priceOptions[index]?.duration)}
-                            className="input"
+                            aria-describedby={durationError ? durationErrorId : undefined}
+                            aria-invalid={Boolean(durationError)}
+                            className="input price-option-duration-input"
                             inputMode="numeric"
                             onChange={(event) =>
                               updatePriceOption(index, {
@@ -692,17 +721,18 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                             type="text"
                             value={option.durationMonths}
                           />
-                          {inputErrors.priceOptions[index]?.duration && (
-                            <small className="field-error" role="alert">
-                              {inputErrors.priceOptions[index].duration}
+                          {durationError && (
+                            <small className="field-error" id={durationErrorId} role="alert">
+                              {durationError}
                             </small>
                           )}
                         </label>
-                        <label className="field">
+                        <label className="field price-option-monthly-price-field">
                           <span>{t.membershipCatalog.monthlyPrice} *</span>
                           <input
-                            aria-invalid={Boolean(inputErrors.priceOptions[index]?.monthlyPrice)}
-                            className="input"
+                            aria-describedby={monthlyPriceError ? monthlyPriceErrorId : undefined}
+                            aria-invalid={Boolean(monthlyPriceError)}
+                            className="input price-option-monthly-price-input"
                             inputMode="numeric"
                             maxLength={19}
                             onBlur={() => setFocusedPrice(null)}
@@ -719,9 +749,9 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                                 : formatMembershipMoney(option.monthlyPriceVnd, locale)
                             }
                           />
-                          {inputErrors.priceOptions[index]?.monthlyPrice && (
-                            <small className="field-error" role="alert">
-                              {inputErrors.priceOptions[index].monthlyPrice}
+                          {monthlyPriceError && (
+                            <small className="field-error" id={monthlyPriceErrorId} role="alert">
+                              {monthlyPriceError}
                             </small>
                           )}
                         </label>
@@ -733,9 +763,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                               : "—"}
                           </output>
                         </div>
-                      </div>
-                      <div className="price-option-actions">
-                        <label className="checkbox">
+                        <label className="checkbox price-option-active-field">
                           <input
                             checked={option.isActive}
                             onChange={(event) =>
@@ -746,7 +774,8 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                           <span>{t.membershipCatalog.active}</span>
                         </label>
                         <button
-                          className="button secondary"
+                          aria-label={removePriceOptionLabel}
+                          className="button secondary icon-only-action price-option-remove-action"
                           disabled={busy || form.priceOptions.length === 1}
                           onClick={() =>
                             setForm((current) => ({
@@ -756,11 +785,53 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                               ),
                             }))
                           }
+                          title={removePriceOptionLabel}
                           type="button"
                         >
-                          {t.membershipCatalog.removePriceOption}
+                          <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                            <path
+                              d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
+                              stroke="currentColor"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="1.8"
+                            />
+                          </svg>
                         </button>
                       </div>
+                      {option.durationMonths === "1" ? (
+                        persistedOption?.duration_months === 1 &&
+                        persistedOption.payment_plans?.length ? (
+                          <div className="price-option-plan-warning" role="status">
+                            <p className="field-error">
+                              {t.membershipCatalog.paymentPlans.oneMonthLegacyReadOnly}
+                            </p>
+                            <ul>
+                              {persistedOption.payment_plans.map((plan) => (
+                                <li key={plan.id}>
+                                  {paymentPlanDisplayName(plan, t.membershipCatalog.paymentPlans)} ·{" "}
+                                  {plan.is_active
+                                    ? t.membershipCatalog.paymentPlans.active
+                                    : t.membershipCatalog.paymentPlans.inactive}
+                                  {plan.in_use
+                                    ? ` · ${t.membershipCatalog.paymentPlans.inUse}`
+                                    : null}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null
+                      ) : option.id && persistedOption && priceContextSaved ? (
+                        <MembershipPaymentPlanManager
+                          key={`${option.id}:${persistedOption.duration_months}:${persistedOption.total_price_vnd}`}
+                          option={persistedOption}
+                          onReload={reloadPaymentPlans}
+                        />
+                      ) : duration > 1n ? (
+                        <p className="catalog-section-help">
+                          {t.membershipCatalog.paymentPlans.savePriceFirst}
+                        </p>
+                      ) : null}
                     </fieldset>
                   );
                 })}

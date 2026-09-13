@@ -75,6 +75,9 @@ describe("backend API target", () => {
     expect(
       isAllowedBackendRequest("GET", ["admin", "memberships", membershipId, "contract", "pdf"]),
     ).toBe(true);
+    expect(
+      isAllowedBackendRequest("POST", ["admin", "memberships", membershipId, "contract", "pdf"]),
+    ).toBe(false);
     expect(isAllowedBackendRequest("GET", ["admin", "memberships", "not-a-uuid", "contract"])).toBe(
       false,
     );
@@ -88,6 +91,26 @@ describe("backend API target", () => {
       ]),
     ).toBe(false);
     expect(isAllowedBackendRequest("GET", ["memberships", "current"])).toBe(false);
+  });
+
+  it("restricts payment-plan management to UUID paths and exact methods", () => {
+    const option = "a0c0313a-85df-4c29-930a-f19a05f3d8c4";
+    const plan = "b0c0313a-85df-4c29-930a-f19a05f3d8c4";
+    const base = ["admin", "membership-price-options", option, "payment-plans"];
+    expect(isAllowedBackendRequest("GET", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", base)).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", base)).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, plan])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", [...base, plan])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", [...base, plan])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, plan, "activate"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, plan, "deactivate"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, plan, "activate"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, plan, "unknown"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, "not-a-uuid", "activate"])).toBe(false);
+    expect(
+      isAllowedBackendRequest("GET", ["admin", "membership-price-options", "bad", "payment-plans"]),
+    ).toBe(false);
   });
 
   it("allowlists only CSA purchase list, detail, approve, reject and mark-refunded", () => {
@@ -131,6 +154,57 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", ["admin", "csa-purchase-requests", "bad-id"])).toBe(
       false,
     );
+  });
+
+  it("allowlists only POST confirm/reject for a positive payment sequence and valid request UUID", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    for (const action of ["confirm", "reject"]) {
+      const path = ["admin", "csa-purchase-requests", id, "payments", "2", action];
+      expect(isAllowedBackendRequest("POST", path)).toBe(true);
+      expect(isAllowedBackendRequest("GET", path)).toBe(false);
+      expect(isAllowedBackendRequest("PATCH", path)).toBe(false);
+      expect(isAllowedBackendRequest("POST", [...path, "extra"])).toBe(false);
+      expect(
+        isAllowedBackendRequest("POST", [
+          "admin",
+          "csa-purchase-requests",
+          "bad",
+          "payments",
+          "2",
+          action,
+        ]),
+      ).toBe(false);
+      expect(
+        isAllowedBackendRequest("POST", [
+          "admin",
+          "csa-purchase-requests",
+          id,
+          "payments",
+          "0",
+          action,
+        ]),
+      ).toBe(false);
+      expect(
+        isAllowedBackendRequest("POST", [
+          "admin",
+          "csa-purchase-requests",
+          id,
+          "payments",
+          "02",
+          action,
+        ]),
+      ).toBe(false);
+    }
+    expect(
+      isAllowedBackendRequest("POST", [
+        "admin",
+        "csa-purchase-requests",
+        id,
+        "payments",
+        "2",
+        "other",
+      ]),
+    ).toBe(false);
   });
 
   it("allowlists only CSA customer collection, detail, and one-way linking", () => {

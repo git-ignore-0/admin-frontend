@@ -61,9 +61,81 @@ const request: CSAPurchaseRequest = {
   updated_at: "2026-09-10T02:00:00Z",
 };
 
-function renderWithProviders(node: React.ReactNode) {
+const installmentRequest: CSAPurchaseRequest = {
+  ...request,
+  status: "approved",
+  membership_id: "87703641-2dce-4cac-8fc4-91e55f03e95f",
+  payment_plan: {
+    id: "plan-id",
+    name: "Trả góp 3 lần",
+    payment_type: "installment",
+    total_amount: "1200000",
+    installment_count: 3,
+    initial_payment_amount: "400000",
+    installments: [
+      { sequence: 1, amount: "400000", cycle_count: 1 },
+      { sequence: 2, amount: "400000", cycle_count: 1 },
+      { sequence: 3, amount: "400000", cycle_count: 1 },
+    ],
+  },
+  payment_summary: {
+    total_amount: "1200000",
+    paid_amount: "400000",
+    remaining_amount: "800000",
+    confirmed_installments: 1,
+    installment_count: 3,
+    paid_cycles: 1,
+    total_cycles: 3,
+  },
+  payments: [
+    {
+      id: "payment-3",
+      installment_sequence: 3,
+      amount_due: "400000",
+      amount_paid: null,
+      cycle_count: 1,
+      status: "overdue",
+      due_at: "2026-12-01T18:00:00Z",
+      confirmed_at: null,
+      confirmed_by: null,
+      rejected_at: null,
+      rejection_reason: null,
+      note: "",
+    },
+    {
+      id: "payment-1",
+      installment_sequence: 1,
+      amount_due: "400000",
+      amount_paid: "400000",
+      cycle_count: 1,
+      status: "confirmed",
+      due_at: "2026-10-01T18:00:00Z",
+      confirmed_at: "2026-10-02T01:00:00Z",
+      confirmed_by: { id: "admin-id", name: "Admin A" },
+      rejected_at: null,
+      rejection_reason: null,
+      note: "Đã đối soát",
+    },
+    {
+      id: "payment-2",
+      installment_sequence: 2,
+      amount_due: "400000",
+      amount_paid: null,
+      cycle_count: 1,
+      status: "reported",
+      due_at: "2026-11-01T18:00:00Z",
+      confirmed_at: null,
+      confirmed_by: null,
+      rejected_at: null,
+      rejection_reason: null,
+      note: "",
+    },
+  ],
+};
+
+function renderWithProviders(node: React.ReactNode, locale: "vi" | "en" = "vi") {
   return render(
-    <AdminI18nProvider initialLocale="vi">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>{node}</ToastProvider>
     </AdminI18nProvider>,
   );
@@ -81,6 +153,272 @@ function mockDetailApi(item = request) {
 }
 
 describe("CSA purchase request admin", () => {
+  it("shows full payment without adding a list column or installment actions", async () => {
+    const fullRequest: CSAPurchaseRequest = {
+      ...request,
+      payment_plan: {
+        id: "full-plan",
+        name: "Trả thẳng",
+        payment_type: "full",
+        total_amount: "1200000",
+        installment_count: 1,
+        initial_payment_amount: "1200000",
+        installments: [{ sequence: 1, amount: "1200000", cycle_count: 3 }],
+      },
+      payment_summary: {
+        total_amount: "1200000",
+        paid_amount: "0",
+        remaining_amount: "1200000",
+        confirmed_installments: 0,
+        installment_count: 1,
+        paid_cycles: 0,
+        total_cycles: 3,
+      },
+      payments: [],
+    };
+    vi.mocked(apiEnvelope).mockResolvedValueOnce({
+      data: [fullRequest],
+      meta: { page: 1, page_size: 30, total: 1 },
+    });
+    const list = renderWithProviders(<CSAPurchaseRequestList />);
+    expect(await screen.findByText("Trả thẳng")).toBeVisible();
+    expect(screen.queryByRole("columnheader", { name: "Phương thức thanh toán" })).toBeNull();
+    list.unmount();
+    mockDetailApi(fullRequest);
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    expect(await screen.findByText("Chưa có lịch thanh toán.")).toBeVisible();
+    expect(screen.getByText("Trả thẳng")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Xác nhận thanh toán" })).toBeNull();
+  });
+
+  it("renders an ordered responsive installment schedule with backend totals and states", async () => {
+    mockDetailApi(installmentRequest);
+    const { container } = renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    expect(await screen.findByText("Lịch thanh toán")).toBeVisible();
+    expect(screen.getByText("Trả góp 3 lần")).toBeVisible();
+    expect(screen.getByText(/800\.000/)).toBeVisible();
+    expect(screen.getAllByText("1/3")).toHaveLength(2);
+    const rows = Array.from(container.querySelectorAll(".csa-installment-table tbody tr"));
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.querySelector("th")?.textContent)).toEqual([
+      "Lần thanh toán 1",
+      "Lần thanh toán 2",
+      "Lần thanh toán 3",
+    ]);
+    expect(rows[0]).toHaveTextContent("Đã xác nhận");
+    expect(rows[0]).toHaveTextContent("Admin A");
+    expect(rows[0]).toHaveTextContent("Đã đối soát");
+    expect(rows[1]).toHaveTextContent("Đã báo thanh toán");
+    expect(rows[2]).toHaveTextContent("Quá hạn");
+    expect(rows[1].querySelector("td[data-label='Hạn thanh toán']")).toHaveTextContent(
+      "02/11/2026 01:00",
+    );
+    expect(within(rows[0] as HTMLElement).queryByRole("button")).toBeNull();
+    expect(within(rows[1] as HTMLElement).getAllByRole("button")).toHaveLength(2);
+    expect(within(rows[2] as HTMLElement).queryByRole("button")).toBeNull();
+    expect(container.querySelectorAll(".csa-installment-wrap")).toHaveLength(1);
+  });
+
+  it("confirms only a reported approved payment, prevents duplicate submit and reloads detail", async () => {
+    const confirmed: CSAPurchaseRequest = {
+      ...installmentRequest,
+      payments: installmentRequest.payments?.map((entry) =>
+        entry.installment_sequence === 2
+          ? { ...entry, status: "confirmed" as const, amount_paid: "400000" }
+          : entry,
+      ),
+    };
+    let loaded = installmentRequest;
+    let resolveMutation!: (value: CSAPurchaseRequest) => void;
+    const mutation = new Promise<CSAPurchaseRequest>((resolve) => {
+      resolveMutation = resolve;
+    });
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/csa-purchase-requests/${request.id}` && !init?.method)
+        return loaded as never;
+      if (path === `admin/csa-purchase-requests/${request.id}/payments/2/confirm`)
+        return mutation as never;
+      if (
+        path === "administrative-units/provinces" ||
+        path.startsWith("administrative-units/wards")
+      )
+        return [] as never;
+      throw new Error(`unexpected:${path}`);
+    });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    const confirm = await screen.findByRole("button", { name: "Xác nhận thanh toán" });
+    fireEvent.click(confirm);
+    const dialog = screen.getByRole("dialog");
+    const submit = within(dialog).getByRole("button", { name: "Xác nhận thanh toán" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Số tiền thực nhận"), {
+      target: { value: "399999" },
+    });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Số tiền thực nhận"), {
+      target: { value: "400000" },
+    });
+    expect(submit).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("Ghi chú"), { target: { value: "Đối soát" } });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    expect(
+      vi.mocked(api).mock.calls.filter(([path]) => String(path).endsWith("/payments/2/confirm")),
+    ).toHaveLength(1);
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      `admin/csa-purchase-requests/${request.id}/payments/2/confirm`,
+      { method: "POST", body: JSON.stringify({ amount_paid: "400000", note: "Đối soát" }) },
+    );
+    expect(submit).toBeDisabled();
+    loaded = confirmed;
+    await act(async () => resolveMutation(confirmed));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Xác nhận thanh toán" })).toBeNull();
+    expect(
+      vi
+        .mocked(api)
+        .mock.calls.filter(
+          ([path, init]) => path === `admin/csa-purchase-requests/${request.id}` && !init?.method,
+        ).length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("requires a rejection reason and refreshes on a payment race conflict", async () => {
+    let loaded = installmentRequest;
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/csa-purchase-requests/${request.id}` && !init?.method)
+        return loaded as never;
+      if (path.endsWith("/payments/2/reject")) {
+        loaded = {
+          ...installmentRequest,
+          payments: installmentRequest.payments?.map((entry) =>
+            entry.installment_sequence === 2 ? { ...entry, status: "confirmed" as const } : entry,
+          ),
+        };
+        throw new Error("csa_payment_state_conflict");
+      }
+      if (
+        path === "administrative-units/provinces" ||
+        path.startsWith("administrative-units/wards")
+      )
+        return [] as never;
+      throw new Error(`unexpected:${path}`);
+    });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Từ chối khoản thanh toán" }));
+    const dialog = screen.getByRole("dialog");
+    const submit = within(dialog).getByRole("button", { name: "Từ chối khoản thanh toán" });
+    expect(submit).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Lý do từ chối"), {
+      target: { value: "Sai giao dịch" },
+    });
+    fireEvent.click(submit);
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      `admin/csa-purchase-requests/${request.id}/payments/2/reject`,
+      { method: "POST", body: JSON.stringify({ rejection_reason: "Sai giao dịch" }) },
+    );
+    expect(await screen.findByText(/Khoản thanh toán đã thay đổi/)).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Từ chối khoản thanh toán" })).toBeNull();
+  });
+
+  it("rejects a reported installment with only the required reason and reloads its history", async () => {
+    const rejected: CSAPurchaseRequest = {
+      ...installmentRequest,
+      payments: installmentRequest.payments?.map((entry) =>
+        entry.installment_sequence === 2
+          ? {
+              ...entry,
+              status: "rejected" as const,
+              rejection_reason: "Sai mã",
+              rejected_at: "2026-11-03T01:00:00Z",
+            }
+          : entry,
+      ),
+    };
+    let loaded = installmentRequest;
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/csa-purchase-requests/${request.id}` && !init?.method)
+        return loaded as never;
+      if (path.endsWith("/payments/2/reject")) {
+        loaded = rejected;
+        return rejected as never;
+      }
+      if (
+        path === "administrative-units/provinces" ||
+        path.startsWith("administrative-units/wards")
+      )
+        return [] as never;
+      throw new Error(`unexpected:${path}`);
+    });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Từ chối khoản thanh toán" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Từ chối khoản thanh toán" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Lý do từ chối"), {
+      target: { value: "Sai mã" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Từ chối khoản thanh toán" }));
+    expect(await screen.findByText(/Lý do từ chối: Sai mã/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Từ chối khoản thanh toán" })).toBeNull();
+    expect(vi.mocked(api)).toHaveBeenCalledWith(
+      `admin/csa-purchase-requests/${request.id}/payments/2/reject`,
+      { method: "POST", body: JSON.stringify({ rejection_reason: "Sai mã" }) },
+    );
+  });
+
+  it("keeps a reported payment visible and localizes backend amount errors", async () => {
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/csa-purchase-requests/${request.id}` && !init?.method)
+        return installmentRequest as never;
+      if (path.endsWith("/payments/2/confirm")) throw new Error("csa_payment_amount_mismatch");
+      if (
+        path === "administrative-units/provinces" ||
+        path.startsWith("administrative-units/wards")
+      )
+        return [] as never;
+      throw new Error(`unexpected:${path}`);
+    });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Xác nhận thanh toán" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Số tiền thực nhận"), {
+      target: { value: "400000" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận thanh toán" }));
+    expect(
+      await within(dialog).findByText("Số tiền thực nhận phải bằng số tiền phải trả."),
+    ).toBeVisible();
+    expect(within(dialog).getByLabelText("Số tiền thực nhận")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByText("Đã báo thanh toán")).toBeVisible();
+    expect(screen.queryByText("csa_payment_amount_mismatch")).toBeNull();
+  });
+
+  it("never exposes installment actions before approval even if payment is reported", async () => {
+    mockDetailApi({ ...installmentRequest, status: "payment_confirmed" });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    expect(await screen.findByText("Lịch thanh toán")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Xác nhận thanh toán" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Từ chối khoản thanh toán" })).toBeNull();
+  });
+
+  it("uses English installment copy without leaking sensitive API fields", async () => {
+    mockDetailApi({
+      ...installmentRequest,
+      guest_confirmation_token: "secret" as never,
+      storage_key: "private/contract.pdf" as never,
+    } as CSAPurchaseRequest);
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />, "en");
+    expect(await screen.findByText("Payment schedule")).toBeVisible();
+    expect(screen.getByText("Installments (3)")).toBeVisible();
+    expect(screen.getByText("Payment reported")).toBeVisible();
+    expect(screen.queryByText("secret")).toBeNull();
+    expect(screen.queryByText("private/contract.pdf")).toBeNull();
+  });
+
   it("renders loading, empty and permission error states", async () => {
     vi.mocked(apiEnvelope).mockResolvedValueOnce({
       data: [],

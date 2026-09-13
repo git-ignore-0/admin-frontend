@@ -467,16 +467,42 @@ h3 {
 
 .price-option-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns:
+    minmax(80px, 96px) fit-content(13.75rem) minmax(9rem, 0.85fr)
+    max-content 44px;
+  align-items: end;
+  gap: 12px;
 }
 
-.price-option-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 14px;
+.price-option-duration-field {
+  max-width: 96px;
+}
+
+.price-option-duration-input {
+  width: 100%;
+}
+
+.price-option-monthly-price-field {
+  min-width: 0;
+  max-width: 13.75rem;
+}
+
+.price-option-monthly-price-input {
+  width: min(100%, 13.75rem);
+  max-width: 100%;
+  min-width: 0;
+  field-sizing: content;
+  white-space: nowrap;
+}
+
+.price-option-active-field {
+  min-height: 44px;
+  align-self: end;
+  white-space: nowrap;
+}
+
+.price-option-remove-action {
+  align-self: end;
 }
 
 .price-total-preview output {
@@ -488,6 +514,288 @@ h3 {
 
 .catalog-price-options {
   margin-top: 24px;
+}
+
+.payment-plan-manager {
+  min-width: 0;
+  padding-block: 16px;
+}
+
+.payment-plan-manager .panel-head h5 {
+  margin: 0;
+}
+
+.payment-plan-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.payment-plan-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding-block: 10px;
+}
+
+.payment-plan-list li > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.payment-plan-editor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.payment-plan-editor h6 {
+  margin: 12px 0 0;
+  font-size: 0.95rem;
+}
+
+.payment-plan-type-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.payment-plan-type-row > .field-error {
+  grid-column: 2;
+}
+
+.payment-plan-total-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.payment-plan-total-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.payment-plan-total-field .field-error {
+  grid-column: 2;
+}
+
+.payment-plan-type-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .payment-plan-type-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .payment-plan-type-row > .field-error {
+    grid-column: 1;
+  }
+}
+
+.payment-plan-type-option {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.payment-plan-type-option input {
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.payment-plan-type-option:hover {
+  border-color: var(--primary);
+  background: var(--surface-subtle);
+}
+
+.payment-plan-type-option.selected,
+.payment-plan-type-option.selected:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 650;
+}
+
+.payment-plan-type-option:has(input:focus-visible) {
+  outline: 3px solid rgba(26, 115, 232, 0.3);
+  outline-offset: 2px;
+}
+
+.payment-plan-type-option:has(input:disabled) {
+  background: #f1f3f4;
+  color: #7d858c;
+  cursor: not-allowed;
+}
+
+.payment-plan-preview .detail-list {
+  margin: 0;
+}
+
+.payment-plan-unit,
+.payment-plan-comparison {
+  color: var(--muted);
+}
+
+.payment-plan-schedule-head,
+.payment-plan-schedule-row {
+  display: grid;
+  grid-template-columns:
+    minmax(6rem, 0.75fr) minmax(9rem, 1.25fr) minmax(72px, 96px) minmax(7rem, 0.9fr)
+    44px;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.payment-plan-schedule-head {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.payment-plan-schedule-row {
+  grid-template-areas: "title amount months total remove";
+  padding-block: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.payment-plan-schedule-row > strong {
+  grid-area: title;
+}
+
+.payment-plan-amount-field {
+  grid-area: amount;
+}
+
+.payment-plan-months-field {
+  grid-area: months;
+}
+
+.payment-plan-months-field .input {
+  width: min(96px, 100%);
+}
+
+.payment-plan-row-total {
+  grid-area: total;
+}
+
+.payment-plan-remove-payment {
+  grid-area: remove;
+}
+
+.payment-plan-schedule-row .field {
+  min-width: 0;
+}
+
+.payment-plan-schedule-row .input {
+  width: 100%;
+}
+
+.payment-plan-row-total {
+  overflow-wrap: anywhere;
+}
+
+.payment-plan-preview {
+  margin-block: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+
+.payment-plan-preview p,
+.payment-plan-preview ol {
+  margin-block: 8px;
+}
+
+.payment-plan-valid {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.payment-plan-comparison dd,
+.payment-plan-preview li,
+.payment-plan-schedule-row strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .payment-plan-schedule-head {
+    display: none;
+  }
+}
+
+@media (min-width: 761px) {
+  .payment-plan-schedule-field-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+}
+
+@media (max-width: 600px) {
+  .payment-plan-total-row,
+  .payment-plan-total-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payment-plan-total-field .field-error {
+    grid-column: 1;
+  }
+
+  .payment-plan-schedule-row {
+    grid-template-columns: minmax(0, 1fr) minmax(72px, 96px) 44px;
+    grid-template-areas:
+      "title title remove"
+      "amount months months"
+      "total total total";
+  }
+}
+
+@media (max-width: 420px) {
+  .payment-plan-schedule-row {
+    grid-template-columns: minmax(0, 1fr) 44px;
+    grid-template-areas:
+      "title remove"
+      "amount amount"
+      "months months"
+      "total total";
+  }
+}
+
+@media (max-width: 600px) {
+  .payment-plan-list .row-actions,
+  .payment-plan-editor .row-actions {
+    flex-basis: 100%;
+    width: 100%;
+  }
 }
 
 .assignment-user-results,
@@ -537,9 +845,35 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 680px) {
   .price-option-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    align-items: start;
+  }
+
+  .price-option-duration-field,
+  .price-option-monthly-price-field,
+  .price-total-preview {
+    grid-column: 1 / -1;
+  }
+
+  .price-option-monthly-price-field {
+    max-width: none;
+  }
+
+  .price-option-monthly-price-input {
+    width: 100%;
+    field-sizing: fixed;
+  }
+
+  .price-option-active-field {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .price-option-remove-action {
+    grid-column: 2;
+    grid-row: 4;
   }
 }
 
@@ -832,12 +1166,6 @@ h3 {
     flex-direction: column;
   }
 
-  .price-option-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .price-option-actions .button,
   .price-options-section .panel-head .button {
     width: 100%;
   }
@@ -2004,6 +2332,98 @@ h3 {
   margin: 0;
 }
 
+.csa-installment-summary {
+  margin-bottom: 20px;
+}
+
+.csa-installment-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.csa-installment-table {
+  min-width: 880px;
+}
+
+.csa-installment-table th,
+.csa-installment-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.csa-installment-status.pending,
+.csa-installment-status.reported {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.csa-installment-status.confirmed {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.csa-installment-status.rejected,
+.csa-installment-status.overdue {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.csa-installment-actions {
+  justify-content: flex-start;
+}
+
+@media (max-width: 680px) {
+  .csa-installment-wrap {
+    overflow: visible;
+    border: 0;
+  }
+
+  .csa-installment-table,
+  .csa-installment-table tbody,
+  .csa-installment-table tr,
+  .csa-installment-table th,
+  .csa-installment-table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .csa-installment-table thead {
+    display: none;
+  }
+
+  .csa-installment-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .csa-installment-table tbody tr {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .csa-installment-table th,
+  .csa-installment-table td {
+    padding: 7px 0;
+    border: 0;
+  }
+
+  .csa-installment-table th::before,
+  .csa-installment-table td::before {
+    display: block;
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .csa-installment-actions,
+  .csa-installment-actions .button {
+    width: 100%;
+  }
+}
+
 .purchase-resolution {
   margin-top: 18px;
   padding-top: 16px;
@@ -3144,6 +3564,63 @@ h3 {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 16px;
+}
+
+.membership-contract-versions {
+  margin-top: 20px;
+}
+
+.membership-contract-versions > h3 {
+  font-size: 1rem;
+}
+
+.membership-contract-versions > .muted-copy {
+  margin-top: 12px;
+}
+
+.membership-contract-version-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.membership-contract-version {
+  min-width: 0;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+
+.membership-contract-version-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.membership-contract-version-head h4 {
+  font-size: 0.95rem;
+}
+
+.membership-contract-version-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px 20px;
+  margin: 12px 0 0;
+}
+
+.membership-contract-version-meta > div {
+  min-width: 0;
+}
+
+.membership-contract-version-meta dt {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.membership-contract-version-meta dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .membership-wide {

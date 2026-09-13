@@ -34,6 +34,33 @@ afterEach(() => {
 
 describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
+  const versionId = "77777777-7777-4777-8777-777777777777";
+
+  it("forwards payment-plan writes with server authorization and rejects extra queries", async () => {
+    const option = "a0c0313a-85df-4c29-930a-f19a05f3d8c4";
+    const path = ["admin", "membership-price-options", option, "payment-plans"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: option } }));
+    vi.stubGlobal("fetch", upstream);
+    const created = await POST(
+      new NextRequest(url, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        body: JSON.stringify({ name: "Full payment" }),
+      }),
+      { params: Promise.resolve({ path }) },
+    );
+    expect(created.status).toBe(200);
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+    upstream.mockClear();
+    const blocked = await GET(new NextRequest(`${url}?original=true`), {
+      params: Promise.resolve({ path }),
+    });
+    expect(blocked.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
 
   it("forwards only POST mark-refunded for a valid CSA purchase UUID", async () => {
     const requestId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
@@ -82,6 +109,50 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it("forwards installment mutations with server-side authorization and rejects query or unsafe paths", async () => {
+    const requestId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: requestId } }));
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "csa-purchase-requests", requestId, "payments", "2", "confirm"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const allowed = await POST(
+      new NextRequest(url, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        body: JSON.stringify({ amount_paid: "500000", note: "" }),
+      }),
+      { params: Promise.resolve({ path }) },
+    );
+    expect(allowed.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/${path.join("/")}`,
+    );
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+    upstream.mockClear();
+    const blockedGet = await GET(new NextRequest(url), { params: Promise.resolve({ path }) });
+    const blockedQuery = await POST(
+      new NextRequest(`${url}?original=true`, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path }) },
+    );
+    const wrongPath = ["admin", "csa-purchase-requests", requestId, "payments", "0", "confirm"];
+    const blockedSequence = await POST(
+      new NextRequest(`https://admin.example.test/api/backend/${wrongPath.join("/")}`, {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path: wrongPath }) },
+    );
+    expect([blockedGet.status, blockedQuery.status, blockedSequence.status]).toEqual([
+      404, 404, 404,
+    ]);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it.each(["vi", "en"])(
     "streams the current %s Membership contract PDF and preserves safe download headers",
     async (locale) => {
@@ -120,25 +191,55 @@ describe("admin backend proxy", () => {
     },
   );
 
-  it.each([`?locale=fr`, `?locale=vi&original=true`, `?locale=vi&locale=en`, ``])(
-    "rejects an unsafe Membership contract PDF query: %s",
-    async (query) => {
-      const upstream = vi.fn();
-      vi.stubGlobal("fetch", upstream);
-      const response = await GET(
-        new NextRequest(
-          `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract/pdf${query}`,
-        ),
-        {
-          params: Promise.resolve({
-            path: ["admin", "memberships", membershipId, "contract", "pdf"],
-          }),
+  it("forwards a validated Contract version PDF query without exposing credentials", async () => {
+    const upstream = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'attachment; filename="CSA-CODE.v1.vi.pdf"',
         },
-      );
-      expect(response.status).toBe(404);
-      expect(upstream).not.toHaveBeenCalled();
-    },
-  );
+      }),
+    );
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "memberships", membershipId, "contract", "pdf"];
+    const response = await GET(
+      new NextRequest(
+        `https://admin.example.test/api/backend/${path.join("/")}?locale=vi&version_id=${versionId}`,
+      ),
+      { params: Promise.resolve({ path }) },
+    );
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/admin/memberships/${membershipId}/contract/pdf?locale=vi&version_id=${versionId}`,
+    );
+    expect(response.headers.get("content-disposition")).toContain("CSA-CODE.v1.vi.pdf");
+    expect(response.headers.get("authorization")).toBeNull();
+  });
+
+  it.each([
+    `?locale=fr`,
+    `?locale=vi&original=true`,
+    `?locale=vi&locale=en`,
+    `?locale=vi&version_id=bad`,
+    `?locale=vi&version_id=${versionId}&version_id=${versionId}`,
+    `?locale=vi&version_id=${versionId}&extra=1`,
+    ``,
+  ])("rejects an unsafe Membership contract PDF query: %s", async (query) => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const response = await GET(
+      new NextRequest(
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract/pdf${query}`,
+      ),
+      {
+        params: Promise.resolve({
+          path: ["admin", "memberships", membershipId, "contract", "pdf"],
+        }),
+      },
+    );
+    expect(response.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
 
   it("allows only a query-free Membership contract detail request", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "active" } }));

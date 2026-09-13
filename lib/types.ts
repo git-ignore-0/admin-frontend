@@ -58,11 +58,26 @@ export type CSAContractSummary = {
   status: "active" | "revoked";
 };
 
+export type CSAContractVersion = {
+  id: string;
+  version_number: number;
+  version_reason: "issued" | "payment_confirmed" | "membership_revoked";
+  contract_status: "active" | "revoked";
+  created_at: string;
+  available_locales: Array<"vi" | "en">;
+  paid_amount?: string;
+  remaining_amount?: string;
+  paid_cycles?: number;
+  total_cycles?: number;
+};
+
 export type AdminCSAContract = CSAContractSummary & {
   available_locales: Array<"vi" | "en">;
   issued_at: string;
   revoked_at: string | null;
   revocation_reason: string | null;
+  current_version?: CSAContractVersion | null;
+  versions?: CSAContractVersion[];
 };
 
 export type MembershipProduct = {
@@ -123,6 +138,21 @@ export type MembershipPackagePriceOption = {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  payment_plans?: AdminMembershipPaymentPlan[];
+};
+
+export type AdminMembershipPaymentPlan = {
+  id: string;
+  price_option_id: string;
+  name: string;
+  payment_type: "full" | "installment";
+  total_amount: string;
+  installment_count: number;
+  initial_payment_amount: string | null;
+  sort_order: number;
+  is_active: boolean;
+  in_use: boolean;
+  installments: Array<{ sequence: number; amount: string; cycle_count: number }>;
 };
 
 export type MembershipQuota = {
@@ -197,10 +227,48 @@ export type CSAPurchaseRefundStatus = "not_applicable" | "pending" | "completed"
 export type CSAPurchaseCustomerResolution =
   "keep_existing" | "use_request_data" | "reject_conflict";
 
+export type CSAPurchasePayment = {
+  id: string;
+  installment_sequence: number;
+  amount_due: string;
+  amount_paid: string | null;
+  cycle_count: number;
+  status: "pending" | "reported" | "confirmed" | "rejected" | "overdue";
+  due_at: string | null;
+  confirmed_at: string | null;
+  confirmed_by: { id: string; name: string } | null;
+  rejected_at: string | null;
+  rejected_by?: { id: string; name: string } | null;
+  rejection_reason: string | null;
+  note: string | null;
+};
+
+export type CSAPurchasePaymentSummary = {
+  total_amount: string;
+  paid_amount: string;
+  remaining_amount: string;
+  confirmed_installments: number;
+  installment_count: number;
+  paid_cycles: number;
+  total_cycles: number;
+};
+
 export type CSAPurchaseRequest = {
   id: string;
   request_code: string;
   status: CSAPurchaseRequestStatus;
+  payment_plan?: {
+    id: string;
+    name: string;
+    payment_type: "full" | "installment";
+    total_amount: string;
+    installment_count: number;
+    initial_payment_amount: string | null;
+    installments: Array<{ sequence: number; amount: string; cycle_count: number }>;
+  } | null;
+  payments?: CSAPurchasePayment[];
+  payment_summary?: CSAPurchasePaymentSummary | null;
+  contract?: CSAContractSummary | null;
   user: { id: string; name: string; email: string } | null;
   customer_id: string | null;
   membership_id: string | null;

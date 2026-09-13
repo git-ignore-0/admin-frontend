@@ -18,7 +18,9 @@ import {
 } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { apiErrorContext, requestErrorMessage } from "@/lib/client-error";
+import { formatMembershipMoney } from "@/lib/membership-format";
 import type {
+  CSAPurchasePayment,
   CSAPurchaseCustomerResolution,
   CSAPurchaseRequest,
   CSAPurchaseResolutionContext,
@@ -56,6 +58,18 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
   const [fieldError, setFieldError] = useState("");
   const [actionError, setActionError] = useState("");
   const [saving, setSaving] = useState(false);
+  const paymentSavingRef = useRef(false);
+  const [paymentAction, setPaymentAction] = useState<{
+    sequence: number;
+    kind: "confirm" | "reject";
+  } | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentNote, setPaymentNote] = useState("");
+  const [paymentReason, setPaymentReason] = useState("");
+  const [paymentFieldError, setPaymentFieldError] = useState("");
+  const [paymentActionError, setPaymentActionError] = useState("");
+  const [paymentFeedback, setPaymentFeedback] = useState("");
+  const [paymentSaving, setPaymentSaving] = useState(false);
   const { provinceName, wardName } = useAdministrativeUnitNames(
     item?.province_code ?? null,
     item?.ward_code ?? null,
@@ -212,6 +226,72 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
     }
   }
 
+  function openPaymentAction(payment: CSAPurchasePayment, kind: "confirm" | "reject") {
+    if (item?.status !== "approved" || payment.status !== "reported") return;
+    setPaymentAction({ sequence: payment.installment_sequence, kind });
+    setPaymentAmount("");
+    setPaymentNote("");
+    setPaymentReason("");
+    setPaymentFieldError("");
+    setPaymentActionError("");
+    setPaymentFeedback("");
+  }
+
+  async function submitPaymentAction() {
+    if (!item || !paymentAction || paymentSavingRef.current) return;
+    const payment = item.payments?.find(
+      (entry) => entry.installment_sequence === paymentAction.sequence,
+    );
+    if (item.status !== "approved" || payment?.status !== "reported") return;
+    const labels = t.csaPurchases.installments;
+    const amount = paymentAmount.trim();
+    if (paymentAction.kind === "confirm") {
+      if (!/^[1-9]\d*$/u.test(amount)) {
+        setPaymentFieldError(labels.amountRequired);
+        return;
+      }
+      if (BigInt(amount) !== BigInt(payment.amount_due)) {
+        setPaymentFieldError(labels.amountMismatch);
+        return;
+      }
+    } else if (!paymentReason.trim()) {
+      setPaymentFieldError(labels.reasonRequired);
+      return;
+    }
+    paymentSavingRef.current = true;
+    setPaymentSaving(true);
+    setPaymentFieldError("");
+    setPaymentActionError("");
+    try {
+      const payload =
+        paymentAction.kind === "confirm"
+          ? { amount_paid: amount, note: paymentNote.trim() }
+          : { rejection_reason: paymentReason.trim() };
+      const updated = await api<CSAPurchaseRequest>(
+        `admin/csa-purchase-requests/${item.id}/payments/${payment.installment_sequence}/${paymentAction.kind}`,
+        { method: "POST", body: JSON.stringify(payload) },
+      );
+      setItem(updated);
+      setPaymentAction(null);
+      await load();
+      toast(paymentAction.kind === "confirm" ? labels.confirmSuccess : labels.rejectSuccess);
+    } catch (caught) {
+      const code = caught instanceof Error ? caught.message : "";
+      if (code === "csa_payment_state_conflict" || code === "csa_payment_unavailable") {
+        setPaymentAction(null);
+        setPaymentFeedback(labels.stateConflict);
+        await load();
+      } else if (code === "csa_payment_amount_mismatch") {
+        setPaymentFieldError(labels.amountMismatch);
+      } else {
+        setPaymentActionError(labels.actionError);
+      }
+    } finally {
+      paymentSavingRef.current = false;
+      setPaymentSaving(false);
+    }
+  }
+
   if (!item) {
     return (
       <div className={loadError ? "error-box retry-error" : "panel"}>
@@ -233,6 +313,17 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
   const canApprove = item.status === "payment_confirmed";
   const canReject = item.status === "pending" || item.status === "payment_confirmed";
   const canMarkRefunded = item.status === "rejected" && item.refund_status === "pending";
+  const installmentCopy = t.csaPurchases.installments;
+  const paymentMethod =
+    item.payment_plan?.payment_type === "installment"
+      ? installmentCopy.installment.replace("{count}", String(item.payment_plan.installment_count))
+      : installmentCopy.full;
+  const orderedPayments = [...(item.payments ?? [])].sort(
+    (left, right) => left.installment_sequence - right.installment_sequence,
+  );
+  const selectedPayment = orderedPayments.find(
+    (payment) => payment.installment_sequence === paymentAction?.sequence,
+  );
   const formatAmount = new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US", {
     style: "currency",
     currency: item.currency,
@@ -296,6 +387,11 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           {refundFeedback}
         </p>
       )}
+      {paymentFeedback && (
+        <p className="error-box" role="alert">
+          {paymentFeedback}
+        </p>
+      )}
 
       <div className="csa-purchase-detail-sections">
         <section className="panel">
@@ -329,7 +425,141 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
               )}
             />
             <DetailRow label={t.csaPurchases.amount} value={formatAmount} />
+            <DetailRow label={installmentCopy.method} value={paymentMethod} />
           </dl>
+        </section>
+        <section className="panel csa-installment-section">
+          <div className="panel-head">
+            <h2>{installmentCopy.schedule}</h2>
+          </div>
+          {item.payment_summary && (
+            <dl className="detail-list csa-installment-summary">
+              <DetailRow
+                label={t.csaPurchases.amount}
+                value={formatMembershipMoney(item.payment_summary.total_amount, locale)}
+              />
+              <DetailRow
+                label={installmentCopy.paid}
+                value={formatMembershipMoney(item.payment_summary.paid_amount, locale)}
+              />
+              <DetailRow
+                label={installmentCopy.remaining}
+                value={formatMembershipMoney(item.payment_summary.remaining_amount, locale)}
+              />
+              <DetailRow
+                label={installmentCopy.confirmedCount}
+                value={`${item.payment_summary.confirmed_installments}/${item.payment_summary.installment_count}`}
+              />
+              <DetailRow
+                label={installmentCopy.openedCycles}
+                value={`${item.payment_summary.paid_cycles}/${item.payment_summary.total_cycles}`}
+              />
+            </dl>
+          )}
+          {orderedPayments.length ? (
+            <div className="table-wrap csa-installment-wrap">
+              <table className="table csa-installment-table">
+                <thead>
+                  <tr>
+                    <th>{installmentCopy.installmentNumber.replace("{count}", "#")}</th>
+                    <th>{installmentCopy.dueAmount}</th>
+                    <th>{installmentCopy.paidAmount}</th>
+                    <th>{installmentCopy.cycles}</th>
+                    <th>{installmentCopy.dueAt}</th>
+                    <th>{installmentCopy.paymentStatus}</th>
+                    <th>{t.csaPurchases.actions}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderedPayments.map((payment) => (
+                    <tr key={payment.id}>
+                      <th
+                        data-label={installmentCopy.installmentNumber.replace("{count}", "#")}
+                        scope="row"
+                      >
+                        {installmentCopy.installmentNumber.replace(
+                          "{count}",
+                          String(payment.installment_sequence),
+                        )}
+                      </th>
+                      <td data-label={installmentCopy.dueAmount}>
+                        {formatMembershipMoney(payment.amount_due, locale)}
+                      </td>
+                      <td data-label={installmentCopy.paidAmount}>
+                        {payment.amount_paid
+                          ? formatMembershipMoney(payment.amount_paid, locale)
+                          : "—"}
+                      </td>
+                      <td data-label={installmentCopy.cycles}>{payment.cycle_count}</td>
+                      <td data-label={installmentCopy.dueAt}>
+                        {formatAdminDateTime(payment.due_at)}
+                      </td>
+                      <td data-label={installmentCopy.paymentStatus}>
+                        <span className={`badge csa-installment-status ${payment.status}`}>
+                          {installmentCopy.statuses[payment.status]}
+                        </span>
+                        {payment.confirmed_at && (
+                          <small className="table-secondary">
+                            {installmentCopy.confirmedAt}:{" "}
+                            {formatAdminDateTime(payment.confirmed_at)}
+                          </small>
+                        )}
+                        {payment.confirmed_by?.name && (
+                          <small className="table-secondary">
+                            {installmentCopy.confirmedBy}: {payment.confirmed_by.name}
+                          </small>
+                        )}
+                        {payment.rejected_at && (
+                          <small className="table-secondary">
+                            {installmentCopy.rejectedAt}: {formatAdminDateTime(payment.rejected_at)}
+                          </small>
+                        )}
+                        {payment.rejected_by?.name && (
+                          <small className="table-secondary">
+                            {installmentCopy.rejectedBy}: {payment.rejected_by.name}
+                          </small>
+                        )}
+                        {payment.rejection_reason && (
+                          <small className="table-secondary">
+                            {installmentCopy.rejectionReason}: {payment.rejection_reason}
+                          </small>
+                        )}
+                        {payment.note && (
+                          <small className="table-secondary">
+                            {installmentCopy.note}: {payment.note}
+                          </small>
+                        )}
+                      </td>
+                      <td data-label={t.csaPurchases.actions}>
+                        {item.status === "approved" && payment.status === "reported" && (
+                          <div className="detail-actions csa-installment-actions">
+                            <button
+                              className="button secondary"
+                              disabled={paymentSaving}
+                              onClick={() => openPaymentAction(payment, "confirm")}
+                              type="button"
+                            >
+                              {installmentCopy.confirm}
+                            </button>
+                            <button
+                              className="button danger"
+                              disabled={paymentSaving}
+                              onClick={() => openPaymentAction(payment, "reject")}
+                              type="button"
+                            >
+                              {installmentCopy.reject}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>{installmentCopy.noSchedule}</p>
+          )}
         </section>
         <section className="panel">
           <div className="panel-head">
@@ -439,6 +669,16 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                 )
               }
             />
+            {item.status === "approved" && item.membership_id && item.contract && (
+              <DetailRow
+                label={t.csaPurchases.contractLink}
+                value={
+                  <Link href={`/memberships/${item.membership_id}`}>
+                    {item.contract.reference_code}
+                  </Link>
+                }
+              />
+            )}
           </dl>
         </section>
       </div>
@@ -635,6 +875,105 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                 </small>
               )}
             </label>
+          )}
+        </ConfirmationDialog>
+      )}
+      {paymentAction && selectedPayment && (
+        <ConfirmationDialog
+          busy={paymentSaving}
+          busyLabel={
+            paymentAction.kind === "confirm"
+              ? installmentCopy.confirming
+              : installmentCopy.rejecting
+          }
+          cancelLabel={t.memberships.cancel}
+          confirmDisabled={
+            paymentAction.kind === "confirm"
+              ? !/^[1-9]\d*$/u.test(paymentAmount.trim()) ||
+                BigInt(paymentAmount.trim() || "0") !== BigInt(selectedPayment.amount_due)
+              : !paymentReason.trim()
+          }
+          confirmLabel={
+            paymentAction.kind === "confirm" ? installmentCopy.confirm : installmentCopy.reject
+          }
+          danger={paymentAction.kind === "reject"}
+          error={paymentActionError}
+          fallbackFocusRef={headingRef}
+          onCancel={() => {
+            if (!paymentSaving) setPaymentAction(null);
+          }}
+          onConfirm={() => void submitPaymentAction()}
+          title={
+            paymentAction.kind === "confirm"
+              ? installmentCopy.confirmTitle
+              : installmentCopy.rejectTitle
+          }
+        >
+          {paymentAction.kind === "confirm" ? (
+            <>
+              <label className="field" htmlFor="installment-amount-received">
+                <span>{installmentCopy.amountReceived}</span>
+                <input
+                  aria-describedby={
+                    paymentFieldError ? "installment-payment-field-error" : undefined
+                  }
+                  aria-invalid={Boolean(paymentFieldError)}
+                  className="input"
+                  disabled={paymentSaving}
+                  id="installment-amount-received"
+                  inputMode="numeric"
+                  maxLength={19}
+                  onBlur={() => {
+                    const value = paymentAmount.trim();
+                    if (!/^[1-9]\d*$/u.test(value))
+                      setPaymentFieldError(installmentCopy.amountRequired);
+                    else if (BigInt(value) !== BigInt(selectedPayment.amount_due))
+                      setPaymentFieldError(installmentCopy.amountMismatch);
+                  }}
+                  onChange={(event) => {
+                    setPaymentAmount(event.target.value);
+                    setPaymentFieldError("");
+                  }}
+                  value={paymentAmount}
+                />
+              </label>
+              <label className="field" htmlFor="installment-payment-note">
+                <span>{installmentCopy.note}</span>
+                <textarea
+                  className="textarea"
+                  disabled={paymentSaving}
+                  id="installment-payment-note"
+                  maxLength={1000}
+                  onChange={(event) => setPaymentNote(event.target.value)}
+                  value={paymentNote}
+                />
+              </label>
+            </>
+          ) : (
+            <label className="field" htmlFor="installment-rejection-reason">
+              <span>{installmentCopy.rejectionReason}</span>
+              <textarea
+                aria-describedby={paymentFieldError ? "installment-payment-field-error" : undefined}
+                aria-invalid={Boolean(paymentFieldError)}
+                className="textarea"
+                disabled={paymentSaving}
+                id="installment-rejection-reason"
+                maxLength={1000}
+                onBlur={() => {
+                  if (!paymentReason.trim()) setPaymentFieldError(installmentCopy.reasonRequired);
+                }}
+                onChange={(event) => {
+                  setPaymentReason(event.target.value);
+                  setPaymentFieldError("");
+                }}
+                value={paymentReason}
+              />
+            </label>
+          )}
+          {paymentFieldError && (
+            <small className="field-error" id="installment-payment-field-error" role="alert">
+              {paymentFieldError}
+            </small>
           )}
         </ConfirmationDialog>
       )}
