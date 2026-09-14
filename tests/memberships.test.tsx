@@ -633,14 +633,18 @@ describe("Membership detail snapshots and usage regressions", () => {
     );
     providers(<MembershipDetail membershipId={membership.id} />);
     const versionRow = (await screen.findByRole("heading", { name: "Version 1" })).closest("li")!;
-    const viButton = within(versionRow).getByRole("button", { name: "Download Vietnamese PDF" });
+    const viButton = within(versionRow).getByRole("button", {
+      name: "Download Vietnamese contract",
+    });
     fireEvent.click(viButton);
     expect(viButton).toBeDisabled();
-    expect(within(versionRow).getByRole("button", { name: "Download English PDF" })).toBeEnabled();
+    expect(
+      within(versionRow).getByRole("button", { name: "Download English contract" }),
+    ).toBeEnabled();
     fireEvent.click(viButton);
     expect(apiFile).toHaveBeenCalledTimes(1);
     await act(async () => rejectDownload(new Error("private-storage-secret")));
-    expect(await screen.findByText("The contract PDF is temporarily unavailable.")).toBeVisible();
+    expect(await screen.findByText("The contract is temporarily unavailable.")).toBeVisible();
     expect(screen.getByText(contract.reference_code)).toBeVisible();
     expect(screen.queryByText("private-storage-secret")).toBeNull();
     expect(viButton).toBeEnabled();
@@ -708,13 +712,17 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(within(rows[0]).queryByText("Current version")).toBeNull();
     expect(within(rows[1]).getByText("Current version")).toBeVisible();
     expect(within(rows[0]).getByText("VI")).toBeVisible();
-    expect(within(rows[0]).queryByRole("button", { name: "Download English PDF" })).toBeNull();
+    expect(within(rows[0]).queryByRole("button", { name: "Download English contract" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Download Vietnamese contract" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Download English contract" })).toHaveLength(1);
     expect(within(rows[1]).getByText("₫1,000,000")).toBeVisible();
     expect(within(rows[1]).getByText("₫3,500,000")).toBeVisible();
 
     vi.useFakeTimers();
     await act(async () => {
-      fireEvent.click(within(rows[0]).getByRole("button", { name: "Download Vietnamese PDF" }));
+      fireEvent.click(
+        within(rows[0]).getByRole("button", { name: "Download Vietnamese contract" }),
+      );
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=vi&version_id=${oldVersion.id}`,
@@ -726,7 +734,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:contract-version");
 
     await act(async () => {
-      fireEvent.click(within(rows[1]).getByRole("button", { name: "Download English PDF" }));
+      fireEvent.click(within(rows[1]).getByRole("button", { name: "Download English contract" }));
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=en&version_id=${currentVersion.id}`,
@@ -769,13 +777,13 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(await screen.findByText(contract.reference_code)).toBeVisible();
     expect(
       screen.getByText(
-        "This legacy contract has no version history. Its current PDF is available above.",
+        "This legacy contract has no version history. Its current contract is available above.",
       ),
     ).toBeVisible();
     expect(screen.getByText("Active", { selector: "dd" })).toBeVisible();
     vi.useFakeTimers();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Download Vietnamese PDF" }));
+      fireEvent.click(screen.getByRole("button", { name: "Download Vietnamese contract" }));
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=vi`,
@@ -788,7 +796,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Download English PDF" }));
+      fireEvent.click(screen.getByRole("button", { name: "Download English contract" }));
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=en`,
@@ -845,8 +853,8 @@ describe("Membership detail snapshots and usage regressions", () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     vi.mocked(apiFile).mockRejectedValue(new Error("internal_storage_key_failure"));
     providers(<MembershipDetail membershipId={membership.id} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Download English PDF" }));
-    expect(await screen.findByText("The contract PDF is temporarily unavailable.")).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "Download English contract" }));
+    expect(await screen.findByText("The contract is temporarily unavailable.")).toBeVisible();
     expect(screen.queryByText("internal_storage_key_failure")).toBeNull();
   });
 

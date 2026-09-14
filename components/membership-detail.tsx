@@ -528,32 +528,34 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                   }
                 />
               </dl>
-              <div className="membership-contract-actions">
-                {contract.available_locales.includes("vi") && (
-                  <button
-                    className="button secondary"
-                    disabled={downloadingContracts.has("current:vi")}
-                    onClick={() => void downloadContract("vi")}
-                    type="button"
-                  >
-                    {downloadingContracts.has("current:vi")
-                      ? t.memberships.downloadingContract
-                      : t.memberships.downloadContractVi}
-                  </button>
-                )}
-                {contract.available_locales.includes("en") && (
-                  <button
-                    className="button secondary"
-                    disabled={downloadingContracts.has("current:en")}
-                    onClick={() => void downloadContract("en")}
-                    type="button"
-                  >
-                    {downloadingContracts.has("current:en")
-                      ? t.memberships.downloadingContract
-                      : t.memberships.downloadContractEn}
-                  </button>
-                )}
-              </div>
+              {!contract.current_version && !contract.versions?.length ? (
+                <div className="membership-contract-actions">
+                  {contract.available_locales.includes("vi") && (
+                    <button
+                      className="button secondary"
+                      disabled={downloadingContracts.has("current:vi")}
+                      onClick={() => void downloadContract("vi")}
+                      type="button"
+                    >
+                      {downloadingContracts.has("current:vi")
+                        ? t.memberships.downloadingContract
+                        : t.memberships.downloadContractVi}
+                    </button>
+                  )}
+                  {contract.available_locales.includes("en") && (
+                    <button
+                      className="button secondary"
+                      disabled={downloadingContracts.has("current:en")}
+                      onClick={() => void downloadContract("en")}
+                      type="button"
+                    >
+                      {downloadingContracts.has("current:en")
+                        ? t.memberships.downloadingContract
+                        : t.memberships.downloadContractEn}
+                    </button>
+                  )}
+                </div>
+              ) : null}
               <div className="membership-contract-versions">
                 <h3>{t.memberships.contractVersionHistory}</h3>
                 {contractVersions.length === 0 ? (
