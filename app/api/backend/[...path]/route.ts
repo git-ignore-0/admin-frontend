@@ -22,6 +22,21 @@ function jsonError(error: string, status: number) {
 
 function invalidMembershipContractQuery(request: NextRequest, path: string[]) {
   const [, resource, id, action, extra] = path;
+  if (resource === "csa-coupons") {
+    const params = request.nextUrl.searchParams;
+    if (id !== undefined) return params.size > 0;
+    const allowed = new Set(["page", "status", "discount_type"]);
+    return (
+      [...params.keys()].some((key) => !allowed.has(key) || params.getAll(key).length !== 1) ||
+      (params.has("page") && !/^[1-9]\d*$/u.test(params.get("page") ?? "")) ||
+      (params.has("status") &&
+        !["active", "inactive", "scheduled", "expired", "exhausted"].includes(
+          params.get("status") ?? "",
+        )) ||
+      (params.has("discount_type") &&
+        !["percent", "fixed"].includes(params.get("discount_type") ?? ""))
+    );
+  }
   if (resource === "csa-purchase-requests" && action === "payments") {
     return request.nextUrl.searchParams.size > 0;
   }

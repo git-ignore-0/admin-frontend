@@ -5,6 +5,23 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
+  it("allowlists CSA coupon administration by exact UUID path and method", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const base = ["admin", "csa-coupons"];
+    expect(isAllowedBackendRequest("GET", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", base)).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, "options"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, "preview"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, id])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", [...base, id])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, id, "deactivate"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, id, "activate"])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", [...base, id])).toBe(false);
+    expect(isAllowedBackendRequest("PATCH", [...base, "bad-id"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, id, "activate"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, id, "unknown"])).toBe(false);
+  });
+
   it("adds the trailing slash required by the Django REST Framework router", () => {
     const target = buildBackendTarget(origin, ["admin", "workshops"], "");
 

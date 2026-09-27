@@ -36,6 +36,50 @@ describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
 
+  it("forwards allowed coupon filters and rejects duplicate or unknown query parameters", async () => {
+    const path = ["admin", "csa-coupons"];
+    const base = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const allowed = await GET(new NextRequest(`${base}?status=active&discount_type=fixed&page=1`), {
+      params: Promise.resolve({ path }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toContain("/api/v1/admin/csa-coupons?status=active");
+    upstream.mockClear();
+    for (const query of [
+      "?secret=1",
+      "?status=active&status=inactive",
+      "?page=0",
+      "?discount_type=other",
+    ]) {
+      const blocked = await GET(new NextRequest(`${base}${query}`), {
+        params: Promise.resolve({ path }),
+      });
+      expect(blocked.status).toBe(404);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+    const detail = [...path, "24803641-2dce-4cac-8fc4-91e55f03e95f"];
+    const blockedDetail = await GET(new NextRequest(`${base}/${detail[2]}?status=active`), {
+      params: Promise.resolve({ path: detail }),
+    });
+    expect(blockedDetail.status).toBe(404);
+  });
+
+  it("requires an admin session for coupons and preserves upstream permission denial", async () => {
+    const path = ["admin", "csa-coupons"];
+    const request = new NextRequest("https://admin.example.test/api/backend/admin/csa-coupons");
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await GET(request, { params: Promise.resolve({ path }) })).status).toBe(401);
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(Response.json({ detail: "Forbidden" }, { status: 403 }));
+    vi.stubGlobal("fetch", upstream);
+    const forbidden = await GET(request, { params: Promise.resolve({ path }) });
+    expect(forbidden.status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards payment-plan writes with server authorization and rejects extra queries", async () => {
     const option = "a0c0313a-85df-4c29-930a-f19a05f3d8c4";
     const path = ["admin", "membership-price-options", option, "payment-plans"];

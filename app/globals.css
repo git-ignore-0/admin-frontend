@@ -3380,6 +3380,169 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.csa-coupon-code,
+.csa-coupon-scope {
+  overflow-wrap: anywhere;
+}
+
+.csa-coupon-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+
+.csa-coupon-filters .field {
+  min-width: min(220px, 100%);
+}
+
+.csa-coupon-editor {
+  width: min(100%, 840px);
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.csa-coupon-heading-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.csa-coupon-form {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.csa-coupon-form-fields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.csa-coupon-offer-rows {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.csa-coupon-form-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.csa-coupon-form-row > label {
+  margin: 0;
+  padding-top: 11px;
+}
+
+.csa-coupon-offer-control,
+.csa-coupon-row-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.csa-coupon-row-control > .input,
+.csa-coupon-row-control > select,
+.csa-coupon-offer-control > .input,
+.csa-coupon-offer-control > .csa-coupon-number-wrap {
+  max-width: 420px;
+}
+
+.csa-coupon-date-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+.csa-coupon-number-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.csa-coupon-number-wrap > .input {
+  width: 100%;
+  min-width: 0;
+  padding-inline-end: 2.5rem;
+}
+
+.csa-coupon-number-wrap > span {
+  position: absolute;
+  inset-inline-end: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.csa-coupon-date-grid .input[type="datetime-local"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.csa-coupon-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-top: 24px;
+}
+
+.csa-coupon-read-only {
+  margin: 0;
+}
+
+.csa-coupon-global-error {
+  overflow-wrap: anywhere;
+}
+
+.csa-coupon-status.inactive,
+.csa-coupon-status.expired,
+.csa-coupon-status.exhausted {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.csa-coupon-status.scheduled {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+@media (max-width: 680px) {
+  .csa-coupon-filters .field {
+    width: 100%;
+  }
+
+  .csa-coupon-table .button {
+    width: auto;
+    max-width: 100%;
+  }
+
+  .csa-coupon-form-row,
+  .csa-coupon-date-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .csa-coupon-form-row > label {
+    padding-top: 0;
+  }
+}
+
+@media (max-width: 440px) {
+  .csa-coupon-form-actions > .button {
+    width: 100%;
+  }
+}
+
 .csa-list-primary-link,
 .admin-list-primary-link {
   color: var(--text);
