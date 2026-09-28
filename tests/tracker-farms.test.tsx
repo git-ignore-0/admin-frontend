@@ -243,13 +243,19 @@ it("loads the edit screen, preserves validation, and returns to the list after s
   });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/tracker-farms"));
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body))).toMatchObject({
+    signup_count: 14,
+    one_month_signup_count: 0,
+    version: 1,
+  });
   expect(refresh).toHaveBeenCalled();
 });
 
-it("localizes editor copy and keeps the signup cluster compact on desktop", () => {
+it("localizes both signup fields and keeps the signup cluster responsive", () => {
   const view = renderWithProviders(<TrackerFarmEditor />);
   expect(screen.getByText("Manage the image, signup total, and visibility.")).toBeVisible();
-  expect(screen.getByLabelText("Total signups *")).toBeVisible();
+  expect(screen.getByLabelText("6-month signup count *")).toHaveValue("0");
+  expect(screen.getByLabelText("1-month signup count *")).toHaveValue("0");
   expect(screen.getByLabelText("Farm name *")).toBeVisible();
   expect(screen.getByLabelText("Location *")).toBeVisible();
   expect(screen.getByLabelText("Description")).toBeVisible();
@@ -259,20 +265,21 @@ it("localizes editor copy and keeps the signup cluster compact on desktop", () =
   expect(screen.getByText("Choose photos")).toBeVisible();
   expect(screen.getByText("JPEG, PNG, or WebP; maximum 8 MB per image.")).toBeVisible();
 
-  const signup = screen.getByLabelText("Total signups *");
+  const signup = screen.getByLabelText("6-month signup count *");
   const basicsLayout = signup.closest(".tracker-farm-basics-layout");
   expect(basicsLayout).not.toBeNull();
-  expect(basicsLayout?.children).toHaveLength(3);
+  expect(basicsLayout?.children).toHaveLength(4);
   expect(basicsLayout?.children[0]).toHaveClass("tracker-farm-signup-field");
-  expect(basicsLayout?.children[1]).toHaveClass("tracker-milestone-preview");
-  expect(basicsLayout?.children[2]).toHaveClass("tracker-farm-visibility");
+  expect(basicsLayout?.children[1]).toHaveClass("tracker-farm-signup-field");
+  expect(basicsLayout?.children[2]).toHaveClass("tracker-milestone-preview");
+  expect(basicsLayout?.children[3]).toHaveClass("tracker-farm-visibility");
   expect(document.querySelector(".tracker-farm-signup-cluster")).toBeNull();
   const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
   expect(css).toMatch(
     /\.tracker-farm-basics-layout \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?align-items: stretch;/,
   );
   expect(css).toMatch(
-    /@media \(min-width: 1100px\) \{[\s\S]*?\.tracker-farm-basics-layout \{[\s\S]*?grid-template-columns: minmax\(180px, 220px\) minmax\(0, 1fr\) max-content;[\s\S]*?align-items: end;/,
+    /@media \(min-width: 1100px\) \{[\s\S]*?\.tracker-farm-basics-layout \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(180px, 220px\)\) minmax\(0, 1fr\) max-content;[\s\S]*?align-items: end;/,
   );
   expect(css).toMatch(
     /\.tracker-farm-signup-field \.input \{[\s\S]*?width: 100%;[\s\S]*?min-height: 44px;/,
@@ -283,7 +290,8 @@ it("localizes editor copy and keeps the signup cluster compact on desktop", () =
   view.unmount();
   renderWithProviders(<TrackerFarmEditor />, "vi");
   expect(screen.getByText("Quản lý ảnh, số lượt đăng ký và trạng thái hiển thị.")).toBeVisible();
-  expect(screen.getByLabelText("Tổng số lượt đăng ký *")).toBeVisible();
+  expect(screen.getByLabelText("Số đăng ký gói 6 tháng *")).toBeVisible();
+  expect(screen.getByLabelText("Số đăng ký gói 1 tháng *")).toBeVisible();
   expect(screen.getByLabelText("Farm name *")).toBeVisible();
   expect(screen.getByLabelText("Tên nông trại *")).toBeVisible();
   expect(screen.getByLabelText("Địa điểm *")).toBeVisible();
@@ -301,7 +309,8 @@ it("keeps the bilingual fields and image controls on the localized detail form",
   expect(await screen.findByDisplayValue("Thung lũng Xanh")).toBeVisible();
   expect(screen.getByDisplayValue("Mô tả Việt")).toBeVisible();
   expect(screen.getByText("Chọn ảnh")).toBeVisible();
-  expect(screen.getByLabelText("Tổng số lượt đăng ký *")).toBeVisible();
+  expect(screen.getByLabelText("Số đăng ký gói 6 tháng *")).toHaveValue("14");
+  expect(screen.getByLabelText("Số đăng ký gói 1 tháng *")).toHaveValue("0");
   expect(screen.getByRole("link", { name: "Hủy" }).getAttribute("href")).toBe("/tracker-farms");
 });
 
@@ -337,7 +346,8 @@ it("keeps a stale editor draft and reloads authoritative data only on request", 
 
   fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
   await waitFor(() => expect(name).toHaveValue("Server Farm"));
-  expect(screen.getByLabelText("Total signups *")).toHaveValue("18");
+  expect(screen.getByLabelText("6-month signup count *")).toHaveValue("18");
+  expect(screen.getByLabelText("1-month signup count *")).toHaveValue("0");
   expect(document.querySelector(".tracker-photo-preview img")).toHaveAttribute(
     "src",
     expect.stringContaining("hill-farm.webp"),
@@ -347,35 +357,118 @@ it("keeps a stale editor draft and reloads authoritative data only on request", 
   expect(api).toHaveBeenNthCalledWith(3, "admin/tracker-farms");
 });
 
-it("validates numeric typing, paste, empty values, and submits a normalized integer", async () => {
-  vi.mocked(api).mockResolvedValueOnce({ ...farm, signup_count: 25 });
+it("sanitizes ordinary letters but preserves invalid numeric syntax for inline validation", () => {
   renderWithProviders(<TrackerFarmEditor />);
   fillRequiredEditorFields();
-  const signup = screen.getByLabelText("Total signups *");
+  const inputs = [
+    screen.getByLabelText("6-month signup count *"),
+    screen.getByLabelText("1-month signup count *"),
+  ];
+  const submit = screen.getByRole("button", { name: "Add farm" });
 
-  for (const invalid of ["abc", "12abc", "1.5", "-1", "1e2", "1 2"]) {
-    fireEvent.change(signup, { target: { value: invalid } });
-    expect(signup).toHaveValue("0");
-    expect(signup).toHaveAttribute("aria-invalid", "true");
+  for (const input of inputs) {
+    fireEvent.change(input, { target: { value: "12U3" } });
+    expect(input).toHaveValue("123");
+
+    for (const invalid of ["1.5", "-1", "+1", "1e2", "1E2"]) {
+      fireEvent.change(input, { target: { value: invalid } });
+      expect(input).toHaveValue(invalid);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(submit).toBeDisabled();
+      expect(api).not.toHaveBeenCalled();
+    }
+
+    for (const valid of ["0", "12", "4294967295"]) {
+      fireEvent.change(input, { target: { value: valid } });
+      expect(input).toHaveValue(valid);
+      expect(input).toHaveAttribute("aria-invalid", "false");
+      expect(submit).toBeEnabled();
+    }
+
+    for (const tooLarge of ["4294967296", String(Number.MAX_SAFE_INTEGER + 1)]) {
+      fireEvent.change(input, { target: { value: tooLarge } });
+      expect(input).toHaveValue(tooLarge);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(submit).toBeDisabled();
+      expect(api).not.toHaveBeenCalled();
+    }
+
+    fireEvent.change(input, { target: { value: "0" } });
   }
-  const invalidPaste = createEvent.paste(signup, {
-    clipboardData: { getData: () => "12abc" },
-  });
-  fireEvent(signup, invalidPaste);
-  expect(invalidPaste.defaultPrevented).toBe(true);
+});
 
-  fireEvent.change(signup, { target: { value: "" } });
+it("applies the same signup validation to pasted values", () => {
+  renderWithProviders(<TrackerFarmEditor />);
+  const inputs = [
+    screen.getByLabelText("6-month signup count *"),
+    screen.getByLabelText("1-month signup count *"),
+  ];
+  const submit = screen.getByRole("button", { name: "Add farm" });
+
+  function pasteOver(input: HTMLElement, value: string) {
+    const field = input as HTMLInputElement;
+    field.focus();
+    field.setSelectionRange(0, field.value.length);
+    const event = createEvent.paste(field, {
+      clipboardData: { getData: () => value },
+    });
+    fireEvent(field, event);
+    expect(event.defaultPrevented).toBe(true);
+  }
+
+  for (const input of inputs) {
+    pasteOver(input, "12U3");
+    expect(input).toHaveValue("123");
+
+    for (const invalid of ["1.5", "-1", "+1", "1e2", "1E2"]) {
+      pasteOver(input, invalid);
+      expect(input).toHaveValue(invalid);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(submit).toBeDisabled();
+      pasteOver(input, "0");
+    }
+  }
+
+  expect(api).not.toHaveBeenCalled();
+});
+
+it("allows clearing either signup count and reports it as required on submit", () => {
+  renderWithProviders(<TrackerFarmEditor />);
+  fillRequiredEditorFields();
+  const oneMonthSignup = screen.getByLabelText("1-month signup count *");
+
+  fireEvent.change(oneMonthSignup, { target: { value: "" } });
+  expect(oneMonthSignup).toHaveValue("");
   fireEvent.click(screen.getByRole("button", { name: "Add farm" }));
   expect(screen.getByText("This field is required.")).toBeVisible();
   expect(api).not.toHaveBeenCalled();
-
-  fireEvent.change(signup, { target: { value: "00025" } });
-  fireEvent.click(screen.getByRole("button", { name: "Add farm" }));
-  await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
-  expect(JSON.parse(String(vi.mocked(api).mock.calls[0][1]?.body))).toMatchObject({
-    signup_count: 25,
-  });
 });
+
+it.each([0, 4_294_967_295])(
+  "submits both signup counts at the supported boundary %s",
+  async (value) => {
+    vi.mocked(api).mockResolvedValueOnce({
+      ...farm,
+      signup_count: value,
+      one_month_signup_count: value,
+    });
+    renderWithProviders(<TrackerFarmEditor />);
+    fillRequiredEditorFields();
+    fireEvent.change(screen.getByLabelText("6-month signup count *"), {
+      target: { value: String(value) },
+    });
+    fireEvent.change(screen.getByLabelText("1-month signup count *"), {
+      target: { value: String(value) },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add farm" }));
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(vi.mocked(api).mock.calls[0][1]?.body))).toMatchObject({
+      signup_count: value,
+      one_month_signup_count: value,
+    });
+  },
+);
 
 it("uploads photos sequentially, marks the primary, reorders, and sends photo_ids", async () => {
   const firstUpload = deferred<MediaAsset>();

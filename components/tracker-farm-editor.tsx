@@ -25,12 +25,21 @@ import { trackerMilestone } from "@/components/tracker-farm-manager";
 
 type FormState = Omit<
   TrackerFarm,
-  "id" | "created_at" | "updated_at" | "sort_order" | "image" | "photos" | "signup_count"
+  | "id"
+  | "created_at"
+  | "updated_at"
+  | "sort_order"
+  | "image"
+  | "photos"
+  | "signup_count"
+  | "one_month_signup_count"
 > & {
   id?: string;
   photos: MediaAsset[];
   signup_count: string;
+  one_month_signup_count: string;
 };
+type SignupField = "signup_count" | "one_month_signup_count";
 type UploadItem = {
   id: number;
   name: string;
@@ -39,6 +48,30 @@ type UploadItem = {
 };
 
 const MAX_PHOTOS = 12;
+const TRACKER_SIGNUP_COUNT_MAX = 4_294_967_295;
+const SIGNUP_FIELDS: SignupField[] = ["signup_count", "one_month_signup_count"];
+const INVALID_SIGNUP_NUMBER_SYNTAX = /[.\-+eE]/;
+
+function isSignupCountWithinLimit(value: string) {
+  const normalized = value.replace(/^0+/, "") || "0";
+  const maximum = String(TRACKER_SIGNUP_COUNT_MAX);
+  return (
+    normalized.length < maximum.length ||
+    (normalized.length === maximum.length && normalized <= maximum)
+  );
+}
+
+function normalizeSignupInput(value: string) {
+  if (INVALID_SIGNUP_NUMBER_SYNTAX.test(value)) {
+    return { value, invalid: true };
+  }
+  const digits = value.replace(/\D/g, "");
+  return {
+    value: digits,
+    invalid: Boolean(digits) && !isSignupCountWithinLimit(digits),
+  };
+}
+
 const emptyForm: FormState = {
   name_en: "",
   name_vi: "",
@@ -48,6 +81,7 @@ const emptyForm: FormState = {
   description_vi: "",
   photos: [],
   signup_count: "0",
+  one_month_signup_count: "0",
   is_visible: true,
   version: 0,
 };
@@ -62,6 +96,7 @@ function fromFarm(farm: TrackerFarm): FormState {
     description_vi: farm.description_vi,
     photos,
     signup_count: String(farm.signup_count),
+    one_month_signup_count: String(farm.one_month_signup_count ?? 0),
     is_visible: farm.is_visible,
     version: farm.version,
   };
@@ -148,23 +183,30 @@ export function TrackerFarmEditor({ farmId }: { farmId?: string }) {
   }, [attempt, farmId, t]);
   const uploading = uploadItems.some((item) => item.status !== "error");
   const hasUploadErrors = uploadItems.some((item) => item.status === "error");
+  const hasSignupErrors = SIGNUP_FIELDS.some((field) => Boolean(errors[field]));
   function update(field: keyof FormState, value: string | boolean) {
     setForm((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: "" }));
     setError("");
   }
-  function signup(value: string) {
-    if (value && !/^\d+$/.test(value)) {
-      setErrors((current) => ({ ...current, signup_count: t.trackerFarms.signupInvalid }));
-      return;
-    }
-    update("signup_count", value);
+  function signup(field: SignupField, value: string) {
+    const normalized = normalizeSignupInput(value);
+    setForm((current) => ({ ...current, [field]: normalized.value }));
+    setErrors((current) => ({
+      ...current,
+      [field]: normalized.invalid ? t.trackerFarms.signupInvalid : "",
+    }));
+    setError("");
   }
-  function paste(event: ClipboardEvent<HTMLInputElement>) {
-    if (!/^\d+$/.test(event.clipboardData.getData("text"))) {
-      event.preventDefault();
-      setErrors((current) => ({ ...current, signup_count: t.trackerFarms.signupInvalid }));
-    }
+  function paste(field: SignupField, event: ClipboardEvent<HTMLInputElement>) {
+    event.preventDefault();
+    const input = event.currentTarget;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    signup(
+      field,
+      `${input.value.slice(0, start)}${event.clipboardData.getData("text")}${input.value.slice(end)}`,
+    );
   }
   async function selectPhotos(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -289,9 +331,12 @@ export function TrackerFarmEditor({ farmId }: { farmId?: string }) {
     const next: Record<string, string> = {};
     for (const key of ["name_en", "name_vi", "location_en", "location_vi"] as const)
       if (!form[key].trim()) next[key] = t.trackerFarms.required;
-    if (!form.signup_count) next.signup_count = t.trackerFarms.required;
-    else if (!/^\d+$/.test(form.signup_count) || !Number.isSafeInteger(Number(form.signup_count)))
-      next.signup_count = t.trackerFarms.signupInvalid;
+    for (const field of SIGNUP_FIELDS) {
+      if (!form[field]) next[field] = t.trackerFarms.required;
+      else if (!/^\d+$/.test(form[field]) || !isSignupCountWithinLimit(form[field])) {
+        next[field] = t.trackerFarms.signupInvalid;
+      }
+    }
     setErrors(next);
     if (Object.keys(next).length) return;
     savingRef.current = true;
@@ -307,6 +352,7 @@ export function TrackerFarmEditor({ farmId }: { farmId?: string }) {
         description_vi: form.description_vi.trim(),
         photo_ids: form.photos.map((photo) => photo.id),
         signup_count: Number(form.signup_count),
+        one_month_signup_count: Number(form.one_month_signup_count),
         is_visible: form.is_visible,
       };
       await api<TrackerFarm>(farmId ? `admin/tracker-farms/${farmId}` : "admin/tracker-farms", {
@@ -387,19 +433,38 @@ export function TrackerFarmEditor({ farmId }: { farmId?: string }) {
         </div>
         <div className="tracker-farm-basics-layout">
           <label className="field tracker-farm-signup-field">
-            <span>{t.trackerFarms.totalSignups} *</span>
+            <span>{t.trackerFarms.sixMonthSignups} *</span>
             <input
-              aria-label={`${t.trackerFarms.totalSignups} *`}
+              aria-label={`${t.trackerFarms.sixMonthSignups} *`}
               aria-invalid={Boolean(errors.signup_count)}
               className="input"
               disabled={saving || uploading}
               inputMode="numeric"
-              onChange={(event) => signup(event.target.value)}
-              onPaste={paste}
+              onChange={(event) => signup("signup_count", event.target.value)}
+              onPaste={(event) => paste("signup_count", event)}
+              pattern="[0-9]*"
               type="text"
               value={form.signup_count}
             />
             {errors.signup_count && <small className="field-error">{errors.signup_count}</small>}
+          </label>
+          <label className="field tracker-farm-signup-field">
+            <span>{t.trackerFarms.oneMonthSignups} *</span>
+            <input
+              aria-label={`${t.trackerFarms.oneMonthSignups} *`}
+              aria-invalid={Boolean(errors.one_month_signup_count)}
+              className="input"
+              disabled={saving || uploading}
+              inputMode="numeric"
+              onChange={(event) => signup("one_month_signup_count", event.target.value)}
+              onPaste={(event) => paste("one_month_signup_count", event)}
+              pattern="[0-9]*"
+              type="text"
+              value={form.one_month_signup_count}
+            />
+            {errors.one_month_signup_count && (
+              <small className="field-error">{errors.one_month_signup_count}</small>
+            )}
           </label>
           <div className="tracker-milestone-preview" role="status">
             {t.trackerFarms.milestonePreview.replace(
@@ -629,7 +694,9 @@ export function TrackerFarmEditor({ farmId }: { farmId?: string }) {
         </Link>
         <button
           className="button"
-          disabled={saving || uploading || hasUploadErrors || conflict || reloadingLatest}
+          disabled={
+            saving || uploading || hasUploadErrors || hasSignupErrors || conflict || reloadingLatest
+          }
           type="submit"
         >
           {saving
