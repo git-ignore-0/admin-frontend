@@ -1005,6 +1005,10 @@ const vi = {
     stateConflict: "Yêu cầu đã được xử lý. Dữ liệu mới nhất đã được tải lại.",
     expiredConflict: "Yêu cầu đã hết hạn. Dữ liệu mới nhất đã được tải lại.",
     customerConflict: "Thông tin khách hàng có xung đột và không thể tự động liên kết.",
+    contractSnapshotError:
+      "Dữ liệu hợp đồng hoặc lịch thanh toán chưa nhất quán. Yêu cầu chưa được duyệt.",
+    contractPdfError:
+      "Không thể tạo hoặc lưu PDF hợp đồng Việt/Anh. Yêu cầu chưa được duyệt, vui lòng thử lại.",
     resolutionTitle: "Xử lý khác biệt thông tin khách hàng",
     existingCustomer: "Thông tin Customer hiện tại",
     requestCustomer: "Thông tin trong yêu cầu mua",
@@ -2248,6 +2252,10 @@ const en: AdminDictionary = {
     stateConflict: "The request has already been processed. Latest data has been loaded.",
     expiredConflict: "The request has expired. Latest data has been loaded.",
     customerConflict: "Customer information conflicts and cannot be linked automatically.",
+    contractSnapshotError:
+      "The contract or payment schedule snapshot is inconsistent. The request was not approved.",
+    contractPdfError:
+      "Could not create or store the Vietnamese/English contract PDFs. The request was not approved; please try again.",
     resolutionTitle: "Resolve customer information differences",
     existingCustomer: "Current Customer information",
     requestCustomer: "Purchase request information",

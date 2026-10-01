@@ -217,6 +217,10 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
         setActionError(t.memberships.packageUnavailable);
       } else if (code === "price_option_unavailable") {
         setActionError(t.memberships.inactivePriceConflict);
+      } else if (code === "csa_contract_pdf_snapshot_incomplete") {
+        setActionError(t.csaPurchases.contractSnapshotError);
+      } else if (code === "csa_contract_pdf_error" || code === "csa_contract_pdf_storage_error") {
+        setActionError(t.csaPurchases.contractPdfError);
       } else {
         setActionError(requestErrorMessage(caught, t));
       }

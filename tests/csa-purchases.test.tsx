@@ -1011,6 +1011,40 @@ describe("CSA purchase request admin", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("csa_purchase_customer_incomplete")).not.toBeInTheDocument();
   });
+
+  it.each([
+    [
+      "csa_contract_pdf_snapshot_incomplete",
+      "Dữ liệu hợp đồng hoặc lịch thanh toán chưa nhất quán. Yêu cầu chưa được duyệt.",
+    ],
+    [
+      "csa_contract_pdf_storage_error",
+      "Không thể tạo hoặc lưu PDF hợp đồng Việt/Anh. Yêu cầu chưa được duyệt, vui lòng thử lại.",
+    ],
+    [
+      "csa_contract_pdf_error",
+      "Không thể tạo hoặc lưu PDF hợp đồng Việt/Anh. Yêu cầu chưa được duyệt, vui lòng thử lại.",
+    ],
+  ])("maps %s to actionable localized contract copy", async (code, message) => {
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/csa-purchase-requests/${request.id}` && !init?.method)
+        return request as never;
+      if (path.endsWith("/approve")) throw new Error(code);
+      if (
+        path === "administrative-units/provinces" ||
+        path.startsWith("administrative-units/wards")
+      )
+        return [] as never;
+      throw new Error(`unexpected:${path}`);
+    });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Duyệt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận duyệt" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByText(code)).not.toBeInTheDocument();
+  });
 });
 
 describe("CSA bank settings", () => {
