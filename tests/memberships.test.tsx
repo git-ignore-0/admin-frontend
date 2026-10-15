@@ -14,7 +14,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { MembershipPackageDetail } from "@/components/membership-catalog-detail";
-import { MembershipPackageEditor } from "@/components/membership-catalog-editors";
+import {
+  MembershipPackageEditor,
+  MembershipProductEditor,
+} from "@/components/membership-catalog-editors";
 import { MembershipPackageList } from "@/components/membership-catalog-lists";
 import { MembershipDetail } from "@/components/membership-detail";
 import { ToastProvider } from "@/components/toast-provider";
@@ -199,6 +202,21 @@ function membershipCycle(
 
 const meta: PaginationMeta = { page: 1, page_size: 30, total: 1 };
 
+describe("CSA quota group editor", () => {
+  it("explains why a group used by an active package cannot be disabled", async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce(product)
+      .mockRejectedValueOnce(new Error("csa_quota_group_in_use"));
+    providers(<MembershipProductEditor productId={product.id} />);
+    await screen.findByDisplayValue("Vegetable basket");
+    fireEvent.click(screen.getByLabelText("Active"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This quota group is used by an active CSA package or a store product.",
+    );
+  });
+});
+
 function mockCatalogLookups() {
   vi.mocked(apiEnvelope).mockImplementation(async (path) => {
     if (path.startsWith("admin/membership-products")) return { data: [product], meta };
@@ -214,6 +232,21 @@ async function fillBilingualNames() {
 }
 
 describe("CSA package price options", () => {
+  it("blocks saving a package whose existing quota group is inactive", async () => {
+    const inactivePackage = {
+      ...packageItem,
+      items: [{ ...packageItem.items[0], product_is_active: false }],
+    };
+    vi.mocked(api).mockResolvedValue(inactivePackage);
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipPackageEditor packageId={packageItem.id} />);
+    await screen.findByLabelText("CSA quota group 1");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Inactive");
+    expect(vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(
+      0,
+    );
+  });
   it("formats VND only on blur, previews with BigInt, and sends only writable option fields", async () => {
     mockCatalogLookups();
     vi.mocked(api).mockResolvedValue(packageItem);
@@ -230,7 +263,7 @@ describe("CSA package price options", () => {
     fireEvent.blur(monthly);
     expect(monthly).toHaveValue("₫750,000");
     expect(screen.getByText("₫4,500,000")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Product 1"), { target: { value: product.id } });
+    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(api).toHaveBeenCalled());
@@ -312,7 +345,7 @@ describe("CSA package price options", () => {
     providers(<MembershipPackageEditor />);
     await fillBilingualNames();
     fireEvent.change(screen.getByLabelText("Monthly price *"), { target: { value: "750000" } });
-    fireEvent.change(screen.getByLabelText("Product 1"), { target: { value: product.id } });
+    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
     fireEvent.click(screen.getByRole("button", { name: "+ Add price option" }));
     const durations = screen.getAllByLabelText("Months *");
     const prices = screen.getAllByLabelText("Monthly price *");
@@ -339,7 +372,7 @@ describe("CSA package price options", () => {
     fireEvent.change(screen.getByLabelText("Monthly price *"), {
       target: { value: "5000000000000000000" },
     });
-    fireEvent.change(screen.getByLabelText("Product 1"), { target: { value: product.id } });
+    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("total price exceeds");
     expect(api).not.toHaveBeenCalled();

@@ -30,6 +30,19 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
 
   const [, resource, id, action, extra] = path;
+  if (["store-categories", "store-products"].includes(resource)) {
+    if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (resource === "store-products" && id === "media") {
+      if (action === undefined) return path.length === 3 && normalizedMethod === "POST";
+      return path.length === 4 && normalizedMethod === "DELETE" && UUID_PATH_SEGMENT.test(action);
+    }
+    return (
+      path.length === 3 &&
+      action === undefined &&
+      UUID_PATH_SEGMENT.test(id) &&
+      CRUD_DETAIL.has(normalizedMethod)
+    );
+  }
   if (resource === "csa-coupons") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (id === "options") return path.length === 3 && normalizedMethod === "GET";

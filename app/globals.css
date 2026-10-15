@@ -3331,6 +3331,47 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.store-product-image-field {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+}
+
+.store-product-image-preview {
+  width: 240px;
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.store-product-image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.store-product-image-controls {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.store-product-image-name {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+.store-product-image-actions {
+  justify-content: flex-start;
+}
+
 .csa-list-section,
 .admin-list-section {
   min-width: 0;
@@ -4110,6 +4151,10 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .store-product-image-field {
+    grid-template-columns: 1fr;
+  }
+
   .testimonial-hero {
     align-items: flex-start;
     flex-direction: column;
@@ -4454,6 +4499,10 @@ h3 {
     width: 100%;
   }
 
+  .store-product-image-preview {
+    width: 100%;
+  }
+
   .testimonial-image-actions,
   .testimonial-image-actions .button,
   .testimonial-hero-identity,
@@ -4667,5 +4716,62 @@ h3 {
   .customer-detail-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+.store-product-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.store-product-identity img {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border-radius: 0.5rem;
+  object-fit: cover;
+}
+.store-product-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: 1.5rem;
+}
+.store-product-detail img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+}
+.store-category-table .table-secondary,
+.store-product-table .table-secondary {
+  display: block;
+}
+@media (max-width: 700px) {
+  .store-product-detail {
+    grid-template-columns: 1fr;
+  }
+  .store-product-table,
+  .store-product-table tbody,
+  .store-product-table tr,
+  .store-product-table td,
+  .store-product-table th {
+    display: block;
+  }
+  .store-product-table thead {
+    display: none;
+  }
+  .store-product-table tr {
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 0;
+  }
+  .store-product-table td {
+    padding: 0.35rem 0;
+  }
+  .store-product-table td::before {
+    content: attr(data-label) ": ";
+    font-weight: 700;
+  }
+  .store-product-table td:first-child::before {
+    content: none;
   }
 }

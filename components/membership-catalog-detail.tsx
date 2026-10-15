@@ -12,6 +12,7 @@ import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { formatMembershipMoney } from "@/lib/membership-format";
+import { legacyPackageItemView } from "@/lib/membership-catalog-adapter";
 import {
   hasCompleteCatalogTranslations,
   localizedCatalogTranslation,
@@ -373,30 +374,33 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {item.items.map((line) => (
-                  <tr key={line.product_id}>
-                    <td>
-                      <strong>
-                        {localizedCatalogTranslation(line.product_translations ?? [], locale)
-                          ?.name || line.product_name}
-                      </strong>
-                      <small className="table-secondary">
-                        {localizedCatalogTranslation(line.product_translations ?? [], locale)
-                          ?.short_description ||
-                          line.short_description ||
-                          "—"}
-                      </small>
-                    </td>
-                    <td>{line.quota_units}</td>
-                    <td>
-                      {formatUnitConversion(
-                        t.membershipCatalog.unitConversionValue,
-                        line.unit_size,
-                        locale === "vi" ? line.unit_label_vi : line.unit_label_en,
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {item.items.map((raw) => {
+                  const line = legacyPackageItemView(raw);
+                  return (
+                    <tr key={line.quotaGroupId}>
+                      <td>
+                        <strong>
+                          {localizedCatalogTranslation(line.translations, locale)?.name ||
+                            line.name}
+                        </strong>
+                        <small className="table-secondary">
+                          {localizedCatalogTranslation(line.translations, locale)
+                            ?.short_description ||
+                            line.shortDescription ||
+                            "—"}
+                        </small>
+                      </td>
+                      <td>{line.quotaUnits}</td>
+                      <td>
+                        {formatUnitConversion(
+                          t.membershipCatalog.unitConversionValue,
+                          line.unitSize,
+                          locale === "vi" ? line.unitLabelVi : line.unitLabelEn,
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -14,9 +14,15 @@ import {
   type BilingualContentValue,
 } from "@/components/bilingual-content-fields";
 import { useToast } from "@/components/toast-provider";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
+import {
+  fromLegacyPackageItems,
+  legacyPackageItemView,
+  listActiveQuotaGroups,
+  toLegacyPackageItems,
+} from "@/lib/membership-catalog-adapter";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import {
   MAX_POSITIVE_BIG_INTEGER,
@@ -177,7 +183,11 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
       navigating = true;
       router.replace(`/membership-catalog/products/${item.id}`);
     } catch (caught) {
-      setError(requestErrorMessage(caught, t));
+      setError(
+        caught instanceof Error && caught.message === "csa_quota_group_in_use"
+          ? t.membershipCatalog.quotaGroupInUse
+          : requestErrorMessage(caught, t),
+      );
     } finally {
       if (!navigating) {
         savingRef.current = false;
@@ -284,7 +294,7 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
   );
 }
 
-type PackageLine = { productId: string; quotaUnits: string };
+type PackageLine = { quotaGroupId: string; quotaUnits: string };
 type PriceOptionLine = {
   id?: string;
   durationMonths: string;
@@ -304,7 +314,7 @@ const emptyPackage: PackageForm = {
   priceOptions: [{ durationMonths: "6", monthlyPriceVnd: "", isActive: true }],
   policy: "expire",
   isActive: true,
-  lines: [{ productId: "", quotaUnits: "1" }],
+  lines: [{ quotaGroupId: "", quotaUnits: "1" }],
 };
 
 function packageForm(item: MembershipPackage): PackageForm {
@@ -325,9 +335,9 @@ function packageForm(item: MembershipPackage): PackageForm {
     })),
     policy: item.quota_policy,
     isActive: item.is_active,
-    lines: item.items.map((line) => ({
-      productId: line.product_id,
-      quotaUnits: String(line.quota_units),
+    lines: fromLegacyPackageItems(item.items).map((line) => ({
+      quotaGroupId: line.quotaGroupId,
+      quotaUnits: String(line.quotaUnits),
     })),
   };
 }
@@ -373,12 +383,15 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
         setProducts((current) =>
           mergeProductOptions(
             current,
-            item.items.map((line) => ({
-              id: line.product_id,
-              name: line.product_name,
-              is_active: true,
-              translations: line.product_translations ?? [],
-            })),
+            item.items.map((raw) => {
+              const line = legacyPackageItemView(raw);
+              return {
+                id: line.quotaGroupId,
+                name: line.name,
+                is_active: line.isActive,
+                translations: line.translations,
+              };
+            }),
           ),
         );
         setLoaded(true);
@@ -396,13 +409,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
     let cancelled = false;
     setProductsLoading(true);
     setProductsError("");
-    const query = new URLSearchParams({
-      page: String(productPage),
-      active: "true",
-    });
-    apiEnvelope<MembershipProduct[], PaginationMeta>(
-      `admin/membership-products?${query.toString()}`,
-    )
+    listActiveQuotaGroups(productPage)
       .then((payload) => {
         if (cancelled) return;
         setProducts((current) => mergeProductOptions(current, payload.data));
@@ -515,9 +522,13 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
       setError(t.membershipCatalog.uniqueActiveDuration);
       return;
     }
-    const productIds = form.lines.map((line) => line.productId);
+    const productIds = form.lines.map((line) => line.quotaGroupId);
     if (productIds.some((id) => !id) || new Set(productIds).size !== productIds.length) {
       setError(t.membershipCatalog.uniqueProducts);
+      return;
+    }
+    if (productIds.some((id) => products.find((item) => item.id === id)?.is_active === false)) {
+      setError(t.membershipCatalog.inactive);
       return;
     }
     setError("");
@@ -538,10 +549,12 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
             price_options: parsedOptions,
             quota_policy: form.policy,
             is_active: form.isActive,
-            items: form.lines.map((line, index) => ({
-              product_id: line.productId,
-              quota_units: quotaUnits[index],
-            })),
+            items: toLegacyPackageItems(
+              form.lines.map((line, index) => ({
+                quotaGroupId: line.quotaGroupId,
+                quotaUnits: quotaUnits[index],
+              })),
+            ),
           }),
         },
       );
@@ -568,7 +581,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
   }
   if (!loaded) return <div className="panel">{t.membershipCatalog.loadingPackage}</div>;
 
-  const selected = new Set(form.lines.map((line) => line.productId).filter(Boolean));
+  const selected = new Set(form.lines.map((line) => line.quotaGroupId).filter(Boolean));
   const visibleProducts = products.filter(
     (item) => visibleProductIds.has(item.id) || selected.has(item.id),
   );
@@ -894,13 +907,13 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                   aria-label={`${t.membershipCatalog.product} ${index + 1}`}
                   className="input"
                   disabled={busy || productsLoading || Boolean(productsError)}
-                  onChange={(event) => updateLine(index, { productId: event.target.value })}
+                  onChange={(event) => updateLine(index, { quotaGroupId: event.target.value })}
                   required
-                  value={line.productId}
+                  value={line.quotaGroupId}
                 >
                   <option value="">{t.membershipCatalog.chooseProduct}</option>
                   {visibleProducts
-                    .filter((item) => !selected.has(item.id) || item.id === line.productId)
+                    .filter((item) => !selected.has(item.id) || item.id === line.quotaGroupId)
                     .map((item) => {
                       const translated = localizedCatalogTranslation(item.translations, locale);
                       return (
@@ -958,7 +971,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
           onClick={() =>
             setForm((value) => ({
               ...value,
-              lines: [...value.lines, { productId: "", quotaUnits: "1" }],
+              lines: [...value.lines, { quotaGroupId: "", quotaUnits: "1" }],
             }))
           }
           type="button"

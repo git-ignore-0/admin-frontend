@@ -11,14 +11,24 @@ export const emptyBilingualContent = (): BilingualContentValue => ({
   en: { name: "", description: "" },
 });
 
+type LongDescriptionFields = {
+  label: string;
+  maxLength?: number;
+  onChange: (value: Record<AdminLocale, string>) => void;
+  value: Record<AdminLocale, string>;
+};
+
 export function BilingualContentFields({
   busy,
   completionLabels,
   defaultLocale,
   descriptionLabel,
   languageLabels,
+  longDescription,
   nameLabel,
   onChange,
+  requireNames = true,
+  descriptionMaxLength = 800,
   title,
   value,
 }: {
@@ -27,8 +37,11 @@ export function BilingualContentFields({
   defaultLocale: AdminLocale;
   descriptionLabel: string;
   languageLabels: Record<AdminLocale, string>;
+  longDescription?: LongDescriptionFields;
   nameLabel: string;
   onChange: (value: BilingualContentValue) => void;
+  requireNames?: boolean;
+  descriptionMaxLength?: number;
   title: string;
   value: BilingualContentValue;
 }) {
@@ -82,8 +95,11 @@ export function BilingualContentFields({
         id={`${id}-${activeLocale}-panel`}
         role="tabpanel"
       >
-        <label className="field">
-          <span>{nameLabel} *</span>
+        <label className="field full">
+          <span>
+            {nameLabel}
+            {requireNames ? " *" : ""}
+          </span>
           <input
             className="input"
             disabled={busy}
@@ -94,7 +110,7 @@ export function BilingualContentFields({
                 [activeLocale]: { ...active, name: event.target.value },
               })
             }
-            required
+            required={requireNames}
             value={active.name}
           />
         </label>
@@ -103,7 +119,7 @@ export function BilingualContentFields({
           <textarea
             className="textarea"
             disabled={busy}
-            maxLength={800}
+            maxLength={descriptionMaxLength}
             onChange={(event) =>
               onChange({
                 ...value,
@@ -113,6 +129,24 @@ export function BilingualContentFields({
             value={active.description}
           />
         </label>
+        {longDescription && (
+          <label className="field full">
+            <span>{longDescription.label}</span>
+            <textarea
+              className="textarea"
+              disabled={busy}
+              maxLength={longDescription.maxLength}
+              onChange={(event) =>
+                longDescription.onChange({
+                  ...longDescription.value,
+                  [activeLocale]: event.target.value,
+                })
+              }
+              rows={7}
+              value={longDescription.value[activeLocale]}
+            />
+          </label>
+        )}
       </div>
     </section>
   );

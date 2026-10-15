@@ -9,7 +9,7 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 
 type Props = { user: { email: string; name: string }; children: React.ReactNode };
 
-type NavigationGroup = "pointsRewards" | "csa" | "website";
+type NavigationGroup = "pointsRewards" | "csa" | "store" | "website";
 
 const groupRoutes: Record<NavigationGroup, readonly string[]> = {
   pointsRewards: ["/points", "/rewards", "/redemptions"],
@@ -20,6 +20,7 @@ const groupRoutes: Record<NavigationGroup, readonly string[]> = {
     "/memberships",
     "/membership-catalog",
   ],
+  store: ["/store-catalog"],
   website: [
     "/settings",
     "/membership-payment-settings",
@@ -67,6 +68,11 @@ export function AdminShell({ user, children }: Props) {
       ],
     },
     {
+      key: "store",
+      label: t.common.storeCatalog,
+      links: [["/store-catalog", t.storeCatalog.title]],
+    },
+    {
       key: "website",
       label: t.common.website,
       links: [
@@ -86,6 +92,7 @@ export function AdminShell({ user, children }: Props) {
   const [openGroups, setOpenGroups] = useState<Record<NavigationGroup, boolean>>(() => ({
     pointsRewards: activeGroup === "pointsRewards",
     csa: activeGroup === "csa",
+    store: activeGroup === "store",
     website: activeGroup === "website",
   }));
 

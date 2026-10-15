@@ -8,12 +8,23 @@ import type { PaginationMeta } from "@/lib/types";
 type PaginatedListOptions<T> = {
   fetchPage: (page: number) => Promise<ApiEnvelope<T[], PaginationMeta>>;
   getErrorMessage: (error: unknown) => string;
+  initialPage?: number;
+  controlledPage?: number;
+  onPage?: (page: number) => void;
 };
 
-export function usePaginatedList<T>({ fetchPage, getErrorMessage }: PaginatedListOptions<T>) {
+export function usePaginatedList<T>({
+  fetchPage,
+  getErrorMessage,
+  initialPage = 1,
+  controlledPage,
+  onPage,
+}: PaginatedListOptions<T>) {
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<PaginationMeta | null>(null);
-  const [page, setPage] = useState(1);
+  const [localPage, setLocalPage] = useState(initialPage);
+  const page = controlledPage ?? localPage;
+  const setPage = onPage ?? setLocalPage;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadVersion, setReloadVersion] = useState(0);

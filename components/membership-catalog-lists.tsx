@@ -10,6 +10,7 @@ import { Pagination } from "@/components/pagination";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
+import { legacyPackageItemView } from "@/lib/membership-catalog-adapter";
 import {
   hasCompleteCatalogTranslations,
   localizedCatalogTranslation,
@@ -260,10 +261,10 @@ export function MembershipPackageList() {
                       )}
                       <small className="table-secondary">
                         {item.items
-                          .map(
-                            (line) =>
-                              `${localizedCatalogTranslation(line.product_translations ?? [], locale)?.name || line.product_name}: ${line.quota_units}`,
-                          )
+                          .map((raw) => {
+                            const line = legacyPackageItemView(raw);
+                            return `${localizedCatalogTranslation(line.translations, locale)?.name || line.name}: ${line.quotaUnits}`;
+                          })
                           .join(" · ") || "—"}
                       </small>
                     </td>

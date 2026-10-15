@@ -33,13 +33,14 @@ function group(name: string) {
 }
 
 describe("admin sidebar navigation", () => {
-  it("renders direct links and the three collapsed navigation groups", () => {
+  it("renders direct links and the four collapsed navigation groups", () => {
     renderShell();
 
     expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "/dashboard");
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
     expect(group("Points & rewards")).toHaveAttribute("aria-expanded", "false");
     expect(group("CSA")).toHaveAttribute("aria-expanded", "false");
+    expect(group("Store")).toHaveAttribute("aria-expanded", "false");
     expect(group("Website")).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("link", { name: "Rewards" })).toBeNull();
     expect(screen.queryByRole("link", { name: /catalog/i })).toBeNull();
@@ -110,6 +111,7 @@ describe("admin sidebar navigation", () => {
     ["/membership-payment-settings", "Website", "Payment settings"],
     ["/membership-catalog", "CSA", "CSA package catalog"],
     ["/membership-catalog/packages/123/edit", "CSA", "CSA package catalog"],
+    ["/store-catalog/products/new", "Store", "Store catalog"],
     ["/tracker-farms", "Website", "Growth Tracker farms"],
     ["/rewards", "Points & rewards", "Rewards"],
     ["/settings", "Website", "Website information"],

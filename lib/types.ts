@@ -14,6 +14,44 @@ export type Dashboard = {
 
 export type PaginationMeta = { page: number; page_size: number; total: number };
 
+export type StoreTranslation = { locale: "vi" | "en"; name: string; description: string };
+
+export type StoreCategory = {
+  id: string;
+  parent_id: string | null;
+  slug: string;
+  sort_order: number;
+  is_active: boolean;
+  depth: number;
+  has_children: boolean;
+  product_count: number;
+  translations: StoreTranslation[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type StoreProduct = {
+  id: string;
+  category_id: string;
+  category_slug: string;
+  sku: string;
+  slug: string;
+  unit_size: string;
+  unit_label_vi: string;
+  unit_label_en: string;
+  retail_price_vnd: string;
+  csa_quota_group_id: string | null;
+  csa_quota_group: Pick<MembershipProduct, "id" | "name" | "translations"> | null;
+  csa_quota_cost: number;
+  primary_image_id: string | null;
+  primary_image: MediaAsset | null;
+  is_active: boolean;
+  is_published: boolean;
+  translations: Array<StoreTranslation & { short_description: string }>;
+  created_at: string;
+  updated_at: string;
+};
+
 export type MembershipStatus = "scheduled" | "active" | "ended" | "revoked";
 export type MembershipQuotaPolicy = "expire" | "rollover";
 
@@ -100,6 +138,7 @@ export type MembershipProduct = {
 export type MembershipPackageItem = {
   product_id: string;
   product_name: string;
+  product_is_active?: boolean;
   short_description: string;
   product_translations?: MembershipProduct["translations"];
   unit_size: string;

@@ -5,6 +5,30 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
+  it("allowlists only the Commerce catalog routes and methods", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    for (const resource of ["store-categories", "store-products"]) {
+      const base = ["admin", resource];
+      expect(isAllowedBackendRequest("GET", base)).toBe(true);
+      expect(isAllowedBackendRequest("POST", base)).toBe(true);
+      for (const method of ["GET", "PATCH", "DELETE"]) {
+        expect(isAllowedBackendRequest(method, [...base, id])).toBe(true);
+      }
+      expect(isAllowedBackendRequest("POST", [...base, id])).toBe(false);
+      expect(isAllowedBackendRequest("GET", [...base, "bad-id"])).toBe(false);
+      expect(isAllowedBackendRequest("GET", [...base, id, "extra"])).toBe(false);
+    }
+    expect(isAllowedBackendRequest("POST", ["admin", "store-products", "media"])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "store-products", "media", id])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "store-products", "media"])).toBe(false);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "store-products", "media", "bad-id"])).toBe(
+      false,
+    );
+    expect(buildBackendTarget(origin, ["admin", "store-products"], "?page=2").toString()).toBe(
+      "http://127.0.0.1:8000/api/v1/admin/store-products?page=2",
+    );
+  });
+
   it("allowlists CSA coupon administration by exact UUID path and method", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = ["admin", "csa-coupons"];
