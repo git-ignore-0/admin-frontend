@@ -5,6 +5,42 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
+  it("allowlists exact Farm, media, product and weekly-supply methods", () => {
+    const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const product = "11111111-1111-4111-8111-111111111111";
+    const base = ["admin", "farms"];
+    expect(isAllowedBackendRequest("GET", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", base)).toBe(true);
+    for (const method of ["GET", "PATCH", "DELETE"])
+      expect(isAllowedBackendRequest(method, [...base, farm])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, "media"])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", [...base, "media", product])).toBe(true);
+    for (const method of ["GET", "POST", "PATCH", "DELETE"])
+      expect(isAllowedBackendRequest(method, [...base, farm, "growth-tracker"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, farm, "products"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, farm, "available-products"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, farm, "available-products"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, farm, "products"])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", [...base, farm, "products", product])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", [...base, farm, "products", product])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, farm, "products", product, "weeks"])).toBe(
+      true,
+    );
+    expect(
+      isAllowedBackendRequest("PUT", [...base, farm, "products", product, "weeks", "2026-10-19"]),
+    ).toBe(true);
+    expect(
+      isAllowedBackendRequest("PUT", [...base, farm, "products", product, "weeks", "2026-10-20"]),
+    ).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, "bad-id"])).toBe(false);
+    expect(isAllowedBackendRequest("DELETE", [...base, "media", "bad-id"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, farm, "products", product])).toBe(false);
+    expect(
+      isAllowedBackendRequest("GET", [...base, farm, "products", product, "weeks", "2026-10-19"]),
+    ).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, farm, "unknown"])).toBe(false);
+  });
+
   it("allowlists only the Commerce catalog routes and methods", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     for (const resource of ["store-categories", "store-products"]) {

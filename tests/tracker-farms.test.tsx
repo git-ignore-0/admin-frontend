@@ -98,17 +98,17 @@ afterEach(() => {
 it("uses routes for create and edit instead of a farm form dialog", async () => {
   vi.mocked(api).mockResolvedValueOnce([farm]);
   renderWithProviders(<TrackerFarmManager />);
-  expect((await screen.findByRole("link", { name: "+ Add farm" })).getAttribute("href")).toBe(
-    "/tracker-farms/new",
-  );
+  expect(
+    (await screen.findByRole("link", { name: "+ Enable Growth Tracker" })).getAttribute("href"),
+  ).toBe("/tracker-farms/new");
   const edit = screen.getByRole("link", { name: "Edit Green Valley" });
   expect(edit.getAttribute("href")).toBe("/tracker-farms/farm-1");
   expect(edit).toHaveAttribute("title", "Edit Green Valley");
   expect(edit).toHaveTextContent("");
   expect(edit.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
 
-  const remove = screen.getByRole("button", { name: "Delete Green Valley" });
-  expect(remove).toHaveAttribute("title", "Delete Green Valley");
+  const remove = screen.getByRole("button", { name: "Disable Growth Tracker for Green Valley" });
+  expect(remove).toHaveAttribute("title", "Disable Growth Tracker for Green Valley");
   expect(remove).toHaveTextContent("");
   expect(remove.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   expect(screen.queryByRole("dialog", { name: "Edit farm" })).toBeNull();
@@ -143,10 +143,9 @@ it("renders only the active admin locale's name and location in the list", async
   expect(vietnameseEdit).toBeVisible();
   expect(vietnameseEdit).toHaveAttribute("title", "Chỉnh sửa Thung lũng Xanh");
   expect(vietnameseEdit).toHaveTextContent("");
-  expect(screen.getByRole("button", { name: "Xóa Thung lũng Xanh" })).toHaveAttribute(
-    "title",
-    "Xóa Thung lũng Xanh",
-  );
+  expect(
+    screen.getByRole("button", { name: "Tắt Growth Tracker của Thung lũng Xanh" }),
+  ).toHaveAttribute("title", "Tắt Growth Tracker của Thung lũng Xanh");
 });
 
 it("keeps icon-only Edit and Delete on one equal square action row at every breakpoint", async () => {
@@ -154,7 +153,7 @@ it("keeps icon-only Edit and Delete on one equal square action row at every brea
   renderWithProviders(<TrackerFarmManager />);
 
   const edit = await screen.findByRole("link", { name: "Edit Green Valley" });
-  const remove = screen.getByRole("button", { name: "Delete Green Valley" });
+  const remove = screen.getByRole("button", { name: "Disable Growth Tracker for Green Valley" });
   expect(edit.parentElement).toHaveClass("tracker-row-actions");
   expect(remove.parentElement).toBe(edit.parentElement);
   expect(edit).toHaveClass("icon-only-action", "secondary");
@@ -877,7 +876,7 @@ it("guards Add and Edit navigation while reorder changes are unsaved", async () 
   renderWithProviders(<TrackerFarmManager />);
   fireEvent.click(await screen.findByRole("button", { name: "Move Green Valley down" }));
 
-  fireEvent.click(screen.getByRole("link", { name: "+ Add farm" }));
+  fireEvent.click(screen.getByRole("link", { name: "+ Enable Growth Tracker" }));
   const stayDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
   expect(push).not.toHaveBeenCalled();
   fireEvent.click(within(stayDialog).getByRole("button", { name: "Stay" }));
@@ -890,27 +889,33 @@ it("guards Add and Edit navigation while reorder changes are unsaved", async () 
 
   push.mockClear();
   fireEvent.click(screen.getByRole("button", { name: "Move Green Valley down" }));
-  fireEvent.click(screen.getByRole("link", { name: "+ Add farm" }));
+  fireEvent.click(screen.getByRole("link", { name: "+ Enable Growth Tracker" }));
   const saveDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
   fireEvent.click(within(saveDialog).getByRole("button", { name: "Save order" }));
   await waitFor(() => expect(push).toHaveBeenCalledWith("/tracker-farms/new"));
 });
 
-it("deletes permanently only after confirmation and preserves the item on failure", async () => {
+it("disables only the Growth Tracker profile after confirmation and preserves the item on failure", async () => {
   vi.mocked(api).mockResolvedValueOnce([farm, secondFarm]);
   vi.mocked(apiEnvelope)
     .mockRejectedValueOnce(new Error("network_error"))
     .mockResolvedValueOnce({ data: undefined });
   renderWithProviders(<TrackerFarmManager />);
 
-  fireEvent.click(await screen.findByRole("button", { name: "Delete Green Valley" }));
-  const dialog = screen.getByRole("dialog", { name: "Permanently delete farm" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Disable Growth Tracker for Green Valley" }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Disable Growth Tracker" });
+  expect(within(dialog).getByText(/farm and its products will remain/)).toBeVisible();
   expect(apiEnvelope).not.toHaveBeenCalled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Disable Growth Tracker" }));
   expect(await within(dialog).findByRole("alert")).toBeVisible();
   expect(screen.getByText("Green Valley")).toBeVisible();
 
-  fireEvent.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Disable Growth Tracker" }));
   await waitFor(() => expect(screen.queryByText("Green Valley")).toBeNull());
+  expect(apiEnvelope).toHaveBeenCalledWith("admin/farms/farm-1/growth-tracker", {
+    method: "DELETE",
+  });
   expect(screen.getByText("River Farm")).toBeVisible();
 });

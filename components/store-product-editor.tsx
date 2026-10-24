@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminImagePicker } from "@/components/admin-image-picker";
 import {
   BilingualContentFields,
   emptyBilingualContent,
@@ -43,6 +43,8 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   const pendingImageIdRef = useRef<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  const translationRef = useRef(t);
+  translationRef.current = t;
   const [categories, setCategories] = useState<StoreCategory[]>([]);
   const [groups, setGroups] = useState<
     Array<Pick<MembershipProduct, "id" | "name" | "translations">>
@@ -120,12 +122,12 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         setLoaded(true);
       })
       .catch((caught) => {
-        if (!cancelled) setLoadError(requestErrorMessage(caught, t));
+        if (!cancelled) setLoadError(requestErrorMessage(caught, translationRef.current));
       });
     return () => {
       cancelled = true;
     };
-  }, [productId, loadRetry, t]);
+  }, [productId, loadRetry]);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,7 +144,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         setGroupError("");
       })
       .catch((caught) => {
-        if (!cancelled) setGroupError(requestErrorMessage(caught, t));
+        if (!cancelled) setGroupError(requestErrorMessage(caught, translationRef.current));
       })
       .finally(() => {
         if (!cancelled) setGroupLoading(false);
@@ -150,7 +152,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [groupPage, groupRetry, t]);
+  }, [groupPage, groupRetry]);
 
   function hydrate(item: StoreProduct) {
     setSku(item.sku);
@@ -327,6 +329,12 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         return;
       }
       const field = (caught as { field?: string }).field;
+      if (caught instanceof Error && caught.message === "product_unit_in_use") {
+        fail(copy.productUnitInUse, "unit_size");
+        savingRef.current = false;
+        setBusy(false);
+        return;
+      }
       fail(
         requestErrorMessage(caught, t, {
           sku: copy.sku,
@@ -554,55 +562,33 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
           </div>
         )}
       </section>
-      <section className="catalog-editor-section">
+      <section className="catalog-editor-section admin-image-picker-section">
         <h2>{copy.image}</h2>
-        <p className="catalog-section-help">{copy.imageHelp}</p>
-        <div className="store-product-image-field">
-          <div className="store-product-image-preview">
-            {previewUrl || image ? (
-              <Image
-                alt={copy.imagePreviewAlt}
-                height={180}
-                src={previewUrl || mediaUrlForWidth(image!, 480)}
-                unoptimized
-                width={240}
-              />
-            ) : (
-              <span>{copy.noImage}</span>
-            )}
-          </div>
-          <div className="store-product-image-controls">
-            {selectedImage && <p className="store-product-image-name">{selectedImage.name}</p>}
-            <div className="catalog-editor-actions store-product-image-actions">
-              <label className="button secondary">
-                {copy.chooseImage}
-                <input
-                  accept="image/jpeg,image/png,image/webp"
-                  disabled={busy}
-                  hidden
-                  type="file"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = "";
-                    if (!file) return;
-                    if (!isSupportedImageFile(file)) return fail(copy.imageTypeError);
-                    setSelectedImage(file);
-                  }}
-                />
-              </label>
-              {(image || selectedImage) && (
-                <button
-                  className="button secondary"
-                  disabled={busy}
-                  onClick={removeImage}
-                  type="button"
-                >
-                  {copy.removeImage}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <AdminImagePicker
+          items={
+            selectedImage && previewUrl
+              ? [{ id: "selected-image", src: previewUrl, alt: copy.imagePreviewAlt }]
+              : image
+                ? [{ id: image.id, src: mediaUrlForWidth(image, 160), alt: copy.imagePreviewAlt }]
+                : []
+          }
+          maxItems={1}
+          busy={busy}
+          fileName={selectedImage?.name}
+          help={copy.imageHelp}
+          labels={{
+            choose: copy.chooseImage,
+            replace: locale === "vi" ? "Thay ảnh" : "Replace image",
+            empty: copy.noImage,
+            remove: copy.removeImage,
+          }}
+          onChooseFiles={(files) => {
+            const file = files[0];
+            if (!isSupportedImageFile(file)) return fail(copy.imageTypeError);
+            setSelectedImage(file);
+          }}
+          onRemove={removeImage}
+        />
       </section>
       <section className="catalog-editor-section">
         <h2>{copy.status}</h2>

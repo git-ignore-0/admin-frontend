@@ -575,6 +575,45 @@ export type TrackerFarm = {
   updated_at: string;
 };
 
+export type Farm = {
+  id: string;
+  name_en: string;
+  name_vi: string;
+  location_en: string;
+  location_vi: string;
+  description_en: string;
+  description_vi: string;
+  image: MediaAsset | null;
+  photos: MediaAsset[];
+  is_active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FarmProduct = {
+  id: string;
+  farm_id: string;
+  product_id: string;
+  sku: string;
+  name_vi: string;
+  name_en: string;
+  unit_size: string;
+  unit_label_vi: string;
+  unit_label_en: string;
+  is_active: boolean;
+};
+
+export type AvailableFarmProduct = Pick<FarmProduct, "sku" | "name_vi" | "name_en"> & {
+  id: string;
+};
+
+export type FarmWeeklySupply = {
+  id?: string;
+  week_start: string;
+  quantity_units: number;
+};
+
 export type MediaAsset = {
   id: string;
   url: string;

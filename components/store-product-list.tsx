@@ -9,6 +9,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { formatAdminDate } from "@/lib/admin-date";
 import { listStoreCategories, listStoreProducts } from "@/lib/commerce-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
@@ -257,11 +258,7 @@ export function StoreProductList() {
                       </span>{" "}
                       {!item.is_active && <span className="badge warm">{copy.inactive}</span>}
                     </td>
-                    <td data-label={copy.updatedAt}>
-                      {new Date(item.updated_at).toLocaleDateString(
-                        locale === "vi" ? "vi-VN" : "en-US",
-                      )}
-                    </td>
+                    <td data-label={copy.updatedAt}>{formatAdminDate(item.updated_at)}</td>
                   </tr>
                 );
               })}

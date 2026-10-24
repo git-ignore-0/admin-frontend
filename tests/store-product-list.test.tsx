@@ -46,4 +46,28 @@ describe("store product filters", () => {
       { scroll: false },
     );
   });
+
+  it("shows product dates in the shared dd/MM/yyyy admin format", async () => {
+    mocks.products.mockResolvedValue({
+      data: [
+        {
+          id: "product-1",
+          sku: "RAU-01",
+          category_id: "category-1",
+          category_slug: "rau",
+          translations: [{ locale: "vi", name: "Rau muống" }],
+          primary_image: null,
+          retail_price_vnd: "10000",
+          csa_quota_group_id: null,
+          is_published: true,
+          is_active: true,
+          updated_at: "2026-10-15T00:00:00Z",
+        },
+      ],
+      meta: { page: 2, page_size: 30, total: 70 },
+    });
+    render(<StoreProductList />);
+    expect(await screen.findByText("Rau muống")).toBeVisible();
+    expect(screen.getByText("15/10/2026")).toBeVisible();
+  });
 });

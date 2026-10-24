@@ -148,6 +148,37 @@ async function fillBase() {
 }
 
 describe("store product editor", () => {
+  it("explains why a selling unit cannot change after weekly supply exists", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    mocks.save.mockRejectedValue(Object.assign(new Error("product_unit_in_use"), { status: 409 }));
+    render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByLabelText(/Khối lượng \/ số lượng/), {
+      target: { value: "1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    expect(
+      await screen.findByText(/Không thể đổi quy cách hoặc đơn vị bán vì sản phẩm đã có số lượng/),
+    ).toBeVisible();
+    expect(mocks.save).toHaveBeenCalled();
+  });
+
+  it("keeps unsaved product edits when the Admin language changes", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    const page = render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByDisplayValue("RAU-01"), {
+      target: { value: "RAU-DRAFT" },
+    });
+    fireEvent.change(screen.getAllByLabelText("Chọn ảnh")[0], {
+      target: { files: [new File(["image"], "draft.webp", { type: "image/webp" })] },
+    });
+    mocks.locale = "en";
+    page.rerender(<StoreProductEditor productId="product-1" />);
+    expect(screen.getByDisplayValue("RAU-DRAFT")).toBeVisible();
+    expect(screen.getByText("draft.webp")).toBeVisible();
+    expect(mocks.product).toHaveBeenCalledTimes(1);
+    expect(mocks.categories).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps an inactive current category selectable while editing a draft", async () => {
     mocks.categories.mockResolvedValue([
       {

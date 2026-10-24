@@ -19,38 +19,48 @@ type LongDescriptionFields = {
 };
 
 export function BilingualContentFields({
+  activeLocale,
   busy,
   completionLabels,
   defaultLocale,
   descriptionLabel,
+  isLocaleComplete,
   languageLabels,
   longDescription,
   nameLabel,
   onChange,
+  onLocaleChange,
+  renderAfterName,
   requireNames = true,
   descriptionMaxLength = 800,
   title,
   value,
 }: {
+  activeLocale?: AdminLocale;
   busy: boolean;
   completionLabels: { complete: string; incomplete: string };
   defaultLocale: AdminLocale;
   descriptionLabel: string;
+  isLocaleComplete?: (locale: AdminLocale) => boolean;
   languageLabels: Record<AdminLocale, string>;
   longDescription?: LongDescriptionFields;
   nameLabel: string;
   onChange: (value: BilingualContentValue) => void;
+  onLocaleChange?: (locale: AdminLocale) => void;
+  renderAfterName?: (locale: AdminLocale) => React.ReactNode;
   requireNames?: boolean;
   descriptionMaxLength?: number;
   title: string;
   value: BilingualContentValue;
 }) {
   const id = useId();
-  const [activeLocale, setActiveLocale] = useState<AdminLocale>(defaultLocale);
+  const [internalLocale, setInternalLocale] = useState<AdminLocale>(defaultLocale);
+  const currentLocale = activeLocale ?? internalLocale;
   const locales = ["vi", "en"] as const;
 
   function selectLocale(locale: AdminLocale) {
-    setActiveLocale(locale);
+    setInternalLocale(locale);
+    onLocaleChange?.(locale);
   }
 
   function moveTab(event: React.KeyboardEvent<HTMLButtonElement>, locale: AdminLocale) {
@@ -61,18 +71,20 @@ export function BilingualContentFields({
     document.getElementById(`${id}-${nextLocale}-tab`)?.focus();
   }
 
-  const active = value[activeLocale];
+  const active = value[currentLocale];
   return (
     <section className="catalog-editor-section bilingual-content-editor">
       <h2>{title}</h2>
       <div aria-label={title} className="catalog-language-tabs" role="tablist">
         {locales.map((locale) => {
-          const complete = Boolean(value[locale].name.trim());
+          const complete = isLocaleComplete
+            ? isLocaleComplete(locale)
+            : Boolean(value[locale].name.trim());
           return (
             <button
               aria-controls={`${id}-${locale}-panel`}
-              aria-selected={activeLocale === locale}
-              className={activeLocale === locale ? "active" : ""}
+              aria-selected={currentLocale === locale}
+              className={currentLocale === locale ? "active" : ""}
               disabled={busy}
               id={`${id}-${locale}-tab`}
               key={locale}
@@ -90,9 +102,9 @@ export function BilingualContentFields({
         })}
       </div>
       <div
-        aria-labelledby={`${id}-${activeLocale}-tab`}
+        aria-labelledby={`${id}-${currentLocale}-tab`}
         className="catalog-language-panel form-grid"
-        id={`${id}-${activeLocale}-panel`}
+        id={`${id}-${currentLocale}-panel`}
         role="tabpanel"
       >
         <label className="field full">
@@ -107,13 +119,14 @@ export function BilingualContentFields({
             onChange={(event) =>
               onChange({
                 ...value,
-                [activeLocale]: { ...active, name: event.target.value },
+                [currentLocale]: { ...active, name: event.target.value },
               })
             }
             required={requireNames}
             value={active.name}
           />
         </label>
+        {renderAfterName?.(currentLocale)}
         <label className="field full">
           <span>{descriptionLabel}</span>
           <textarea
@@ -123,7 +136,7 @@ export function BilingualContentFields({
             onChange={(event) =>
               onChange({
                 ...value,
-                [activeLocale]: { ...active, description: event.target.value },
+                [currentLocale]: { ...active, description: event.target.value },
               })
             }
             value={active.description}
@@ -139,11 +152,11 @@ export function BilingualContentFields({
               onChange={(event) =>
                 longDescription.onChange({
                   ...longDescription.value,
-                  [activeLocale]: event.target.value,
+                  [currentLocale]: event.target.value,
                 })
               }
               rows={7}
-              value={longDescription.value[activeLocale]}
+              value={longDescription.value[currentLocale]}
             />
           </label>
         )}

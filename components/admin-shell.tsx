@@ -9,7 +9,7 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 
 type Props = { user: { email: string; name: string }; children: React.ReactNode };
 
-type NavigationGroup = "pointsRewards" | "csa" | "store" | "website";
+type NavigationGroup = "pointsRewards" | "csa" | "store" | "farms" | "website";
 
 const groupRoutes: Record<NavigationGroup, readonly string[]> = {
   pointsRewards: ["/points", "/rewards", "/redemptions"],
@@ -21,13 +21,8 @@ const groupRoutes: Record<NavigationGroup, readonly string[]> = {
     "/membership-catalog",
   ],
   store: ["/store-catalog"],
-  website: [
-    "/settings",
-    "/membership-payment-settings",
-    "/workshops",
-    "/testimonials",
-    "/tracker-farms",
-  ],
+  farms: ["/farms", "/tracker-farms"],
+  website: ["/settings", "/membership-payment-settings", "/workshops", "/testimonials"],
 };
 
 function isActiveRoute(pathname: string, href: string) {
@@ -73,6 +68,14 @@ export function AdminShell({ user, children }: Props) {
       links: [["/store-catalog", t.storeCatalog.title]],
     },
     {
+      key: "farms",
+      label: t.common.farms,
+      links: [
+        ["/farms", t.common.farmList],
+        ["/tracker-farms", t.common.trackerFarms],
+      ],
+    },
+    {
       key: "website",
       label: t.common.website,
       links: [
@@ -80,7 +83,6 @@ export function AdminShell({ user, children }: Props) {
         ["/membership-payment-settings", t.common.membershipPaymentSettings],
         ["/workshops", t.common.workshops],
         ["/testimonials", t.common.testimonials],
-        ["/tracker-farms", t.common.trackerFarms],
       ],
     },
   ] as const satisfies readonly {
@@ -93,6 +95,7 @@ export function AdminShell({ user, children }: Props) {
     pointsRewards: activeGroup === "pointsRewards",
     csa: activeGroup === "csa",
     store: activeGroup === "store",
+    farms: activeGroup === "farms",
     website: activeGroup === "website",
   }));
 

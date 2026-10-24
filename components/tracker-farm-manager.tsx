@@ -200,7 +200,7 @@ export function TrackerFarmManager() {
     setDeleting(true);
     setDeleteError("");
     try {
-      await apiEnvelope(`admin/tracker-farms/${deleteTarget.id}`, { method: "DELETE" });
+      await apiEnvelope(`admin/farms/${deleteTarget.id}/growth-tracker`, { method: "DELETE" });
       setFarms((current) => current?.filter((farm) => farm.id !== deleteTarget.id) ?? []);
       setSavedFarms((current) => current.filter((farm) => farm.id !== deleteTarget.id));
       setDeleteTarget(null);

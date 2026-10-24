@@ -30,6 +30,33 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
 
   const [, resource, id, action, extra] = path;
+  if (resource === "farms") {
+    if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (id === "media") {
+      if (action === undefined) return path.length === 3 && normalizedMethod === "POST";
+      return path.length === 4 && normalizedMethod === "DELETE" && UUID_PATH_SEGMENT.test(action);
+    }
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined) return path.length === 3 && CRUD_DETAIL.has(normalizedMethod);
+    if (action === "growth-tracker")
+      return path.length === 4 && new Set(["GET", "POST", "PATCH", "DELETE"]).has(normalizedMethod);
+    if (action === "available-products") return path.length === 4 && normalizedMethod === "GET";
+    if (action !== "products") return false;
+    if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(extra)) return false;
+    if (path.length === 5) return new Set(["PATCH", "DELETE"]).has(normalizedMethod);
+    if (path[5] !== "weeks") return false;
+    if (path.length === 6) return normalizedMethod === "GET";
+    if (path.length !== 7 || normalizedMethod !== "PUT") return false;
+    const week = path[6];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return false;
+    const date = new Date(`${week}T00:00:00Z`);
+    return (
+      !Number.isNaN(date.getTime()) &&
+      date.toISOString().slice(0, 10) === week &&
+      date.getUTCDay() === 1
+    );
+  }
   if (["store-categories", "store-products"].includes(resource)) {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (resource === "store-products" && id === "media") {
