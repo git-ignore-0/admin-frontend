@@ -143,7 +143,7 @@ const vi = {
   page: {
     dashboardDescription: "Tình trạng nội dung website tại một nơi.",
     settingsDescription: "Quản lý thông tin liên hệ và các liên kết công khai.",
-    workshopsDescription: "Soạn, xem trước và xuất bản lịch workshop đa ngôn ngữ.",
+    workshopsDescription: "Soạn bản nháp và xuất bản lịch workshop đa ngôn ngữ.",
     usersDescription: "Tra cứu nguồn đăng ký, lời mời và lịch sử điểm của người dùng.",
     pointsDescription: "Ghi nhận cộng hoặc trừ điểm thủ công bằng giao dịch bất biến.",
     rewardsDescription: "Quản lý danh mục quà song ngữ và số điểm cần dùng.",
@@ -1287,7 +1287,6 @@ const vi = {
     delete: "Xóa workshop",
     deleting: "Đang xóa…",
     unpublish: "Gỡ xuất bản",
-    preview: "Xem trước",
     saveDraft: "Lưu nháp",
     saving: "Đang lưu…",
     publish: "Xuất bản",
@@ -1479,7 +1478,7 @@ const en: AdminDictionary = {
   page: {
     dashboardDescription: "A concise view of the website content status.",
     settingsDescription: "Manage public contact details and external links.",
-    workshopsDescription: "Draft, preview and publish multilingual workshops.",
+    workshopsDescription: "Draft and publish multilingual workshops.",
     usersDescription: "Review signup source, invitations, and point history for each user.",
     pointsDescription: "Record manual credits or debits as immutable transactions.",
     rewardsDescription: "Manage the bilingual reward catalog and required point costs.",
@@ -2619,7 +2618,6 @@ const en: AdminDictionary = {
     delete: "Delete workshop",
     deleting: "Deleting…",
     unpublish: "Unpublish",
-    preview: "Preview",
     saveDraft: "Save draft",
     saving: "Saving…",
     publish: "Publish",

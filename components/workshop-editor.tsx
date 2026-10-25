@@ -8,7 +8,6 @@ import { normalizeTiptapLinks, RichTextEditor } from "@/components/rich-text-edi
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
-import { publicSiteOrigin } from "@/lib/public-site";
 import {
   emptyTranslation,
   type Locale,
@@ -255,23 +254,6 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
     }
   }
 
-  async function preview() {
-    const saved = await save();
-    if (!saved) return;
-    try {
-      const result = await api<{ token: string }>(`admin/workshops/${saved.id}/preview-token/`, {
-        method: "POST",
-      });
-      window.open(
-        `${publicSiteOrigin()}/workshops/preview/${encodeURIComponent(result.token)}?locale=${activeLocale}`,
-        "_blank",
-        "noopener,noreferrer",
-      );
-    } catch (caught) {
-      showToast(requestErrorMessage(caught, t), "error");
-    }
-  }
-
   if (loading) return <div className="panel">{t.editor.loading}</div>;
   if (loadError) return <p className="error-box">{loadError}</p>;
 
@@ -444,16 +426,6 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
             onClick={() => void unpublish()}
           >
             {t.editor.unpublish}
-          </button>
-        )}
-        {workshopId && (
-          <button
-            type="button"
-            className="button secondary"
-            disabled={saving || publishing || deleting}
-            onClick={() => void preview()}
-          >
-            {t.editor.preview}
           </button>
         )}
         <button

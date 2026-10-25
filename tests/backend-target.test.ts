@@ -96,6 +96,12 @@ describe("backend API target", () => {
     );
   });
 
+  it("does not proxy the removed workshop preview action", () => {
+    expect(
+      isAllowedBackendRequest("POST", ["admin", "workshops", "workshop-id", "preview-token"]),
+    ).toBe(false);
+  });
+
   it("adds DRF trailing slashes to all Testimonial router routes", () => {
     expect(buildBackendTarget(origin, ["admin", "testimonials"], "").toString()).toBe(
       "http://127.0.0.1:8000/api/v1/admin/testimonials/",

@@ -129,9 +129,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (resource === "workshops") {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
     if (action === undefined) return CRUD_DETAIL.has(normalizedMethod);
-    return (
-      ["publish", "unpublish", "preview-token"].includes(action) && normalizedMethod === "POST"
-    );
+    return ["publish", "unpublish"].includes(action) && normalizedMethod === "POST";
   }
 
   if (resource === "testimonials") {

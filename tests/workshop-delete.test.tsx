@@ -77,6 +77,13 @@ describe("workshop delete flow", () => {
     vi.restoreAllMocks();
   });
 
+  it("does not offer a public preview for a saved draft", async () => {
+    renderEditor();
+
+    await screen.findByRole("button", { name: "Xóa workshop" });
+    expect(screen.queryByRole("button", { name: "Xem trước" })).not.toBeInTheDocument();
+  });
+
   it("archives a published workshop only after explicit confirmation", async () => {
     loadedWorkshop = { ...draftWorkshop, has_published_revision: true };
     const confirmation = vi.spyOn(window, "confirm").mockReturnValue(false);

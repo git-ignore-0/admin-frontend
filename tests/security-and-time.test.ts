@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { adminDictionaries } from "@/lib/admin-i18n";
 import {
@@ -12,7 +12,6 @@ import {
 import { requestErrorMessage } from "@/lib/client-error";
 import { firstValidationField } from "@/lib/client-api";
 import { isTrustedAdminRequest } from "@/lib/csrf";
-import { publicSiteOrigin } from "@/lib/public-site";
 import { formatZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/zoned-date-time";
 
 describe("admin request protection", () => {
@@ -25,20 +24,6 @@ describe("admin request protection", () => {
       isTrustedAdminRequest("POST", "https://forum.naturalfarmingvietnam.com", origin, "1"),
     ).toBe(false);
     expect(isTrustedAdminRequest("POST", origin, origin, null)).toBe(false);
-  });
-});
-
-describe("public site environment", () => {
-  it("accepts a clean origin and rejects paths or credentials", () => {
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://preview.naturalfarmingvietnam.com/");
-    expect(publicSiteOrigin()).toBe("https://preview.naturalfarmingvietnam.com");
-
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://example.com/workshops");
-    expect(() => publicSiteOrigin()).toThrow(/origin/i);
-
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://user:secret@example.com");
-    expect(() => publicSiteOrigin()).toThrow(/credentials/i);
-    vi.unstubAllEnvs();
   });
 });
 
