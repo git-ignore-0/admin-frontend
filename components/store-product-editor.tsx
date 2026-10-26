@@ -23,6 +23,7 @@ import { listActiveQuotaGroups } from "@/lib/membership-catalog-adapter";
 import { mediaUrlForWidth } from "@/lib/media";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import {
+  formatDecimalInput,
   parsePositiveBigInteger,
   parsePositiveDecimal,
   parsePositiveInteger,
@@ -158,7 +159,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     setSku(item.sku);
     setCategoryId(item.category_id);
     setOriginalCategoryId(item.category_id);
-    setUnitSize(item.unit_size);
+    setUnitSize(formatDecimalInput(item.unit_size));
     setUnitVi(item.unit_label_vi);
     setUnitEn(item.unit_label_en);
     setPrice(String(item.retail_price_vnd));

@@ -4,6 +4,7 @@ out/
 coverage/
 .vercel/
 /cpanel-deploy/
+/node-compile-cache/
 .env*
 !.env.example
 *.log

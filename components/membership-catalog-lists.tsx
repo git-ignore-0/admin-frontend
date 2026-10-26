@@ -11,6 +11,7 @@ import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import { legacyPackageItemView } from "@/lib/membership-catalog-adapter";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import {
   hasCompleteCatalogTranslations,
   localizedCatalogTranslation,
@@ -144,7 +145,8 @@ export function MembershipProductList() {
                       </small>
                     </td>
                     <td data-label={t.membershipCatalog.unitConversion}>
-                      {item.unit_size} {item.unit_label_vi} / {item.unit_label_en}
+                      {formatDecimalInput(item.unit_size)} {item.unit_label_vi} /{" "}
+                      {item.unit_label_en}
                     </td>
                     <td data-label={t.membershipCatalog.status}>
                       <Status active={item.is_active} />

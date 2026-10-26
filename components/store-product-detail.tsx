@@ -13,6 +13,7 @@ import { deleteStoreProduct, getStoreProduct, saveStoreProduct } from "@/lib/com
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import type { StoreProduct } from "@/lib/types";
 
 export function StoreProductDetail({ productId }: { productId: string }) {
@@ -137,7 +138,7 @@ export function StoreProductDetail({ productId }: { productId: string }) {
             {copy.category}: {item.category_slug}
           </p>
           <p>
-            {copy.unitSize}: {item.unit_size}{" "}
+            {copy.unitSize}: {formatDecimalInput(item.unit_size)}{" "}
             {locale === "vi" ? item.unit_label_vi : item.unit_label_en}
           </p>
           <p>

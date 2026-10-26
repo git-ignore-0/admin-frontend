@@ -15,6 +15,7 @@ import {
   setFarmProductActive,
 } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import type { AvailableFarmProduct, FarmProduct, PaginationMeta } from "@/lib/types";
 
 export function FarmProducts({ farmId, initialWeek }: { farmId: string; initialWeek?: string }) {
@@ -247,7 +248,7 @@ export function FarmProducts({ farmId, initialWeek }: { farmId: string; initialW
             <tbody>
               {visibleLinks.map((row) => {
                 const name = locale === "vi" ? row.name_vi : row.name_en;
-                const unit = `${row.unit_size.replace(/\.0+$/, "")} ${locale === "vi" ? row.unit_label_vi : row.unit_label_en}`;
+                const unit = `${formatDecimalInput(row.unit_size)} ${locale === "vi" ? row.unit_label_vi : row.unit_label_en}`;
                 return (
                   <tr key={row.id}>
                     <td data-label={c.productColumn}>

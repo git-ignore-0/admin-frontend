@@ -7,6 +7,7 @@ import { adminTodayIso, formatAdminDate } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { listFarmWeeklySupplies, setFarmWeeklySupply } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import type { FarmProduct } from "@/lib/types";
 
 function addDays(iso: string, days: number) {
@@ -101,7 +102,7 @@ export function FarmWeeklySupply({
     }
   }
 
-  const saleUnit = `${product.unit_size.replace(/\.0+$/, "")} ${locale === "vi" ? product.unit_label_vi : product.unit_label_en}`;
+  const saleUnit = `${formatDecimalInput(product.unit_size)} ${locale === "vi" ? product.unit_label_vi : product.unit_label_en}`;
   return (
     <section className="farm-weekly-panel" aria-busy={loading}>
       <p className="field-help">

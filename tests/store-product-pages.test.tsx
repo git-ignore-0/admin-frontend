@@ -148,6 +148,18 @@ async function fillBase() {
 }
 
 describe("store product editor", () => {
+  it("shows stored selling-unit quantities without insignificant zeroes", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    const page = render(<StoreProductEditor productId="product-1" />);
+
+    expect(await screen.findByLabelText(/Khối lượng \/ số lượng/)).toHaveValue("0.5");
+
+    page.unmount();
+    render(<StoreProductDetail productId="product-1" />);
+    expect(await screen.findByText(/0\.5 kg/)).toBeVisible();
+    expect(screen.queryByText(/0\.500 kg/)).not.toBeInTheDocument();
+  });
+
   it("explains why a selling unit cannot change after weekly supply exists", async () => {
     mocks.product.mockResolvedValue(storedProduct);
     mocks.save.mockRejectedValue(Object.assign(new Error("product_unit_in_use"), { status: 409 }));

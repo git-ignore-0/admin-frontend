@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDecimalInput,
   parsePositiveDecimal,
   parsePositiveInteger,
   sanitizeDecimalInput,
@@ -8,6 +9,15 @@ import {
 } from "@/lib/numeric-input";
 
 describe("numeric input boundaries", () => {
+  it.each([
+    ["500.000", "500"],
+    ["0.500", "0.5"],
+    ["1.250", "1.25"],
+    ["1.001", "1.001"],
+  ])("formats stored decimal %s without insignificant zeroes", (input, expected) => {
+    expect(formatDecimalInput(input)).toBe(expected);
+  });
+
   it.each([
     ["abc", ""],
     ["1e3", "13"],

@@ -41,6 +41,13 @@ export function sanitizeDecimalInput(value: string) {
   return result;
 }
 
+export function formatDecimalInput(value: string) {
+  const [integer, fraction] = value.split(".");
+  if (fraction === undefined) return value;
+  const compactFraction = fraction.replace(/0+$/, "");
+  return compactFraction ? `${integer}.${compactFraction}` : integer;
+}
+
 export function parsePositiveInteger(
   value: string,
   { max = MAX_POSITIVE_INTEGER }: { max?: number } = {},

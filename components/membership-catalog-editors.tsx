@@ -27,6 +27,7 @@ import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import {
   MAX_POSITIVE_BIG_INTEGER,
   MAX_UNIT_SIZE,
+  formatDecimalInput,
   numericInputErrorMessage,
   parsePositiveDecimal,
   parsePositiveBigInteger,
@@ -106,7 +107,7 @@ function productForm(item: MembershipProduct): ProductForm {
   });
   return {
     content,
-    unitSize: item.unit_size,
+    unitSize: formatDecimalInput(item.unit_size),
     unitVi: item.unit_label_vi,
     unitEn: item.unit_label_en,
     isActive: item.is_active,
