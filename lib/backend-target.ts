@@ -70,6 +70,13 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       CRUD_DETAIL.has(normalizedMethod)
     );
   }
+  if (resource === "shipping-settings") {
+    return (
+      path.length === 3 &&
+      /^\d{2}$/u.test(id ?? "") &&
+      new Set(["GET", "PUT"]).has(normalizedMethod)
+    );
+  }
   if (resource === "csa-coupons") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (id === "options") return path.length === 3 && normalizedMethod === "GET";

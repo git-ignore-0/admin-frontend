@@ -113,6 +113,7 @@ describe("admin sidebar navigation", () => {
     ["/membership-catalog", "CSA", "CSA package catalog"],
     ["/membership-catalog/packages/123/edit", "CSA", "CSA package catalog"],
     ["/store-catalog/products/new", "Store", "Store catalog"],
+    ["/shipping-settings", "Store", "Delivery settings"],
     ["/farms", "Farms", "Farm list"],
     ["/tracker-farms", "Farms", "Growth Tracker farms"],
     ["/rewards", "Points & rewards", "Rewards"],

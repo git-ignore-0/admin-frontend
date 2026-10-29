@@ -65,6 +65,13 @@ describe("backend API target", () => {
     );
   });
 
+  it("allowlists GET and PUT for one province shipping setting", () => {
+    expect(isAllowedBackendRequest("GET", ["admin", "shipping-settings", "66"])).toBe(true);
+    expect(isAllowedBackendRequest("PUT", ["admin", "shipping-settings", "66"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "shipping-settings", "66"])).toBe(false);
+    expect(isAllowedBackendRequest("PUT", ["admin", "shipping-settings", "invalid"])).toBe(false);
+  });
+
   it("allowlists CSA coupon administration by exact UUID path and method", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = ["admin", "csa-coupons"];

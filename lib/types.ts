@@ -425,6 +425,29 @@ export type AdministrativeUnit = {
   name: string;
 };
 
+export type ShippingArea = {
+  id: string;
+  province_code: string;
+  province_name_vi: string;
+  province_name_en: string;
+  ward_code: string;
+  ward_name_vi: string;
+  ward_name_en: string;
+  shipping_fee_vnd: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShippingSettings = {
+  province_code: string;
+  province_name_vi: string;
+  province_name_en: string;
+  default_shipping_fee_vnd: string;
+  is_active: boolean;
+  overrides: ShippingArea[];
+};
+
 export type InvitedAdminUser = {
   id: string;
   name: string;

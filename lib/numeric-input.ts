@@ -5,6 +5,7 @@ export const MAX_UNIT_SIZE = 9_999_999.999;
 export type NumericInputError =
   | "required"
   | "positive_integer"
+  | "non_negative_integer"
   | "integer_range"
   | "positive_decimal"
   | "decimal_format"
@@ -22,6 +23,15 @@ export function parsePositiveBigInteger(value: string) {
   if (!/^\d+$/.test(value)) return { error: "positive_integer" as const };
   const normalized = value.replace(/^0+/, "") || "0";
   if (normalized === "0") return { error: "positive_integer" as const };
+  const parsed = BigInt(normalized);
+  if (parsed > MAX_POSITIVE_BIG_INTEGER) return { error: "integer_range" as const };
+  return { value: parsed };
+}
+
+export function parseNonNegativeBigInteger(value: string) {
+  if (!value) return { error: "required" as const };
+  if (!/^\d+$/.test(value)) return { error: "non_negative_integer" as const };
+  const normalized = value.replace(/^0+/, "") || "0";
   const parsed = BigInt(normalized);
   if (parsed > MAX_POSITIVE_BIG_INTEGER) return { error: "integer_range" as const };
   return { value: parsed };
@@ -85,6 +95,7 @@ export function numericInputErrorMessage(
   messages: {
     required: string;
     positiveInteger: string;
+    nonNegativeInteger: string;
     integerRange: string;
     positiveDecimal: string;
     decimalFormat: string;
@@ -95,6 +106,7 @@ export function numericInputErrorMessage(
   const message = {
     required: messages.required,
     positive_integer: messages.positiveInteger,
+    non_negative_integer: messages.nonNegativeInteger,
     integer_range: messages.integerRange,
     positive_decimal: messages.positiveDecimal,
     decimal_format: messages.decimalFormat,

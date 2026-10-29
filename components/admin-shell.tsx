@@ -20,7 +20,7 @@ const groupRoutes: Record<NavigationGroup, readonly string[]> = {
     "/memberships",
     "/membership-catalog",
   ],
-  store: ["/store-catalog"],
+  store: ["/store-catalog", "/shipping-settings"],
   farms: ["/farms", "/tracker-farms"],
   website: ["/settings", "/membership-payment-settings", "/workshops", "/testimonials"],
 };
@@ -65,7 +65,10 @@ export function AdminShell({ user, children }: Props) {
     {
       key: "store",
       label: t.common.storeCatalog,
-      links: [["/store-catalog", t.storeCatalog.title]],
+      links: [
+        ["/store-catalog", t.storeCatalog.title],
+        ["/shipping-settings", t.common.shippingSettings],
+      ],
     },
     {
       key: "farms",
