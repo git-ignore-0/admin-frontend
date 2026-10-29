@@ -90,6 +90,14 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       ["activate", "deactivate"].includes(action)
     );
   }
+  if (resource === "csa-terms") {
+    if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined) return path.length === 3 && CRUD_DETAIL.has(normalizedMethod);
+    return (
+      path.length === 4 && normalizedMethod === "POST" && ["clone", "publish"].includes(action)
+    );
+  }
   if (resource === "membership-price-options") {
     if (!UUID_PATH_SEGMENT.test(id ?? "") || action !== "payment-plans") return false;
     if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);

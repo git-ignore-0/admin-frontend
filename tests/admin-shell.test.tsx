@@ -82,6 +82,7 @@ describe("admin sidebar navigation", () => {
       "href",
       "/membership-catalog",
     );
+    expect(screen.getByRole("link", { name: "CSA terms" })).toHaveAttribute("href", "/csa-terms");
     expect(screen.queryByRole("link", { name: "Payment settings" })).toBeNull();
   });
 
@@ -109,6 +110,7 @@ describe("admin sidebar navigation", () => {
   it.each([
     ["/csa-customers/24803641-2dce-4cac-8fc4-91e55f03e95f", "CSA", "CSA customers"],
     ["/csa-purchase-requests", "CSA", "CSA purchase requests"],
+    ["/csa-terms/24803641-2dce-4cac-8fc4-91e55f03e95f", "CSA", "CSA terms"],
     ["/membership-payment-settings", "Website", "Payment settings"],
     ["/membership-catalog", "CSA", "CSA package catalog"],
     ["/membership-catalog/packages/123/edit", "CSA", "CSA package catalog"],

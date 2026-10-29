@@ -89,6 +89,22 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("POST", [...base, id, "unknown"])).toBe(false);
   });
 
+  it("allowlists only the CSA terms collection, detail, clone and publish methods", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const base = ["admin", "csa-terms"];
+    expect(isAllowedBackendRequest("GET", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", base)).toBe(true);
+    for (const method of ["GET", "PATCH", "DELETE"])
+      expect(isAllowedBackendRequest(method, [...base, id])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, id, "clone"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, id, "publish"])).toBe(true);
+    expect(isAllowedBackendRequest("PUT", [...base, id])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, id])).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, id, "clone"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, "bad-id", "publish"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, id, "unknown"])).toBe(false);
+  });
+
   it("adds the trailing slash required by the Django REST Framework router", () => {
     const target = buildBackendTarget(origin, ["admin", "workshops"], "");
 
