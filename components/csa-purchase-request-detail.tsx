@@ -208,6 +208,8 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
         await load();
       } else if (code === "csa_purchase_customer_conflict") {
         setActionError(t.csaPurchases.customerConflict);
+      } else if (code === "csa_purchase_customer_shipping_address_unavailable") {
+        setActionError(t.csaPurchases.customerShippingAddressUnavailable);
       } else if (
         code === "csa_purchase_customer_incomplete" ||
         code === "csa_customer_incomplete"

@@ -425,6 +425,14 @@ export type AdministrativeUnit = {
   name: string;
 };
 
+export type SupportedShippingWard = AdministrativeUnit & {
+  shipping_fee_vnd: string;
+};
+
+export type SupportedShippingProvince = AdministrativeUnit & {
+  wards: SupportedShippingWard[];
+};
+
 export type ShippingArea = {
   id: string;
   province_code: string;

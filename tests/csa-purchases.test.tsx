@@ -1012,6 +1012,34 @@ describe("CSA purchase request admin", () => {
     expect(screen.queryByText("csa_purchase_customer_incomplete")).not.toBeInTheDocument();
   });
 
+  it("explains how to recover when the account shipping address is unavailable", async () => {
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/csa-purchase-requests/${request.id}` && !init?.method)
+        return request as never;
+      if (path.endsWith("/approve"))
+        throw new Error("csa_purchase_customer_shipping_address_unavailable");
+      if (
+        path === "administrative-units/provinces" ||
+        path.startsWith("administrative-units/wards")
+      )
+        return [] as never;
+      throw new Error(`unexpected:${path}`);
+    });
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Duyệt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Xác nhận duyệt" }));
+
+    expect(
+      await screen.findByText(
+        "Địa chỉ giao hàng của tài khoản không còn được hỗ trợ. Hãy yêu cầu khách hàng cập nhật địa chỉ trong Account rồi thử duyệt lại.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("csa_purchase_customer_shipping_address_unavailable"),
+    ).not.toBeInTheDocument();
+  });
+
   it.each([
     [
       "csa_contract_pdf_snapshot_incomplete",

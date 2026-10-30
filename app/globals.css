@@ -1054,15 +1054,6 @@ h3 {
   align-items: end;
   gap: 10px;
 }
-.customer-user-picker {
-  display: grid;
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 16px;
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 .field-error {
   color: var(--danger);
   font-weight: 650;
@@ -1138,10 +1129,6 @@ h3 {
     min-width: 0;
   }
 
-  .customer-mode {
-    align-items: flex-start;
-    flex-direction: column;
-  }
   .customer-form-step {
     padding: 18px 15px;
   }
@@ -5265,8 +5252,7 @@ h3 {
 }
 
 .customer-detail-heading,
-.customer-detail-heading > div,
-.customer-mode {
+.customer-detail-heading > div {
   display: flex;
   gap: 0.75rem;
 }
@@ -5274,25 +5260,9 @@ h3 {
   align-items: center;
   justify-content: space-between;
 }
-.customer-detail-heading > div,
-.customer-mode {
+.customer-detail-heading > div {
   align-items: center;
   flex-wrap: wrap;
-}
-.customer-mode {
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  margin: 0 0 1.5rem;
-  padding: 1rem;
-}
-.customer-mode legend {
-  font-weight: 700;
-  padding: 0 0.35rem;
-}
-.customer-form > section + section {
-  border-top: 1px solid var(--border);
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
 }
 .customer-detail-grid {
   display: grid;

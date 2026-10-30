@@ -27,6 +27,9 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       normalizedMethod === "GET" && path.length === 2 && ["provinces", "wards"].includes(path[1])
     );
   }
+  if (path[0] === "public") {
+    return normalizedMethod === "GET" && path.length === 2 && path[1] === "shipping-areas";
+  }
   if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
 
   const [, resource, id, action, extra] = path;
@@ -193,7 +196,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (resource === "csa-customers") {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(id)) return false;
-    if (action === undefined) return new Set(["GET", "PATCH"]).has(normalizedMethod);
+    if (action === undefined) return normalizedMethod === "GET";
     return action === "link-user" && normalizedMethod === "POST";
   }
 

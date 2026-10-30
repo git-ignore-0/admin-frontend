@@ -328,6 +328,37 @@ describe("admin backend proxy", () => {
     expect(new Headers(upstream.mock.calls[0][1].headers).get("accept-language")).toBe("vi");
   });
 
+  it("proxies the public supported shipping areas used by guest CSA", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(
+      new NextRequest("https://admin.example.test/api/backend/public/shipping-areas?locale=en"),
+      { params: Promise.resolve({ path: ["public", "shipping-areas"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      "https://auth.example.test/api/v1/public/shipping-areas?locale=en",
+    );
+  });
+
+  it.each([
+    "https://admin.example.test/api/backend/public/shipping-areas",
+    "https://admin.example.test/api/backend/public/shipping-areas?locale=fr",
+    "https://admin.example.test/api/backend/public/shipping-areas?locale=vi&extra=1",
+  ])("rejects an unsafe supported-shipping-area query: %s", async (url) => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(new NextRequest(url), {
+      params: Promise.resolve({ path: ["public", "shipping-areas"] }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("keeps the bearer token server-side for an allowed Membership detail lookup", async () => {
     const upstream = vi
       .fn()

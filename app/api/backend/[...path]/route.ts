@@ -20,7 +20,16 @@ function jsonError(error: string, status: number) {
   );
 }
 
-function invalidMembershipContractQuery(request: NextRequest, path: string[]) {
+function invalidBackendQuery(request: NextRequest, path: string[]) {
+  if (path[0] === "public" && path[1] === "shipping-areas") {
+    const params = request.nextUrl.searchParams;
+    const locales = params.getAll("locale");
+    return (
+      locales.length !== 1 ||
+      !["vi", "en"].includes(locales[0]) ||
+      [...params.keys()].some((key) => key !== "locale")
+    );
+  }
   const [, resource, id, action, extra] = path;
   if (resource === "csa-coupons") {
     const params = request.nextUrl.searchParams;
@@ -87,7 +96,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!isAllowedBackendRequest(request.method, path)) {
     return jsonError("backend_route_not_allowed", 404);
   }
-  if (invalidMembershipContractQuery(request, path)) {
+  if (invalidBackendQuery(request, path)) {
     return jsonError("backend_route_not_allowed", 404);
   }
   const target = buildBackendTarget(authOrigin(), path, request.nextUrl.search);

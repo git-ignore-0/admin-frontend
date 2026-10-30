@@ -317,7 +317,7 @@ describe("backend API target", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     expect(isAllowedBackendRequest("GET", ["admin", "csa-customers"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "csa-customers"])).toBe(true);
-    expect(isAllowedBackendRequest("PATCH", ["admin", "csa-customers", id])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "csa-customers", id])).toBe(false);
     expect(isAllowedBackendRequest("DELETE", ["admin", "csa-customers", id])).toBe(false);
     expect(isAllowedBackendRequest("POST", ["admin", "csa-customers", id, "link-user"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "csa-customers", id, "unlink-user"])).toBe(
@@ -332,6 +332,13 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("POST", ["administrative-units", "provinces"])).toBe(false);
     expect(isAllowedBackendRequest("GET", ["administrative-units", "unknown"])).toBe(false);
     expect(isAllowedBackendRequest("GET", ["administrative-units", "wards", "extra"])).toBe(false);
+  });
+
+  it("allowlists only read access to public supported shipping areas", () => {
+    expect(isAllowedBackendRequest("GET", ["public", "shipping-areas"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["public", "shipping-areas"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["public", "shipping-quotes"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["public", "shipping-areas", "extra"])).toBe(false);
   });
 
   it("allowlists only the required Testimonial methods and exact actions", () => {

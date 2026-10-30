@@ -62,7 +62,9 @@ export function LinkCustomerUserDialog({
       setError(
         code === "csa_customer_user_exists"
           ? t.csaCustomers.userExists
-          : requestErrorMessage(caught, t),
+          : code === "csa_customer_shipping_address_unavailable"
+            ? t.csaCustomers.shippingAddressUnavailable
+            : requestErrorMessage(caught, t),
       );
     } finally {
       submitRef.current = false;

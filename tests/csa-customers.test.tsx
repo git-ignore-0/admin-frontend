@@ -36,6 +36,13 @@ const customer: CSACustomer = {
   updated_at: "2026-09-02T00:00:00Z",
   memberships: [],
 };
+const supportedShippingAreas = [
+  {
+    province_code: "79",
+    province_name: "Ho Chi Minh City",
+    wards: [{ ward_code: "001", ward_name: "Ben Nghe Ward", shipping_fee_vnd: "30000" }],
+  },
+];
 
 function membership(
   id: string,
@@ -78,6 +85,19 @@ function providers(child: React.ReactNode, initialLocale: "en" | "vi" = "en") {
 }
 
 describe("CSA customer administration", () => {
+  it("offers only manual customer creation", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    providers(<CSACustomerForm />);
+
+    expect(screen.queryByRole("radio", { name: "Choose from website accounts" })).toBeNull();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(await screen.findByRole("button", { name: "Create CSA customer" })).toBeVisible();
+  });
+
   it("renders only the supported customer columns and one row action", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [customer], meta });
     const view = providers(<CSACustomerList />);
@@ -290,15 +310,10 @@ describe("CSA customer administration", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 
-  it("creates a customer without a website account using Auth address data and no Membership request", async () => {
+  it("creates a customer with the same supported shipping areas used by guest CSA", async () => {
     let resolveCreate!: (value: CSACustomer) => void;
     vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "administrative-units/provinces") {
-        return [{ code: "79", name: "Ho Chi Minh City" }] as never;
-      }
-      if (path === "administrative-units/wards?province=79") {
-        return [{ code: "001", name: "Ben Nghe Ward" }] as never;
-      }
+      if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
       if (path === "admin/csa-customers") {
         return new Promise<CSACustomer>((resolve) => {
           resolveCreate = resolve;
@@ -308,10 +323,8 @@ describe("CSA customer administration", () => {
     });
 
     const view = providers(<CSACustomerForm />);
-    expect(
-      screen.getByRole("radio", { name: "Create customer without website account" }),
-    ).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Choose from website accounts" })).toBeVisible();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByRole("searchbox")).toBeNull();
     expect(view.container).not.toHaveTextContent("Package");
     expect(screen.queryByLabelText(/Farmbrite/)).toBeNull();
 
@@ -323,6 +336,10 @@ describe("CSA customer administration", () => {
     expect(screen.getByText("Ward/commune is required.")).toBeVisible();
     expect(screen.getByText("Detailed address is required.")).toBeVisible();
     expect(api).toHaveBeenCalledTimes(1);
+    expect(api).toHaveBeenCalledWith("public/shipping-areas?locale=en", expect.anything());
+    expect(
+      vi.mocked(api).mock.calls.some(([path]) => path.startsWith("administrative-units/")),
+    ).toBe(false);
 
     fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), {
       target: { value: customer.name },
@@ -381,130 +398,9 @@ describe("CSA customer administration", () => {
     );
   });
 
-  it("previews a complete website User and blocks Users that already have a CSA customer", async () => {
-    const completeUser = {
-      id: "58cbea40-4749-4400-9fa3-188de573abaf",
-      name: "Web User",
-      email: "web@example.com",
-      phone: "0912345678",
-      province_code: "79",
-      ward_code: "001",
-      address: "12 Main Street",
-      has_csa_customer: false,
-      status: "active",
-      date_joined: "",
-      points_balance: 0,
-    };
-    const unavailableUser = {
-      ...completeUser,
-      id: "unavailable",
-      email: "used@example.com",
-      has_csa_customer: true,
-    };
-    vi.mocked(apiEnvelope).mockResolvedValue({ data: [completeUser, unavailableUser], meta });
-    vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "administrative-units/provinces")
-        return [{ code: "79", name: "Ho Chi Minh City" }] as never;
-      if (path === "administrative-units/wards?province=79")
-        return [{ code: "001", name: "Ben Nghe Ward" }] as never;
-      if (path === "admin/csa-customers") return { ...customer, user: completeUser } as never;
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<CSACustomerForm />);
-
-    fireEvent.click(screen.getByRole("radio", { name: "Choose from website accounts" }));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "web" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    const available = await screen.findByRole("radio", { name: /web@example.com/ });
-    const unavailable = screen.getByRole("radio", { name: /used@example.com/ });
-    expect(unavailable).toBeDisabled();
-    expect(screen.getByText("This account is linked to another CSA customer.")).toBeVisible();
-    fireEvent.click(available);
-    expect(screen.getByRole("heading", { name: "Confirm account information" })).toBeVisible();
-    expect(screen.getByText("12 Main Street")).toBeVisible();
-    expect(screen.queryByLabelText("Name *")).toBeNull();
-
-    await waitFor(() =>
-      expect(api).toHaveBeenCalledWith("administrative-units/wards?province=79", expect.anything()),
-    );
-    const create = screen.getByRole("button", { name: "Create CSA customer" });
-    await waitFor(() => expect(create).toBeEnabled());
-    fireEvent.click(create);
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
-    const createCall = vi.mocked(api).mock.calls.find(([path]) => path === "admin/csa-customers");
-    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
-      user_id: completeUser.id,
-      name: completeUser.name,
-      phone: "+84912345678",
-      province_code: "79",
-      ward_code: "001",
-      address: "12 Main Street",
-    });
-  });
-
-  it("requires and submits supplemental fields for an incomplete website User without updating the User", async () => {
-    const incompleteUser = {
-      id: "58cbea40-4749-4400-9fa3-188de573abaf",
-      name: "Web User",
-      email: "web@example.com",
-      phone: "",
-      province_code: "",
-      ward_code: "",
-      address: "",
-      has_csa_customer: false,
-      status: "active",
-      date_joined: "",
-      points_balance: 0,
-    };
-    vi.mocked(apiEnvelope).mockResolvedValue({ data: [incompleteUser], meta });
-    vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "administrative-units/provinces")
-        return [{ code: "79", name: "Ho Chi Minh City" }] as never;
-      if (path === "administrative-units/wards?province=79")
-        return [{ code: "001", name: "Ben Nghe Ward" }] as never;
-      if (path === "admin/csa-customers") return customer;
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    providers(<CSACustomerForm />);
-
-    fireEvent.click(screen.getByRole("radio", { name: "Choose from website accounts" }));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "web" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    fireEvent.click(await screen.findByRole("radio", { name: /web@example.com/ }));
-    expect(
-      screen.getByText(
-        "Complete the missing customer information below. This does not update the website account.",
-      ),
-    ).toBeVisible();
-    expect(screen.getByLabelText("Name *")).toHaveValue("Web User");
-    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-    expect(screen.getByText("Phone number is required.")).toBeVisible();
-    expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/csa-customers")).toBe(false);
-
-    fireEvent.change(screen.getByRole("textbox", { name: /Phone number/ }), {
-      target: { value: "+84912345678" },
-    });
-    fireEvent.change(screen.getByRole("combobox", { name: /Province\/city/ }), {
-      target: { value: "79" },
-    });
-    await screen.findByRole("option", { name: "Ben Nghe Ward" });
-    fireEvent.change(screen.getByRole("combobox", { name: /Ward\/commune/ }), {
-      target: { value: "001" },
-    });
-    fireEvent.change(screen.getByRole("textbox", { name: /Delivery address/ }), {
-      target: { value: "12 Main Street" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
-    expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith("admin/users/"))).toBe(false);
-  });
-
   it("keeps the create form intact and reports a duplicate-phone conflict", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "administrative-units/provinces")
-        return [{ code: "79", name: "Ho Chi Minh City" }] as never;
-      if (path === "administrative-units/wards?province=79")
-        return [{ code: "001", name: "Ben Nghe Ward" }] as never;
+      if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
       if (path === "admin/csa-customers") throw new Error("csa_customer_phone_exists");
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -532,58 +428,6 @@ describe("CSA customer administration", () => {
     expect(
       [...view.container.querySelectorAll(".error-box")].some((box) =>
         box.textContent?.includes("This phone number belongs to another CSA customer."),
-      ),
-    ).toBe(false);
-    expect(navigation.replace).not.toHaveBeenCalled();
-  });
-
-  it("returns a duplicate-phone error to the phone field in the linked User flow", async () => {
-    const completeUser = {
-      id: "linked-phone-conflict",
-      name: "Web User",
-      email: "web@example.com",
-      phone: "0912345678",
-      province_code: "79",
-      ward_code: "001",
-      address: "12 Main Street",
-      has_csa_customer: false,
-      status: "active",
-      date_joined: "",
-      points_balance: 0,
-    };
-    vi.mocked(apiEnvelope).mockResolvedValue({ data: [completeUser], meta });
-    vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "administrative-units/provinces") {
-        return [{ code: "79", name: "Ho Chi Minh City" }] as never;
-      }
-      if (path === "administrative-units/wards?province=79") {
-        return [{ code: "001", name: "Ben Nghe Ward" }] as never;
-      }
-      if (path === "admin/csa-customers") throw new Error("csa_customer_phone_exists");
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    const view = providers(<CSACustomerForm />, "vi");
-
-    fireEvent.click(screen.getByRole("radio", { name: "Chọn từ tài khoản website" }));
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "web" } });
-    fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
-    fireEvent.click(await screen.findByRole("radio", { name: /web@example.com/ }));
-    expect(screen.getByRole("heading", { name: "Xác nhận thông tin tài khoản" })).toBeVisible();
-    fireEvent.submit(screen.getByRole("button", { name: "Tạo khách hàng CSA" }).closest("form")!);
-
-    await waitFor(() =>
-      expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/csa-customers")).toBe(true),
-    );
-    const duplicateError = await screen.findByText(
-      "Số điện thoại này đã thuộc về khách hàng CSA khác.",
-    );
-    const phoneInput = screen.getByLabelText(/Số điện thoại/);
-    expect(phoneInput).toHaveAttribute("aria-invalid", "true");
-    expect(phoneInput).toHaveAttribute("aria-describedby", duplicateError.id);
-    expect(phoneInput).toHaveValue("0912345678");
-    expect(
-      [...view.container.querySelectorAll(".error-box")].some((box) =>
-        box.textContent?.includes("Số điện thoại này đã thuộc về khách hàng CSA khác."),
       ),
     ).toBe(false);
     expect(navigation.replace).not.toHaveBeenCalled();
@@ -619,6 +463,44 @@ describe("CSA customer administration", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm link" }));
     expect(
       await within(dialog).findByText("This account is linked to another CSA customer."),
+    ).toBeVisible();
+  });
+
+  it("explains that a supported delivery address is required before linking", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith("link-user")) {
+        throw new Error("csa_customer_shipping_address_unavailable");
+      }
+      return customer;
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [
+        {
+          id: "58cbea40-4749-4400-9fa3-188de573abaf",
+          name: "Web User",
+          email: "web@example.com",
+          phone: "0909000000",
+          status: "active",
+          date_joined: "",
+          points_balance: 0,
+        },
+      ],
+      meta,
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />, "vi");
+    fireEvent.click((await screen.findAllByRole("button", { name: "Liên kết tài khoản" }))[0]);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("searchbox"), {
+      target: { value: "web@example.com" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tìm kiếm" }));
+    fireEvent.click(await within(dialog).findByRole("radio"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận liên kết" }));
+
+    expect(
+      await within(dialog).findByText(
+        "Tài khoản chưa có địa chỉ giao hàng đang được hỗ trợ. Hãy cập nhật địa chỉ trước khi liên kết.",
+      ),
     ).toBeVisible();
   });
 

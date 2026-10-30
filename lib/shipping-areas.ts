@@ -1,5 +1,15 @@
 import { api } from "@/lib/client-api";
-import type { ShippingSettings } from "@/lib/types";
+import type { ShippingSettings, SupportedShippingProvince } from "@/lib/types";
+
+type SupportedShippingAreaPayload = {
+  province_code: string;
+  province_name: string;
+  wards: Array<{
+    ward_code: string;
+    ward_name: string;
+    shipping_fee_vnd: string;
+  }>;
+};
 
 export type ShippingOverrideInput = {
   ward_code: string;
@@ -12,6 +22,25 @@ export type ShippingSettingsInput = {
   is_active: boolean;
   overrides: ShippingOverrideInput[];
 };
+
+export async function getSupportedShippingAreas(
+  locale: "vi" | "en",
+  signal?: AbortSignal,
+): Promise<SupportedShippingProvince[]> {
+  const items = await api<SupportedShippingAreaPayload[]>(
+    `public/shipping-areas?locale=${locale}`,
+    { signal },
+  );
+  return items.map((province) => ({
+    code: province.province_code,
+    name: province.province_name,
+    wards: province.wards.map((ward) => ({
+      code: ward.ward_code,
+      name: ward.ward_name,
+      shipping_fee_vnd: ward.shipping_fee_vnd,
+    })),
+  }));
+}
 
 export function getShippingSettings(provinceCode: string, signal?: AbortSignal) {
   const path = `admin/shipping-settings/${encodeURIComponent(provinceCode)}`;
