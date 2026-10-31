@@ -235,7 +235,7 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
               </p>
             )}
             {meta.total > meta.page_size && (
-              <div className="farm-weekly-navigation">
+              <div className="farm-profile-navigation">
                 <button
                   type="button"
                   className="button secondary"

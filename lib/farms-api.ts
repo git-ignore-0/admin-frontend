@@ -3,9 +3,11 @@ import type {
   Farm,
   AvailableFarmProduct,
   FarmProduct,
-  FarmWeeklySupply,
+  FarmStockBatch,
   MediaAsset,
   PaginationMeta,
+  StockBatchInput,
+  StockBatchStatus,
   TrackerFarm,
 } from "@/lib/types";
 
@@ -72,10 +74,10 @@ export function listAvailableFarmProducts(
   );
 }
 
-export function addFarmProduct(farmId: string, productId: string) {
+export function addFarmProduct(farmId: string, productId: string, batch: StockBatchInput) {
   return api<FarmProduct>(`admin/farms/${farmId}/products`, {
     method: "POST",
-    body: JSON.stringify({ product_id: productId }),
+    body: JSON.stringify({ product_id: productId, ...batch }),
   });
 }
 
@@ -90,26 +92,47 @@ export function removeFarmProduct(farmId: string, productId: string) {
   return api<void>(`admin/farms/${farmId}/products/${productId}`, { method: "DELETE" });
 }
 
-export function listFarmWeeklySupplies(
+export function listFarmStockBatches(
   farmId: string,
   productId: string,
-  fromWeek: string,
-  toWeek: string,
+  query: { page?: number; status?: StockBatchStatus } = {},
 ) {
-  const params = new URLSearchParams({ from_week: fromWeek, to_week: toWeek });
-  return api<FarmWeeklySupply[]>(`admin/farms/${farmId}/products/${productId}/weeks?${params}`);
+  const params = new URLSearchParams({ page: String(query.page ?? 1) });
+  if (query.status) params.set("status", query.status);
+  return apiEnvelope<FarmStockBatch[], PaginationMeta>(
+    `admin/farms/${farmId}/products/${productId}/batches?${params}`,
+  );
 }
 
-export function setFarmWeeklySupply(
+export function createFarmStockBatch(farmId: string, productId: string, batch: StockBatchInput) {
+  return api<FarmStockBatch>(`admin/farms/${farmId}/products/${productId}/batches`, {
+    method: "POST",
+    body: JSON.stringify(batch),
+  });
+}
+
+export function updateFarmStockBatch(
   farmId: string,
   productId: string,
-  week: string,
-  quantity: number,
+  batchId: string,
+  payload: Partial<StockBatchInput> & { version: number },
 ) {
-  return api<FarmWeeklySupply>(`admin/farms/${farmId}/products/${productId}/weeks/${week}`, {
-    method: "PUT",
-    body: JSON.stringify({ quantity_units: quantity }),
+  return api<FarmStockBatch>(`admin/farms/${farmId}/products/${productId}/batches/${batchId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
   });
+}
+
+export function cancelFarmStockBatch(
+  farmId: string,
+  productId: string,
+  batchId: string,
+  version: number,
+) {
+  return api<FarmStockBatch>(
+    `admin/farms/${farmId}/products/${productId}/batches/${batchId}/cancel`,
+    { method: "POST", body: JSON.stringify({ version }) },
+  );
 }
 
 export function getFarmTracker(farmId: string) {

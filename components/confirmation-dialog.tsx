@@ -2,6 +2,8 @@
 
 import { ReactNode, RefObject, useEffect, useId, useRef } from "react";
 
+import { Button } from "@/components/nfv-controls";
+
 type Props = {
   title: string;
   children: ReactNode;
@@ -108,27 +110,28 @@ export function ConfirmationDialog({
           </p>
         )}
         <div className="confirmation-actions">
-          <button className="button secondary" disabled={busy} onClick={onCancel} type="button">
+          <Button className="button secondary" variant="outline" disabled={busy} onClick={onCancel}>
             {cancelLabel}
-          </button>
+          </Button>
           {alternateLabel && onAlternate ? (
-            <button
+            <Button
               className="button secondary"
+              variant="outline"
               disabled={busy}
               onClick={onAlternate}
-              type="button"
             >
               {alternateLabel}
-            </button>
+            </Button>
           ) : null}
-          <button
-            className={`button ${danger ? "danger" : ""}`}
+          <Button
+            className={`button ${danger ? "danger" : ""}`.trim()}
             disabled={busy || confirmDisabled}
+            loading={busy}
             onClick={onConfirm}
-            type="button"
+            variant={danger ? "danger" : "primary"}
           >
             {busy ? busyLabel : confirmLabel}
-          </button>
+          </Button>
         </div>
       </section>
     </div>

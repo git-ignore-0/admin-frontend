@@ -617,6 +617,8 @@ export type Farm = {
   image: MediaAsset | null;
   photos: MediaAsset[];
   is_active: boolean;
+  in_stock_product_count: number;
+  out_of_stock_product_count: number;
   version: number;
   created_at: string;
   updated_at: string;
@@ -633,17 +635,32 @@ export type FarmProduct = {
   unit_label_vi: string;
   unit_label_en: string;
   is_active: boolean;
+  available_quantity: number;
+  batch_count: number;
+  active_batch_count: number;
+  has_supply_history: boolean;
+  next_expiry_date: string | null;
 };
 
 export type AvailableFarmProduct = Pick<FarmProduct, "sku" | "name_vi" | "name_en"> & {
   id: string;
 };
 
-export type FarmWeeklySupply = {
-  id?: string;
-  week_start: string;
+export type StockBatchStatus = "upcoming" | "active" | "expired" | "cancelled";
+
+export type FarmStockBatch = {
+  id: string;
+  farm_product_id: string;
+  start_date: string;
+  end_date: string;
   quantity_units: number;
+  status: StockBatchStatus;
+  version: number;
+  created_at: string;
+  updated_at: string;
 };
+
+export type StockBatchInput = Pick<FarmStockBatch, "start_date" | "end_date" | "quantity_units">;
 
 export type MediaAsset = {
   id: string;

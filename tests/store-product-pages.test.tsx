@@ -160,7 +160,7 @@ describe("store product editor", () => {
     expect(screen.queryByText(/0\.500 kg/)).not.toBeInTheDocument();
   });
 
-  it("explains why a selling unit cannot change after weekly supply exists", async () => {
+  it("explains why a selling unit cannot change after stock batches exist", async () => {
     mocks.product.mockResolvedValue(storedProduct);
     mocks.save.mockRejectedValue(Object.assign(new Error("product_unit_in_use"), { status: 409 }));
     render(<StoreProductEditor productId="product-1" />);
@@ -169,7 +169,7 @@ describe("store product editor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     expect(
-      await screen.findByText(/Không thể đổi quy cách hoặc đơn vị bán vì sản phẩm đã có số lượng/),
+      await screen.findByText(/Không thể đổi quy cách hoặc đơn vị bán vì sản phẩm đã có đợt hàng/),
     ).toBeVisible();
     expect(mocks.save).toHaveBeenCalled();
   });

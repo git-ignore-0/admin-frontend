@@ -1,11 +1,15 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
 import {
+  addFarmProduct,
+  cancelFarmStockBatch,
+  createFarmStockBatch,
   listFarms,
   listFarmProducts,
   listAvailableFarmProducts,
+  listFarmStockBatches,
   saveFarm,
-  setFarmWeeklySupply,
+  updateFarmStockBatch,
   enableFarmTracker,
 } from "@/lib/farms-api";
 
@@ -69,14 +73,69 @@ it("sends Farm version and photo IDs without sending tracker counts", async () =
   });
 });
 
-it("writes integer sale units to a Monday and enables an existing Farm profile", async () => {
-  fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: {} }) });
-  await setFarmWeeklySupply("farm-1", "product-1", "2026-10-19", 10);
-  await enableFarmTracker("farm-1", { signup_count: 4, one_month_signup_count: 1 });
-  expect(fetchMock.mock.calls[0][0]).toBe(
-    "/api/backend/admin/farms/farm-1/products/product-1/weeks/2026-10-19",
-  );
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ quantity_units: 10 });
-  expect(fetchMock.mock.calls[1][0]).toBe("/api/backend/admin/farms/farm-1/growth-tracker");
+it("creates a Farm product together with its first stock batch", async () => {
+  fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ data: {} }) });
+
+  await addFarmProduct("farm-1", "product-1", {
+    start_date: "2026-10-26",
+    end_date: "2026-11-01",
+    quantity_units: 10,
+  });
+
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/admin/farms/farm-1/products");
+  expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    product_id: "product-1",
+    start_date: "2026-10-26",
+    end_date: "2026-11-01",
+    quantity_units: 10,
+  });
+});
+
+it("lists, creates, updates, and cancels Farm stock batches through the BFF", async () => {
+  fetchMock.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ data: [], meta: {} }),
+  });
+
+  await listFarmStockBatches("farm-1", "product-1", { page: 2, status: "active" });
+  await createFarmStockBatch("farm-1", "product-1", {
+    start_date: "2026-10-26",
+    end_date: "2026-11-01",
+    quantity_units: 10,
+  });
+  await updateFarmStockBatch("farm-1", "product-1", "batch-1", {
+    version: 2,
+    end_date: "2026-11-02",
+    quantity_units: 12,
+  });
+  await cancelFarmStockBatch("farm-1", "product-1", "batch-1", 3);
+
+  const base = "/api/backend/admin/farms/farm-1/products/product-1/batches";
+  expect(fetchMock.mock.calls[0][0]).toBe(`${base}?page=2&status=active`);
+  expect(fetchMock.mock.calls[1][0]).toBe(base);
   expect(fetchMock.mock.calls[1][1].method).toBe("POST");
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+    start_date: "2026-10-26",
+    end_date: "2026-11-01",
+    quantity_units: 10,
+  });
+  expect(fetchMock.mock.calls[2][0]).toBe(`${base}/batch-1`);
+  expect(fetchMock.mock.calls[2][1].method).toBe("PATCH");
+  expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
+    version: 2,
+    end_date: "2026-11-02",
+    quantity_units: 12,
+  });
+  expect(fetchMock.mock.calls[3][0]).toBe(`${base}/batch-1/cancel`);
+  expect(fetchMock.mock.calls[3][1].method).toBe("POST");
+  expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ version: 3 });
+});
+
+it("enables an existing Farm profile", async () => {
+  fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: {} }) });
+  await enableFarmTracker("farm-1", { signup_count: 4, one_month_signup_count: 1 });
+  expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/admin/farms/farm-1/growth-tracker");
+  expect(fetchMock.mock.calls[0][1].method).toBe("POST");
 });

@@ -23,7 +23,7 @@ vi.mock("@/lib/session", () => ({
   writeSession: vi.fn(),
 }));
 
-import { DELETE, GET, PATCH, POST, PUT } from "@/app/api/backend/[...path]/route";
+import { DELETE, GET, PATCH, POST } from "@/app/api/backend/[...path]/route";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { clearSession, readSession, writeSession } from "@/lib/session";
 
@@ -537,17 +537,21 @@ describe("admin backend proxy", () => {
     expect((upstream.mock.calls[3][1] as RequestInit).method).toBe("DELETE");
   });
 
-  it("forwards Farm weekly quantity writes through the same-origin proxy", async () => {
+  it("forwards Farm stock-batch writes through the same-origin proxy", async () => {
     const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const product = "11111111-1111-4111-8111-111111111111";
-    const path = ["admin", "farms", farm, "products", product, "weeks", "2026-10-19"];
+    const path = ["admin", "farms", farm, "products", product, "batches"];
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { quantity_units: 10 } }));
     vi.stubGlobal("fetch", upstream);
-    const response = await PUT(
+    const response = await POST(
       new NextRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
-        method: "PUT",
+        method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
-        body: JSON.stringify({ quantity_units: 10 }),
+        body: JSON.stringify({
+          start_date: "2026-10-19",
+          end_date: "2026-10-25",
+          quantity_units: 10,
+        }),
       }),
       { params: Promise.resolve({ path }) },
     );
@@ -555,7 +559,7 @@ describe("admin backend proxy", () => {
     expect(String(upstream.mock.calls[0][0])).toBe(
       `https://auth.example.test/api/v1/${path.join("/")}`,
     );
-    expect((upstream.mock.calls[0][1] as RequestInit).method).toBe("PUT");
+    expect((upstream.mock.calls[0][1] as RequestInit).method).toBe("POST");
   });
 
   it("returns a bounded timeout with no-store caching", async () => {

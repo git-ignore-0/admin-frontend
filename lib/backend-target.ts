@@ -48,17 +48,11 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(extra)) return false;
     if (path.length === 5) return new Set(["PATCH", "DELETE"]).has(normalizedMethod);
-    if (path[5] !== "weeks") return false;
-    if (path.length === 6) return normalizedMethod === "GET";
-    if (path.length !== 7 || normalizedMethod !== "PUT") return false;
-    const week = path[6];
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(week)) return false;
-    const date = new Date(`${week}T00:00:00Z`);
-    return (
-      !Number.isNaN(date.getTime()) &&
-      date.toISOString().slice(0, 10) === week &&
-      date.getUTCDay() === 1
-    );
+    if (path[5] !== "batches") return false;
+    if (path.length === 6) return CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(path[6] ?? "")) return false;
+    if (path.length === 7) return normalizedMethod === "PATCH";
+    return path.length === 8 && path[7] === "cancel" && normalizedMethod === "POST";
   }
   if (["store-categories", "store-products"].includes(resource)) {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);

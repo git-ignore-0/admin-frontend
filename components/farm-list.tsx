@@ -9,7 +9,6 @@ import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
-import { formatAdminDate } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { listFarms } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
@@ -112,49 +111,48 @@ export function FarmList() {
         retryLabel={t.common.retry}
       />
       {rows && rows.length > 0 && (
-        <div className="table-wrap">
-          <table className="table farm-table">
-            <thead>
-              <tr>
-                <th>{c.image}</th>
-                <th>{c.name}</th>
-                <th>{c.location}</th>
-                <th>{c.status}</th>
-                <th>{c.updated}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((farm) => {
-                const name = locale === "vi" ? farm.name_vi : farm.name_en;
-                return (
-                  <tr key={farm.id}>
-                    <td data-label={c.image}>
-                      {farm.image ? (
-                        <Image
-                          className="reward-thumbnail"
-                          alt=""
-                          width={72}
-                          height={56}
-                          unoptimized
-                          src={mediaUrlForWidth(farm.image, 144)}
-                        />
-                      ) : (
-                        <span aria-hidden="true">—</span>
-                      )}
-                    </td>
-                    <td data-label={c.name}>
-                      <Link href={`/farms/${farm.id}`}>{name}</Link>
-                    </td>
-                    <td data-label={c.location}>
-                      {locale === "vi" ? farm.location_vi : farm.location_en}
-                    </td>
-                    <td data-label={c.status}>{farm.is_active ? c.active : c.inactive}</td>
-                    <td data-label={c.updated}>{formatAdminDate(farm.updated_at)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="farm-inventory-list">
+          {rows.map((farm) => {
+            const name = locale === "vi" ? farm.name_vi : farm.name_en;
+            return (
+              <article className="farm-inventory-row" key={farm.id}>
+                <div className="farm-inventory-identity">
+                  {farm.image ? (
+                    <Image
+                      alt=""
+                      width={72}
+                      height={56}
+                      unoptimized
+                      src={mediaUrlForWidth(farm.image, 144)}
+                    />
+                  ) : (
+                    <span className="farm-inventory-placeholder" aria-hidden="true" />
+                  )}
+                  <div>
+                    <strong>{name}</strong>
+                    <span>{locale === "vi" ? farm.location_vi : farm.location_en}</span>
+                  </div>
+                </div>
+                <span className={`farm-status ${farm.is_active ? "active" : "inactive"}`}>
+                  {farm.is_active ? c.active : c.inactive}
+                </span>
+                <div className="farm-inventory-counts">
+                  <span>
+                    {c.inStockProducts.replace("{count}", String(farm.in_stock_product_count))}
+                  </span>
+                  <span>
+                    {c.outOfStockProducts.replace(
+                      "{count}",
+                      String(farm.out_of_stock_product_count),
+                    )}
+                  </span>
+                </div>
+                <Link className="button secondary" href={`/farms/${farm.id}`}>
+                  {c.manageStock}
+                </Link>
+              </article>
+            );
+          })}
         </div>
       )}
       <Pagination

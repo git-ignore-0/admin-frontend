@@ -37,6 +37,11 @@ const vi = {
     vietnamese: "Tiếng Việt",
     english: "English",
     close: "Đóng",
+    collapseSidebar: "Thu gọn thanh bên",
+    expandSidebar: "Mở rộng thanh bên",
+    openNavigation: "Mở điều hướng",
+    closeNavigation: "Đóng điều hướng",
+    dismissNavigation: "Đóng lớp điều hướng",
     numericInput: {
       required: "Hãy nhập giá trị.",
       positiveInteger: "Giá trị phải là số nguyên lớn hơn 0.",
@@ -736,8 +741,7 @@ const vi = {
     unitViPlaceholder: "VD: g, kg, mớ, bó, quả",
     unitEn: "Đơn vị bán (tiếng Anh)",
     unitEnPlaceholder: "VD: g, kg, bunch, piece",
-    productUnitInUse:
-      "Không thể đổi quy cách hoặc đơn vị bán vì sản phẩm đã có số lượng cung cấp theo tuần.",
+    productUnitInUse: "Không thể đổi quy cách hoặc đơn vị bán vì sản phẩm đã có đợt hàng.",
     price: "Giá bán lẻ (VND)",
     saleType: "Hình thức bán",
     csaEligible: "Dùng được trong gói CSA",
@@ -1437,6 +1441,11 @@ const en: AdminDictionary = {
     vietnamese: "Tiếng Việt",
     english: "English",
     close: "Close",
+    collapseSidebar: "Collapse sidebar",
+    expandSidebar: "Expand sidebar",
+    openNavigation: "Open navigation",
+    closeNavigation: "Close navigation",
+    dismissNavigation: "Dismiss navigation",
     numericInput: {
       required: "Enter a value.",
       positiveInteger: "The value must be a whole number greater than 0.",
@@ -2139,7 +2148,7 @@ const en: AdminDictionary = {
     unitEn: "Selling unit (English)",
     unitEnPlaceholder: "E.g. g, kg, bunch, piece",
     productUnitInUse:
-      "Selling quantity or unit cannot be changed because this product has weekly supply history.",
+      "Selling quantity or unit cannot be changed because this product has stock batches.",
     price: "Retail price (VND)",
     saleType: "Sale type",
     csaEligible: "Available with a CSA package",
