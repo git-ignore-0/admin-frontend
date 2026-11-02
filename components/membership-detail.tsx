@@ -14,8 +14,8 @@ import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import {
   numericInputErrorMessage,
-  parsePositiveInteger,
-  sanitizeIntegerInput,
+  MAX_POSITIVE_INTEGER,
+  parsePositiveQuotaUnits,
 } from "@/lib/numeric-input";
 import type {
   AdminCSAContract,
@@ -34,9 +34,11 @@ function cycleQuantities(cycle: MembershipCycle): CycleQuantities | null {
   const quantities = cycle.quotas.reduce<CycleQuantities | null>(
     (total, quota) => {
       if (!total) return null;
+      if (!Number.isSafeInteger(quota.granted_units)) return null;
       const values = [quota.granted_units, quota.remaining_units, quota.expired_units];
-      if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) return null;
-      const received = quota.granted_units - quota.remaining_units - quota.expired_units;
+      if (values.some((value) => !Number.isFinite(value) || value < 0)) return null;
+      const received =
+        Math.round((quota.granted_units - quota.remaining_units - quota.expired_units) * 100) / 100;
       if (received < 0) return null;
       return {
         granted: total.granted + quota.granted_units,
@@ -48,7 +50,7 @@ function cycleQuantities(cycle: MembershipCycle): CycleQuantities | null {
   );
   if (
     !quantities ||
-    ![quantities.granted, quantities.received, quantities.remaining].every(Number.isSafeInteger)
+    ![quantities.granted, quantities.received, quantities.remaining].every(Number.isFinite)
   ) {
     return null;
   }
@@ -56,7 +58,7 @@ function cycleQuantities(cycle: MembershipCycle): CycleQuantities | null {
 }
 
 function quantity(value: number | undefined): string {
-  return value === undefined ? "—" : String(value);
+  return value === undefined ? "—" : String(Math.round(value * 100) / 100);
 }
 
 export function MembershipDetail({ membershipId }: { membershipId: string }) {
@@ -211,9 +213,13 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
     const validatedLines: Array<{ productId: string; units: number }> = [];
     const nextUnitErrors: Record<number, string> = {};
     usageLines.forEach((line, index) => {
-      const parsed = parsePositiveInteger(line.units);
+      const parsed = parsePositiveQuotaUnits(line.units);
       if (parsed.error) {
-        nextUnitErrors[index] = numericInputErrorMessage(parsed.error, t.common.numericInput);
+        nextUnitErrors[index] = numericInputErrorMessage(
+          parsed.error,
+          { ...t.common.numericInput, decimalFormat: t.memberships.quotaUnitsFormat },
+          MAX_POSITIVE_INTEGER,
+        );
       } else {
         validatedLines[index] = { productId: line.productId, units: parsed.value };
       }
@@ -361,7 +367,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
       cycleTotalCandidate.granted,
       cycleTotalCandidate.received,
       cycleTotalCandidate.remaining,
-    ].every(Number.isSafeInteger)
+    ].every(Number.isFinite)
       ? cycleTotalCandidate
       : null;
 
@@ -832,10 +838,10 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     aria-invalid={Boolean(usageUnitErrors[index])}
                     className="input"
                     disabled={saving}
-                    inputMode="numeric"
+                    inputMode="decimal"
                     onChange={(event) => {
                       updateUsageLine(index, {
-                        units: sanitizeIntegerInput(event.target.value),
+                        units: event.target.value.replace(/,/g, "."),
                       });
                       setUsageUnitErrors((current) => ({ ...current, [index]: "" }));
                     }}

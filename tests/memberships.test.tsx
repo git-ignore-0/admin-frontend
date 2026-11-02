@@ -968,6 +968,41 @@ describe("Membership detail snapshots and usage regressions", () => {
     await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
   });
 
+  it("shows fractional remaining and received period points", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...membership,
+      cycles: [membershipCycle(1, "2026-06-15", "2026-07-15", 10, 9.75)],
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    providers(<MembershipDetail membershipId={membership.id} />);
+    const table = await screen.findByRole("table", { name: "Quantity tracking by period" });
+    const row = within(table).getByRole("row", { name: /Period 1/ });
+    expect(
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent)
+        .slice(-3),
+    ).toEqual(["10", "0.25", "9.75"]);
+  });
+
+  it.each(["0.1", "1.25", "2.5", "0", "-0.25", "0.001", "Infinity", "NaN"])(
+    "rejects invalid manual point usage %s",
+    async (units) => {
+      vi.mocked(api).mockResolvedValue(membership);
+      vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+      providers(<MembershipDetail membershipId={membership.id} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Record received products" }));
+      const dialog = screen.getByRole("dialog", { name: "Record received products" });
+      fireEvent.change(within(dialog).getByLabelText("Units 1"), { target: { value: units } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Record received products" }));
+      expect(within(dialog).getByRole("alert")).toBeVisible();
+      if (units === "0.001") {
+        expect(within(dialog).getByRole("alert")).toHaveTextContent("0.25, 0.5, 0.75");
+      }
+      expect(vi.mocked(api).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    },
+  );
+
   it("keeps usage idempotent and undo retry-safe", async () => {
     const usage: MembershipUsage = {
       id: "ac7d02ac-d36c-4558-b839-9124620dde44",
@@ -976,7 +1011,7 @@ describe("Membership detail snapshots and usage regressions", () => {
       note: "Basket",
       created_at: "2026-08-04T03:00:00Z",
       reversed_at: null,
-      lines: [{ product_id: product.id, product_name: product.name, units: 1 }],
+      lines: [{ product_id: product.id, product_name: product.name, units: 0.25 }],
     };
     let usageCreated = false;
     vi.mocked(api).mockImplementation(async (path, init) => {
@@ -995,6 +1030,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     providers(<MembershipDetail membershipId={membership.id} />);
     fireEvent.click(await screen.findByRole("button", { name: "Record received products" }));
     const dialog = screen.getByRole("dialog", { name: "Record received products" });
+    fireEvent.change(within(dialog).getByLabelText("Units 1"), { target: { value: ".25" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Record received products" }));
     await waitFor(() =>
       expect(
@@ -1008,7 +1044,7 @@ describe("Membership detail snapshots and usage regressions", () => {
       ),
     );
     expect(usageBody.idempotency_key).toMatch(/[0-9a-f-]{36}/);
-    expect(usageBody.lines).toEqual([{ product_id: product.id, units: 1 }]);
+    expect(usageBody.lines).toEqual([{ product_id: product.id, units: 0.25 }]);
     fireEvent.click(await screen.findByRole("button", { name: "Undo product collection" }));
     const undoDialog = screen.getByRole("dialog", { name: "Confirm product collection undo" });
     fireEvent.change(within(undoDialog).getByLabelText("Reason *"), {

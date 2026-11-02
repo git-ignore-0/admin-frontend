@@ -26,7 +26,7 @@ import {
   formatDecimalInput,
   parsePositiveBigInteger,
   parsePositiveDecimal,
-  parsePositiveInteger,
+  parsePositiveQuotaUnits,
   sanitizeDecimalInput,
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
@@ -235,7 +235,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     const leaf = categories.find((item) => item.id === categoryId && isSelectableCategory(item));
     const parsedSize = parsePositiveDecimal(unitSize);
     const parsedPrice = parsePositiveBigInteger(price);
-    const parsedQuota = csa ? parsePositiveInteger(quotaCost) : { value: 0 };
+    const parsedQuota = csa ? parsePositiveQuotaUnits(quotaCost) : { value: 0 };
     const translations = (["vi", "en"] as const).flatMap((language) => {
       const value = content[language];
       return value.name.trim()
@@ -532,10 +532,10 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
               <input
                 className="input"
                 disabled={busy}
-                inputMode="numeric"
+                inputMode="decimal"
                 name="csa_quota_cost"
                 value={quotaCost}
-                onChange={(event) => setQuotaCost(sanitizeIntegerInput(event.target.value))}
+                onChange={(event) => setQuotaCost(event.target.value.replace(/,/g, "."))}
               />
             </label>
             {groupError && (

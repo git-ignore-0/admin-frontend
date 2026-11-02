@@ -25,6 +25,7 @@ import {
   formatStoreMoney,
   getStoreOrder,
   getStoreOrderActions,
+  getStoreOrderPrimaryAction,
   IdempotencyKeyStore,
   mutateStoreOrder,
   storeDeadlineRemainingMs,
@@ -128,17 +129,11 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
   const deadlineLabel =
     currentOrder.status === "payment_pending" ? c.paymentDeadline : c.reviewDeadline;
   const remainingMinutes = remaining === null ? null : Math.ceil(remaining / 60_000);
-  const primaryAction =
-    currentOrder.status === "pending_review"
-      ? "approve"
-      : currentOrder.status === "pending_delivery"
-        ? "deliver"
-        : currentOrder.payment_status === "refund_required"
-          ? "refund"
-          : null;
-  const actions = getStoreOrderActions(currentOrder).sort(
-    (a, b) => Number(b === primaryAction) - Number(a === primaryAction),
-  );
+  const actions = getStoreOrderActions(currentOrder);
+  const primaryAction = getStoreOrderPrimaryAction(actions);
+  actions.sort((a, b) => Number(b === primaryAction) - Number(a === primaryAction));
+  const allocationsValid =
+    currentOrder.status !== "pending_review" || validateStoreAllocations(currentOrder, draft).valid;
   const timeline = [
     { label: c.createdAt, value: order.created_at },
     { label: c.transferReportedAt, value: order.transfer_reported_at },
@@ -203,11 +198,7 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
 
   function actionDisabled() {
     if (!action || loading || error || reloadRequired || !actions.includes(action)) return true;
-    if (action === "approve")
-      return (
-        !validateStoreAllocations(currentOrder, draft).valid ||
-        (currentOrder.total_vnd !== "0" && !confirmed)
-      );
+    if (action === "approve") return !allocationsValid;
     if (action === "cancel") return !reason.trim();
     if (action === "refund") return !note.trim() || !confirmed;
     if (action === "deliver") return !confirmed;
@@ -239,7 +230,7 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
       setActionError(c.refundNoteRequired);
       return;
     }
-    if (action === "approve" && !validateStoreAllocations(currentOrder, draft).valid) {
+    if (action === "approve" && !allocationsValid) {
       setActionError(c.approveAllocationInvalid);
       return;
     }
@@ -414,28 +405,19 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
           </Section>
           {actions.length ? (
             <Section title={c.actions} className="store-order-actions">
-              {order.status === "pending_review" &&
-              !validateStoreAllocations(currentOrder, draft).valid ? (
+              {order.status === "pending_review" && !allocationsValid ? (
                 <p className="allocation-invalid store-order-action-hint">{c.allocationCheck}</p>
               ) : null}
               <div className="detail-actions">
                 {actions.map((item) => (
                   <Button
-                    variant={
-                      item === "cancel"
-                        ? "outline"
-                        : item === "refund"
-                          ? "primary"
-                          : item === "approve" || item === "deliver"
-                            ? "primary"
-                            : "outline"
-                    }
+                    variant={item === primaryAction ? "primary" : "outline"}
                     disabled={
                       actionBusy ||
                       loading ||
                       Boolean(error) ||
                       reloadRequired ||
-                      (item === "approve" && !validateStoreAllocations(currentOrder, draft).valid)
+                      (item === "approve" && !allocationsValid)
                     }
                     className={item === "cancel" ? "store-order-cancel" : undefined}
                     key={item}
@@ -489,19 +471,7 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
               </div>
             )}
           </dl>
-          {action === "approve" ? (
-            <>
-              <p>{c.approveAllocationInvalid}</p>
-              {order.total_vnd !== "0" ? (
-                <FormCheckbox
-                  label={c.confirmPayment}
-                  checked={confirmed}
-                  disabled={actionBusy}
-                  onChange={(event) => setConfirmed(event.target.checked)}
-                />
-              ) : null}
-            </>
-          ) : null}
+          {action === "approve" ? <p>{c.approveAllocationInvalid}</p> : null}
           {action === "cancel" ? (
             <>
               <FormField label={c.cancelReason}>

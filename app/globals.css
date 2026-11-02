@@ -3169,18 +3169,17 @@ h3 {
 }
 .store-order-actions .detail-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 .store-order-actions .nfv-button {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  min-height: 40px;
   height: auto;
   white-space: normal;
-  padding-block: 8px;
-}
-.store-order-actions .detail-actions > .nfv-button:first-child {
-  grid-column: 1 / -1;
+  padding: 10px 16px;
 }
 .store-order-action-hint {
   font-size: var(--store-order-secondary-size);

@@ -301,20 +301,42 @@ describe("store product editor", () => {
     expect(screen.queryByLabelText(/Đường dẫn/)).not.toBeInTheDocument();
   });
 
-  it("saves a CSA-eligible draft with a positive quota cost", async () => {
+  it("saves a CSA-eligible draft with a fractional point cost", async () => {
     render(<StoreProductEditor />);
     await fillBase();
     fireEvent.change(screen.getByLabelText("Hình thức bán"), { target: { value: "yes" } });
     fireEvent.change(await screen.findByLabelText(/Nhóm quyền lợi CSA/), {
       target: { value: "quota" },
     });
-    fireEvent.change(screen.getByLabelText(/Số lượt cần trừ/), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: ".25" } });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][0]).toMatchObject({
       csa_quota_group_id: "quota",
-      csa_quota_cost: 2,
+      csa_quota_cost: 0.25,
     });
+  });
+
+  it.each(["0.1", "0.9", "1.25", "2.5", "0", "-0.25", "0.001", "Infinity", "NaN", "2147483647.01"])(
+    "rejects invalid point cost %s without saving",
+    async (cost) => {
+      render(<StoreProductEditor />);
+      await fillBase();
+      fireEvent.change(screen.getByLabelText("Hình thức bán"), { target: { value: "yes" } });
+      fireEvent.change(await screen.findByLabelText(/Nhóm quyền lợi CSA/), {
+        target: { value: "quota" },
+      });
+      fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: cost } });
+      fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+      expect(await screen.findByRole("alert")).toBeVisible();
+      expect(mocks.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it("loads and retains a fractional cost when editing", async () => {
+    mocks.product.mockResolvedValue({ ...storedProduct, csa_quota_cost: 0.25 });
+    render(<StoreProductEditor productId={storedProduct.id} />);
+    expect(await screen.findByLabelText(/Số điểm cần trừ/)).toHaveValue("0.25");
   });
 
   it("previews the selected primary image and releases its object URL when removed", async () => {

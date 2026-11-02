@@ -90,6 +90,17 @@ export function parsePositiveDecimal(
   return { value: parsed };
 }
 
+export function parsePositiveQuotaUnits(value: string): NumericInputResult {
+  const parsed = parsePositiveDecimal(value.replace(/,/g, ".").replace(/^\./, "0."), {
+    max: MAX_POSITIVE_INTEGER,
+    decimalPlaces: 2,
+  });
+  if (parsed.error) return parsed;
+  return Number.isInteger(parsed.value) || [0.25, 0.5, 0.75].includes(parsed.value)
+    ? parsed
+    : { error: "decimal_format" };
+}
+
 export function numericInputErrorMessage(
   error: NumericInputError,
   messages: {

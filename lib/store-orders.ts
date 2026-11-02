@@ -106,7 +106,12 @@ export function storeDeadlineRemainingMs(
 
 export function getStoreOrderActions(order: StoreOrder): StoreOrderAction[] {
   const actions: StoreOrderAction[] = [];
-  if (order.status === "pending_review") actions.push("approve");
+  if (
+    order.status === "pending_review" &&
+    (order.total_vnd === "0" || order.payment_status === "received")
+  ) {
+    actions.push("approve");
+  }
   if (["payment_pending", "pending_review", "pending_delivery"].includes(order.status)) {
     actions.push("cancel");
   }
@@ -128,6 +133,13 @@ export function getStoreOrderActions(order: StoreOrder): StoreOrderAction[] {
     actions.push("restock");
   }
   return actions;
+}
+
+export function getStoreOrderPrimaryAction(
+  actions: readonly StoreOrderAction[],
+): StoreOrderAction | null {
+  const priority: StoreOrderAction[] = ["record-payment", "approve", "deliver", "refund"];
+  return priority.find((action) => actions.includes(action)) ?? null;
 }
 
 export type StoreAllocationError =

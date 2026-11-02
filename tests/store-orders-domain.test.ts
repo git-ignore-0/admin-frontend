@@ -9,6 +9,7 @@ import {
   buildStoreOrderQuery,
   formatStoreMoney,
   getStoreOrderActions,
+  getStoreOrderPrimaryAction,
   getStoreOrderDisplayStatus,
   storeOrderStatusQuery,
   storeDeadlineRemainingMs,
@@ -132,7 +133,14 @@ describe("Store order admin domain", () => {
   });
 
   it("exposes only actions valid for the order and payment state", () => {
-    expect(getStoreOrderActions(order())).toEqual(["approve", "cancel", "record-payment"]);
+    expect(getStoreOrderActions(order())).toEqual(["cancel", "record-payment"]);
+    expect(getStoreOrderActions(order({ payment_status: "received" }))).toEqual([
+      "approve",
+      "cancel",
+    ]);
+    expect(getStoreOrderActions(order({ total_vnd: "0", payment_status: "not_required" }))).toEqual(
+      ["approve", "cancel"],
+    );
     expect(
       getStoreOrderActions(
         order({
@@ -176,6 +184,23 @@ describe("Store order admin domain", () => {
     expect(
       getStoreOrderActions(order({ status: "delivered", payment_status: "received" })),
     ).toEqual([]);
+  });
+
+  it("chooses the primary action only from available actions", () => {
+    expect(getStoreOrderPrimaryAction(getStoreOrderActions(order()))).toBe("record-payment");
+    expect(
+      getStoreOrderPrimaryAction(getStoreOrderActions(order({ payment_status: "received" }))),
+    ).toBe("approve");
+    expect(
+      getStoreOrderPrimaryAction(
+        getStoreOrderActions(order({ total_vnd: "0", payment_status: "not_required" })),
+      ),
+    ).toBe("approve");
+    expect(getStoreOrderPrimaryAction(["cancel", "deliver"])).toBe("deliver");
+    expect(getStoreOrderPrimaryAction(["refund", "restock"])).toBe("refund");
+    expect(getStoreOrderPrimaryAction(["cancel"])).toBeNull();
+    expect(getStoreOrderPrimaryAction(["restock"])).toBeNull();
+    expect(getStoreOrderPrimaryAction([])).toBeNull();
   });
 
   it("validates complete unique allocations against each line and shared batch availability", () => {

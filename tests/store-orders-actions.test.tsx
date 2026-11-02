@@ -70,8 +70,31 @@ async function open(name: string) {
 }
 
 describe("Store order actions", () => {
-  it("approves atomically with allocations, payment confirmation, and one synchronous submit", async () => {
+  it("requires recording payment before approval becomes available", async () => {
     const item = pending();
+    view(item);
+    await screen.findByRole("button", { name: "Ghi nhận đã nhận tiền" });
+    expect(screen.queryByRole("button", { name: "Duyệt đơn" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeEnabled();
+    vi.mocked(api).mockResolvedValueOnce({ ...item, payment_status: "received" });
+    const dialog = await open("Ghi nhận đã nhận tiền");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+    expect(await screen.findByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).not.toBeInTheDocument();
+    const approval = await open("Duyệt đơn");
+    expect(within(approval).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(approval).getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
+  });
+
+  it("allows a zero-total order to be approved without recording payment", async () => {
+    view({ ...pending(), total_vnd: "0", payment_status: "not_required" });
+    const dialog = await open("Duyệt đơn");
+    expect(within(dialog).getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).not.toBeInTheDocument();
+  });
+
+  it("approves a paid order with allocations and one synchronous submit", async () => {
+    const item = { ...pending(), payment_status: "received" as const };
     let resolve!: (value: unknown) => void;
     view(item);
     vi.mocked(api).mockImplementationOnce(
@@ -81,9 +104,6 @@ describe("Store order actions", () => {
         }) as never,
     );
     const dialog = await open("Duyệt đơn");
-    fireEvent.click(
-      within(dialog).getByLabelText("Tôi đã kiểm tra và xác nhận cửa hàng nhận đủ tiền."),
-    );
     const confirm = within(dialog).getByRole("button", { name: "Duyệt đơn" });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
@@ -369,7 +389,7 @@ describe("Store order actions", () => {
   });
 
   it("shows a stale snapshot warning and locks mutations when conflict reload fails", async () => {
-    const item = pending();
+    const item = { ...pending(), payment_status: "received" as const };
     vi.mocked(api)
       .mockResolvedValueOnce(item)
       .mockRejectedValueOnce(

@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 function detailOrder() {
-  const item = storeOrderFixture();
+  const item = storeOrderFixture({ payment_status: "received" });
   return {
     ...item,
     allocation_suggestion: [

@@ -4,6 +4,7 @@ import {
   formatDecimalInput,
   parsePositiveDecimal,
   parsePositiveInteger,
+  parsePositiveQuotaUnits,
   sanitizeDecimalInput,
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
@@ -38,6 +39,30 @@ describe("numeric input boundaries", () => {
   ])("normalizes decimal input %s without scientific notation", (input, expected) => {
     expect(sanitizeDecimalInput(input)).toBe(expected);
   });
+
+  it.each([".25", "0.25", "0,25", "0.5", "0.75", "1", "2", "2147483647"])(
+    "accepts fractional point input %s as a JSON number",
+    (value) =>
+      expect(parsePositiveQuotaUnits(value)).toEqual({ value: Number(value.replace(",", ".")) }),
+  );
+
+  it.each([
+    "0.1",
+    "0.2",
+    "0.9",
+    "1.1",
+    "1.25",
+    "2.5",
+    "0",
+    "-0.25",
+    "0.001",
+    "NaN",
+    "Infinity",
+    "1e2",
+    "2147483647.01",
+  ])("rejects invalid point input %s", (value) =>
+    expect(parsePositiveQuotaUnits(value)).toHaveProperty("error"),
+  );
 
   it("validates positive values and ranges before conversion", () => {
     expect(parsePositiveInteger("")).toEqual({ error: "required" });
