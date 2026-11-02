@@ -5,6 +5,20 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
+  it("allowlists only Store order reads and implemented lifecycle actions", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const base = ["admin", "store-orders"];
+    expect(isAllowedBackendRequest("GET", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", base)).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, id])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", [...base, id])).toBe(false);
+    for (const action of ["approve", "cancel", "record-payment", "refund", "deliver", "restock"])
+      expect(isAllowedBackendRequest("POST", [...base, id, action])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, id, "approve"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, id, "unknown"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...base, "not-a-uuid"])).toBe(false);
+  });
+
   it("allowlists exact Farm, media, product and stock-batch methods", () => {
     const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const product = "11111111-1111-4111-8111-111111111111";

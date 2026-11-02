@@ -1,4 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
+import { Button, FormInput } from "@/components/nfv-controls";
 
 export function ListToolbar({
   busy,
@@ -15,6 +16,8 @@ export function ListToolbar({
   resultCountSingularLabel,
   searchLabel,
   searchSubmitLabel,
+  controls = "default",
+  actions,
 }: {
   busy: boolean;
   clearLabel: string;
@@ -30,7 +33,11 @@ export function ListToolbar({
   resultCountSingularLabel: string;
   searchLabel: string;
   searchSubmitLabel: string;
+  controls?: "default" | "nfv";
+  actions?: ReactNode;
 }) {
+  const SearchInput = controls === "nfv" ? FormInput : "input";
+  const ActionButton = controls === "nfv" ? Button : "button";
   return (
     <div className="list-toolbar-row">
       <form
@@ -39,10 +46,10 @@ export function ListToolbar({
         onSubmit={onSubmit}
         role="search"
       >
-        <label className="field list-toolbar-search">
-          <span>{searchLabel}</span>
-          <input
-            className="input"
+        <label className={`${controls === "nfv" ? "nfv-field" : "field"} list-toolbar-search`}>
+          <span className={controls === "nfv" ? "nfv-field-label" : undefined}>{searchLabel}</span>
+          <SearchInput
+            className={controls === "nfv" ? undefined : "input"}
             disabled={busy}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={placeholder}
@@ -52,13 +59,25 @@ export function ListToolbar({
         </label>
         {filter}
         <div className="list-toolbar-actions">
-          <button className="button" disabled={busy} type="submit">
+          <ActionButton
+            className={controls === "nfv" ? undefined : "button"}
+            disabled={busy}
+            type="submit"
+          >
             {searchSubmitLabel}
-          </button>
+          </ActionButton>
+          {actions}
           {hasFilters && (
-            <button className="button secondary" disabled={busy} onClick={onClear} type="button">
+            <ActionButton
+              {...(controls === "nfv"
+                ? { variant: "outline" as const }
+                : { className: "button secondary" })}
+              disabled={busy}
+              onClick={onClear}
+              type="button"
+            >
               {clearLabel}
-            </button>
+            </ActionButton>
           )}
         </div>
       </form>

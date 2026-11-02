@@ -118,6 +118,16 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       (path[5] === "confirm" || path[5] === "reject")
     );
   }
+  if (resource === "store-orders") {
+    if (id === undefined) return path.length === 2 && normalizedMethod === "GET";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined) return path.length === 3 && normalizedMethod === "GET";
+    return (
+      path.length === 4 &&
+      normalizedMethod === "POST" &&
+      ["approve", "cancel", "record-payment", "refund", "deliver", "restock"].includes(action)
+    );
+  }
   if (extra !== undefined) return false;
 
   if (["dashboard"].includes(resource) && id === undefined) return READ.has(normalizedMethod);

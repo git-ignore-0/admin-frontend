@@ -90,6 +90,8 @@ const linkedProduct: FarmProduct = {
   unit_label_vi: "gói",
   unit_label_en: "pack",
   is_active: true,
+  initial_quantity: 10,
+  net_sold_quantity: 0,
   available_quantity: 10,
   batch_count: 1,
   active_batch_count: 1,
@@ -124,7 +126,10 @@ beforeEach(() => {
   });
   mocks.tracker.mockResolvedValue({ signup_count: 24 });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 it("lists canonical Farms with search and status without fetching tracker data", async () => {
   view(<FarmList />);
@@ -517,12 +522,17 @@ it("offers deactivation instead of removal when a Farm product has batch history
 });
 
 it("lists stock batches and only allows editing an active or upcoming batch", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-31T03:00:00Z"));
   const active: FarmStockBatch = {
     id: "batch-active",
     farm_product_id: linkedProduct.id,
     start_date: "2026-10-26",
     end_date: "2026-11-01",
     quantity_units: 10,
+    net_sold_quantity: 4,
+    remaining_quantity: 6,
+    available_quantity: 6,
     status: "active",
     version: 2,
     created_at: "2026-10-26T00:00:00Z",
@@ -562,6 +572,8 @@ it("lists stock batches and only allows editing an active or upcoming batch", as
   expect(screen.getByText("Đã hết hạn", { selector: ".status" })).toBeVisible();
   expect(screen.getByText("Sắp áp dụng", { selector: ".status" })).toBeVisible();
   expect(screen.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+  expect(screen.getAllByText("Ban đầu 10 · Đã bán ròng 4 · Còn 6 · Khả dụng 6")).toHaveLength(4);
+  expect(screen.getAllByText("3000 gói", { selector: "strong" })).toHaveLength(4);
   expect(screen.getAllByRole("button", { name: "Sửa thông tin" })).toHaveLength(2);
 
   fireEvent.click(screen.getAllByRole("button", { name: "Sửa thông tin" })[0]);
@@ -604,6 +616,9 @@ it("returns to the first valid batch page after cancelling the only row on page 
     start_date: "2026-10-26",
     end_date: "2026-11-01",
     quantity_units: 10,
+    net_sold_quantity: 0,
+    remaining_quantity: 10,
+    available_quantity: 10,
     status: "active",
     version: 1,
     created_at: "2026-10-26T00:00:00Z",
@@ -649,6 +664,9 @@ it("returns to the first batch page when reloading after a page-two conflict", a
     start_date: "2026-10-26",
     end_date: "2026-11-01",
     quantity_units: 10,
+    net_sold_quantity: 0,
+    remaining_quantity: 10,
+    available_quantity: 10,
     status: "active",
     version: 1,
     created_at: "2026-10-26T00:00:00Z",

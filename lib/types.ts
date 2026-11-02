@@ -635,6 +635,8 @@ export type FarmProduct = {
   unit_label_vi: string;
   unit_label_en: string;
   is_active: boolean;
+  initial_quantity: number;
+  net_sold_quantity: number;
   available_quantity: number;
   batch_count: number;
   active_batch_count: number;
@@ -654,6 +656,9 @@ export type FarmStockBatch = {
   start_date: string;
   end_date: string;
   quantity_units: number;
+  net_sold_quantity: number;
+  remaining_quantity: number;
+  available_quantity: number;
   status: StockBatchStatus;
   version: number;
   created_at: string;
@@ -661,6 +666,125 @@ export type FarmStockBatch = {
 };
 
 export type StockBatchInput = Pick<FarmStockBatch, "start_date" | "end_date" | "quantity_units">;
+
+export type StoreOrderStatus =
+  "payment_pending" | "pending_review" | "pending_delivery" | "delivered" | "cancelled";
+
+export type StorePaymentStatus =
+  "not_required" | "unconfirmed" | "received" | "refund_required" | "refunded";
+
+export type StoreOrderSort = "created_desc" | "created_asc" | "deadline_asc" | "total_desc";
+
+export type StoreOrderLine = {
+  id: string;
+  product_id: string;
+  sku: string;
+  name: string;
+  unit_size: string;
+  unit_label: string;
+  unit_price_vnd: string;
+  quantity: number;
+  quota_group_id: string | null;
+  quota_cost: number | null;
+  quota_quantity: number;
+  quota_units: number;
+  cash_quantity: number;
+  cash_subtotal_vnd: string;
+};
+
+export type StoreSourceCandidate = {
+  line_id: string;
+  product_id: string;
+  farm_id: string;
+  farm_name: string;
+  batch_id: string;
+  start_date: string;
+  end_date: string;
+  available_quantity: number;
+};
+
+export type StoreOrderAllocationDraft = {
+  line_id: string;
+  batch_id: string;
+  quantity: number;
+};
+
+export type StoreOrderAllocation = StoreOrderAllocationDraft & {
+  id: string;
+  product_id: string;
+  farm_id: string;
+  farm_name: string;
+  start_date: string;
+  end_date: string;
+  restocked_quantity: number;
+  restock_remaining_quantity: number;
+  restock_eligible: boolean;
+  restock_unavailable_reason: string | null;
+};
+
+export type StoreOrder = {
+  id: string;
+  reference_code: string;
+  status: StoreOrderStatus;
+  payment_status: StorePaymentStatus;
+  locale: "vi" | "en";
+  lines: StoreOrderLine[];
+  shipping_address: {
+    recipient_name: string;
+    phone_number: string;
+    province_code: string;
+    ward_code: string;
+    address: string;
+  };
+  subtotal_vnd: string;
+  shipping_fee_vnd: string;
+  shipping_discount_reason: string | null;
+  total_vnd: string;
+  payment: {
+    status: StorePaymentStatus;
+    bank_bin: string;
+    bank_name: string;
+    account_number: string;
+    account_name: string;
+    transfer_content: string;
+    qr_payload: {
+      acqId: string;
+      accountNo: string;
+      accountName: string;
+      amount: number;
+      addInfo: string;
+    };
+    received_at: string | null;
+    refunded_at: string | null;
+    refund_amount_vnd: string | null;
+    refund_note: string;
+  } | null;
+  expires_at: string | null;
+  server_time: string;
+  transfer_reported_at: string | null;
+  approved_at: string | null;
+  delivered_at: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  reconciliation_note: string;
+  created_at: string;
+  updated_at: string;
+  allocation_suggestion?: StoreOrderAllocationDraft[];
+  source_inventory?: {
+    refresh_required_before_approve: boolean;
+    product_reservations: Array<{
+      product_id: string;
+      reserved_quantity: number;
+      this_order_quantity: number;
+      other_orders_quantity: number;
+    }>;
+    candidates: StoreSourceCandidate[];
+  };
+  allocations?: StoreOrderAllocation[];
+};
+
+export type StoreOrderAction =
+  "approve" | "cancel" | "record-payment" | "refund" | "deliver" | "restock";
 
 export type MediaAsset = {
   id: string;

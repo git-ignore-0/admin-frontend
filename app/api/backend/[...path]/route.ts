@@ -31,6 +31,39 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     );
   }
   const [, resource, id, action, extra] = path;
+  if (resource === "store-orders") {
+    const params = request.nextUrl.searchParams;
+    if (id !== undefined) return params.size > 0;
+    const allowed = new Set(["page", "page_size", "search", "status", "payment_status", "sort"]);
+    const statuses = new Set([
+      "payment_pending",
+      "pending_review",
+      "pending_delivery",
+      "delivered",
+      "cancelled",
+    ]);
+    const paymentStatuses = new Set([
+      "not_required",
+      "unconfirmed",
+      "received",
+      "refund_required",
+      "refunded",
+    ]);
+    const sorts = new Set(["created_desc", "created_asc", "deadline_asc", "total_desc"]);
+    const positiveIntegerWithin = (key: string, maximum: bigint) => {
+      const value = params.get(key) ?? "";
+      return /^[1-9]\d*$/u.test(value) && BigInt(value) <= maximum;
+    };
+    return (
+      [...params.keys()].some((key) => !allowed.has(key) || params.getAll(key).length !== 1) ||
+      (params.has("page") && !positiveIntegerWithin("page", 10_000n)) ||
+      (params.has("page_size") && !positiveIntegerWithin("page_size", 50n)) ||
+      (params.has("search") && (params.get("search")?.length ?? 0) > 200) ||
+      (params.has("status") && !statuses.has(params.get("status") ?? "")) ||
+      (params.has("payment_status") && !paymentStatuses.has(params.get("payment_status") ?? "")) ||
+      (params.has("sort") && !sorts.has(params.get("sort") ?? ""))
+    );
+  }
   if (resource === "csa-coupons") {
     const params = request.nextUrl.searchParams;
     if (id !== undefined) return params.size > 0;

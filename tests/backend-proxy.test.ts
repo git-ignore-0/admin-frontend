@@ -36,6 +36,62 @@ describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
 
+  it("forwards only the Store order list query contract", async () => {
+    const path = ["admin", "store-orders"];
+    const base = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+
+    const allowed = await GET(
+      new NextRequest(
+        `${base}?page=2&page_size=20&search=NFV&status=pending_review&payment_status=received&sort=deadline_asc`,
+      ),
+      { params: Promise.resolve({ path }) },
+    );
+    expect(allowed.status).toBe(200);
+    upstream.mockClear();
+
+    for (const query of [
+      "?unknown=1",
+      "?status=other",
+      "?payment_status=other",
+      "?sort=other",
+      "?page=0",
+      "?page=10001",
+      "?page_size=51",
+      `?search=${"x".repeat(201)}`,
+      "?page_size=20&page_size=50",
+    ]) {
+      const blocked = await GET(new NextRequest(`${base}${query}`), {
+        params: Promise.resolve({ path }),
+      });
+      expect(blocked.status).toBe(404);
+    }
+    const detailPath = [...path, "24803641-2dce-4cac-8fc4-91e55f03e95f"];
+    const blockedDetail = await GET(new NextRequest(`${base}/${detailPath[2]}?page=1`), {
+      params: Promise.resolve({ path: detailPath }),
+    });
+    expect(blockedDetail.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("keeps Store order authorization server-side and preserves permission denials", async () => {
+    const path = ["admin", "store-orders"];
+    const request = new NextRequest("https://admin.example.test/api/backend/admin/store-orders");
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await GET(request, { params: Promise.resolve({ path }) })).status).toBe(401);
+
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(Response.json({ detail: "Forbidden" }, { status: 403 }));
+    vi.stubGlobal("fetch", upstream);
+    const forbidden = await GET(request, { params: Promise.resolve({ path }) });
+    expect(forbidden.status).toBe(403);
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+  });
+
   it("forwards allowed coupon filters and rejects duplicate or unknown query parameters", async () => {
     const path = ["admin", "csa-coupons"];
     const base = `https://admin.example.test/api/backend/${path.join("/")}`;

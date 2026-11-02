@@ -84,6 +84,8 @@ const copy = {
     stockBatchesHint: "Mỗi đợt chỉ được tính vào tồn kho trong khoảng ngày áp dụng.",
     currentStock: "Tồn hiện tại",
     remainingUnits: "Còn {count}",
+    batchInventory:
+      "Ban đầu {initial} · Đã bán ròng {sold} · Còn {remaining} · Khả dụng {available}",
     outOfStock: "Hết hàng",
     backToProducts: "Quay lại sản phẩm",
     batchSummary: "{active} đang áp dụng / {total} đợt",
@@ -206,6 +208,8 @@ const copy = {
     stockBatchesHint: "Each batch only contributes to stock during its applicable date range.",
     currentStock: "Current stock",
     remainingUnits: "{count} remaining",
+    batchInventory:
+      "Initial {initial} · Net sold {sold} · Remaining {remaining} · Available {available}",
     outOfStock: "Out of stock",
     backToProducts: "Back to products",
     batchSummary: "{active} active / {total} batches",

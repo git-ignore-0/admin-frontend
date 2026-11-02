@@ -24,7 +24,6 @@ import {
   type StockBatchFieldErrors,
   type StockBatchPreset,
 } from "@/lib/farm-stock";
-import { formatDecimalInput } from "@/lib/numeric-input";
 import type { FarmProduct, FarmStockBatch, PaginationMeta, StockBatchStatus } from "@/lib/types";
 
 const conflictCodes = new Set([
@@ -265,11 +264,15 @@ export function FarmStockBatches({
                     {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
                   </strong>
                   <span>
-                    {batch.quantity_units} × {formatDecimalInput(product.unit_size)} {unitLabel}
+                    {c.batchInventory
+                      .replace("{initial}", String(batch.quantity_units))
+                      .replace("{sold}", String(batch.net_sold_quantity))
+                      .replace("{remaining}", String(batch.remaining_quantity))
+                      .replace("{available}", String(batch.available_quantity))}
                   </span>
                 </div>
                 <strong>
-                  {formatStockQuantityTotal(batch.quantity_units, product.unit_size, unitLabel)}
+                  {formatStockQuantityTotal(batch.remaining_quantity, product.unit_size, unitLabel)}
                 </strong>
                 <Status status={batch.status} label={statusLabels[batch.status]} />
                 <div className="farm-stock-batch-row-actions">

@@ -51,6 +51,7 @@ describe("admin sidebar navigation", () => {
       "/csa-coupons",
       "/csa-terms",
       "/membership-catalog",
+      "/store-orders",
       "/store-catalog",
       "/shipping-settings",
       "/farms",
@@ -65,6 +66,7 @@ describe("admin sidebar navigation", () => {
 
   it.each([
     ["/farms/24803641-2dce-4cac-8fc4-91e55f03e95f", "/farms", "farms"],
+    ["/store-orders/24803641-2dce-4cac-8fc4-91e55f03e95f", "/store-orders", "store"],
     ["/store-catalog/products/new", "/store-catalog", "store"],
     ["/membership-catalog/packages/123/edit", "/membership-catalog", "csa"],
   ])("resolves nested path %s to %s in section %s", (pathname, activeHref, sectionKey) => {

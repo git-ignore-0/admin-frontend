@@ -64,6 +64,7 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
       label: t.common.storeCatalog,
       icon: "store",
       items: [
+        { href: "/store-orders", label: t.common.storeOrders },
         { href: "/store-catalog", label: t.storeCatalog.title },
         { href: "/shipping-settings", label: t.common.shippingSettings },
       ],

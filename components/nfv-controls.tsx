@@ -112,6 +112,19 @@ export function FormField({ label, children, error, hint, className = "" }: Form
   );
 }
 
+export function FormCheckbox({
+  label,
+  className = "",
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { label: ReactNode }) {
+  return (
+    <label className={`nfv-check ${className}`.trim()}>
+      <input {...props} type="checkbox" />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 const iconPaths = {
   plus: <path d="M12 5v14M5 12h14" />,
   back: <path d="m15 18-6-6 6-6" />,
@@ -194,17 +207,32 @@ export function Icon({ name }: { name: IconName }) {
   );
 }
 
-export function Status({ status, label }: { status: string; label: string }) {
+export function Status({
+  status,
+  label,
+  className = "",
+}: {
+  status: string;
+  label: string;
+  className?: string;
+}) {
   const tone =
-    status === "draft" || status === "upcoming"
+    status === "draft" ||
+    status === "upcoming" ||
+    status === "payment_pending" ||
+    status === "pending_review" ||
+    status === "unconfirmed" ||
+    status === "refund_required"
       ? "p2"
       : status === "archived" ||
           status === "expired" ||
           status === "cancelled" ||
-          status === "inactive"
+          status === "inactive" ||
+          status === "refunded" ||
+          status === "not_required"
         ? "neutral"
         : "";
-  return <span className={`status ${tone}`.trim()}>{label}</span>;
+  return <span className={`status ${tone} ${className}`.trim()}>{label}</span>;
 }
 
 type TabsProps = {
