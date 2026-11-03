@@ -36,6 +36,124 @@ describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
 
+  it.each(["vouchers", "csa-coupons"])(
+    "forwards valid %s list scopes and rejects unsafe queries",
+    async (resource) => {
+      const path = ["admin", resource];
+      const base = `https://admin.example.test/api/backend/${path.join("/")}`;
+      const upstream = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(Response.json({ data: [] })));
+      vi.stubGlobal("fetch", upstream);
+      for (const scope of ["csa", "store", "both"]) {
+        const query = `?application_scope=${scope}&status=active&discount_type=fixed&page=2`;
+        const response = await GET(new NextRequest(`${base}${query}`), {
+          params: Promise.resolve({ path }),
+        });
+        expect(response.status).toBe(200);
+        expect(String(upstream.mock.calls.at(-1)?.[0])).toBe(
+          `https://auth.example.test/api/v1/admin/${resource}${query}`,
+        );
+      }
+      upstream.mockClear();
+      for (const query of [
+        "?application_scope=other",
+        "?application_scope=",
+        "?application_scope=csa&application_scope=store",
+        "?page=1&page=2",
+        "?page=-1",
+        "?page=1.5",
+        "?page=",
+        "?status=other",
+        "?discount_type=other",
+        "?search=secret",
+        "?page_size=30",
+      ]) {
+        expect(
+          (await GET(new NextRequest(`${base}${query}`), { params: Promise.resolve({ path }) }))
+            .status,
+        ).toBe(404);
+      }
+      expect(upstream).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps voucher mutations authenticated and origin protected while preserving upstream denials", async () => {
+    const path = ["admin", "vouchers", membershipId, "activate"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const upstream = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(Response.json({ detail: "Forbidden" }, { status: 403 })),
+      );
+    vi.stubGlobal("fetch", upstream);
+    for (const headers of [
+      {},
+      { origin: "https://evil.example.test", "x-nfv-admin-request": "1" },
+      { origin: "https://admin.example.test" },
+    ] as Record<string, string>[]) {
+      expect(
+        (
+          await POST(new NextRequest(url, { method: "POST", headers }), {
+            params: Promise.resolve({ path }),
+          })
+        ).status,
+      ).toBe(403);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+    const headers = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+      "content-type": "application/json",
+      "accept-language": "vi",
+    };
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect(
+      (
+        await POST(new NextRequest(url, { method: "POST", headers }), {
+          params: Promise.resolve({ path }),
+        })
+      ).status,
+    ).toBe(401);
+    const response = await POST(new NextRequest(url, { method: "POST", headers, body: "{}" }), {
+      params: Promise.resolve({ path }),
+    });
+    expect(response.status).toBe(403);
+    const forwarded = new Headers(upstream.mock.calls[0][1].headers);
+    expect(forwarded.get("authorization")).toBe("Bearer access-token");
+    expect(forwarded.get("accept-language")).toBe("vi");
+    expect(forwarded.get("content-type")).toBe("application/json");
+    expect(response.headers.get("authorization")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it.each(["vouchers", "csa-coupons"])(
+    "rejects queries on %s options, preview, detail and actions",
+    async (resource) => {
+      const upstream = vi.fn();
+      vi.stubGlobal("fetch", upstream);
+      for (const [method, suffix] of [
+        ["GET", ["options"]],
+        ["GET", [membershipId]],
+        ["POST", ["preview"]],
+        ["PATCH", [membershipId]],
+        ["POST", [membershipId, "activate"]],
+        ["POST", [membershipId, "deactivate"]],
+      ] as const) {
+        const path = ["admin", resource, ...suffix];
+        const request = new NextRequest(
+          `https://admin.example.test/api/backend/${path.join("/")}?page=1`,
+          { method, headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" } },
+        );
+        const response = await { GET, POST, PATCH }[method](request, {
+          params: Promise.resolve({ path }),
+        });
+        expect(response.status).toBe(404);
+      }
+      expect(upstream).not.toHaveBeenCalled();
+    },
+  );
+
   it("forwards only the Store order list query contract", async () => {
     const path = ["admin", "store-orders"];
     const base = `https://admin.example.test/api/backend/${path.join("/")}`;

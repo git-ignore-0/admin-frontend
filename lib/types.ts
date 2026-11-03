@@ -722,6 +722,18 @@ export type StoreOrderAllocation = StoreOrderAllocationDraft & {
   restock_unavailable_reason: string | null;
 };
 
+export type StoreOrderCouponSnapshot = {
+  id?: string;
+  code?: string;
+  discount_type?: "fixed" | "percent";
+  discount_value?: string;
+  maximum_discount_amount?: string | null;
+  subtotal_vnd?: number;
+  eligible_subtotal_vnd?: number;
+  discount_amount_vnd?: number;
+  total_vnd?: number;
+};
+
 export type StoreOrder = {
   id: string;
   reference_code: string;
@@ -737,6 +749,8 @@ export type StoreOrder = {
     address: string;
   };
   subtotal_vnd: string;
+  discount_amount_vnd?: string;
+  coupon?: StoreOrderCouponSnapshot | null;
   shipping_fee_vnd: string;
   shipping_discount_reason: string | null;
   total_vnd: string;

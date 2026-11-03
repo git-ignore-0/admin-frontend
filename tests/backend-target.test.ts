@@ -5,6 +5,35 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
+  it("allowlists voucher administration by exact method and UUID path", () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const base = ["admin", "vouchers"];
+    for (const [suffix, allowed] of [
+      [[], ["GET", "POST"]],
+      [["options"], ["GET"]],
+      [["preview"], ["POST"]],
+      [[id], ["GET", "PATCH"]],
+      [[id, "activate"], ["POST"]],
+      [[id, "deactivate"], ["POST"]],
+    ]) {
+      for (const method of ["GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"]) {
+        expect(isAllowedBackendRequest(method, [...base, ...suffix])).toBe(
+          allowed.includes(method),
+        );
+      }
+      expect(isAllowedBackendRequest("POST", [...base, ...suffix, "extra"])).toBe(false);
+    }
+    for (const suffix of [
+      ["bad-id"],
+      [id, "unknown"],
+      ["options", "extra"],
+      [id, "activate", "extra"],
+    ]) {
+      expect(isAllowedBackendRequest("POST", [...base, ...suffix])).toBe(false);
+    }
+    expect(buildBackendTarget(origin, base, "").pathname).toBe("/api/v1/admin/vouchers");
+  });
+
   it("allowlists only Store order reads and implemented lifecycle actions", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = ["admin", "store-orders"];

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { ActionLink, Icon } from "@/components/nfv-controls";
 
 import { CSACouponList } from "@/components/csa-coupon-list";
 import { PageHeading } from "@/components/page-heading";
@@ -18,9 +18,10 @@ export default async function Page() {
         title={t.csaCoupons.title}
         description={t.csaCoupons.description}
         action={
-          <Link className="button" href="/csa-coupons/new">
+          <ActionLink href="/csa-coupons/new">
+            <Icon name="plus" />
             {t.csaCoupons.create}
-          </Link>
+          </ActionLink>
         }
       />
       <CSACouponList />

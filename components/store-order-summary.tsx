@@ -19,24 +19,44 @@ function quotaCovered(order: StoreOrder) {
 export function StoreOrderTotals({ order }: { order: StoreOrder }) {
   const { locale } = useAdminI18n();
   const c = storeOrdersCopy(locale);
-  const rows = [
-    [c.listedSubtotal, listedSubtotal(order)],
-    [c.shippingFee, order.shipping_fee_vnd],
-  ] as const;
+  const covered = quotaCovered(order);
+  const voucherCode = order.coupon?.code;
+  const discount = order.discount_amount_vnd ?? "0";
+  const hasVoucher = Boolean(voucherCode) || BigInt(discount) > 0n;
   return (
     <dl className="store-order-totals">
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <dt>{label}</dt>
-          <dd>{formatStoreMoney(value, locale)}</dd>
-        </div>
-      ))}
-      {BigInt(quotaCovered(order)) > 0n ? (
+      <div>
+        <dt>{c.listedSubtotal}</dt>
+        <dd>{formatStoreMoney(listedSubtotal(order), locale)}</dd>
+      </div>
+      {BigInt(covered) > 0n ? (
         <div>
           <dt>{c.quotaCovered}</dt>
-          <dd>−{formatStoreMoney(quotaCovered(order), locale)}</dd>
+          <dd>−{formatStoreMoney(covered, locale)}</dd>
         </div>
       ) : null}
+      {hasVoucher ? (
+        <>
+          <div>
+            <dt>{c.cashSubtotalBeforeDiscount}</dt>
+            <dd>{formatStoreMoney(order.subtotal_vnd, locale)}</dd>
+          </div>
+          {voucherCode ? (
+            <div>
+              <dt>{c.voucherCode}</dt>
+              <dd>{voucherCode}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>{c.voucherDiscount}</dt>
+            <dd>−{formatStoreMoney(discount, locale)}</dd>
+          </div>
+        </>
+      ) : null}
+      <div>
+        <dt>{c.shippingFee}</dt>
+        <dd>{formatStoreMoney(order.shipping_fee_vnd, locale)}</dd>
+      </div>
       <div className="store-order-total-due">
         <dt>{c.total}</dt>
         <dd>{formatStoreMoney(order.total_vnd, locale)}</dd>

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { Button, DataState, FormInput, FormSelect, Status } from "@/components/nfv-controls";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { api } from "@/lib/client-api";
 import {
@@ -12,11 +13,13 @@ import {
   couponErrorMessage,
   type AdminCoupon,
   type CouponDiscountType,
+  type CouponApplicationScope,
 } from "@/lib/csa-coupons";
 import { PageHeading } from "@/components/page-heading";
 import { parsePositiveInteger } from "@/lib/numeric-input";
 
 type Draft = {
+  application_scope: CouponApplicationScope;
   code: string;
   discount_type: CouponDiscountType;
   discount_value: string;
@@ -28,6 +31,7 @@ type Draft = {
 };
 
 const emptyDraft: Draft = {
+  application_scope: "csa",
   code: "",
   discount_type: "percent",
   discount_value: "",
@@ -40,6 +44,7 @@ const emptyDraft: Draft = {
 
 function draftFromCoupon(coupon: AdminCoupon): Draft {
   return {
+    application_scope: coupon.application_scope ?? "csa",
     code: coupon.code,
     discount_type: coupon.discount_type,
     discount_value: coupon.discount_value.replace(/\.0+$/u, ""),
@@ -109,12 +114,11 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
   const [busy, setBusy] = useState(false);
   const [needsReload, setNeedsReload] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
-
   const reload = useCallback(async () => {
     setLoadError("");
     try {
       const latest = savedId.current
-        ? await api<AdminCoupon>(`admin/csa-coupons/${savedId.current}`)
+        ? await api<AdminCoupon>(`admin/vouchers/${savedId.current}`)
         : null;
       if (latest) {
         setCoupon(latest);
@@ -142,6 +146,9 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
   }
 
   const used = Boolean(coupon?.used_count);
+  // The current API exposes no historical-use/editability flag. A zero count
+  // can mean all uses were returned, so existing economics stay read-only.
+  const locked = Boolean(coupon || savedId.current);
 
   function getValidationErrors(): Record<string, string> {
     const errors: Record<string, string> = {};
@@ -200,6 +207,7 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
 
   function payload() {
     return {
+      application_scope: draft.application_scope,
       code: draft.code.trim().toUpperCase(),
       discount_type: draft.discount_type,
       discount_value: draft.discount_value,
@@ -209,6 +217,14 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
       minimum_amount: draft.minimum_amount || null,
       maximum_discount_amount:
         draft.discount_type === "percent" ? draft.maximum_discount_amount || null : null,
+      ...(draft.application_scope === "store"
+        ? {}
+        : {
+            package_ids: [],
+            price_option_ids: [],
+            payment_types: [],
+            installment_counts: [],
+          }),
     };
   }
 
@@ -225,16 +241,16 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
     setSubmitError("");
     try {
       const saved = await api<AdminCoupon>(
-        savedId.current ? `admin/csa-coupons/${savedId.current}` : "admin/csa-coupons",
+        savedId.current ? `admin/vouchers/${savedId.current}` : "admin/vouchers",
         {
           method: savedId.current ? "PATCH" : "POST",
-          body: JSON.stringify(used ? { usage_limit: Number(draft.usage_limit) } : payload()),
+          body: JSON.stringify(locked ? { usage_limit: Number(draft.usage_limit) } : payload()),
         },
       );
       savedId.current = saved.id;
       setNeedsReload(true);
       try {
-        const latest = await api<AdminCoupon>(`admin/csa-coupons/${saved.id}`);
+        const latest = await api<AdminCoupon>(`admin/vouchers/${saved.id}`);
         setCoupon(latest);
         setDraft(draftFromCoupon(latest));
         setNeedsReload(false);
@@ -255,14 +271,14 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
     busyRef.current = true;
     setBusy(true);
     try {
-      await api<AdminCoupon>(`admin/csa-coupons/${coupon.id}/deactivate`, {
+      await api<AdminCoupon>(`admin/vouchers/${coupon.id}/deactivate`, {
         method: "POST",
         body: "{}",
       });
       setConfirmDeactivate(false);
       setNeedsReload(true);
       try {
-        const latest = await api<AdminCoupon>(`admin/csa-coupons/${coupon.id}`);
+        const latest = await api<AdminCoupon>(`admin/vouchers/${coupon.id}`);
         setCoupon(latest);
         setDraft(draftFromCoupon(latest));
         setNeedsReload(false);
@@ -283,7 +299,7 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
     busyRef.current = true;
     setBusy(true);
     try {
-      await api<AdminCoupon>(`admin/csa-coupons/${coupon.id}/activate`, {
+      await api<AdminCoupon>(`admin/vouchers/${coupon.id}/activate`, {
         method: "POST",
         body: "{}",
       });
@@ -302,9 +318,16 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
   const headingAction = coupon ? (
     <div className="csa-coupon-heading-meta">
       <strong className="csa-coupon-code">{coupon.code}</strong>
-      <span className={`badge csa-coupon-status ${coupon.status}`}>
-        {copy.statuses[coupon.status]}
-      </span>
+      <Status
+        status={
+          coupon.status === "scheduled"
+            ? "upcoming"
+            : coupon.status === "exhausted"
+              ? "inactive"
+              : coupon.status
+        }
+        label={copy.statuses[coupon.status]}
+      />
     </div>
   ) : null;
   const header = (
@@ -321,21 +344,18 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
     return (
       <>
         {header}
-        <p className="panel" role="status">
-          {copy.loading}
-        </p>
+        <DataState kind="loading" title={copy.loading} />
       </>
     );
   if (couponId && !coupon && loadError)
     return (
       <>
         {header}
-        <div className="error-box" role="alert">
-          <p>{loadError}</p>
-          <button className="button secondary" onClick={() => void reload()} type="button">
-            {copy.retry}
-          </button>
-        </div>
+        <DataState
+          kind="error"
+          title={loadError}
+          action={{ label: copy.retry, onClick: () => void reload() }}
+        />
       </>
     );
 
@@ -343,13 +363,17 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
     <>
       {header}
       <div className="csa-coupon-editor">
-        {used && <p className="field-help csa-coupon-read-only">{copy.readOnly}</p>}
+        {locked && (
+          <p className="field-help csa-coupon-read-only">
+            {used ? copy.readOnly : copy.historyUnknown}
+          </p>
+        )}
         {needsReload && (
           <div className="error-box csa-coupon-global-error" role="alert">
             <p>{copy.reloadFailed}</p>
-            <button className="button secondary" onClick={() => void reload()} type="button">
+            <Button variant="outline" onClick={() => void reload()} type="button">
               {copy.retry}
-            </button>
+            </Button>
           </div>
         )}
         {loadError && !needsReload && (
@@ -366,16 +390,44 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
         <form aria-busy={busy || loading} className="csa-coupon-form" noValidate onSubmit={submit}>
           <div className="csa-coupon-form-fields">
             <div className="field csa-coupon-form-row">
-              <label htmlFor="coupon-code">{copy.code} *</label>
+              <label className="nfv-field-label" htmlFor="coupon-scope">
+                {copy.applicationScope} *
+              </label>
               <div className="csa-coupon-row-control">
-                <input
+                <FormSelect
+                  id="coupon-scope"
+                  value={draft.application_scope}
+                  disabled={locked || busy}
+                  onChange={(event) => {
+                    const scope = event.target.value as CouponApplicationScope;
+                    setDraft((current) => ({
+                      ...current,
+                      application_scope: scope,
+                    }));
+                    setFieldErrors({});
+                  }}
+                >
+                  {(["csa", "store", "both"] as const).map((scope) => (
+                    <option key={scope} value={scope}>
+                      {copy.applicationScopes[scope]}
+                    </option>
+                  ))}
+                </FormSelect>
+              </div>
+            </div>
+            <div className="field csa-coupon-form-row">
+              <label className="nfv-field-label" htmlFor="coupon-code">
+                {copy.code} *
+              </label>
+              <div className="csa-coupon-row-control">
+                <FormInput
                   aria-describedby={fieldErrors.code ? "coupon-code-error" : undefined}
                   aria-invalid={Boolean(fieldErrors.code)}
-                  className="input"
                   disabled={busy}
                   id="coupon-code"
+                  maxLength={64}
                   onChange={(event) => update("code", event.target.value.toUpperCase())}
-                  readOnly={used}
+                  readOnly={locked}
                   type="text"
                   value={draft.code}
                 />
@@ -388,11 +440,12 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
             </div>
 
             <div className="field csa-coupon-form-row">
-              <label htmlFor="coupon-type">{copy.discountType} *</label>
+              <label className="nfv-field-label" htmlFor="coupon-type">
+                {copy.discountType} *
+              </label>
               <div className="csa-coupon-row-control">
-                <select
-                  className="input"
-                  disabled={used || busy}
+                <FormSelect
+                  disabled={locked || busy}
                   id="coupon-type"
                   onChange={(event) => {
                     update("discount_type", event.target.value as CouponDiscountType);
@@ -404,21 +457,22 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
                 >
                   <option value="percent">{copy.types.percent}</option>
                   <option value="fixed">{copy.types.fixed}</option>
-                </select>
+                </FormSelect>
               </div>
             </div>
             <div className="csa-coupon-offer-rows">
               <div className="field csa-coupon-form-row">
-                <label htmlFor="coupon-value">{copy.discountValue} *</label>
+                <label className="nfv-field-label" htmlFor="coupon-value">
+                  {copy.discountValue} *
+                </label>
                 <div className="csa-coupon-offer-control">
                   <div className="csa-coupon-number-wrap">
-                    <input
+                    <FormInput
                       aria-describedby={
                         fieldErrors.discount_value ? "coupon-value-error" : undefined
                       }
                       aria-invalid={Boolean(fieldErrors.discount_value)}
-                      className="input"
-                      disabled={used || busy}
+                      disabled={locked || busy}
                       id="coupon-value"
                       inputMode={draft.discount_type === "percent" ? "decimal" : "numeric"}
                       onBlur={() => setFocusedMoney(null)}
@@ -465,18 +519,19 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
               </div>
               {draft.discount_type === "percent" && (
                 <div className="field csa-coupon-form-row">
-                  <label htmlFor="coupon-maximum-discount">{copy.maximumDiscountAmount}</label>
+                  <label className="nfv-field-label" htmlFor="coupon-maximum-discount">
+                    {copy.maximumDiscountAmount}
+                  </label>
                   <div className="csa-coupon-offer-control">
                     <div className="csa-coupon-number-wrap">
-                      <input
+                      <FormInput
                         aria-describedby={
                           fieldErrors.maximum_discount_amount
                             ? "coupon-maximum-discount-error"
                             : undefined
                         }
                         aria-invalid={Boolean(fieldErrors.maximum_discount_amount)}
-                        className="input"
-                        disabled={used || busy}
+                        disabled={locked || busy}
                         id="coupon-maximum-discount"
                         inputMode="numeric"
                         onBlur={() => setFocusedMoney(null)}
@@ -508,12 +563,13 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
                 </div>
               )}
               <div className="field csa-coupon-form-row">
-                <label htmlFor="coupon-limit">{copy.usageLimit} *</label>
+                <label className="nfv-field-label" htmlFor="coupon-limit">
+                  {copy.usageLimit} *
+                </label>
                 <div className="csa-coupon-offer-control">
-                  <input
+                  <FormInput
                     aria-describedby={visibleUsageLimitError ? "coupon-limit-error" : undefined}
                     aria-invalid={Boolean(visibleUsageLimitError)}
-                    className="input"
                     disabled={busy}
                     id="coupon-limit"
                     inputMode="numeric"
@@ -533,16 +589,17 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
                 </div>
               </div>
               <div className="field csa-coupon-form-row">
-                <label htmlFor="coupon-minimum">{copy.minimumAmount}</label>
+                <label className="nfv-field-label" htmlFor="coupon-minimum">
+                  {copy.minimumAmount}
+                </label>
                 <div className="csa-coupon-offer-control">
                   <div className="csa-coupon-number-wrap">
-                    <input
+                    <FormInput
                       aria-describedby={
                         fieldErrors.minimum_amount ? "coupon-minimum-error" : undefined
                       }
                       aria-invalid={Boolean(fieldErrors.minimum_amount)}
-                      className="input"
-                      disabled={used || busy}
+                      disabled={locked || busy}
                       id="coupon-minimum"
                       inputMode="numeric"
                       onBlur={() => setFocusedMoney(null)}
@@ -572,12 +629,13 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
 
             <div className="csa-coupon-date-grid">
               <div className="field">
-                <label htmlFor="coupon-start">{copy.startsAt} *</label>
-                <input
+                <label className="nfv-field-label" htmlFor="coupon-start">
+                  {copy.startsAt} *
+                </label>
+                <FormInput
                   aria-describedby={fieldErrors.starts_at ? "coupon-start-error" : undefined}
                   aria-invalid={Boolean(fieldErrors.starts_at)}
-                  className="input"
-                  disabled={used || busy}
+                  disabled={locked || busy}
                   id="coupon-start"
                   lang={locale}
                   onChange={(event) => update("starts_at", event.target.value)}
@@ -592,12 +650,13 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
                 )}
               </div>
               <div className="field">
-                <label htmlFor="coupon-end">{copy.expiresAt} *</label>
-                <input
+                <label className="nfv-field-label" htmlFor="coupon-end">
+                  {copy.expiresAt} *
+                </label>
+                <FormInput
                   aria-describedby={visibleEndError ? "coupon-end-error" : undefined}
                   aria-invalid={Boolean(visibleEndError)}
-                  className="input"
-                  disabled={used || busy}
+                  disabled={locked || busy}
                   id="coupon-end"
                   lang={locale}
                   min={draft.starts_at || undefined}
@@ -617,40 +676,36 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
           </div>
 
           <div className="csa-coupon-form-actions">
-            <button
-              className="button"
-              disabled={busy || needsReload || loading || !formIsValid}
-              type="submit"
-            >
+            <Button disabled={busy || needsReload || loading || !formIsValid} type="submit">
               {busy ? copy.saving : coupon ? copy.saveChanges : copy.save}
-            </button>
-            <button
-              className="button secondary"
+            </Button>
+            <Button
+              variant="outline"
               disabled={busy}
               onClick={() => router.push("/csa-coupons")}
               type="button"
             >
               {copy.cancel}
-            </button>
+            </Button>
             {coupon &&
               (coupon.is_active ? (
-                <button
-                  className="button danger"
+                <Button
+                  variant="danger"
                   disabled={busy || needsReload}
                   onClick={() => setConfirmDeactivate(true)}
                   type="button"
                 >
                   {copy.deactivate}
-                </button>
+                </Button>
               ) : (
-                <button
-                  className="button secondary"
+                <Button
+                  variant="outline"
                   disabled={busy || needsReload}
                   onClick={() => void activate()}
                   type="button"
                 >
                   {copy.activate}
-                </button>
+                </Button>
               ))}
           </div>
         </form>

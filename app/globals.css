@@ -4787,20 +4787,8 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-.csa-coupon-code,
-.csa-coupon-scope {
+.csa-coupon-code {
   overflow-wrap: anywhere;
-}
-
-.csa-coupon-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  min-width: 0;
-}
-
-.csa-coupon-filters .field {
-  min-width: min(220px, 100%);
 }
 
 .csa-coupon-editor {
@@ -4856,9 +4844,9 @@ h3 {
   min-width: 0;
 }
 
-.csa-coupon-row-control > .input,
+.csa-coupon-row-control > .nfv-control,
 .csa-coupon-row-control > select,
-.csa-coupon-offer-control > .input,
+.csa-coupon-offer-control > .nfv-control,
 .csa-coupon-offer-control > .csa-coupon-number-wrap {
   max-width: 420px;
 }
@@ -4877,7 +4865,7 @@ h3 {
   min-width: 0;
 }
 
-.csa-coupon-number-wrap > .input {
+.csa-coupon-number-wrap > .nfv-control {
   width: 100%;
   min-width: 0;
   padding-inline-end: 2.5rem;
@@ -4891,7 +4879,7 @@ h3 {
   pointer-events: none;
 }
 
-.csa-coupon-date-grid .input[type="datetime-local"] {
+.csa-coupon-date-grid .nfv-control[type="datetime-local"] {
   width: 100%;
   min-width: 0;
 }
@@ -4912,28 +4900,7 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-.csa-coupon-status.inactive,
-.csa-coupon-status.expired,
-.csa-coupon-status.exhausted {
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-}
-
-.csa-coupon-status.scheduled {
-  background: var(--warning-soft);
-  color: var(--warning);
-}
-
 @media (max-width: 680px) {
-  .csa-coupon-filters .field {
-    width: 100%;
-  }
-
-  .csa-coupon-table .button {
-    width: auto;
-    max-width: 100%;
-  }
-
   .csa-coupon-form-row,
   .csa-coupon-date-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -4945,7 +4912,7 @@ h3 {
 }
 
 @media (max-width: 440px) {
-  .csa-coupon-form-actions > .button {
+  .csa-coupon-form-actions > .nfv-button {
     width: 100%;
   }
 }

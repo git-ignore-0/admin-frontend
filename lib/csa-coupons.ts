@@ -5,9 +5,11 @@ import { formatMembershipMoney } from "@/lib/membership-format";
 export type CouponStatus = "active" | "inactive" | "scheduled" | "expired" | "exhausted";
 export type CouponDiscountType = "percent" | "fixed";
 export type CouponPaymentType = "full" | "installment";
+export type CouponApplicationScope = "csa" | "store" | "both";
 
 export type AdminCoupon = {
   id: string;
+  application_scope?: CouponApplicationScope;
   code: string;
   discount_type: CouponDiscountType;
   discount_value: string;
@@ -33,31 +35,6 @@ export type AdminCoupon = {
   updated_at: string;
 };
 
-export type CouponOptions = Array<{
-  id: string;
-  name: string;
-  price_options: Array<{
-    id: string;
-    duration_months: number;
-    payment_plans: Array<{
-      id: string;
-      name: string;
-      payment_type: CouponPaymentType;
-      installment_count: number;
-    }>;
-  }>;
-}>;
-
-export type CouponPreview = {
-  payment_type: CouponPaymentType;
-  payment_plan_total_before_discount: string;
-  initial_payment_before_discount: string;
-  initial_payment_after_discount: string;
-  customer_payable_total: string;
-  discount_amount: string;
-  installments: Array<{ sequence: number; amount: string }>;
-};
-
 export function couponOffer(
   coupon: Pick<AdminCoupon, "discount_type" | "discount_value">,
   locale: AdminLocale,
@@ -68,6 +45,8 @@ export function couponOffer(
 }
 
 export function couponScopeSummary(coupon: AdminCoupon, t: AdminDictionary) {
+  const application = t.csaCoupons.applicationScopes[coupon.application_scope ?? "csa"];
+  if (coupon.application_scope === "store") return application;
   const durationLabels = coupon.scope.price_options.map((item) =>
     t.csaCoupons.months.replace("{count}", String(item.duration_months)),
   );
@@ -75,19 +54,18 @@ export function couponScopeSummary(coupon: AdminCoupon, t: AdminDictionary) {
   const countLabels = coupon.installment_counts.map((count) =>
     t.csaCoupons.count.replace("{count}", String(count)),
   );
-  return (
-    [
-      ...coupon.scope.packages.map((item) => item.name),
-      ...durationLabels,
-      ...paymentLabels,
-      ...countLabels,
-    ].join(" · ") || t.csaCoupons.all
-  );
+  return [
+    application,
+    ...coupon.scope.packages.map((item) => item.name),
+    ...durationLabels,
+    ...paymentLabels,
+    ...countLabels,
+  ].join(" · ");
 }
 
 export function couponErrorMessage(error: unknown, t: AdminDictionary): string {
   if (!(error instanceof Error)) return t.common.requestFailed;
-  if (error.message in t.csaCoupons.errors) {
+  if (Object.prototype.hasOwnProperty.call(t.csaCoupons.errors, error.message)) {
     return t.csaCoupons.errors[error.message as keyof typeof t.csaCoupons.errors];
   }
   if (["network_error", "upstream_timeout", "upstream_unavailable"].includes(error.message))
@@ -103,18 +81,6 @@ export function couponDateInput(value: string, { end = false }: { end?: boolean 
     date.setUTCDate(date.getUTCDate() - 1);
   }
   return formatAdminDate(date.toISOString(), "");
-}
-
-export function couponDateToApi(
-  value: string,
-  { end = false }: { end?: boolean } = {},
-): string | null {
-  const iso = adminDateInputToIso(value);
-  if (!iso) return null;
-  if (!end) return `${iso}T00:00:00+07:00`;
-  const next = new Date(`${iso}T00:00:00Z`);
-  next.setUTCDate(next.getUTCDate() + 1);
-  return `${next.toISOString().slice(0, 10)}T00:00:00+07:00`;
 }
 
 export function couponTimeInput(value: string, { end = false }: { end?: boolean } = {}) {

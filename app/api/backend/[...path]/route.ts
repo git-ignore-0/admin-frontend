@@ -64,10 +64,10 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
       (params.has("sort") && !sorts.has(params.get("sort") ?? ""))
     );
   }
-  if (resource === "csa-coupons") {
+  if (resource === "vouchers" || resource === "csa-coupons") {
     const params = request.nextUrl.searchParams;
     if (id !== undefined) return params.size > 0;
-    const allowed = new Set(["page", "status", "discount_type"]);
+    const allowed = new Set(["page", "status", "discount_type", "application_scope"]);
     return (
       [...params.keys()].some((key) => !allowed.has(key) || params.getAll(key).length !== 1) ||
       (params.has("page") && !/^[1-9]\d*$/u.test(params.get("page") ?? "")) ||
@@ -76,7 +76,9 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
           params.get("status") ?? "",
         )) ||
       (params.has("discount_type") &&
-        !["percent", "fixed"].includes(params.get("discount_type") ?? ""))
+        !["percent", "fixed"].includes(params.get("discount_type") ?? "")) ||
+      (params.has("application_scope") &&
+        !["csa", "store", "both"].includes(params.get("application_scope") ?? ""))
     );
   }
   if (resource === "csa-purchase-requests" && action === "payments") {

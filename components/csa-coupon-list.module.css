@@ -1,0 +1,193 @@
+.list {
+  container-type: inline-size;
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.filters > * {
+  min-width: 0;
+}
+
+.tableWrap {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.table th,
+.table td {
+  padding: 14px 12px;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+.table th {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.table th:first-child {
+  width: 16%;
+  border-start-start-radius: var(--radius);
+}
+
+.table th:nth-child(2) {
+  width: 14%;
+}
+
+.table th:nth-child(3) {
+  width: 15%;
+}
+
+.table th:nth-child(4) {
+  width: 18%;
+}
+
+.table th:nth-child(5) {
+  width: 8%;
+}
+
+.table th:nth-child(6) {
+  width: 14%;
+}
+
+.table th:last-child {
+  width: 15%;
+  border-start-end-radius: var(--radius);
+}
+
+.table td {
+  border-top: 1px solid var(--border);
+}
+
+.table td:last-child {
+  text-align: right;
+}
+
+.table td:last-child a {
+  min-height: 44px;
+}
+
+.table td :global(.status) {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.code {
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 960px) {
+  .tableWrap {
+    border: 0;
+    background: transparent;
+  }
+
+  .table,
+  .table tbody {
+    display: block;
+  }
+
+  .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .table tr {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .table td {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    align-items: start;
+    gap: 12px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 650;
+  }
+
+  .table td > * {
+    min-width: 0;
+  }
+
+  .table td:first-child,
+  .table td:last-child {
+    display: block;
+  }
+
+  .table td:first-child {
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table td:first-child::before,
+  .table td:last-child::before {
+    content: none;
+  }
+
+  .table td:last-child {
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .table td :global(.status) {
+    justify-self: start;
+  }
+}
+
+@container (max-width: 560px) {
+  .filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 350px) {
+  .table td {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .table td:last-child a {
+    width: 100%;
+  }
+}

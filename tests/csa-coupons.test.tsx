@@ -13,7 +13,6 @@ import {
   couponDateTimeToApi,
   couponTimeInput,
   type AdminCoupon,
-  type CouponOptions,
 } from "@/lib/csa-coupons";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
@@ -23,62 +22,8 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/csa-coupons",
 }));
 
-const options: CouponOptions = [
-  {
-    id: "24803641-2dce-4cac-8fc4-91e55f03e95f",
-    name: "Vegetable CSA",
-    price_options: [
-      {
-        id: "d0c0313a-85df-4c29-930a-f19a05f3d8c4",
-        duration_months: 1,
-        payment_plans: [
-          {
-            id: "e0c0313a-85df-4c29-930a-f19a05f3d8c4",
-            name: "One month full",
-            payment_type: "full",
-            installment_count: 1,
-          },
-        ],
-      },
-      {
-        id: "a0c0313a-85df-4c29-930a-f19a05f3d8c4",
-        duration_months: 6,
-        payment_plans: [
-          {
-            id: "b0c0313a-85df-4c29-930a-f19a05f3d8c4",
-            name: "Pay in full",
-            payment_type: "full",
-            installment_count: 1,
-          },
-          {
-            id: "c0c0313a-85df-4c29-930a-f19a05f3d8c4",
-            name: "Pay twice",
-            payment_type: "installment",
-            installment_count: 2,
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: "f4803641-2dce-4cac-8fc4-91e55f03e95f",
-    name: "Fruit CSA",
-    price_options: [
-      {
-        id: "f0c0313a-85df-4c29-930a-f19a05f3d8c4",
-        duration_months: 3,
-        payment_plans: [
-          {
-            id: "f1c0313a-85df-4c29-930a-f19a05f3d8c4",
-            name: "Pay three times",
-            payment_type: "installment",
-            installment_count: 3,
-          },
-        ],
-      },
-    ],
-  },
-];
+const packageId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+const priceOptionId = "a0c0313a-85df-4c29-930a-f19a05f3d8c4";
 
 const coupon: AdminCoupon = {
   id: "34803641-2dce-4cac-8fc4-91e55f03e95f",
@@ -92,16 +37,14 @@ const coupon: AdminCoupon = {
   expires_at: "2026-10-01T00:00:00+07:00",
   is_active: true,
   status: "active",
-  package_ids: [options[0].id],
-  price_option_ids: [options[0].price_options[1].id],
+  package_ids: [packageId],
+  price_option_ids: [priceOptionId],
   payment_types: ["installment"],
   installment_counts: [2],
   minimum_amount: null,
   scope: {
-    packages: [{ id: options[0].id, name: options[0].name }],
-    price_options: [
-      { id: options[0].price_options[1].id, package_id: options[0].id, duration_months: 6 },
-    ],
+    packages: [{ id: packageId, name: "Vegetable CSA" }],
+    price_options: [{ id: priceOptionId, package_id: packageId, duration_months: 6 }],
     payment_types: ["installment"],
     installment_counts: [2],
   },
@@ -144,6 +87,8 @@ describe("CSA coupon administration", () => {
       </AdminI18nProvider>,
     );
     expect(await screen.findByText(coupon.code)).toBeVisible();
+    expect(screen.getByLabelText("Filter status")).toHaveClass("nfv-control");
+    expect(screen.getByRole("link", { name: "Edit" })).toHaveClass("nfv-button");
     expect(screen.getByText("01/09/2026 – 30/09/2026")).toBeVisible();
     fireEvent.change(screen.getByLabelText("Filter status"), { target: { value: "inactive" } });
     await waitFor(() =>
@@ -160,15 +105,15 @@ describe("CSA coupon administration", () => {
     expect(css).not.toContain(".csa-coupon-preview");
     expect(css).not.toContain(".csa-coupon-summary");
     expect(css).not.toContain(".csa-coupon-specific-scope");
-    expect(css).toContain('.csa-coupon-date-grid .input[type="datetime-local"]');
+    expect(css).toContain('.csa-coupon-date-grid .nfv-control[type="datetime-local"]');
     expect(css).toMatch(/@media \(max-width: 680px\)[\s\S]*?\.csa-coupon-date-grid/u);
   });
 
-  it("renders a flat field form with a discount dropdown and no preview", async () => {
+  it("renders the basic create form without conditions or preview", async () => {
     mockEditorApi();
     showEditor();
-    expect(await screen.findByRole("heading", { name: "Create CSA discount code" })).toBeVisible();
-    expect(document.querySelectorAll(".csa-coupon-form-row")).toHaveLength(6);
+    expect(await screen.findByRole("heading", { name: "Create discount code" })).toBeVisible();
+    expect(document.querySelectorAll(".csa-coupon-form-row")).toHaveLength(7);
     expect(document.querySelector("section.csa-coupon-section")).toBeNull();
     expect(screen.queryByText("Codes are saved in uppercase.")).toBeNull();
     expect(
@@ -179,6 +124,9 @@ describe("CSA coupon administration", () => {
     expect(type).toHaveValue("percent");
     expect(screen.getByLabelText("Maximum discount")).toBeVisible();
     expect(screen.getByLabelText("Maximum uses *")).toHaveValue("1");
+    expect(screen.getByLabelText("Starts on *")).toHaveClass("nfv-control");
+    expect(screen.getByLabelText("Ends on *")).toHaveClass("nfv-control");
+    expect(screen.getByRole("button", { name: "Save coupon" })).toHaveClass("nfv-button");
     expect(screen.getByLabelText("Starts on *")).toHaveAttribute("type", "datetime-local");
     expect(screen.getByLabelText("Ends on *")).toHaveAttribute("type", "datetime-local");
     expect(document.querySelectorAll('input[type="datetime-local"]')).toHaveLength(2);
@@ -189,7 +137,9 @@ describe("CSA coupon administration", () => {
     expect(screen.queryByLabelText("Choose CSA packages *")).toBeNull();
     expect(screen.queryByText("Price preview")).toBeNull();
     expect(document.querySelectorAll("form.csa-coupon-form")).toHaveLength(1);
-    expect(api).not.toHaveBeenCalledWith("admin/csa-coupons/options");
+    expect(screen.queryByText("CSA conditions")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Voucher preview" })).toBeNull();
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("enables saving only for a complete valid date-time range", async () => {
@@ -227,8 +177,8 @@ describe("CSA coupon administration", () => {
     chooseCouponDateTime("Starts on *", "2026-09-01T00:00");
     chooseCouponDateTime("Ends on *", "2026-09-30T23:59");
     fireEvent.click(screen.getByRole("button", { name: "Save coupon" }));
-    await waitFor(() => expect(api).toHaveBeenCalledWith("admin/csa-coupons", expect.anything()));
-    const createCall = vi.mocked(api).mock.calls.find(([path]) => path === "admin/csa-coupons");
+    await waitFor(() => expect(api).toHaveBeenCalledWith("admin/vouchers", expect.anything()));
+    const createCall = vi.mocked(api).mock.calls.find(([path]) => path === "admin/vouchers");
     expect(JSON.parse(String(createCall?.[1]?.body)).maximum_discount_amount).toBe("250000");
   });
 
@@ -308,11 +258,11 @@ describe("CSA coupon administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save coupon" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        "admin/csa-coupons",
+        "admin/vouchers",
         expect.objectContaining({ method: "POST" }),
       ),
     );
-    const call = vi.mocked(api).mock.calls.find(([path]) => path === "admin/csa-coupons");
+    const call = vi.mocked(api).mock.calls.find(([path]) => path === "admin/vouchers");
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
       code: "AUTUMN",
       starts_at: "2026-09-30T10:00:00+07:00",
@@ -322,7 +272,7 @@ describe("CSA coupon administration", () => {
     expect(couponTimeInput(coupon.expires_at, { end: true })).toBe("23:59");
     expect(couponDateTimeInput(coupon.expires_at, { end: true })).toBe("2026-09-30T23:59");
     expect(couponDateTimeToApi("2026-09-01T09:30")).toBe("2026-09-01T09:30:00+07:00");
-    expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/csa-coupons/preview")).toBe(
+    expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/vouchers/preview")).toBe(
       false,
     );
   });
@@ -337,21 +287,21 @@ describe("CSA coupon administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        `admin/csa-coupons/${coupon.id}`,
+        `admin/vouchers/${coupon.id}`,
         expect.objectContaining({ method: "PATCH" }),
       ),
     );
     const call = vi
       .mocked(api)
       .mock.calls.find(
-        ([path, init]) => path === `admin/csa-coupons/${coupon.id}` && init?.method === "PATCH",
+        ([path, init]) => path === `admin/vouchers/${coupon.id}` && init?.method === "PATCH",
       );
     const body = JSON.parse(String(call?.[1]?.body));
     expect(body.usage_limit).toBe(101);
     for (const key of ["package_ids", "price_option_ids", "payment_types", "installment_counts"])
       expect(body).not.toHaveProperty(key);
     expect(screen.getByDisplayValue(coupon.code)).toBeVisible();
-    expect(api).not.toHaveBeenCalledWith("admin/csa-coupons/options");
+    expect(api).not.toHaveBeenCalledWith("admin/vouchers/options");
   });
 
   it("sends plain integer money values without overriding backend scope defaults", async () => {
@@ -368,8 +318,8 @@ describe("CSA coupon administration", () => {
     chooseCouponDateTime("Starts on *", "2026-09-01T00:00");
     chooseCouponDateTime("Ends on *", "2026-09-30T23:59");
     fireEvent.click(screen.getByRole("button", { name: "Save coupon" }));
-    await waitFor(() => expect(api).toHaveBeenCalledWith("admin/csa-coupons", expect.anything()));
-    const call = vi.mocked(api).mock.calls.find(([path]) => path === "admin/csa-coupons");
+    await waitFor(() => expect(api).toHaveBeenCalledWith("admin/vouchers", expect.anything()));
+    const call = vi.mocked(api).mock.calls.find(([path]) => path === "admin/vouchers");
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
       code: "AUTUMN",
       discount_type: "fixed",
@@ -379,7 +329,7 @@ describe("CSA coupon administration", () => {
     });
     const body = JSON.parse(String(call?.[1]?.body));
     for (const key of ["package_ids", "price_option_ids", "payment_types", "installment_counts"])
-      expect(body).not.toHaveProperty(key);
+      expect(body[key]).toEqual([]);
   });
 
   it("rejects a percentage above 100 before sending a create request", async () => {
@@ -392,10 +342,10 @@ describe("CSA coupon administration", () => {
     chooseCouponDateTime("Ends on *", "2026-09-30T23:59");
     fireEvent.click(screen.getByRole("button", { name: "Save coupon" }));
     expect(screen.getByText("Invalid discount value.")).toBeVisible();
-    expect(api).not.toHaveBeenCalledWith("admin/csa-coupons", expect.anything());
+    expect(api).not.toHaveBeenCalledWith("admin/vouchers", expect.anything());
   });
 
-  it("preserves existing timestamps when saving another field", async () => {
+  it("omits unchanged historical fields when saving usage limit", async () => {
     mockEditorApi();
     showEditor(coupon.id);
     await screen.findByLabelText("Coupon code *");
@@ -403,18 +353,17 @@ describe("CSA coupon administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        `admin/csa-coupons/${coupon.id}`,
+        `admin/vouchers/${coupon.id}`,
         expect.objectContaining({ method: "PATCH" }),
       ),
     );
     const call = vi
       .mocked(api)
       .mock.calls.find(
-        ([path, init]) => path === `admin/csa-coupons/${coupon.id}` && init?.method === "PATCH",
+        ([path, init]) => path === `admin/vouchers/${coupon.id}` && init?.method === "PATCH",
       );
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
-      starts_at: coupon.starts_at,
-      expires_at: coupon.expires_at,
+      usage_limit: 101,
     });
   });
 
@@ -433,7 +382,7 @@ describe("CSA coupon administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        `admin/csa-coupons/${coupon.id}`,
+        `admin/vouchers/${coupon.id}`,
         expect.objectContaining({ method: "PATCH", body: JSON.stringify({ usage_limit: 3 }) }),
       ),
     );
@@ -442,7 +391,7 @@ describe("CSA coupon administration", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Deactivate" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        `admin/csa-coupons/${coupon.id}/deactivate`,
+        `admin/vouchers/${coupon.id}/deactivate`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -451,8 +400,8 @@ describe("CSA coupon administration", () => {
   it("localizes conflicts and retries reload without a duplicate create", async () => {
     let detailCalls = 0;
     vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "admin/csa-coupons") return coupon;
-      if (path === `admin/csa-coupons/${coupon.id}`) {
+      if (path === "admin/vouchers") return coupon;
+      if (path === `admin/vouchers/${coupon.id}`) {
         detailCalls += 1;
         if (detailCalls === 1) throw new Error("network_error");
         return coupon;
@@ -470,8 +419,6 @@ describe("CSA coupon administration", () => {
     expect(screen.getByRole("button", { name: "Save coupon" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Retry reload" }));
     await waitFor(() => expect(detailCalls).toBe(2));
-    expect(vi.mocked(api).mock.calls.filter(([path]) => path === "admin/csa-coupons")).toHaveLength(
-      1,
-    );
+    expect(vi.mocked(api).mock.calls.filter(([path]) => path === "admin/vouchers")).toHaveLength(1);
   });
 });

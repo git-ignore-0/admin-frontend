@@ -74,7 +74,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       new Set(["GET", "PUT"]).has(normalizedMethod)
     );
   }
-  if (resource === "csa-coupons") {
+  if (resource === "vouchers" || resource === "csa-coupons") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (id === "options") return path.length === 3 && normalizedMethod === "GET";
     if (id === "preview") return path.length === 3 && normalizedMethod === "POST";

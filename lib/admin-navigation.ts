@@ -35,6 +35,7 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
       items: [
         { href: "/dashboard", label: t.common.dashboard, icon: "dashboard" },
         { href: "/users", label: t.common.users, icon: "users" },
+        { href: "/csa-coupons", label: t.common.csaCoupons, icon: "voucher" },
       ],
     },
     {
@@ -54,7 +55,6 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
       items: [
         { href: "/csa-customers", label: t.common.csaCustomers },
         { href: "/csa-purchase-requests", label: t.common.csaPurchaseRequests },
-        { href: "/csa-coupons", label: t.common.csaCoupons },
         { href: "/csa-terms", label: t.common.csaTerms },
         { href: "/membership-catalog", label: t.common.membershipCatalog },
       ],

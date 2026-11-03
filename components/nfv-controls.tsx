@@ -180,6 +180,7 @@ const iconPaths = {
       <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
     </>
   ),
+  voucher: <path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4ZM15 5v2m0 3v4m0 3v2" />,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   panelLeft: (
     <>
