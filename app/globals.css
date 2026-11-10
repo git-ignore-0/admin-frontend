@@ -4129,6 +4129,15 @@ h3 {
   outline: none;
 }
 
+/* Store detail reuses the editor schema without the editable field framing. */
+.store-product-description-preview .tiptap {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .tiptap:focus {
   border-color: var(--focus);
   outline: 2px solid rgba(26, 115, 232, 0.2);

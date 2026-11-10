@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { Editor } from "@tiptap/react";
 import { StoreProductDetail } from "@/components/store-product-detail";
 import { StoreProductEditor } from "@/components/store-product-editor";
 import { adminDictionaries } from "@/lib/admin-i18n";
@@ -271,18 +272,118 @@ describe("store product editor", () => {
     await screen.findByRole("heading", { name: "Nội dung song ngữ" });
     expect(screen.getByLabelText(/Tên sản phẩm/).closest("label")).toHaveClass("full");
 
-    fireEvent.change(screen.getByLabelText("Mô tả chi tiết"), {
-      target: { value: "Chi tiết tiếng Việt" },
-    });
+    act(() =>
+      (
+        screen.getByLabelText("Mô tả chi tiết") as HTMLElement & { editor: Editor }
+      ).editor.commands.setContent("<p>Chi tiết tiếng Việt</p>", true),
+    );
     fireEvent.click(screen.getByRole("tab", { name: /English/ }));
-    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("Mô tả chi tiết"), {
-      target: { value: "English details" },
-    });
+    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveTextContent("");
+    act(() =>
+      (
+        screen.getByLabelText("Mô tả chi tiết") as HTMLElement & { editor: Editor }
+      ).editor.commands.setContent("<p>English details</p>", true),
+    );
     fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
 
-    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveValue("Chi tiết tiếng Việt");
+    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveTextContent("Chi tiết tiếng Việt");
     expect(screen.queryByRole("heading", { name: "Mô tả chi tiết" })).not.toBeInTheDocument();
+  });
+
+  it("preserves legacy descriptions byte-for-byte when only another field is changed", async () => {
+    const legacy = "  <b>Rau tươi</b>\r\nDòng hai\n\n  ";
+    mocks.product.mockResolvedValue({
+      ...storedProduct,
+      translations: [
+        { ...storedProduct.translations[0], description: legacy },
+        storedProduct.translations[1],
+      ],
+    });
+    render(<StoreProductEditor productId="product-1" />);
+    const editor = await screen.findByLabelText("Mô tả chi tiết");
+    expect(editor).toHaveTextContent("<b>Rau tươi</b>");
+    expect(editor.querySelector("b")).toBeNull();
+    fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const viTranslation = mocks.save.mock.calls[0][0].translations[0];
+    expect(viTranslation.description).toBe(legacy);
+    expect(viTranslation).not.toHaveProperty("description_document");
+  });
+
+  it("keeps formatted content in both language payloads and preserves it after API rejection", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    mocks.save.mockRejectedValue(new Error("request_failed"));
+    render(<StoreProductEditor productId="product-1" />);
+    const viEditor = await screen.findByLabelText("Mô tả chi tiết");
+    act(() =>
+      (viEditor as HTMLElement & { editor: Editor }).editor.commands.setContent(
+        "<h2>Bảo quản</h2><ul><li><p><strong>Giữ mát</strong></p></li></ul>",
+        true,
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: adminDictionaries.vi.richText.image }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /English/ }));
+    act(() =>
+      (
+        screen.getByLabelText("Mô tả chi tiết") as HTMLElement & { editor: Editor }
+      ).editor.commands.setContent("<p><em>Keep cool</em></p>", true),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const translations = mocks.save.mock.calls[0][0].translations;
+    expect(translations[0]).toMatchObject({
+      description: "Bảo quản\nGiữ mát",
+      description_document: {
+        type: "doc",
+        content: [
+          expect.objectContaining({ type: "heading" }),
+          expect.objectContaining({ type: "bulletList" }),
+        ],
+      },
+    });
+    expect(translations[1].description_document.content[0].content[0].marks).toContainEqual({
+      type: "italic",
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Mô tả chi tiết")).toHaveAttribute("contenteditable", "true"),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
+    expect(screen.getByRole("heading", { name: "Bảo quản" })).toBeInTheDocument();
+    expect(screen.getByText("Giữ mát").closest("strong")).not.toBeNull();
+  });
+
+  it("renders saved rich descriptions in Admin detail without an editing toolbar", async () => {
+    mocks.product.mockResolvedValue({
+      ...storedProduct,
+      translations: [
+        {
+          ...storedProduct.translations[0],
+          description: "Legacy",
+          description_document: {
+            type: "doc",
+            content: [
+              {
+                type: "heading",
+                attrs: { level: 3 },
+                content: [{ type: "text", text: "Đặc điểm" }],
+              },
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "Rau tươi", marks: [{ type: "bold" }] }],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    render(<StoreProductDetail productId="product-1" />);
+    expect(await screen.findByRole("heading", { name: "Đặc điểm" })).toBeInTheDocument();
+    expect(screen.getByText("Rau tươi").closest("strong")).not.toBeNull();
+    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveAttribute("contenteditable", "false");
   });
 
   it("saves a retail-only draft without a quota group", async () => {
@@ -487,6 +588,144 @@ describe("store product editor", () => {
     resolveSave(storedProduct);
     await waitFor(() => expect(mocks.deleteImage).not.toHaveBeenCalled());
     expect(mocks.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("Store description numbered-list contract", () => {
+  it("keeps zero as the list start when typing the numbered-list input rule", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    render(<StoreProductEditor productId="product-1" />);
+    const element = await screen.findByLabelText("Mô tả chi tiết");
+    const editor = (element as HTMLElement & { editor: Editor }).editor;
+    act(() => {
+      editor.commands.setContent("<p></p>", true);
+      editor.commands.insertContent("0.");
+      const position = editor.state.selection.from;
+      editor.view.someProp("handleTextInput", (handler) =>
+        handler(editor.view, position, position, " ", () =>
+          editor.state.tr.insertText(" ", position, position),
+        ),
+      );
+      editor.commands.insertContent("Giữ mát");
+    });
+    expect(editor.getJSON().content?.[0]).toMatchObject({
+      type: "orderedList",
+      attrs: { start: 0, type: null },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    expect(mocks.save.mock.calls[0][0].translations[0]).toMatchObject({
+      description: "Giữ mát",
+      description_document: {
+        type: "doc",
+        content: [{ type: "orderedList", attrs: { start: 0, type: null } }],
+      },
+    });
+  });
+
+  it("sends the actual ordered-list attributes produced by the installed editor", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    render(<StoreProductEditor productId="product-1" />);
+    const element = await screen.findByLabelText("Mô tả chi tiết");
+    const editor = (element as HTMLElement & { editor: Editor }).editor;
+    act(() => editor.commands.setContent("<p>Giữ mát</p>", true));
+    fireEvent.click(
+      screen.getByRole("button", { name: `1. ${adminDictionaries.vi.richText.orderedList}` }),
+    );
+    expect(editor.getJSON().content?.[0]).toMatchObject({
+      type: "orderedList",
+      attrs: { start: 1, type: null },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    expect(mocks.save.mock.calls[0][0].translations[0]).toMatchObject({
+      description: "Giữ mát",
+      description_document: {
+        type: "doc",
+        content: [
+          {
+            type: "orderedList",
+            attrs: { start: 1, type: null },
+            content: [
+              {
+                type: "listItem",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "Giữ mát" }] }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("Store description link editing regression", () => {
+  it("keeps the caret after a pasted link and only normalizes its URL in the save payload", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    render(<StoreProductEditor productId="product-1" />);
+    const element = await screen.findByLabelText("Mô tả chi tiết");
+    const editor = (element as HTMLElement & { editor: Editor }).editor;
+    act(() => editor.commands.setContent("<p>First paragraph</p><p>Second paragraph</p>", true));
+    act(() => {
+      editor.commands.setTextSelection(6);
+      editor.commands.insertContent('<a href="http://example.com">inserted</a>');
+    });
+    expect(editor.state.selection.from).toBe(14);
+    expect(
+      editor
+        .getJSON()
+        .content?.[0].content?.find((node) => node.marks?.some((mark) => mark.type === "link"))
+        ?.marks?.find((mark) => mark.type === "link")?.attrs?.href,
+    ).toBe("http://example.com");
+    act(() => editor.commands.insertContent("NEXT"));
+    expect(
+      editor
+        .getJSON()
+        .content?.[0].content?.map((node) => node.text ?? "")
+        .join(""),
+    ).toBe("FirstinsertedNEXT paragraph");
+    expect(editor.getJSON().content?.[1].content?.[0].text).toBe("Second paragraph");
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    const document = mocks.save.mock.calls[0][0].translations[0].description_document;
+    expect(
+      document.content[0].content
+        .find((node: { marks?: { type: string }[] }) =>
+          node.marks?.some((mark) => mark.type === "link"),
+        )
+        .marks.find((mark: { type: string }) => mark.type === "link").attrs.href,
+    ).toBe("https://example.com/");
+  });
+
+  it("does not rewrite saved link attributes when only another product field changes", async () => {
+    const document = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "Link",
+              marks: [{ type: "link", attrs: { href: "https://example.com" } }],
+            },
+          ],
+        },
+      ],
+    };
+    mocks.product.mockResolvedValue({
+      ...storedProduct,
+      translations: [
+        { ...storedProduct.translations[0], description: "Link", description_document: document },
+        storedProduct.translations[1],
+      ],
+    });
+    render(<StoreProductEditor productId="product-1" />);
+    await screen.findByLabelText("Mô tả chi tiết");
+    fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    expect(mocks.save.mock.calls[0][0].translations[0].description_document).toEqual(document);
   });
 });
 

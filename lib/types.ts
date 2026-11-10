@@ -47,7 +47,9 @@ export type StoreProduct = {
   primary_image: MediaAsset | null;
   is_active: boolean;
   is_published: boolean;
-  translations: Array<StoreTranslation & { short_description: string }>;
+  translations: Array<
+    StoreTranslation & { short_description: string; description_document?: TiptapDocument | null }
+  >;
   created_at: string;
   updated_at: string;
 };

@@ -98,10 +98,18 @@ export function RichTextEditor({
   value,
   onChange,
   imageAlt,
+  variant = "workshop",
+  disabled = false,
+  readOnly = false,
+  ariaLabel,
 }: {
   value: TiptapDocument;
   onChange: (value: TiptapDocument) => void;
   imageAlt: string;
+  variant?: "workshop" | "product";
+  disabled?: boolean;
+  readOnly?: boolean;
+  ariaLabel?: string;
 }) {
   const { t } = useAdminI18n();
   const showToast = useToast();
@@ -112,31 +120,47 @@ export function RichTextEditor({
   const [linkError, setLinkError] = useState("");
   const editor = useEditor({
     immediatelyRender: false,
+    editable: !disabled && !readOnly,
     extensions: [
       StarterKit.configure({
         heading: { levels: [2, 3, 4] },
+        blockquote: variant === "product" ? false : {},
         code: false,
         codeBlock: false,
         horizontalRule: false,
         strike: false,
       }),
       Link.configure({
-        openOnClick: false,
+        openOnClick: readOnly,
         autolink: false,
         linkOnPaste: false,
         protocols: ["https", "mailto"],
       }),
-      Image,
+      ...(variant === "product" ? [] : [Image]),
     ],
     content: value,
-    onUpdate: ({ editor: current }) => onChange(current.getJSON()),
-    editorProps: { attributes: { class: "tiptap", "aria-label": t.richText.ariaLabel } },
+    onUpdate: ({ editor: current }) => {
+      if (!disabled && !readOnly) onChange(current.getJSON());
+    },
+    editorProps: {
+      attributes: { class: "tiptap", "aria-label": ariaLabel ?? t.richText.ariaLabel },
+    },
   });
   useEffect(() => {
     if (editor && JSON.stringify(editor.getJSON()) !== JSON.stringify(value))
-      editor.commands.setContent(value);
+      editor.commands.setContent(value, false);
   }, [editor, value]);
+  useEffect(() => {
+    editor?.setEditable(!disabled && !readOnly, false);
+  }, [editor, disabled, readOnly]);
   if (!editor) return <div className="tiptap">{t.richText.loading}</div>;
+  if (readOnly)
+    return (
+      <EditorContent
+        className={variant === "product" ? "store-product-description-preview" : undefined}
+        editor={editor}
+      />
+    );
   const activeEditor = editor;
   async function uploadInline(file?: File) {
     if (!file) return;
@@ -192,7 +216,7 @@ export function RichTextEditor({
   const keepSelection = (event: React.MouseEvent<HTMLButtonElement>) => event.preventDefault();
   const linkPreview = normalizeLinkHref(linkValue);
   return (
-    <div>
+    <div inert={disabled || undefined}>
       <div className="editor-toolbar" role="toolbar" aria-label={t.richText.toolbar}>
         <button
           type="button"
@@ -258,13 +282,15 @@ export function RichTextEditor({
         >
           {t.richText.link}
         </button>
-        <button
-          type="button"
-          onMouseDown={keepSelection}
-          onClick={() => fileInput.current?.click()}
-        >
-          {t.richText.image}
-        </button>
+        {variant !== "product" && (
+          <button
+            type="button"
+            onMouseDown={keepSelection}
+            onClick={() => fileInput.current?.click()}
+          >
+            {t.richText.image}
+          </button>
+        )}
         <button
           type="button"
           aria-label={t.richText.undo}
@@ -283,16 +309,18 @@ export function RichTextEditor({
         >
           ↷
         </button>
-        <input
-          ref={fileInput}
-          hidden
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onChange={(e) => {
-            void uploadInline(e.target.files?.[0]);
-            e.currentTarget.value = "";
-          }}
-        />
+        {variant !== "product" && (
+          <input
+            ref={fileInput}
+            hidden
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={(e) => {
+              void uploadInline(e.target.files?.[0]);
+              e.currentTarget.value = "";
+            }}
+          />
+        )}
       </div>
       {linkEditorOpen && (
         <div className="editor-link-panel" role="group" aria-label={t.richText.linkEditor}>

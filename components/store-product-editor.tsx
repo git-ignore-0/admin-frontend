@@ -9,6 +9,13 @@ import {
   BilingualContentFields,
   emptyBilingualContent,
 } from "@/components/bilingual-content-fields";
+import { RichTextEditor, normalizeTiptapLinks } from "@/components/rich-text-editor";
+import {
+  descriptionChanged,
+  descriptionDocument,
+  descriptionPayload,
+  descriptionText,
+} from "@/lib/store-product-description";
 import { useToast } from "@/components/toast-provider";
 import {
   deleteStoreProductImage,
@@ -31,7 +38,13 @@ import {
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
 import { categoryPath } from "@/lib/store-categories";
-import type { MediaAsset, MembershipProduct, StoreCategory, StoreProduct } from "@/lib/types";
+import type {
+  MediaAsset,
+  MembershipProduct,
+  StoreCategory,
+  StoreProduct,
+  TiptapDocument,
+} from "@/lib/types";
 
 export function StoreProductEditor({ productId }: { productId?: string }) {
   const { locale, t } = useAdminI18n();
@@ -75,7 +88,12 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   const [active, setActive] = useState(true);
   const [published, setPublished] = useState(false);
   const [content, setContent] = useState(emptyBilingualContent());
-  const [longDescriptions, setLongDescriptions] = useState({ vi: "", en: "" });
+  const [longDescriptions, setLongDescriptions] = useState<Record<"vi" | "en", TiptapDocument>>(
+    () => ({ vi: descriptionDocument(""), en: descriptionDocument("") }),
+  );
+  const originalDescriptions = useRef<
+    Record<"vi" | "en", { text: string; document?: TiptapDocument | null }>
+  >({ vi: { text: "" }, en: { text: "" } });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -176,13 +194,21 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
           : [...current, item.csa_quota_group!],
       );
     const next = emptyBilingualContent();
-    const full = { vi: "", en: "" };
+    const full = { vi: descriptionDocument(""), en: descriptionDocument("") };
+    originalDescriptions.current = { vi: { text: "" }, en: { text: "" } };
     for (const translation of item.translations) {
       next[translation.locale] = {
         name: translation.name,
         description: translation.short_description,
       };
-      full[translation.locale] = translation.description;
+      full[translation.locale] = descriptionDocument(
+        translation.description,
+        translation.description_document,
+      );
+      originalDescriptions.current[translation.locale] = {
+        text: translation.description,
+        document: translation.description_document,
+      };
     }
     setContent(next);
     setLongDescriptions(full);
@@ -238,13 +264,19 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     const parsedQuota = csa ? parsePositiveQuotaUnits(quotaCost) : { value: 0 };
     const translations = (["vi", "en"] as const).flatMap((language) => {
       const value = content[language];
+      const original = originalDescriptions.current[language];
+      const document = longDescriptions[language];
+      // Normalize the submitted copy only; replacing the live editor value resets selection.
+      const savedDocument = descriptionChanged(document, original.text, original.document)
+        ? normalizeTiptapLinks(document)
+        : document;
       return value.name.trim()
         ? [
             {
               locale: language,
               name: value.name.trim(),
               short_description: value.description.trim(),
-              description: longDescriptions[language].trim(),
+              ...descriptionPayload(savedDocument, original.text, original.document),
             },
           ]
         : [];
@@ -266,7 +298,19 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     if (
       (["vi", "en"] as const).some(
         (language) =>
-          (content[language].description.trim() || longDescriptions[language].trim()) &&
+          descriptionChanged(
+            longDescriptions[language],
+            originalDescriptions.current[language].text,
+            originalDescriptions.current[language].document,
+          ) && descriptionText(longDescriptions[language]).length > 10_000,
+      )
+    )
+      return fail(copy.descriptionTooLong);
+    if (
+      (["vi", "en"] as const).some(
+        (language) =>
+          (content[language].description.trim() ||
+            descriptionText(longDescriptions[language]).trim()) &&
           !content[language].name.trim(),
       )
     )
@@ -475,12 +519,25 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         defaultLocale={locale}
         descriptionLabel={copy.shortDescription}
         languageLabels={{ vi: t.common.vietnamese, en: t.common.english }}
-        longDescription={{
-          label: copy.descriptionLabel,
-          maxLength: 10_000,
-          onChange: setLongDescriptions,
-          value: longDescriptions,
-        }}
+        renderAfterDescription={(language) => (
+          <div className="field full store-product-rich-description">
+            <span>{copy.descriptionLabel}</span>
+            <RichTextEditor
+              key={language}
+              ariaLabel={copy.descriptionLabel}
+              disabled={busy}
+              imageAlt=""
+              variant="product"
+              value={longDescriptions[language]}
+              onChange={(document) =>
+                setLongDescriptions((current) => ({
+                  ...current,
+                  [language]: document,
+                }))
+              }
+            />
+          </div>
+        )}
         nameLabel={copy.productName}
         onChange={setContent}
         requireNames={published}

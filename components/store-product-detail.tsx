@@ -8,6 +8,8 @@ import { useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
+import { RichTextEditor } from "@/components/rich-text-editor";
+import { descriptionDocument } from "@/lib/store-product-description";
 import { useToast } from "@/components/toast-provider";
 import { deleteStoreProduct, getStoreProduct, saveStoreProduct } from "@/lib/commerce-api";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -172,7 +174,14 @@ export function StoreProductDetail({ productId }: { productId: string }) {
               {value.locale.toUpperCase()}: {value.name}
             </h2>
             <p>{value.short_description}</p>
-            <p>{value.description}</p>
+            <RichTextEditor
+              readOnly
+              variant="product"
+              imageAlt=""
+              ariaLabel={copy.descriptionLabel}
+              value={descriptionDocument(value.description, value.description_document)}
+              onChange={() => undefined}
+            />
           </section>
         ))}
         <div className="catalog-editor-actions">

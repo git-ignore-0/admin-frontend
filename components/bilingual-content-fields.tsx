@@ -11,13 +11,6 @@ export const emptyBilingualContent = (): BilingualContentValue => ({
   en: { name: "", description: "" },
 });
 
-type LongDescriptionFields = {
-  label: string;
-  maxLength?: number;
-  onChange: (value: Record<AdminLocale, string>) => void;
-  value: Record<AdminLocale, string>;
-};
-
 export function BilingualContentFields({
   activeLocale,
   busy,
@@ -26,11 +19,11 @@ export function BilingualContentFields({
   descriptionLabel,
   isLocaleComplete,
   languageLabels,
-  longDescription,
   nameLabel,
   onChange,
   onLocaleChange,
   renderAfterName,
+  renderAfterDescription,
   requireNames = true,
   descriptionMaxLength = 800,
   title,
@@ -43,11 +36,11 @@ export function BilingualContentFields({
   descriptionLabel: string;
   isLocaleComplete?: (locale: AdminLocale) => boolean;
   languageLabels: Record<AdminLocale, string>;
-  longDescription?: LongDescriptionFields;
   nameLabel: string;
   onChange: (value: BilingualContentValue) => void;
   onLocaleChange?: (locale: AdminLocale) => void;
   renderAfterName?: (locale: AdminLocale) => React.ReactNode;
+  renderAfterDescription?: (locale: AdminLocale) => React.ReactNode;
   requireNames?: boolean;
   descriptionMaxLength?: number;
   title: string;
@@ -142,24 +135,7 @@ export function BilingualContentFields({
             value={active.description}
           />
         </label>
-        {longDescription && (
-          <label className="field full">
-            <span>{longDescription.label}</span>
-            <textarea
-              className="textarea"
-              disabled={busy}
-              maxLength={longDescription.maxLength}
-              onChange={(event) =>
-                longDescription.onChange({
-                  ...longDescription.value,
-                  [currentLocale]: event.target.value,
-                })
-              }
-              rows={7}
-              value={longDescription.value[currentLocale]}
-            />
-          </label>
-        )}
+        {renderAfterDescription?.(currentLocale)}
       </div>
     </section>
   );
