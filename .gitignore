@@ -11,3 +11,4 @@ coverage/
 .DS_Store
 /cpanel-deploy*.zip
 *.tsbuildinfo
+__pycache__/

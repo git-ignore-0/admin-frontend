@@ -4,8 +4,6 @@ set -euo pipefail
 : "${TEST_FTP_SERVER:?Missing TEST_FTP_SERVER}"
 : "${TEST_FTP_USERNAME:?Missing TEST_FTP_USERNAME}"
 : "${TEST_FTP_PASSWORD:?Missing TEST_FTP_PASSWORD}"
-
-# These credentials must be jailed to the Admin TEST application root.
 if [[ "$TEST_FTP_SERVER" != "epsilon.kc.epik.com" ||
   "$TEST_FTP_USERNAME" != "deploy_admin_test@forvietnam.org" ]]; then
   echo 'Expected FTPS host epsilon.kc.epik.com and the dedicated Admin test account.' >&2
@@ -13,28 +11,32 @@ if [[ "$TEST_FTP_SERVER" != "epsilon.kc.epik.com" ||
 fi
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+release="${GITHUB_SHA:-$(git -C "$project_root" rev-parse HEAD)}-${GITHUB_RUN_ID:-$(date -u +%s)}-${GITHUB_RUN_ATTEMPT:-0}"
+[[ "$release" =~ ^[a-f0-9]{40}-[0-9]+-[0-9]+$ ]]
 deploy_work_root="$(mktemp -d)"
 trap 'rm -rf -- "$deploy_work_root"' EXIT
-unzip -q "$project_root/cpanel-deploy-passenger.zip" -d "$deploy_work_root/bundle"
-test -f "$deploy_work_root/bundle/server.js"
-test -d "$deploy_work_root/bundle/.next/static"
-test -d "$deploy_work_root/bundle/node_modules"
-
-# Never upload hosting configuration, source archives or symlinks.
-if find "$deploy_work_root/bundle" \( -name '.env*' -o -name '.htaccess' -o -name '*.zip' -o -type l \) -print -quit | grep -q .; then
-  echo 'Unexpected hosting configuration, archive or symlink in bundle.' >&2
-  exit 1
-fi
-
-printf '%s\n' "${GITHUB_SHA:-manual}-$(date -u +%s)" >"$deploy_work_root/restart.txt"
+cp "$project_root/cpanel-deploy-passenger.zip" "$deploy_work_root/bundle.zip"
 cd "$deploy_work_root"
+python3 - "$release" <<'PY'
+import hashlib, json, sys, zipfile
+from pathlib import Path
+with zipfile.ZipFile('bundle.zip') as archive:
+    names = archive.namelist()
+    assert 'server.js' in names and 'package.json' in names
+    assert not any(any(p.startswith('.env') or p == '.htaccess' for p in n.split('/')) for n in names)
+    assert archive.testzip() is None
+with open('bundle.zip', 'rb') as stream:
+    hasher = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+        hasher.update(chunk)
+    digest = hasher.hexdigest()
+Path('request.json').write_text(json.dumps({'release': sys.argv[1], 'sha256': digest}))
+print(f'ZIP: {Path("bundle.zip").stat().st_size / 1024**2:.1f} MiB; release: {sys.argv[1]}', flush=True)
+PY
 
-# Explicit FTPS on port 21. Certificate and hostname checks stay enabled.
-# No --delete: retain hosting config and previous static chunks.
-# Upload server.js and restart.txt only after all other files succeed.
-LFTP_PASSWORD="$TEST_FTP_PASSWORD" lftp --norc \
-  --env-password --user "$TEST_FTP_USERNAME" -p 21 \
-  "ftp://$TEST_FTP_SERVER" <<'LFTP'
+ftps() {
+  {
+    cat <<'CONFIG'
 set cmd:fail-exit yes
 set ftp:ssl-force yes
 set ftp:ssl-protect-data yes
@@ -43,14 +45,61 @@ set ssl:check-hostname yes
 set net:timeout 30
 set net:max-retries 2
 set net:reconnect-interval-base 5
-cd /
-# Verify the account points at an already configured Passenger app.
-cls -d .env.local
-cls -d .htaccess
-cls -d server.js
-mirror --reverse --parallel=2 --no-perms --transfer-all --exclude-glob server.js bundle/ ./
-put bundle/server.js -o server.js
-mkdir -p tmp
-put restart.txt -o tmp/restart.txt
+cd /tmp/nfv-deploy
+CONFIG
+    cat
+  } | LFTP_PASSWORD="$TEST_FTP_PASSWORD" timeout 600 lftp --norc \
+    --env-password --user "$TEST_FTP_USERNAME" -p 21 "ftp://$TEST_FTP_SERVER"
+}
+
+echo 'Checking hosting deploy worker...'
+if ! ftps <<'LFTP'
+get worker.json -o worker.json
 bye
 LFTP
+then
+  echo 'Install and run admin-test-deploy-worker.py on hosting before deploying.' >&2
+  exit 1
+fi
+python3 - <<'PY'
+import json, time
+from pathlib import Path
+worker = json.loads(Path('worker.json').read_text())
+assert worker['protocol'] == 1, 'Unsupported hosting worker version'
+assert -60 < time.time() - worker['time'] < 180, 'Hosting worker heartbeat expired; check cron'
+PY
+
+echo 'Uploading one ZIP over FTPS (10-minute upload limit)...'
+ftps <<LFTP
+put bundle.zip -o $release.zip.part
+mv $release.zip.part $release.zip
+put request.json -o $release.ready.part
+mv $release.ready.part $release.ready.json
+bye
+LFTP
+echo 'ZIP uploaded. Waiting for hosting cron (normally within one minute)...'
+
+for attempt in $(seq 1 30); do
+  ftps <<LFTP
+get $release.result.json -o result.json || echo "Waiting for worker"
+bye
+LFTP
+  if [[ -s result.json ]]; then
+    python3 - <<'PY'
+import json
+from pathlib import Path
+request = json.loads(Path('request.json').read_text())
+result = json.loads(Path('result.json').read_text())
+assert result['release'] == request['release'], 'Wrong release receipt'
+if result['status'] != 'deployed':
+    raise SystemExit('Hosting deploy failed: ' + result.get('error', 'unknown error'))
+assert result['sha256'] == request['sha256'], 'Wrong deployed ZIP checksum'
+print('Hosting installed the verified ZIP and requested Passenger restart.', flush=True)
+PY
+    exit 0
+  fi
+  echo "Hosting receipt pending ($attempt/30)."
+  sleep 10
+done
+echo 'No hosting receipt after polling. Check cron and worker log; do not assume deployment succeeded.' >&2
+exit 1

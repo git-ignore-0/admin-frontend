@@ -38,6 +38,7 @@ jobs:
           pnpm test
           bash tests/prepare-cpanel-deploy.test.sh
           bash tests/deploy-test-ftps.test.sh
+          python3 tests/test_deploy_worker.py
       - name: Build Passenger bundle from commit
         run: pnpm prepare:cpanel
       - name: Install FTPS client
