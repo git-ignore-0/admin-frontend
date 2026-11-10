@@ -22,10 +22,18 @@ printf '%s\n' "$commands" >>"$TEST_OUTPUT/commands"
 if [[ "$commands" == *'get worker.json'* ]]; then
   python3 -c 'import json,time;open("worker.json","w").write(json.dumps({"protocol":1,"time":time.time()}))'
 elif [[ "$commands" == *'.result.json -o result.json'* ]]; then
+  if [[ ! -f "$TEST_OUTPUT/interrupted" ]]; then
+    printf '{"release":' >result.json
+    touch "$TEST_OUTPUT/interrupted"
+    exit 1
+  fi
+  test ! -f result.json
   python3 -c 'import json;data=json.load(open("request.json"));data["status"]="deployed";open("result.json","w").write(json.dumps(data))'
 fi
 MOCK
 chmod +x "$test_root/bin/lftp"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$test_root/bin/sleep"
+chmod +x "$test_root/bin/sleep"
 export PATH="$test_root/bin:$PATH"
 export TEST_OUTPUT="$test_root"
 export TEST_FTP_SERVER=epsilon.kc.epik.com

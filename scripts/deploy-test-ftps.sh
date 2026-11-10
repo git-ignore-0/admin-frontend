@@ -80,11 +80,13 @@ LFTP
 echo 'ZIP uploaded. Waiting for hosting cron (normally within one minute)...'
 
 for attempt in $(seq 1 30); do
-  ftps <<LFTP
-get $release.result.json -o result.json || echo "Waiting for worker"
+  # A failed RETR can leave partial bytes; lftp does not clobber local files by default.
+  rm -f result.json
+  if ftps <<LFTP
+get $release.result.json -o result.json
 bye
 LFTP
-  if [[ -s result.json ]]; then
+  then
     python3 - <<'PY'
 import json
 from pathlib import Path
@@ -98,6 +100,7 @@ print('Hosting installed the verified ZIP and requested Passenger restart.', flu
 PY
     exit 0
   fi
+  rm -f result.json
   echo "Hosting receipt pending ($attempt/30)."
   sleep 10
 done

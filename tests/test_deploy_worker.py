@@ -104,6 +104,41 @@ class WorkerTests(unittest.TestCase):
         self.worker.process_queue(self.root)
         self.assertEqual(restart.stat().st_mtime_ns, before)
 
+    def test_pending_releases_follow_run_order_instead_of_sha_order(self):
+        self.bundle()
+        older = "f" * 40 + "-122-1"
+        archive = self.queue / (older + ".zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            for name, content in {
+                "server.js": "older server",
+                "package.json": "{}",
+                ".next/static/old.js": "asset",
+                "node_modules/pkg/old.js": "package",
+            }.items():
+                z.writestr(name, content)
+        (self.queue / (older + ".ready.json")).write_text(
+            json.dumps(
+                {
+                    "release": older,
+                    "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                }
+            )
+        )
+        self.worker.process_queue(self.root)
+        self.assertEqual((self.root / "server.js").read_text(), "new server")
+        self.assertEqual((self.root / "tmp/restart.txt").read_text(), RELEASE)
+
+    def test_late_older_request_cannot_roll_back_a_completed_release(self):
+        self.bundle()
+        restart = self.root / "tmp/restart.txt"
+        newer = "f" * 40 + "-124-1"
+        restart.write_text(newer)
+        self.worker.process_queue(self.root)
+        self.assertEqual(restart.read_text(), newer)
+        self.assertEqual((self.root / "server.js").read_text(), "old server")
+        self.assertEqual(self.result()["status"], "failed")
+        self.assertIn("newer", self.result()["error"])
+
     def test_queue_denies_http_access_and_has_heartbeat(self):
         self.assertIn("Require all denied", (self.queue / ".htaccess").read_text())
         self.assertEqual(

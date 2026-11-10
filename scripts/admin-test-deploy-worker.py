@@ -138,7 +138,15 @@ def process_queue(root=APP_ROOT):
         atomic_write(
             queue / "worker.json", json.dumps({"protocol": 1, "time": time.time()})
         )
-        for request in sorted(queue.glob("*.ready.json")):
+        pending = [
+            request
+            for request in queue.glob("*.ready.json")
+            if RELEASE_PATTERN.fullmatch(request.name.removesuffix(".ready.json"))
+            and not request.is_symlink()
+        ]
+        for request in sorted(
+            pending, key=lambda p: release_order(p.name.removesuffix(".ready.json"))
+        ):
             release = request.name.removesuffix(".ready.json")
             if not RELEASE_PATTERN.fullmatch(release) or request.is_symlink():
                 continue
@@ -148,6 +156,12 @@ def process_queue(root=APP_ROOT):
                 continue
             receipt = {"release": release}
             try:
+                restart = root / "tmp/restart.txt"
+                installed = restart.read_text().strip() if restart.exists() else ""
+                if RELEASE_PATTERN.fullmatch(installed) and release_order(
+                    release
+                ) < release_order(installed):
+                    raise ValueError("A newer release has already been installed")
                 receipt["sha256"] = install_release(root, queue, release, request)
                 receipt["status"] = "deployed"
             except Exception as error:
@@ -157,6 +171,12 @@ def process_queue(root=APP_ROOT):
             if receipt["status"] == "deployed":
                 (queue / (release + ".zip")).unlink(missing_ok=True)
             print(json.dumps(receipt), flush=True)
+
+
+def release_order(release):
+    # SHA prefixes have no chronological ordering; GitHub run ID/attempt do.
+    _, run_id, attempt = release.rsplit("-", 2)
+    return int(run_id), int(attempt)
 
 
 if __name__ == "__main__":
