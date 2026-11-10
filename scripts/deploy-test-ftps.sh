@@ -6,9 +6,9 @@ set -euo pipefail
 : "${TEST_FTP_PASSWORD:?Missing TEST_FTP_PASSWORD}"
 
 # These credentials must be jailed to the Admin TEST application root.
-if [[ "$TEST_FTP_SERVER" != "ftp.forvietnam.org" ||
+if [[ "$TEST_FTP_SERVER" != "epsilon.kc.epik.com" ||
   "$TEST_FTP_USERNAME" != "deploy_admin_test@forvietnam.org" ]]; then
-  echo 'Expected the dedicated Admin test FTPS account.' >&2
+  echo 'Expected FTPS host epsilon.kc.epik.com and the dedicated Admin test account.' >&2
   exit 1
 fi
 

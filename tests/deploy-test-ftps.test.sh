@@ -22,13 +22,15 @@ MOCK
 chmod +x "$test_root/bin/lftp"
 export PATH="$test_root/bin:$PATH"
 export TEST_OUTPUT="$test_root"
-export TEST_FTP_SERVER=ftp.forvietnam.org
+export TEST_FTP_SERVER=epsilon.kc.epik.com
 export TEST_FTP_USERNAME=deploy_admin_test@forvietnam.org
 export TEST_FTP_PASSWORD='secret with spaces $ and quotes'
 bash "$test_root/project/scripts/deploy-test-ftps.sh"
 grep -q 'set ftp:ssl-force yes' "$test_root/commands"
 grep -q 'set ftp:ssl-protect-data yes' "$test_root/commands"
 grep -q 'set ssl:verify-certificate yes' "$test_root/commands"
+grep -q 'set ssl:check-hostname yes' "$test_root/commands"
+grep -qF 'ftp://epsilon.kc.epik.com' "$test_root/arguments"
 test "$(tail -2 "$test_root/commands" | head -1)" = 'put restart.txt -o tmp/restart.txt'
 ! grep -q -- '--delete' "$test_root/commands"
 ! grep -qF "$TEST_FTP_PASSWORD" "$test_root/arguments"
