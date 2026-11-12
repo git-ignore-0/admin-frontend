@@ -53,6 +53,7 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
       label: t.common.csa,
       icon: "csa",
       items: [
+        { href: "/csa-rounds", label: t.common.csaRounds },
         { href: "/csa-customers", label: t.common.csaCustomers },
         { href: "/csa-purchase-requests", label: t.common.csaPurchaseRequests },
         { href: "/csa-terms", label: t.common.csaTerms },

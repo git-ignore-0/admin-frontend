@@ -47,6 +47,7 @@ describe("admin sidebar navigation", () => {
       "/points",
       "/rewards",
       "/redemptions",
+      "/csa-rounds",
       "/csa-customers",
       "/csa-purchase-requests",
       "/csa-terms",

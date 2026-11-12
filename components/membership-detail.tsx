@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailBackLink } from "@/components/detail-back-link";
+import { csaRoundsCopy } from "@/lib/csa-rounds-copy";
 import { MembershipStatusBadge } from "@/components/membership-status-badge";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
@@ -403,6 +405,12 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
             {formatAdminDate(item.start_date)} –{" "}
             {formatAdminDate(membershipLastReceiptDate(item.end_date))}
           </p>
+          {item.extension_end_date && (
+            <p>
+              {t.memberships.extensionEndDate}: {formatAdminDate(item.extension_end_date)}
+            </p>
+          )}
+          {item.status === "frozen" && <p>{csaRoundsCopy(locale).frozenHint}</p>}
           {item.snapshot_complete === false && (
             <p className="membership-snapshot-warning">
               <span aria-hidden="true">⚠</span>
@@ -730,18 +738,25 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     </span>
                     <time>{formatAdminDateTime(usage.created_at)}</time>
                   </div>
-                  {usage.status === "applied" && item.status !== "revoked" && (
-                    <button
-                      className="button secondary"
-                      disabled={saving}
-                      onClick={() => {
-                        setUndoItem(usage);
-                        setUndoReason("");
-                        setActionError("");
-                      }}
-                    >
-                      {t.memberships.undoUsage}
-                    </button>
+                  {usage.order_id ? (
+                    <Link className="button secondary" href={`/store-orders/${usage.order_id}`}>
+                      {csaRoundsCopy(locale).order}
+                    </Link>
+                  ) : (
+                    usage.status === "applied" &&
+                    item.status !== "revoked" && (
+                      <button
+                        className="button secondary"
+                        disabled={saving}
+                        onClick={() => {
+                          setUndoItem(usage);
+                          setUndoReason("");
+                          setActionError("");
+                        }}
+                      >
+                        {t.memberships.undoUsage}
+                      </button>
+                    )
                   )}
                 </div>
                 <ul>

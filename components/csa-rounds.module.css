@@ -1,0 +1,287 @@
+.screen {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.form {
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+}
+.form > button {
+  justify-self: start;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.dates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+}
+.dates dt {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+.dates dd {
+  margin: 8px 0 0;
+}
+.tableWrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table th,
+.table td {
+  padding: 14px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  overflow-wrap: anywhere;
+}
+.people {
+  display: grid;
+  gap: 12px;
+}
+.person {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.personHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.personHeader h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.personProducts {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  font-size: 14px;
+}
+.personProducts li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  padding-block: 4px;
+}
+.personProducts li > span:last-child {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.personEmpty {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.personDeadline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+.personDeadline > span {
+  color: var(--text-muted);
+}
+.personDeadline time {
+  font-variant-numeric: tabular-nums;
+}
+.personActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.personActions > :last-child:not(:first-child) {
+  margin-left: auto;
+}
+.person > .history {
+  margin-top: 8px;
+}
+.history {
+  margin-top: 12px;
+  font-size: 13px;
+}
+.history summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding-block: 4px;
+}
+.history summary:hover {
+  color: var(--text);
+}
+.history summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+.historyList {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.historyList > li {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.historyEventHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.historyEventHeading strong {
+  font-weight: 500;
+}
+.historyEventHeading time {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.history .historyNote {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+.historyProducts {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.historyProducts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-block: 2px;
+}
+.historyProducts li > span:last-child {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  .dates {
+    grid-template-columns: 1fr;
+  }
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+  }
+  .table thead {
+    display: none;
+  }
+  .table tr {
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    padding-block: 10px;
+  }
+  .table td {
+    display: grid;
+    grid-template-columns: minmax(100px, 35%) minmax(0, 1fr);
+    gap: 10px;
+    padding: 8px;
+    border: 0;
+  }
+  .table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+  }
+}
+
+.scheduleFields {
+  min-width: 0;
+  margin: 0;
+  padding: 20px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.scheduleFields legend {
+  padding: 0 12px 0 0;
+  font-weight: 600;
+}
+.dateFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.deliveryField {
+  grid-column: 1 / -1;
+  max-width: 360px;
+}
+.overview {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.overviewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.overview .dates {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.dates dd {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.cancelAction {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+@media (max-width: 760px) {
+  .dateFields {
+    grid-template-columns: 1fr;
+  }
+  .deliveryField {
+    max-width: none;
+  }
+  .overview {
+    padding: 16px;
+    gap: 16px;
+  }
+  .overviewHeader > .actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .person {
+    padding: 12px;
+  }
+  .personActions {
+    gap: 4px;
+  }
+  .personActions > :last-child:not(:first-child) {
+    margin-left: 0;
+  }
+}

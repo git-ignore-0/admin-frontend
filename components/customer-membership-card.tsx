@@ -24,6 +24,12 @@ export function CustomerMembershipCard({ item, t }: { item: AdminMembership; t: 
           <dt>{t.memberships.lastReceiptDate}</dt>
           <dd>{formatAdminDate(membershipLastReceiptDate(item.end_date))}</dd>
         </div>
+        {item.extension_end_date && (
+          <div>
+            <dt>{t.memberships.extensionEndDate}</dt>
+            <dd>{formatAdminDate(item.extension_end_date)}</dd>
+          </div>
+        )}
       </dl>
       <Link className="button secondary customer-membership-link" href={`/memberships/${item.id}`}>
         {t.memberships.view}

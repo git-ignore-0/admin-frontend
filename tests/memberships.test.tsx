@@ -1407,3 +1407,28 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(screen.getByRole("dialog", { name: "Confirm CSA package revocation" })).toBeVisible();
   });
 });
+
+it("links order-backed usage instead of offering manual undo", async () => {
+  vi.mocked(api).mockResolvedValue(membership);
+  vi.mocked(apiEnvelope).mockResolvedValue({
+    data: [
+      {
+        id: "usage-order",
+        membership_id: membership.id,
+        order_id: "csa-order",
+        status: "applied",
+        note: "CSA selection",
+        created_at: "2026-08-04T03:00:00Z",
+        reversed_at: null,
+        lines: [],
+      },
+    ],
+    meta: { ...meta, total: 1 },
+  });
+  providers(<MembershipDetail membershipId={membership.id} />);
+  expect(await screen.findByRole("link", { name: "View order" })).toHaveAttribute(
+    "href",
+    "/store-orders/csa-order",
+  );
+  expect(screen.queryByRole("button", { name: "Undo product collection" })).not.toBeInTheDocument();
+});

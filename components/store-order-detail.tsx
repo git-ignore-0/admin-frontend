@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { CSAOrderPanel } from "@/components/csa-order-panel";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
 import {
@@ -58,6 +59,7 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
   const [draft, setDraft] = useState<StoreOrderAllocationDraft[]>([]);
   const [tick, setTick] = useState(0);
   const draftInitialized = useRef(false);
+  const csaRevision = useRef<string | null>(null);
   const receivedAt = useRef(Date.now());
   const requestId = useRef(0);
   const expiryReloaded = useRef<string | null>(null);
@@ -84,6 +86,13 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
       setOrder(next);
       setError("");
       setReloadRequired(false);
+      const nextCSARevision = next.csa
+        ? `${next.csa.selection.revision}:${next.csa.selection.state}`
+        : null;
+      if (nextCSARevision !== csaRevision.current) {
+        draftInitialized.current = false;
+        csaRevision.current = nextCSARevision;
+      }
       if (!draftInitialized.current) {
         setDraft(next.allocation_suggestion ?? []);
         draftInitialized.current = true;
@@ -337,9 +346,14 @@ export function StoreOrderDetail({ orderId }: { orderId: string }) {
           {actions.includes("restock") ? <li>{c.restockPending}</li> : null}
         </ul>
       ) : null}
+      <CSAOrderPanel
+        order={order}
+        disabled={loading || Boolean(error) || reloadRequired || actionBusy}
+        onReload={() => void load()}
+      />
       <div className="store-order-workspace">
         <div className="store-order-main">
-          {order.status === "pending_review" ? (
+          {order.status === "pending_review" && order.csa?.selection.state !== "reselecting" ? (
             <StoreOrderAllocationEditor
               order={order}
               value={draft}

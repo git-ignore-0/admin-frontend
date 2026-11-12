@@ -1,0 +1,192 @@
+import type { AdminLocale } from "@/lib/admin-i18n";
+
+const vi = {
+  title: "Đợt CSA",
+  create: "Tạo đợt",
+  name: "Tên đợt",
+  scheduleTitle: "Lịch chọn hàng và giao hàng",
+  selectionWindow: "Thời gian chọn hàng",
+  opens: "Bắt đầu chọn hàng",
+  closes: "Kết thúc chọn hàng",
+  delivery: "Giao hàng",
+  save: "Lưu nháp",
+  saveChanges: "Lưu thay đổi",
+  publish: "Công bố đợt",
+  publishBody: "Hội viên có thể chọn hàng trong thời gian đã thiết lập. Công bố đợt này?",
+  cancelRound: "Hủy đợt",
+  cancelBody: "Hủy các lựa chọn chưa phân bổ và hoàn điểm của đợt này?",
+  reason: "Lý do hủy",
+  confirm: "Xác nhận",
+  cancel: "Đóng",
+  busy: "Đang xử lý…",
+  loading: "Đang tải đợt CSA…",
+  empty: "Chưa có đợt CSA.",
+  view: "Xem đợt",
+  edit: "Sửa đợt",
+  refresh: "Tải lại",
+  back: "Về danh sách đợt",
+  participants: "Hội viên tham gia",
+  demand: "Tổng nhu cầu sản phẩm",
+  product: "Sản phẩm",
+  quantity: "Số lượng",
+  customer: "Hội viên",
+  state: "Trạng thái",
+  action: "Thao tác",
+  emptyParticipants: "Chưa có hội viên lưu lựa chọn.",
+  emptyDemand: "Chưa có nhu cầu sản phẩm.",
+  emptyLines: "Chưa lưu lựa chọn mới.",
+  order: "Xem đơn hàng",
+  membership: "Gói dùng cho đơn",
+  reopen: "Mở chọn lại",
+  deadline: "Hạn khóa lại",
+  history: "Lịch sử lựa chọn",
+  noHistory: "Chưa có lịch sử.",
+  systemReasons: {
+    reselection_expired: "Đã hết hạn chọn lại.",
+    empty_or_revoked: "Lựa chọn trống hoặc quyền lợi đã bị thu hồi.",
+  },
+  reopenHint:
+    "Mở lại toàn bộ đơn để hội viên chọn từ đầu. Hạn khóa phải ở tương lai và trước giờ giao hàng. Khách không xác nhận đúng hạn sẽ bị hủy cả đơn và hoàn điểm.",
+  allocated: "Đơn đã phân bổ, kết thúc hoặc không còn được mở chọn lại. Hãy tải lại dữ liệu.",
+  schedule: "Thời gian kết thúc chọn hàng phải sau thời gian bắt đầu và trước thời gian giao hàng.",
+  overlap: "Thời gian chọn chồng với đợt đã công bố. Đợt sau phải mở sau hạn chốt đợt trước.",
+  deadlineError: "Hạn chọn lại phải ở tương lai và trước thời gian giao hàng.",
+  immutable: "Đợt đã có người tham gia hoặc đã hủy; không được sửa lịch.",
+  nameRequired: "Hãy nhập tên đợt.",
+  reasonRequired: "Hãy nhập lý do hủy.",
+  failed: "Không thực hiện được. Vui lòng tải lại dữ liệu và thử lại.",
+  statuses: {
+    draft: "Nháp",
+    scheduled: "Chờ mở",
+    open: "Đang mở chọn",
+    closed: "Đã chốt",
+    delivery: "Đến lịch giao",
+    cancelled: "Đã hủy",
+  },
+  states: {
+    selecting: "Đang chọn",
+    locked: "Đã chốt",
+    reselecting: "Chờ chọn lại",
+    confirmed: "Đã xác nhận lại",
+    cancelled: "Đã hủy",
+    delivered: "Đã giao",
+  },
+  events: {
+    saved: "Lưu lựa chọn",
+    closed: "Chốt đơn",
+    reopened: "Mở chọn lại / cập nhật hạn",
+    confirmed: "Xác nhận lại",
+    cancelled: "Hủy lựa chọn",
+  },
+  frozenHint:
+    "Chỉ tiếp tục đợt đã tham gia hoặc chọn lại khi được mở quyền; không tham gia đợt mới hay dùng quyền lợi CSA trên Store.",
+};
+const en: typeof vi = {
+  title: "CSA rounds",
+  create: "Create round",
+  name: "Round name",
+  scheduleTitle: "Selection and delivery schedule",
+  selectionWindow: "Selection window",
+  opens: "Selection opens",
+  closes: "Selection closes",
+  delivery: "Delivery",
+  save: "Save draft",
+  saveChanges: "Save changes",
+  publish: "Publish round",
+  publishBody:
+    "Members can choose produce during the scheduled selection window. Publish this round?",
+  cancelRound: "Cancel round",
+  cancelBody: "Cancel the unallocated selections and refund this round's points?",
+  reason: "Cancellation reason",
+  confirm: "Confirm",
+  cancel: "Close",
+  busy: "Processing…",
+  loading: "Loading CSA round…",
+  empty: "No CSA rounds yet.",
+  view: "View round",
+  edit: "Edit round",
+  refresh: "Refresh",
+  back: "Back to rounds",
+  participants: "Participating members",
+  demand: "Product demand",
+  product: "Product",
+  quantity: "Quantity",
+  customer: "Member",
+  state: "Status",
+  action: "Actions",
+  emptyParticipants: "No saved selections yet.",
+  emptyDemand: "No product demand yet.",
+  emptyLines: "No new selection saved.",
+  order: "View order",
+  membership: "Membership used for this order",
+  reopen: "Reopen selection",
+  deadline: "Selection deadline",
+  history: "Selection history",
+  noHistory: "No history yet.",
+  systemReasons: {
+    reselection_expired: "The reselection deadline expired.",
+    empty_or_revoked: "The selection was empty or the membership benefit was revoked.",
+  },
+  reopenHint:
+    "Reopen the entire order for the member to choose again. Set a future deadline before the delivery time. If the member does not confirm in time, the entire order is cancelled and points are refunded.",
+  allocated: "This order is already allocated, terminal, or cannot be reopened. Refresh the data.",
+  schedule: "Selection must close after it opens and before the delivery time.",
+  overlap:
+    "Selection windows overlap a published round. A later round must open after the previous cutoff.",
+  deadlineError: "The deadline must be in the future and before the delivery time.",
+  immutable: "This round has participants or is cancelled; its schedule cannot be edited.",
+  nameRequired: "Enter a round name.",
+  reasonRequired: "Enter a cancellation reason.",
+  failed: "The action could not be completed. Refresh the data and retry.",
+  statuses: {
+    draft: "Draft",
+    scheduled: "Scheduled",
+    open: "Open",
+    closed: "Closed",
+    delivery: "Delivery due",
+    cancelled: "Cancelled",
+  },
+  states: {
+    selecting: "Selecting",
+    locked: "Locked",
+    reselecting: "Awaiting reselection",
+    confirmed: "Reconfirmed",
+    cancelled: "Cancelled",
+    delivered: "Delivered",
+  },
+  events: {
+    saved: "Selection saved",
+    closed: "Order locked",
+    reopened: "Selection reopened / deadline updated",
+    confirmed: "Selection reconfirmed",
+    cancelled: "Selection cancelled",
+  },
+  frozenHint:
+    "Only existing rounds or admin-enabled reselection remain available; no new rounds or CSA benefits on Store.",
+};
+export function csaRoundsCopy(locale: AdminLocale) {
+  return locale === "vi" ? vi : en;
+}
+export function csaRoundError(error: unknown, locale: AdminLocale, fallback: string) {
+  const c = csaRoundsCopy(locale);
+  if (!(error instanceof Error)) return fallback;
+  const messages: Record<string, string> = {
+    csa_round_schedule_invalid: c.schedule,
+    csa_round_schedule_conflict: c.overlap,
+    csa_round_published_immutable: c.immutable,
+    csa_reselection_deadline_invalid: c.deadlineError,
+    csa_order_already_allocated: c.allocated,
+    csa_selection_locked: c.allocated,
+    csa_selection_stale: c.failed,
+    csa_round_already_closed: c.failed,
+    csa_round_cancelled: c.failed,
+  };
+  return messages[error.message] ?? fallback;
+}
+
+export function csaSelectionReason(reason: string, actorId: string | null, locale: AdminLocale) {
+  const reasons = csaRoundsCopy(locale).systemReasons;
+  return actorId === null && Object.prototype.hasOwnProperty.call(reasons, reason)
+    ? reasons[reason as keyof typeof reasons]
+    : reason;
+}

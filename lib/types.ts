@@ -54,7 +54,7 @@ export type StoreProduct = {
   updated_at: string;
 };
 
-export type MembershipStatus = "scheduled" | "active" | "ended" | "revoked";
+export type MembershipStatus = "scheduled" | "active" | "frozen" | "ended" | "revoked";
 export type MembershipQuotaPolicy = "expire" | "rollover";
 
 export type WebsiteAccount = {
@@ -250,6 +250,7 @@ export type AdminMembership = {
   quota_policy: MembershipQuotaPolicy;
   start_date: string;
   end_date: string;
+  extension_end_date?: string;
   activated_at: string;
   current_slot?: boolean | null;
   revoked_at?: string | null;
@@ -390,6 +391,7 @@ export type MembershipPaymentSettings = {
 
 export type MembershipUsage = {
   id: string;
+  order_id?: string | null;
   membership_id: string;
   status: "applied" | "reversed";
   note: string;
@@ -737,6 +739,10 @@ export type StoreOrderCouponSnapshot = {
 };
 
 export type StoreOrder = {
+  csa?: {
+    round: import("@/lib/csa-rounds").CSARound;
+    selection: import("@/lib/csa-rounds").CSASelection;
+  };
   id: string;
   reference_code: string;
   status: StoreOrderStatus;

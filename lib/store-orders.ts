@@ -108,6 +108,7 @@ export function getStoreOrderActions(order: StoreOrder): StoreOrderAction[] {
   const actions: StoreOrderAction[] = [];
   if (
     order.status === "pending_review" &&
+    (!order.csa || ["locked", "confirmed"].includes(order.csa.selection.state)) &&
     (order.total_vnd === "0" || order.payment_status === "received")
   ) {
     actions.push("approve");

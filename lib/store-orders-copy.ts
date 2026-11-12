@@ -136,6 +136,7 @@ const copy = {
       active_csa_with_csa_product: "Thành viên CSA mua sản phẩm CSA",
     },
     cancellationReasons: {
+      reselection_expired: "Đã hết hạn chọn lại sản phẩm",
       expired: "Đơn hết hạn trước khi được duyệt",
       buyer_cancelled: "Khách đã hủy đơn",
     },
@@ -296,6 +297,7 @@ const copy = {
       active_csa_with_csa_product: "CSA member purchasing a CSA product",
     },
     cancellationReasons: {
+      reselection_expired: "Reselection deadline expired",
       expired: "Order expired before approval",
       buyer_cancelled: "Cancelled by the customer",
     },

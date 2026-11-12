@@ -33,6 +33,26 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
 
   const [, resource, id, action, extra] = path;
+  if (resource === "csa-rounds") {
+    if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined)
+      return path.length === 3 && ["GET", "PATCH"].includes(normalizedMethod);
+    return (
+      path.length === 4 &&
+      (action === "selections"
+        ? normalizedMethod === "GET"
+        : ["publish", "cancel"].includes(action) && normalizedMethod === "POST")
+    );
+  }
+  if (resource === "csa-selections") {
+    return (
+      path.length === 4 &&
+      UUID_PATH_SEGMENT.test(id ?? "") &&
+      ((action === "reopen" && normalizedMethod === "POST") ||
+        (action === "events" && normalizedMethod === "GET"))
+    );
+  }
   if (resource === "farms") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (id === "media") {
