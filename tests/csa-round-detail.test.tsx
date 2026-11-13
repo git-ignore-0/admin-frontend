@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSARoundDetail } from "@/components/csa-round-detail";
 import { api, apiEnvelope } from "@/lib/client-api";
+vi.mock("@/components/csa-companion-delivery", () => ({ CSACompanionDelivery: () => null }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 afterEach(() => {

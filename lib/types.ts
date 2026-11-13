@@ -760,6 +760,15 @@ export type StoreOrder = {
   discount_amount_vnd?: string;
   coupon?: StoreOrderCouponSnapshot | null;
   shipping_fee_vnd: string;
+  delivery_date?: string | null;
+  shipping_benefit?: {
+    reason: "csa_companion_delivery";
+    round_id: string;
+    selection_id: string;
+    csa_order_id: string;
+    delivery_at: string;
+    decided_at: string;
+  } | null;
   shipping_discount_reason: string | null;
   total_vnd: string;
   payment: {

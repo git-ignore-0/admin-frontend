@@ -1,6 +1,24 @@
 import type { AdminLocale } from "@/lib/admin-i18n";
 
 const vi = {
+  companion: {
+    title: "Giao kèm đơn mua lẻ",
+    cutoff: "Hạn nhận đơn kèm",
+    enable: "Bật nhận đơn",
+    close: "Đóng nhận đơn",
+    reopen: "Mở lại",
+    cancelledError: "Đợt đã hủy. Vui lòng tải lại dữ liệu.",
+    deadlineError: "Hạn nhận đơn kèm phải ở tương lai và trước giờ giao CSA.",
+    states: {
+      not_enabled: "Chưa bật",
+      accepting: "Đang nhận đơn",
+      expired: "Đã hết hạn",
+      closed: "Đã đóng",
+      cancelled: "Đã hủy",
+      draft: "Chờ công bố",
+    },
+  },
+
   title: "Đợt CSA",
   create: "Tạo đợt",
   name: "Tên đợt",
@@ -82,6 +100,24 @@ const vi = {
     "Chỉ tiếp tục đợt đã tham gia hoặc chọn lại khi được mở quyền; không tham gia đợt mới hay dùng quyền lợi CSA trên Store.",
 };
 const en: typeof vi = {
+  companion: {
+    title: "Retail orders with CSA delivery",
+    cutoff: "Companion order cutoff",
+    enable: "Start accepting",
+    close: "Stop accepting",
+    reopen: "Reopen",
+    cancelledError: "This round has been cancelled. Refresh the data.",
+    deadlineError: "The companion order cutoff must be in the future and before CSA delivery.",
+    states: {
+      not_enabled: "Not enabled",
+      accepting: "Accepting orders",
+      expired: "Expired",
+      closed: "Closed",
+      cancelled: "Cancelled",
+      draft: "Awaiting publication",
+    },
+  },
+
   title: "CSA rounds",
   create: "Create round",
   name: "Round name",
@@ -175,11 +211,12 @@ export function csaRoundError(error: unknown, locale: AdminLocale, fallback: str
     csa_round_schedule_conflict: c.overlap,
     csa_round_published_immutable: c.immutable,
     csa_reselection_deadline_invalid: c.deadlineError,
+    csa_companion_deadline_invalid: c.companion.deadlineError,
     csa_order_already_allocated: c.allocated,
     csa_selection_locked: c.allocated,
     csa_selection_stale: c.failed,
     csa_round_already_closed: c.failed,
-    csa_round_cancelled: c.failed,
+    csa_round_cancelled: c.companion.cancelledError,
   };
   return messages[error.message] ?? fallback;
 }

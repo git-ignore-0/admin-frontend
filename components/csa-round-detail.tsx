@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { CSACompanionDelivery } from "@/components/csa-companion-delivery";
 import { CSAReopenDialog } from "@/components/csa-reopen-dialog";
 import { CSASelectionHistory } from "@/components/csa-selection-history";
 import { Pagination } from "@/components/pagination";
@@ -45,26 +46,35 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
   const [reason, setReason] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [companionBusy, setCompanionBusy] = useState(false);
+  const [companionRefresh, setCompanionRefresh] = useState(0);
+  const roundReceivedAt = useRef(0);
   const lock = useRef(false);
   const [reopen, setReopen] = useState<CSASelection | null>(null);
   const requests = useRef(0);
-  const roundSnapshot = useRef<{ round: CSARound; page: number } | null>(null);
+  const roundSnapshot = useRef<{ round: CSARound; page: number; receivedAt: number } | null>(null);
   const load = useCallback(
     async (refreshRound = true) => {
-      if (refreshRound) roundSnapshot.current = null;
+      if (refreshRound) {
+        roundSnapshot.current = null;
+        setCompanionRefresh((value) => value + 1);
+      }
       const current = ++requests.current;
       setLoading(true);
       setError(null);
       try {
         const cached = roundSnapshot.current;
         const reuseRound = !refreshRound && cached?.round.id === roundId && cached.page === page;
-        const [item, people] = await Promise.all([
-          reuseRound && cached ? cached.round : getRound(roundId),
+        const [result, people] = await Promise.all([
+          reuseRound && cached
+            ? { item: cached.round, receivedAt: cached.receivedAt }
+            : getRound(roundId).then((item) => ({ item, receivedAt: performance.now() })),
           getRoundParticipants(roundId, page, 20, locale),
         ]);
         if (current === requests.current) {
-          roundSnapshot.current = { round: item, page };
-          setRound(item);
+          roundSnapshot.current = { round: result.item, page, receivedAt: result.receivedAt };
+          roundReceivedAt.current = result.receivedAt;
+          setRound(result.item);
           setParticipants(people);
         }
       } catch (e) {
@@ -109,7 +119,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       setBusy(false);
     }
   }
-  if (!round)
+  if (!round || round.id !== roundId)
     return (
       <div className={styles.screen}>
         <DetailPageHeading backHref="/csa-rounds" backLabel={c.back} title={c.title} />
@@ -124,7 +134,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
         )}
       </div>
     );
-  const disabled = loading || Boolean(error) || busy;
+  const disabled = loading || Boolean(error) || busy || companionBusy;
   return (
     <div className={styles.screen}>
       <DetailPageHeading backHref="/csa-rounds" backLabel={c.back} title={round.name} />
@@ -139,7 +149,11 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
         <div className={styles.overviewHeader}>
           <Status status={round.status} label={c.statuses[round.status]} />
           <div className={styles.actions}>
-            <Button variant="outline" disabled={loading || busy} onClick={() => void load()}>
+            <Button
+              variant="outline"
+              disabled={loading || busy || companionBusy}
+              onClick={() => void load()}
+            >
               {c.refresh}
             </Button>
             {!disabled && round.status !== "cancelled" && participants.meta.total === 0 && (
@@ -178,6 +192,13 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
           <p>{round.cancellation_reason}</p>
         </Section>
       )}
+      <CSACompanionDelivery
+        round={round}
+        receivedAt={roundReceivedAt.current}
+        refreshKey={companionRefresh}
+        disabled={loading || Boolean(error) || busy}
+        onBusyChange={setCompanionBusy}
+      />
       <Section title={c.demand}>
         {participants.demand.length ? (
           <div className={styles.tableWrap}>

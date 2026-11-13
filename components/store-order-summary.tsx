@@ -1,6 +1,7 @@
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { formatStoreMoney } from "@/lib/store-orders";
-import { storeOrdersCopy } from "@/lib/store-orders-copy";
+import Link from "next/link";
+import { formatStoreMoney, formatStoreDeliveryDate } from "@/lib/store-orders";
+import { storeOrdersCopy, storeShippingDiscountReason } from "@/lib/store-orders-copy";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 import type { StoreOrder } from "@/lib/types";
 
@@ -24,44 +25,74 @@ export function StoreOrderTotals({ order }: { order: StoreOrder }) {
   const discount = order.discount_amount_vnd ?? "0";
   const hasVoucher = Boolean(voucherCode) || BigInt(discount) > 0n;
   return (
-    <dl className="store-order-totals">
-      <div>
-        <dt>{c.listedSubtotal}</dt>
-        <dd>{formatStoreMoney(listedSubtotal(order), locale)}</dd>
-      </div>
-      {BigInt(covered) > 0n ? (
+    <>
+      <dl className="detail-list">
+        {!order.csa && (
+          <div>
+            <dt>{c.deliveryDate}</dt>
+            <dd>{formatStoreDeliveryDate(order)}</dd>
+          </div>
+        )}
+        {order.shipping_discount_reason && (
+          <div>
+            <dt>{c.shippingDiscount}</dt>
+            <dd>
+              {storeShippingDiscountReason(order.shipping_discount_reason, locale)}
+              {order.shipping_discount_reason === "csa_companion_delivery" &&
+                order.shipping_benefit && (
+                  <small className="table-secondary">
+                    <Link href={`/csa-rounds/${order.shipping_benefit.round_id}`}>
+                      {c.sourceRound}
+                    </Link>
+                    {" · "}
+                    <Link href={`/store-orders/${order.shipping_benefit.csa_order_id}`}>
+                      {c.sourceOrder}
+                    </Link>
+                  </small>
+                )}
+            </dd>
+          </div>
+        )}
+      </dl>
+      <dl className="store-order-totals">
         <div>
-          <dt>{c.quotaCovered}</dt>
-          <dd>−{formatStoreMoney(covered, locale)}</dd>
+          <dt>{c.listedSubtotal}</dt>
+          <dd>{formatStoreMoney(listedSubtotal(order), locale)}</dd>
         </div>
-      ) : null}
-      {hasVoucher ? (
-        <>
+        {BigInt(covered) > 0n ? (
           <div>
-            <dt>{c.cashSubtotalBeforeDiscount}</dt>
-            <dd>{formatStoreMoney(order.subtotal_vnd, locale)}</dd>
+            <dt>{c.quotaCovered}</dt>
+            <dd>−{formatStoreMoney(covered, locale)}</dd>
           </div>
-          {voucherCode ? (
+        ) : null}
+        {hasVoucher ? (
+          <>
             <div>
-              <dt>{c.voucherCode}</dt>
-              <dd>{voucherCode}</dd>
+              <dt>{c.cashSubtotalBeforeDiscount}</dt>
+              <dd>{formatStoreMoney(order.subtotal_vnd, locale)}</dd>
             </div>
-          ) : null}
-          <div>
-            <dt>{c.voucherDiscount}</dt>
-            <dd>−{formatStoreMoney(discount, locale)}</dd>
-          </div>
-        </>
-      ) : null}
-      <div>
-        <dt>{c.shippingFee}</dt>
-        <dd>{formatStoreMoney(order.shipping_fee_vnd, locale)}</dd>
-      </div>
-      <div className="store-order-total-due">
-        <dt>{c.total}</dt>
-        <dd>{formatStoreMoney(order.total_vnd, locale)}</dd>
-      </div>
-    </dl>
+            {voucherCode ? (
+              <div>
+                <dt>{c.voucherCode}</dt>
+                <dd>{voucherCode}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>{c.voucherDiscount}</dt>
+              <dd>−{formatStoreMoney(discount, locale)}</dd>
+            </div>
+          </>
+        ) : null}
+        <div>
+          <dt>{c.shippingFee}</dt>
+          <dd>{formatStoreMoney(order.shipping_fee_vnd, locale)}</dd>
+        </div>
+        <div className="store-order-total-due">
+          <dt>{c.total}</dt>
+          <dd>{formatStoreMoney(order.total_vnd, locale)}</dd>
+        </div>
+      </dl>
+    </>
   );
 }
 

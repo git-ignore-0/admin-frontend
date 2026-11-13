@@ -382,3 +382,16 @@ describe("Store order list", () => {
     await waitFor(() => expect(screen.queryByText("STALE")).not.toBeInTheDocument());
   });
 });
+
+it("shows saved retail delivery dates and a blank legacy date in secondary text", async () => {
+  vi.mocked(apiEnvelope).mockResolvedValue({
+    data: [
+      storeOrderFixture({ delivery_date: "2026-11-20" }),
+      storeOrderFixture({ id: "legacy", reference_code: "LEGACY", delivery_date: null }),
+    ],
+    meta: { page: 1, page_size: 20, total: 2 },
+  });
+  view();
+  expect(await screen.findByText("Ngày giao: 20/11/2026")).toHaveClass("table-secondary");
+  expect(screen.getByText("Ngày giao: —")).toBeVisible();
+});

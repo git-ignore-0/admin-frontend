@@ -54,6 +54,9 @@ const copy = {
     cashSubtotalBeforeDiscount: "Tiền mặt trước giảm giá",
     voucherCode: "Mã voucher",
     voucherDiscount: "Giảm giá voucher",
+    deliveryDate: "Ngày giao",
+    sourceRound: "Đợt CSA",
+    sourceOrder: "Đơn CSA",
     shippingFee: "Phí giao hàng",
     shippingDiscount: "Lý do miễn phí giao hàng",
     transferTitle: "Thông tin chuyển khoản",
@@ -133,6 +136,8 @@ const copy = {
       "Đơn hàng hoặc nguồn tồn đã thay đổi. Draft được giữ; hãy tải lại và kiểm tra trước khi thử lại.",
     reloadAfterConflict: "Tải trạng thái mới",
     shippingDiscountReasons: {
+      csa_round: "Giao hàng trong gói CSA",
+      csa_companion_delivery: "Miễn phí giao kèm CSA",
       active_csa_with_csa_product: "Thành viên CSA mua sản phẩm CSA",
     },
     cancellationReasons: {
@@ -212,6 +217,9 @@ const copy = {
     cashSubtotalBeforeDiscount: "Cash subtotal before discount",
     voucherCode: "Voucher code",
     voucherDiscount: "Voucher discount",
+    deliveryDate: "Delivery date",
+    sourceRound: "CSA round",
+    sourceOrder: "CSA order",
     shippingFee: "Delivery fee",
     shippingDiscount: "Free-delivery reason",
     transferTitle: "Bank transfer details",
@@ -294,6 +302,8 @@ const copy = {
       "The order or inventory sources changed. The draft was kept; reload and review before retrying.",
     reloadAfterConflict: "Load latest state",
     shippingDiscountReasons: {
+      csa_round: "Delivery included in CSA",
+      csa_companion_delivery: "Free delivery with CSA",
       active_csa_with_csa_product: "CSA member purchasing a CSA product",
     },
     cancellationReasons: {

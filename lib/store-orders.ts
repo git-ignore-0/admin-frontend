@@ -1,3 +1,4 @@
+import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type {
   PaginationMeta,
@@ -220,4 +221,10 @@ export class IdempotencyKeyStore {
   clear(action: StoreOrderAction) {
     this.current.delete(action);
   }
+}
+
+export function formatStoreDeliveryDate(order: Pick<StoreOrder, "csa" | "delivery_date">) {
+  return order.csa
+    ? formatAdminDateTime(order.csa.round.delivery_at)
+    : formatAdminDate(order.delivery_date);
 }

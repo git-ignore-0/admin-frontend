@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { StoreOrderTotals, StoreRecipientSummary } from "@/components/store-order-summary";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
+import { storeShippingDiscountReason } from "@/lib/store-orders-copy";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 
 vi.mock("@/lib/use-administrative-unit-names", () => ({
@@ -144,4 +145,110 @@ describe("Store voucher snapshot totals", () => {
     expect(screen.queryByText("Giảm giá voucher")).not.toBeInTheDocument();
     expect(row("Tổng phải trả").getByText(/105.000/)).toBeVisible();
   });
+});
+
+describe("saved delivery snapshot", () => {
+  it("shows retail date and companion reason with source links from the saved snapshot", () => {
+    render(
+      <AdminI18nProvider initialLocale="vi">
+        <StoreOrderTotals
+          order={storeOrderFixture({
+            delivery_date: "2026-11-20",
+            shipping_discount_reason: "csa_companion_delivery",
+            shipping_benefit: {
+              reason: "csa_companion_delivery",
+              round_id: "saved-round",
+              selection_id: "selection",
+              csa_order_id: "saved-order",
+              delivery_at: "2026-11-20T08:00:00+07:00",
+              decided_at: "2026-11-19T08:00:00+07:00",
+            },
+          })}
+        />
+      </AdminI18nProvider>,
+    );
+    expect(screen.getByText("20/11/2026")).toBeVisible();
+    expect(screen.getByText("Miễn phí giao kèm CSA")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Đợt CSA" })).toHaveAttribute(
+      "href",
+      "/csa-rounds/saved-round",
+    );
+    expect(screen.getByRole("link", { name: "Đơn CSA" })).toHaveAttribute(
+      "href",
+      "/store-orders/saved-order",
+    );
+    expect(screen.getByText(/105.000/)).toBeVisible(); // Never reprice the stored order.
+  });
+  it("shows a blank date for legacy retail and retains the legacy shipping reason", () => {
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <StoreOrderTotals
+          order={storeOrderFixture({
+            delivery_date: null,
+            shipping_benefit: null,
+            shipping_discount_reason: "active_csa_with_csa_product",
+          })}
+        />
+      </AdminI18nProvider>,
+    );
+    expect(within(screen.getByText("Delivery date").parentElement!).getByText("—")).toBeVisible();
+    expect(screen.getByText("CSA member purchasing a CSA product")).toBeVisible();
+  });
+  it.each([
+    ["vi", "Giao hàng trong gói CSA", "Ngày giao"],
+    ["en", "Delivery included in CSA", "Delivery date"],
+  ] as const)(
+    "localizes original CSA delivery in %s without a missing retail date",
+    (locale, label, dateLabel) => {
+      const order = storeOrderFixture({
+        delivery_date: null,
+        shipping_benefit: null,
+        shipping_discount_reason: "csa_round",
+        shipping_fee_vnd: "0",
+        subtotal_vnd: "0",
+        total_vnd: "0",
+        payment_status: "not_required",
+        payment: null,
+        expires_at: null,
+        csa: {
+          round: {
+            id: "round",
+            sequence: 1,
+            name: "CSA round",
+            status: "closed",
+            opens_at: "2026-11-18T08:00:00+07:00",
+            closes_at: "2026-11-19T18:00:00+07:00",
+            delivery_at: "2026-11-20T08:00:00+07:00",
+            server_time: "2026-11-19T18:00:00+07:00",
+          },
+          selection: {
+            id: "selection",
+            round_id: "round",
+            membership_id: "membership",
+            state: "locked",
+            revision: 1,
+            order_id: "11111111-1111-4111-8111-111111111111",
+            reopen_until: null,
+            lines: [],
+            server_time: "2026-11-19T18:00:00+07:00",
+          },
+        },
+      });
+      render(
+        <AdminI18nProvider initialLocale={locale}>
+          <StoreOrderTotals order={order} />
+        </AdminI18nProvider>,
+      );
+      expect(screen.getByText(label)).toBeVisible();
+      expect(screen.queryByText("csa_round")).not.toBeInTheDocument();
+      expect(screen.queryByText(dateLabel)).not.toBeInTheDocument();
+      expect(screen.queryByText("—")).not.toBeInTheDocument();
+      expect(screen.queryByText("Miễn phí giao kèm CSA")).not.toBeInTheDocument();
+      expect(screen.queryByText("Free delivery with CSA")).not.toBeInTheDocument();
+    },
+  );
+});
+
+it.each(["vi", "en"] as const)("retains unknown shipping reason fallback in %s", (locale) => {
+  expect(storeShippingDiscountReason("other_reason", locale)).toBe("other_reason");
 });

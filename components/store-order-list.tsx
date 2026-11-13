@@ -13,6 +13,7 @@ import { formatAdminDateTime } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   formatStoreMoney,
+  formatStoreDeliveryDate,
   storeOrderDisplayStatuses,
   type StoreOrderDisplayStatus,
 } from "@/lib/store-orders";
@@ -157,6 +158,9 @@ export function StoreOrderList() {
                     <small className="table-secondary store-order-created">
                       {c.createdAt}:{" "}
                       <time dateTime={item.created_at}>{formatAdminDateTime(item.created_at)}</time>
+                    </small>
+                    <small className="table-secondary">
+                      {c.deliveryDate}: {formatStoreDeliveryDate(item)}
                     </small>
                   </td>
                   <td data-label={c.recipient}>

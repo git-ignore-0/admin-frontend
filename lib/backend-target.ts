@@ -40,9 +40,11 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       return path.length === 3 && ["GET", "PATCH"].includes(normalizedMethod);
     return (
       path.length === 4 &&
-      (action === "selections"
-        ? normalizedMethod === "GET"
-        : ["publish", "cancel"].includes(action) && normalizedMethod === "POST")
+      (action === "companion-delivery"
+        ? ["GET", "PATCH"].includes(normalizedMethod)
+        : action === "selections"
+          ? normalizedMethod === "GET"
+          : ["publish", "cancel"].includes(action) && normalizedMethod === "POST")
     );
   }
   if (resource === "csa-selections") {
