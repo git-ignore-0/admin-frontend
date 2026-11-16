@@ -1,6 +1,10 @@
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import Link from "next/link";
-import { formatStoreMoney, formatStoreDeliveryDate } from "@/lib/store-orders";
+import {
+  formatStoreMoney,
+  formatStoreDeliveryDate,
+  formatStoreShippingBenefitDate,
+} from "@/lib/store-orders";
 import { storeOrdersCopy, storeShippingDiscountReason } from "@/lib/store-orders-copy";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 import type { StoreOrder } from "@/lib/types";
@@ -41,7 +45,10 @@ export function StoreOrderTotals({ order }: { order: StoreOrder }) {
               {order.shipping_discount_reason === "csa_companion_delivery" &&
                 order.shipping_benefit && (
                   <small className="table-secondary">
-                    <Link href={`/csa-rounds/${order.shipping_benefit.round_id}`}>
+                    <Link
+                      href={`/csa-rounds/${order.shipping_benefit.round_id}`}
+                      title={formatStoreShippingBenefitDate(order)}
+                    >
                       {c.sourceRound}
                     </Link>
                     {" · "}

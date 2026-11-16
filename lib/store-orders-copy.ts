@@ -1,6 +1,12 @@
 import type { AdminLocale } from "@/lib/admin-i18n";
 import type { StoreOrderDisplayStatus } from "@/lib/store-orders";
-import type { StoreOrderSort, StoreOrderStatus, StorePaymentStatus } from "@/lib/types";
+import type {
+  StoreOrder,
+  StoreOrderAction,
+  StoreOrderSort,
+  StoreOrderStatus,
+  StorePaymentStatus,
+} from "@/lib/types";
 
 const copy = {
   vi: {
@@ -26,7 +32,20 @@ const copy = {
     refresh: "Tải lại đơn và nguồn",
     refreshList: "Làm mới",
     allocationComplete: "Đủ {selected}/{required}",
-    refundPending: "Cần hoàn tiền",
+    refundPending: "Chờ hoàn",
+    reconcile: "Xử lý đối soát",
+    processRefund: "Xử lý hoàn tiền",
+    reconciliationDecision: "Kết quả đối soát",
+    reconciliationOpenedAt: "Mở đối soát lúc",
+    reconciliationUnknown: "Chưa xác minh",
+    paymentReceived: "Đã nhận tiền",
+    paymentNotReceived: "Không nhận tiền",
+    confirmReconciliation: "Xác nhận đối soát",
+    refundRequestedAt: "Khách yêu cầu hoàn lúc",
+    refundRequestClosedAt: "Kết thúc yêu cầu hoàn lúc",
+    refundRequestClosedReason: "Lý do kết thúc yêu cầu hoàn",
+    closeRefundReason: "Lý do xác minh không có tiền",
+    closeRefundReasonRequired: "Hãy nhập lý do xác minh không có tiền.",
     restockPending: "Còn hàng chưa hoàn tồn",
     refundHint: "Hoàn tiền thủ công cho khách trước khi xác nhận tại đây.",
     staleSnapshot:
@@ -105,6 +124,7 @@ const copy = {
       approve: "Duyệt đơn",
       cancel: "Hủy đơn",
       "record-payment": "Ghi nhận đã nhận tiền",
+      "close-refund-request": "Xác minh không có tiền",
       refund: "Xác nhận hoàn tiền",
       deliver: "Xác nhận đã giao",
       restock: "Hoàn tồn",
@@ -113,6 +133,7 @@ const copy = {
       approve: "Duyệt toàn bộ đơn hàng",
       cancel: "Hủy đơn hàng",
       "record-payment": "Ghi nhận tiền đã về",
+      "close-refund-request": "Kết thúc yêu cầu hoàn: không có tiền",
       refund: "Xác nhận đã hoàn tiền ngoài hệ thống",
       deliver: "Xác nhận khách đã nhận hàng",
       restock: "Hoàn tồn về batch",
@@ -132,6 +153,7 @@ const copy = {
     mutationSuccess: "Đã cập nhật đơn hàng.",
     saving: "Đang xử lý…",
     cancelButton: "Đóng",
+    retryRequest: "Thử lại yêu cầu trước",
     conflict:
       "Đơn hàng hoặc nguồn tồn đã thay đổi. Draft được giữ; hãy tải lại và kiểm tra trước khi thử lại.",
     reloadAfterConflict: "Tải trạng thái mới",
@@ -144,10 +166,14 @@ const copy = {
       reselection_expired: "Đã hết hạn chọn lại sản phẩm",
       expired: "Đơn hết hạn trước khi được duyệt",
       buyer_cancelled: "Khách đã hủy đơn",
+      delivery_date_expired: "Quá ngày giao hàng",
+      payment_expired: "Quá hạn thanh toán",
+      payment_review_expired: "Quá hạn xác nhận thanh toán",
     },
     statuses: {
       payment_pending: "Chờ thanh toán",
-      pending_review: "Chờ duyệt",
+      pending_review: "Chờ xác nhận đơn",
+      payment_review: "Chờ xác nhận thanh toán",
       pending_delivery: "Chờ giao",
       delivered: "Đã giao",
       cancelled: "Đã hủy",
@@ -156,7 +182,7 @@ const copy = {
       not_required: "Không cần chuyển khoản",
       unconfirmed: "Chưa xác nhận tiền",
       received: "Đã nhận tiền",
-      refund_required: "Chờ hoàn tiền",
+      refund_required: "Đã nhận tiền, cần hoàn",
       refunded: "Đã hoàn tiền",
     } satisfies Record<StorePaymentStatus, string>,
     sorts: {
@@ -189,7 +215,20 @@ const copy = {
     refresh: "Reload order and sources",
     refreshList: "Refresh",
     allocationComplete: "Complete {selected}/{required}",
-    refundPending: "Refund needed",
+    refundPending: "Awaiting refund",
+    reconcile: "Reconcile payment",
+    processRefund: "Process refund",
+    reconciliationDecision: "Reconciliation result",
+    reconciliationOpenedAt: "Reconciliation opened",
+    reconciliationUnknown: "Not yet verified",
+    paymentReceived: "Payment received",
+    paymentNotReceived: "No payment received",
+    confirmReconciliation: "Confirm reconciliation",
+    refundRequestedAt: "Refund requested",
+    refundRequestClosedAt: "Refund request closed",
+    refundRequestClosedReason: "Refund request closure reason",
+    closeRefundReason: "Reason for no received payment",
+    closeRefundReasonRequired: "Enter the reason for confirming no payment was received.",
     restockPending: "Stock still needs to be returned",
     refundHint: "Refund the customer manually before confirming here.",
     staleSnapshot:
@@ -269,6 +308,7 @@ const copy = {
       approve: "Approve order",
       cancel: "Cancel order",
       "record-payment": "Record payment",
+      "close-refund-request": "Confirm no payment received",
       refund: "Record refund",
       deliver: "Mark delivered",
       restock: "Restock",
@@ -277,6 +317,7 @@ const copy = {
       approve: "Approve the full order",
       cancel: "Cancel order",
       "record-payment": "Record received payment",
+      "close-refund-request": "Close refund request: no payment received",
       refund: "Confirm the external refund",
       deliver: "Confirm customer receipt",
       restock: "Restock batches",
@@ -298,6 +339,7 @@ const copy = {
     mutationSuccess: "Order updated.",
     saving: "Processing…",
     cancelButton: "Close",
+    retryRequest: "Retry previous request",
     conflict:
       "The order or inventory sources changed. The draft was kept; reload and review before retrying.",
     reloadAfterConflict: "Load latest state",
@@ -310,10 +352,14 @@ const copy = {
       reselection_expired: "Reselection deadline expired",
       expired: "Order expired before approval",
       buyer_cancelled: "Cancelled by the customer",
+      delivery_date_expired: "Delivery date expired",
+      payment_expired: "Payment deadline expired",
+      payment_review_expired: "Payment confirmation deadline expired",
     },
     statuses: {
       payment_pending: "Awaiting payment",
-      pending_review: "Pending review",
+      pending_review: "Awaiting order confirmation",
+      payment_review: "Awaiting payment confirmation",
       pending_delivery: "Pending delivery",
       delivered: "Delivered",
       cancelled: "Cancelled",
@@ -322,7 +368,7 @@ const copy = {
       not_required: "No bank payment required",
       unconfirmed: "Payment unconfirmed",
       received: "Payment received",
-      refund_required: "Awaiting refund",
+      refund_required: "Received, refund required",
       refunded: "Refunded",
     } satisfies Record<StorePaymentStatus, string>,
     sorts: {
@@ -338,11 +384,79 @@ export function storeOrdersCopy(locale: AdminLocale) {
   return copy[locale];
 }
 
-export function storeOrderStatusLabel(status: StoreOrderDisplayStatus, locale: AdminLocale) {
-  const c = storeOrdersCopy(locale);
-  return status === "refund_required" || status === "refunded"
-    ? c.paymentStatuses[status]
-    : c.statuses[status];
+export function storeOrderStatusLabel(
+  status: StoreOrderDisplayStatus,
+  locale: AdminLocale,
+  order?: Pick<StoreOrder, "workflow_version" | "csa">,
+) {
+  if (status === "pending_review" && order?.workflow_version === 1) {
+    return locale === "vi" ? "Chờ duyệt" : "Pending review";
+  }
+  return storeOrdersCopy(locale).statuses[status];
+}
+
+export function storeRefundStatusLabel(
+  status: StoreOrder["refund_status"],
+  locale: AdminLocale,
+  order?: Pick<StoreOrder, "workflow_version" | "csa" | "payment_status">,
+) {
+  if (
+    status === "pending" &&
+    order?.workflow_version === 2 &&
+    !order.csa &&
+    order.payment_status === "unconfirmed"
+  )
+    return locale === "vi" ? "Chờ đối soát" : "Awaiting reconciliation";
+  if (status === "pending") return locale === "vi" ? "Chờ hoàn" : "Awaiting refund";
+  if (status === "refunded") return locale === "vi" ? "Đã hoàn" : "Refunded";
+  return "";
+}
+
+export function storeOrderActionLabel(
+  order: StoreOrder,
+  action: StoreOrderAction,
+  locale: AdminLocale,
+) {
+  if (
+    order.workflow_version === 2 &&
+    !order.csa &&
+    order.status === "cancelled" &&
+    order.refund_status === "pending"
+  ) {
+    if (action === "record-payment") return storeOrdersCopy(locale).reconcile;
+    if (action === "refund") return storeOrdersCopy(locale).processRefund;
+  }
+  if (action === "approve" && order.workflow_version === 2 && !order.csa) {
+    return locale === "vi" ? "Xác nhận đủ hàng" : "Confirm all goods";
+  }
+  return storeOrdersCopy(locale).actionLabels[action];
+}
+
+export function storeOrderActionTitle(
+  order: StoreOrder,
+  action: StoreOrderAction,
+  locale: AdminLocale,
+) {
+  if (action === "approve" && order.workflow_version === 2 && !order.csa) {
+    return locale === "vi" ? "Xác nhận đủ toàn bộ hàng" : "Confirm all goods are available";
+  }
+  return storeOrdersCopy(locale).actionTitles[action];
+}
+
+export function storeOrderDeadlineLabel(
+  order: Pick<StoreOrder, "workflow_version" | "status" | "csa">,
+  locale: AdminLocale,
+) {
+  if (order.workflow_version === 2 && !order.csa) {
+    if (order.status === "pending_review")
+      return locale === "vi" ? "Hạn xác nhận đơn" : "Order confirmation deadline";
+    if (order.status === "payment_review")
+      return locale === "vi" ? "Hạn xác nhận thanh toán" : "Payment confirmation deadline";
+    return locale === "vi" ? "Hạn thanh toán" : "Payment deadline";
+  }
+  return order.status === "payment_pending"
+    ? storeOrdersCopy(locale).paymentDeadline
+    : storeOrdersCopy(locale).reviewDeadline;
 }
 
 function translatedReason(reasons: Record<string, string>, reason: string): string {

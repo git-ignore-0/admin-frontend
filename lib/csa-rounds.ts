@@ -1,3 +1,4 @@
+import { isoDateToAdminInput, membershipLastReceiptDate } from "@/lib/admin-date";
 import type { PaginationMeta } from "@/lib/types";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { formatMembershipUnits } from "@/lib/membership-format";
@@ -13,7 +14,7 @@ export type CSARound = {
   name: string;
   opens_at: string;
   closes_at: string;
-  delivery_at: string;
+  delivery_date: string;
   status: CSARoundStatus;
   server_time: string;
   cancellation_reason?: string | null;
@@ -53,7 +54,7 @@ export type CSASelectionEvent = {
   };
 };
 export type RoundPage<T> = { data: T[]; meta: PaginationMeta };
-export type RoundDates = Pick<CSARound, "opens_at" | "closes_at" | "delivery_at">;
+export type RoundDates = Pick<CSARound, "opens_at" | "closes_at" | "delivery_date">;
 export type RoundParticipants = {
   data: CSASelection[];
   meta: PaginationMeta;
@@ -67,16 +68,29 @@ export type RoundParticipants = {
 };
 export const roundDateInput = couponDateTimeInput;
 export const roundDateToApi = couponDateTimeToApi;
+/** Deadline boundary only: a delivery date is never a scheduled delivery time. */
+export function csaDeliveryStartMs(deliveryDate: string) {
+  return isoDateToAdminInput(deliveryDate)
+    ? Date.parse(`${deliveryDate}T00:00:00+07:00`)
+    : Number.NaN;
+}
+
+export function csaDeadlineInputMax(deliveryDate: string) {
+  if (!isoDateToAdminInput(deliveryDate)) return undefined;
+  const previous = membershipLastReceiptDate(deliveryDate);
+  return previous ? `${previous}T23:59` : undefined;
+}
+
 export function validateRoundDates(dates: RoundDates) {
   const a = Date.parse(dates.opens_at),
     b = Date.parse(dates.closes_at),
-    c = Date.parse(dates.delivery_at);
+    c = csaDeliveryStartMs(dates.delivery_date);
   // Cross-round scheduling is authoritative on the backend at publication.
   return ![a, b, c].every(Number.isFinite) || !(a < b && b < c) ? "schedule" : null;
 }
-export function validateReopenDeadline(deadline: string, deliveryAt: string, serverNow: number) {
+export function validateReopenDeadline(deadline: string, deliveryDate: string, serverNow: number) {
   const end = Date.parse(deadline);
-  return Number.isFinite(end) && serverNow < end && end < Date.parse(deliveryAt);
+  return Number.isFinite(end) && serverNow < end && end < csaDeliveryStartMs(deliveryDate);
 }
 export async function getRounds(page = 1, pageSize = 20) {
   return (await apiEnvelope<CSARound[], PaginationMeta>(

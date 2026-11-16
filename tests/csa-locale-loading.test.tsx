@@ -59,7 +59,7 @@ it("refreshes only localized demand and keeps history open on locale change", as
     status: "closed",
     opens_at: "2026-11-20T08:00:00+07:00",
     closes_at: "2026-11-21T18:00:00+07:00",
-    delivery_at: "2026-11-22T09:00:00+07:00",
+    delivery_date: "2026-11-22",
   });
   vi.mocked(apiEnvelope).mockImplementation(async (path) =>
     path.includes("/events?")
@@ -133,7 +133,7 @@ it("keeps fresh round status when locale changes during an explicit refresh", as
     status: "draft",
     opens_at: "2026-11-20T08:00:00+07:00",
     closes_at: "2026-11-21T18:00:00+07:00",
-    delivery_at: "2026-11-22T09:00:00+07:00",
+    delivery_date: "2026-11-22",
   };
   const published = { ...draft, status: "scheduled" };
   let finishRefresh!: (value: typeof published) => void;
@@ -171,7 +171,7 @@ it("retains the current locale when a pending mutation completes", async () => {
     status: "draft",
     opens_at: "2026-11-10T01:00:00Z",
     closes_at: "2026-11-11T01:00:00Z",
-    delivery_at: "2026-11-15T01:00:00Z",
+    delivery_date: "2026-11-15",
   };
   let finish!: () => void;
   vi.mocked(api).mockImplementation(async (path, init) => {

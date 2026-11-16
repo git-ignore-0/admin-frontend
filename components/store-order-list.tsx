@@ -13,12 +13,13 @@ import { formatAdminDateTime } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   formatStoreMoney,
+  storeOrderHasDeadline,
   formatStoreDeliveryDate,
   storeOrderDisplayStatuses,
   type StoreOrderDisplayStatus,
 } from "@/lib/store-orders";
 import { storeOrdersCopy, storeOrderStatusLabel } from "@/lib/store-orders-copy";
-import type { StoreOrderSort } from "@/lib/types";
+import type { StoreOrderSort, StorePaymentStatus } from "@/lib/types";
 import { useStoreOrderList } from "@/lib/use-store-order-list";
 
 export function StoreOrderList() {
@@ -28,12 +29,14 @@ export function StoreOrderList() {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StoreOrderDisplayStatus | "">("");
+  const [paymentStatus, setPaymentStatus] = useState<StorePaymentStatus | "">("");
   const [sort, setSort] = useState<StoreOrderSort>("created_desc");
   const errorMessage = useCallback((error: unknown) => requestErrorMessage(error, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = useStoreOrderList({
     search,
     sort,
     status,
+    paymentStatus,
     getErrorMessage: errorMessage,
   });
 
@@ -50,6 +53,7 @@ export function StoreOrderList() {
     setQuery("");
     setSearch("");
     setStatus("");
+    setPaymentStatus("");
     setSort("created_desc");
     setPage(1);
   }
@@ -84,6 +88,24 @@ export function StoreOrderList() {
         clearLabel={t.common.clearFilters}
         filter={
           <div className="list-toolbar-filters store-order-filters">
+            <FormField label={c.paymentStatus}>
+              <FormSelect
+                aria-label={c.paymentStatus}
+                disabled={loading}
+                value={paymentStatus}
+                onChange={(event) => {
+                  setPaymentStatus(event.target.value as StorePaymentStatus | "");
+                  setPage(1);
+                }}
+              >
+                <option value="">{c.all}</option>
+                {(Object.keys(c.paymentStatuses) as StorePaymentStatus[]).map((value) => (
+                  <option key={value} value={value}>
+                    {c.paymentStatuses[value]}
+                  </option>
+                ))}
+              </FormSelect>
+            </FormField>
             <FormField label={c.sort}>
               <FormSelect
                 aria-label={c.sort}
@@ -103,7 +125,7 @@ export function StoreOrderList() {
             </FormField>
           </div>
         }
-        hasFilters={Boolean(search || status || sort !== "created_desc")}
+        hasFilters={Boolean(search || status || paymentStatus || sort !== "created_desc")}
         onClear={clear}
         onQueryChange={(value) => {
           setQuery(value);
@@ -172,11 +194,10 @@ export function StoreOrderList() {
                   <td data-label={c.total}>{formatStoreMoney(item.total_vnd, locale)}</td>
                   <td data-label={c.orderStatus}>
                     <StoreOrderStatusBadge order={item} />
-                    {item.expires_at &&
-                    ["payment_pending", "pending_review"].includes(item.status) ? (
+                    {storeOrderHasDeadline(item) ? (
                       <small className="table-secondary store-order-deadline-meta">
                         {c.deadline}:{" "}
-                        <time dateTime={item.expires_at}>
+                        <time dateTime={item.expires_at ?? undefined}>
                           {formatAdminDateTime(item.expires_at)}
                         </time>
                       </small>

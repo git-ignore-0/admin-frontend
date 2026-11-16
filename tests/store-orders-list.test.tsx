@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -59,7 +59,7 @@ describe("Store order list", () => {
     view();
     await screen.findByText("PAID-ORDER");
     const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-    fireEvent.click(tabs.getByRole("button", { name: "Chờ duyệt" }));
+    fireEvent.click(tabs.getByRole("button", { name: "Chờ xác nhận đơn" }));
     expect(screen.getByText("NFV-STORE-001")).toBeVisible();
     expect(screen.queryByText("PAID-ORDER")).not.toBeInTheDocument();
     expect(screen.queryByText("Đang tải đơn hàng…")).not.toBeInTheDocument();
@@ -91,35 +91,51 @@ describe("Store order list", () => {
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps refund filters distinct while cancelled includes all cancelled orders", async () => {
+  it("keeps payment-status filters distinct while cancelled includes every refund claim", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [
         storeOrderFixture({
           reference_code: "NEEDS-REFUND",
           status: "cancelled",
           payment_status: "refund_required",
+          refund_status: "pending",
         }),
         storeOrderFixture({
           id: "other",
           reference_code: "REFUNDED",
           status: "cancelled",
           payment_status: "refunded",
+          refund_status: "refunded",
+        }),
+        storeOrderFixture({
+          id: "claim",
+          reference_code: "UNVERIFIED-CLAIM",
+          status: "cancelled",
+          refund_status: "pending",
         }),
       ],
-      meta: { page: 1, page_size: 20, total: 2 },
+      meta: { page: 1, page_size: 20, total: 3 },
     });
     view();
     await screen.findByText("REFUNDED");
-    const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-    fireEvent.click(tabs.getByRole("button", { name: "Chờ hoàn tiền" }));
+    const money = screen.getByLabelText("Trạng thái tiền");
+    expect(within(money).getByRole("option", { name: "Đã nhận tiền, cần hoàn" })).toBeVisible();
+    fireEvent.change(money, { target: { value: "refund_required" } });
     expect(screen.getByText("NEEDS-REFUND")).toBeVisible();
     expect(screen.queryByText("REFUNDED")).not.toBeInTheDocument();
-    fireEvent.click(tabs.getByRole("button", { name: "Đã hoàn tiền" }));
+    expect(screen.queryByText("UNVERIFIED-CLAIM")).not.toBeInTheDocument();
+    fireEvent.change(money, { target: { value: "refunded" } });
     expect(screen.getByText("REFUNDED")).toBeVisible();
     expect(screen.queryByText("NEEDS-REFUND")).not.toBeInTheDocument();
-    fireEvent.click(tabs.getByRole("button", { name: "Đã hủy" }));
+    fireEvent.change(money, { target: { value: "" } });
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+        name: "Đã hủy",
+      }),
+    );
     expect(screen.getByText("REFUNDED")).toBeVisible();
     expect(screen.getByText("NEEDS-REFUND")).toBeVisible();
+    expect(screen.getByText("UNVERIFIED-CLAIM")).toBeVisible();
     expect(apiEnvelope).toHaveBeenCalledTimes(1);
   });
 
@@ -138,7 +154,7 @@ describe("Store order list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
     await screen.findByText("Đã giao", { selector: ".status" });
     const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-    fireEvent.click(tabs.getByRole("button", { name: "Chờ duyệt" }));
+    fireEvent.click(tabs.getByRole("button", { name: "Chờ xác nhận đơn" }));
     expect(screen.getByText("Không có đơn hàng phù hợp.")).toBeVisible();
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
@@ -168,7 +184,7 @@ describe("Store order list", () => {
       await screen.findByText("ALL");
       const pending = within(screen.getByRole("group", { name: "Trạng thái" })).getByRole(
         "button",
-        { name: "Chờ duyệt" },
+        { name: "Chờ xác nhận đơn" },
       );
       fireEvent.click(pending);
       await screen.findByText("PENDING-1");
@@ -239,9 +255,11 @@ describe("Store order list", () => {
       }),
     ).toBeVisible();
     expect(screen.getAllByText("Chờ duyệt", { selector: ".store-order-status" })).toHaveLength(2);
-    expect(screen.queryByText("Chưa xác nhận tiền")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Chưa xác nhận tiền", { selector: ".store-order-status" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Dùng điểm CSA")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Trạng thái tiền")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Trạng thái tiền")).toBeVisible();
     const zeroOrder = screen.getByRole("link", { name: /NFV-STORE-002/u });
     expect(zeroOrder.tagName).toBe("A");
     expect(zeroOrder).toHaveAttribute("href", "/store-orders/99999999-9999-4999-8999-999999999999");
@@ -272,15 +290,20 @@ describe("Store order list", () => {
     );
   });
 
-  it("shows one refund status without presenting the old checkout deadline as a refund deadline", async () => {
+  it("shows cancelled plus a refund status without presenting the old checkout deadline as a refund deadline", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [
-        storeOrderFixture({ status: "cancelled", payment_status: "refund_required" }),
+        storeOrderFixture({
+          status: "cancelled",
+          payment_status: "refund_required",
+          refund_status: "pending",
+        }),
         storeOrderFixture({
           id: "99999999-9999-4999-8999-999999999999",
           reference_code: "REFUNDED-ORDER",
           status: "cancelled",
           payment_status: "refunded",
+          refund_status: "refunded",
         }),
       ],
       meta: { page: 1, page_size: 20, total: 2 },
@@ -289,18 +312,19 @@ describe("Store order list", () => {
     const awaiting = await screen.findByRole("link", { name: /NFV-STORE-001/u });
     const refunded = screen.getByRole("link", { name: /REFUNDED-ORDER/u });
     expect(
-      within(awaiting.closest("tr")!).getByText("Chờ hoàn tiền", { selector: ".status" }),
+      within(awaiting.closest("tr")!).getByText("Chờ hoàn", { selector: ".status" }),
     ).toBeVisible();
     expect(
-      within(refunded.closest("tr")!).getByText("Đã hoàn tiền", { selector: ".status" }),
+      within(refunded.closest("tr")!).getByText("Đã hoàn", { selector: ".status" }),
     ).toBeVisible();
     for (const row of [awaiting.closest("tr")!, refunded.closest("tr")!]) {
-      expect(row.querySelectorAll(".status")).toHaveLength(1);
+      expect(row.querySelectorAll(".status")).toHaveLength(2);
+      expect(within(row).getByText("Đã hủy", { selector: ".status" })).toBeVisible();
       expect(within(row).queryByText(/Hạn xử lý:/u)).not.toBeInTheDocument();
     }
   });
 
-  it("sends the unified refund filter, search, sort and page to the server", async () => {
+  it("sends explicit payment filtering, search, sort and page to the server", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [storeOrderFixture()],
       meta: { page: 1, page_size: 20, total: 21 },
@@ -312,9 +336,12 @@ describe("Store order list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
     fireEvent.click(
       within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
-        name: "Chờ hoàn tiền",
+        name: "Đã hủy",
       }),
     );
+    fireEvent.change(screen.getByLabelText("Trạng thái tiền"), {
+      target: { value: "refund_required" },
+    });
     fireEvent.change(screen.getByLabelText("Sắp xếp"), { target: { value: "total_desc" } });
 
     await waitFor(() => {
@@ -327,6 +354,7 @@ describe("Store order list", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sau" }));
     await waitFor(() => expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("page=2"));
+    fireEvent.change(screen.getByLabelText("Trạng thái tiền"), { target: { value: "" } });
     fireEvent.click(
       within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
         name: "Đã hủy",
@@ -371,7 +399,7 @@ describe("Store order list", () => {
     view();
     fireEvent.click(
       within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
-        name: "Chờ duyệt",
+        name: "Chờ xác nhận đơn",
       }),
     );
     expect(await screen.findByText("LATEST")).toBeVisible();
@@ -394,4 +422,109 @@ it("shows saved retail delivery dates and a blank legacy date in secondary text"
   view();
   expect(await screen.findByText("Ngày giao: 20/11/2026")).toHaveClass("table-secondary");
   expect(screen.getByText("Ngày giao: —")).toBeVisible();
+});
+
+it("keeps six order states and shows an unverified refund claim alongside cancelled", async () => {
+  vi.mocked(apiEnvelope).mockResolvedValue({
+    data: [
+      storeOrderFixture({
+        workflow_version: 2,
+        status: "cancelled",
+        payment_status: "unconfirmed",
+        refund_status: "pending",
+      }),
+    ],
+    meta: { page: 1, page_size: 20, total: 21 },
+  });
+  view();
+  const link = await screen.findByRole("link", { name: /NFV-STORE-001/u });
+  const row = within(link.closest("tr")!);
+  expect(row.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+  expect(row.getByText("Chờ đối soát", { selector: ".status" })).toBeVisible();
+  const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
+  expect(tabs.getAllByRole("button")).toHaveLength(7);
+  fireEvent.click(tabs.getByRole("button", { name: "Chờ xác nhận thanh toán" }));
+  await waitFor(() =>
+    expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=payment_review"),
+  );
+  expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).not.toContain("refund_status");
+});
+
+it("reconciles a mounted page at the backend deadline without inventing a local cancelled state", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [
+          storeOrderFixture({
+            workflow_version: 2,
+            status: "payment_review",
+            server_time: "2026-11-20T09:00:00Z",
+            expires_at: "2026-11-20T09:00:01Z",
+          }),
+        ],
+        meta: { page: 1, page_size: 20, total: 1 },
+      })
+      .mockResolvedValueOnce({
+        data: [
+          storeOrderFixture({ workflow_version: 2, status: "cancelled", refund_status: "pending" }),
+        ],
+        meta: { page: 1, page_size: 20, total: 1 },
+      });
+    view();
+    await act(async () => {});
+    expect(screen.getByText("Chờ xác nhận thanh toán", { selector: ".status" })).toBeVisible();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+    expect(screen.getByText("Chờ đối soát", { selector: ".status" })).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("refreshes filtered counts when a known cached pending order expires off the visible tab", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [
+          storeOrderFixture({
+            workflow_version: 2,
+            status: "payment_pending",
+            server_time: "2026-11-20T09:00:00Z",
+            expires_at: "2026-11-20T09:00:01Z",
+          }),
+        ],
+        meta: { page: 1, page_size: 20, total: 1 },
+      })
+      .mockResolvedValueOnce({
+        data: [
+          storeOrderFixture({
+            workflow_version: 2,
+            status: "cancelled",
+            expires_at: "2026-11-20T09:00:01Z",
+          }),
+        ],
+        meta: { page: 1, page_size: 20, total: 1 },
+      });
+    view();
+    await act(async () => {});
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+        name: "Đã hủy",
+      }),
+    );
+    expect(screen.getByText("Không có đơn hàng phù hợp.")).toBeVisible();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=cancelled");
+    expect(screen.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
 });

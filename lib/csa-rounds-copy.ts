@@ -8,7 +8,7 @@ const vi = {
     close: "Đóng nhận đơn",
     reopen: "Mở lại",
     cancelledError: "Đợt đã hủy. Vui lòng tải lại dữ liệu.",
-    deadlineError: "Hạn nhận đơn kèm phải ở tương lai và trước giờ giao CSA.",
+    deadlineError: "Hạn nhận đơn kèm phải ở tương lai và trước ngày giao CSA.",
     states: {
       not_enabled: "Chưa bật",
       accepting: "Đang nhận đơn",
@@ -64,11 +64,11 @@ const vi = {
     empty_or_revoked: "Lựa chọn trống hoặc quyền lợi đã bị thu hồi.",
   },
   reopenHint:
-    "Mở lại toàn bộ đơn để hội viên chọn từ đầu. Hạn khóa phải ở tương lai và trước giờ giao hàng. Khách không xác nhận đúng hạn sẽ bị hủy cả đơn và hoàn điểm.",
+    "Mở lại toàn bộ đơn để hội viên chọn từ đầu. Hạn khóa phải ở tương lai và trước ngày giao hàng. Khách không xác nhận đúng hạn sẽ bị hủy cả đơn và hoàn điểm.",
   allocated: "Đơn đã phân bổ, kết thúc hoặc không còn được mở chọn lại. Hãy tải lại dữ liệu.",
-  schedule: "Thời gian kết thúc chọn hàng phải sau thời gian bắt đầu và trước thời gian giao hàng.",
+  schedule: "Thời gian kết thúc chọn hàng phải sau thời gian bắt đầu và trước ngày giao hàng.",
   overlap: "Thời gian chọn chồng với đợt đã công bố. Đợt sau phải mở sau hạn chốt đợt trước.",
-  deadlineError: "Hạn chọn lại phải ở tương lai và trước thời gian giao hàng.",
+  deadlineError: "Hạn chọn lại phải ở tương lai và trước ngày giao hàng.",
   immutable: "Đợt đã có người tham gia hoặc đã hủy; không được sửa lịch.",
   nameRequired: "Hãy nhập tên đợt.",
   reasonRequired: "Hãy nhập lý do hủy.",
@@ -107,7 +107,8 @@ const en: typeof vi = {
     close: "Stop accepting",
     reopen: "Reopen",
     cancelledError: "This round has been cancelled. Refresh the data.",
-    deadlineError: "The companion order cutoff must be in the future and before CSA delivery.",
+    deadlineError:
+      "The companion order cutoff must be in the future and before the CSA delivery day.",
     states: {
       not_enabled: "Not enabled",
       accepting: "Accepting orders",
@@ -164,12 +165,12 @@ const en: typeof vi = {
     empty_or_revoked: "The selection was empty or the membership benefit was revoked.",
   },
   reopenHint:
-    "Reopen the entire order for the member to choose again. Set a future deadline before the delivery time. If the member does not confirm in time, the entire order is cancelled and points are refunded.",
+    "Reopen the entire order for the member to choose again. Set a future deadline before the delivery day. If the member does not confirm in time, the entire order is cancelled and points are refunded.",
   allocated: "This order is already allocated, terminal, or cannot be reopened. Refresh the data.",
-  schedule: "Selection must close after it opens and before the delivery time.",
+  schedule: "Selection must close after it opens and before the delivery day.",
   overlap:
     "Selection windows overlap a published round. A later round must open after the previous cutoff.",
-  deadlineError: "The deadline must be in the future and before the delivery time.",
+  deadlineError: "The deadline must be in the future and before the delivery day.",
   immutable: "This round has participants or is cancelled; its schedule cannot be edited.",
   nameRequired: "Enter a round name.",
   reasonRequired: "Enter a cancellation reason.",

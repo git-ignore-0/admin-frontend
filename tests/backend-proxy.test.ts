@@ -154,7 +154,14 @@ describe("admin backend proxy", () => {
     },
   );
 
-  it("forwards only the Store order list query contract", async () => {
+  it.each([
+    "pending_review",
+    "payment_pending",
+    "payment_review",
+    "pending_delivery",
+    "delivered",
+    "cancelled",
+  ])("forwards only the Store order list query contract (%s)", async (status) => {
     const path = ["admin", "store-orders"];
     const base = `https://admin.example.test/api/backend/${path.join("/")}`;
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
@@ -162,7 +169,7 @@ describe("admin backend proxy", () => {
 
     const allowed = await GET(
       new NextRequest(
-        `${base}?page=2&page_size=20&search=NFV&status=pending_review&payment_status=received&sort=deadline_asc`,
+        `${base}?page=2&page_size=20&search=NFV&status=${status}&payment_status=received&sort=deadline_asc`,
       ),
       { params: Promise.resolve({ path }) },
     );
@@ -173,6 +180,7 @@ describe("admin backend proxy", () => {
       "?unknown=1",
       "?status=other",
       "?payment_status=other",
+      "?refund_status=pending",
       "?sort=other",
       "?page=0",
       "?page=10001",
@@ -190,6 +198,64 @@ describe("admin backend proxy", () => {
       params: Promise.resolve({ path: detailPath }),
     });
     expect(blockedDetail.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("forwards close-refund-request exact body server-side and rejects method/query/segments", async () => {
+    const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const path = ["admin", "store-orders", id, "close-refund-request"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const payload = JSON.stringify({
+      idempotency_key: "77777777-7777-4777-8777-777777777777",
+      reason: "Không có tiền",
+    });
+    const upstream = vi.fn().mockResolvedValue(
+      Response.json({
+        data: { status: "cancelled", payment_status: "unconfirmed", refund_status: null },
+      }),
+    );
+    vi.stubGlobal("fetch", upstream);
+    const request = (address: string, method = "POST") =>
+      new NextRequest(address, {
+        method,
+        headers: {
+          origin: "https://admin.example.test",
+          "x-nfv-admin-request": "1",
+          "content-type": "application/json",
+        },
+        ...(method === "POST" ? { body: payload } : {}),
+      });
+    const response = await POST(request(url), { params: Promise.resolve({ path }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      data: { status: "cancelled", payment_status: "unconfirmed", refund_status: null },
+    });
+    const [target, init] = upstream.mock.calls[0];
+    expect(String(target)).toBe(
+      `https://auth.example.test/api/v1/admin/store-orders/${id}/close-refund-request`,
+    );
+    expect(new TextDecoder().decode(init.body)).toBe(payload);
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer access-token");
+    expect(response.headers.get("authorization")).toBeNull();
+    upstream.mockClear();
+    for (const method of ["GET", "PATCH", "DELETE"] as const)
+      expect(
+        (
+          await { GET, PATCH, DELETE }[method](request(url, method), {
+            params: Promise.resolve({ path }),
+          })
+        ).status,
+      ).toBe(404);
+    for (const blocked of [
+      [...path, "extra"],
+      ["admin", "store-orders", "bad", path[3]],
+    ])
+      expect(
+        (await POST(request(url), { params: Promise.resolve({ path: blocked }) })).status,
+      ).toBe(404);
+    expect(
+      (await POST(request(`${url}?page=1`), { params: Promise.resolve({ path }) })).status,
+    ).toBe(404);
     expect(upstream).not.toHaveBeenCalled();
   });
 

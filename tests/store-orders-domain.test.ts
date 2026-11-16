@@ -22,8 +22,10 @@ function order(overrides: Partial<StoreOrder> = {}): StoreOrder {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     reference_code: "NFV-STORE-001",
+    workflow_version: 1,
     status: "pending_review",
     payment_status: "unconfirmed",
+    refund_status: null,
     locale: "vi",
     lines: [
       {
@@ -58,9 +60,24 @@ function order(overrides: Partial<StoreOrder> = {}): StoreOrder {
     expires_at: "2026-10-31T10:08:00Z",
     server_time: "2026-10-31T10:00:00Z",
     transfer_reported_at: "2026-10-31T09:59:00Z",
+    transfer_reported_by: null,
+    payment_received_at: null,
+    payment_received_by: null,
+    refund_requested_at: null,
+    refund_requested_by: null,
+    refund_request_closed_at: null,
+    refund_request_closed_by: null,
+    refund_request_closed_reason: null,
+    refunded_at: null,
+    refunded_by: null,
+    refund_amount_vnd: null,
+    refund_note: "",
     approved_at: null,
+    approved_by: null,
     delivered_at: null,
+    delivered_by: null,
     cancelled_at: null,
+    cancelled_by: null,
     cancellation_reason: null,
     reconciliation_note: "",
     created_at: "2026-10-31T09:55:00Z",
@@ -133,7 +150,7 @@ describe("Store order admin domain", () => {
   });
 
   it("exposes only actions valid for the order and payment state", () => {
-    expect(getStoreOrderActions(order())).toEqual(["cancel", "record-payment"]);
+    expect(getStoreOrderActions(order())).toEqual(["approve", "cancel", "record-payment"]);
     expect(getStoreOrderActions(order({ payment_status: "received" }))).toEqual([
       "approve",
       "cancel",
@@ -160,6 +177,7 @@ describe("Store order admin domain", () => {
         order({
           status: "cancelled",
           payment_status: "refund_required",
+          refund_status: "pending",
           approved_at: "x",
           allocations: [
             {
@@ -267,17 +285,17 @@ describe("Store order unified status", () => {
     ["pending_review", "received", "pending_review"],
     ["pending_delivery", "received", "pending_delivery"],
     ["cancelled", "unconfirmed", "cancelled"],
-    ["cancelled", "refund_required", "refund_required"],
-    ["cancelled", "refunded", "refunded"],
+    ["cancelled", "refund_required", "cancelled"],
+    ["cancelled", "refunded", "cancelled"],
   ] as const)("shows %s / %s as one status: %s", (status, payment_status, expected) => {
     expect(getStoreOrderDisplayStatus(order({ status, payment_status }))).toBe(expected);
   });
 
-  it("maps refund filters to cancelled orders and clears payment filtering for normal states", () => {
-    expect(buildStoreOrderQuery(storeOrderStatusQuery("refund_required"))).toBe(
+  it("keeps verified-money filters separate from the six order states", () => {
+    expect(buildStoreOrderQuery({ status: "cancelled", paymentStatus: "refund_required" })).toBe(
       "page=1&page_size=20&status=cancelled&payment_status=refund_required",
     );
-    expect(buildStoreOrderQuery(storeOrderStatusQuery("refunded"))).toBe(
+    expect(buildStoreOrderQuery({ status: "cancelled", paymentStatus: "refunded" })).toBe(
       "page=1&page_size=20&status=cancelled&payment_status=refunded",
     );
     expect(buildStoreOrderQuery(storeOrderStatusQuery("pending_review"))).toBe(
@@ -300,3 +318,146 @@ it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
     }
   },
 );
+
+describe("review-before-payment workflow contract", () => {
+  it.each(["105000", "0"])("approves v2 goods without receipt for total %s", (total) => {
+    expect(
+      getStoreOrderActions(order({ workflow_version: 2, total_vnd: total, payment: null })),
+    ).toEqual(["approve", "cancel"]);
+  });
+  it.each(["payment_pending", "payment_review"] as const)(
+    "accepts receipt after goods in %s without requiring report",
+    (status) => {
+      expect(
+        getStoreOrderActions(
+          order({
+            workflow_version: 2,
+            status,
+            approved_at: "2026-10-31T10:00:00Z",
+            transfer_reported_at: null,
+          }),
+        ),
+      ).toEqual(["cancel", "record-payment"]);
+    },
+  );
+  it("keeps legacy combined approval without forcing a separate receipt first", () => {
+    expect(getStoreOrderActions(order({ workflow_version: 1 }))).toEqual([
+      "approve",
+      "cancel",
+      "record-payment",
+    ]);
+  });
+  it("offers receipt and closing a claim, but no refund before money has been received", () => {
+    expect(
+      getStoreOrderActions(
+        order({
+          workflow_version: 2,
+          status: "cancelled",
+          approved_at: "2026-10-31T10:00:00Z",
+          refund_status: "pending",
+          payment_received_at: null,
+        }),
+      ),
+    ).toEqual(["record-payment", "close-refund-request"]);
+  });
+  it.each([1, 2] as const)(
+    "allows legacy late receipt but requires a pending reconciliation on v2 workflow %s",
+    (workflow_version) => {
+      const cancelled = order({ workflow_version, status: "cancelled", approved_at: null });
+      expect(getStoreOrderActions(cancelled)).toEqual(
+        workflow_version === 1 ? ["record-payment"] : [],
+      );
+      expect(getStoreOrderActions({ ...cancelled, approved_at: "2026-10-31T10:00:00Z" })).toEqual(
+        workflow_version === 1 ? ["record-payment"] : [],
+      );
+    },
+  );
+  it("does not close a claim with recorded receipt and never refunds twice", () => {
+    expect(
+      getStoreOrderActions(
+        order({
+          workflow_version: 2,
+          status: "cancelled",
+          payment_status: "refund_required",
+          refund_status: "pending",
+          payment_received_at: "2026-10-31T10:01:00Z",
+        }),
+      ),
+    ).toEqual(["refund"]);
+    expect(
+      getStoreOrderActions(
+        order({
+          workflow_version: 2,
+          status: "cancelled",
+          payment_status: "refunded",
+          refund_status: "refunded",
+        }),
+      ),
+    ).toEqual([]);
+  });
+  it("has no money actions for zero total or repeated payment on pending delivery", () => {
+    expect(
+      getStoreOrderActions(
+        order({
+          workflow_version: 2,
+          status: "cancelled",
+          total_vnd: "0",
+          refund_status: "pending",
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      getStoreOrderActions(
+        order({ workflow_version: 2, status: "pending_delivery", payment_status: "unconfirmed" }),
+      ),
+    ).toEqual(["cancel", "deliver"]);
+  });
+  it("blocks deadline-sensitive order actions but preserves late receipt", () => {
+    expect(getStoreOrderActions(order({ workflow_version: 2 }), { expired: true })).toEqual([]);
+    expect(
+      getStoreOrderActions(
+        order({
+          workflow_version: 2,
+          status: "payment_pending",
+          approved_at: "2026-10-31T10:00:00Z",
+        }),
+        { expired: true },
+      ),
+    ).toEqual(["record-payment"]);
+  });
+});
+
+describe("v2 cancelled reconciliation is final", () => {
+  it.each([null, "2026-10-31T09:59:00Z"])(
+    "permits pending reconciliation regardless of buyer report %s",
+    (transfer_reported_at) => {
+      expect(
+        getStoreOrderActions(
+          order({
+            workflow_version: 2,
+            status: "cancelled",
+            approved_at: "2026-10-31T10:00:00Z",
+            refund_status: "pending",
+            transfer_reported_at,
+          }),
+        ),
+      ).toEqual(["record-payment", "close-refund-request"]);
+    },
+  );
+  it.each([null, "pending"] as const)(
+    "never opens money actions after no-money closure, including stale refund %s",
+    (refund_status) => {
+      expect(
+        getStoreOrderActions(
+          order({
+            workflow_version: 2,
+            status: "cancelled",
+            approved_at: "2026-10-31T10:00:00Z",
+            refund_status,
+            refund_request_closed_at: "2026-10-31T10:02:00Z",
+          }),
+        ),
+      ).toEqual([]);
+    },
+  );
+});

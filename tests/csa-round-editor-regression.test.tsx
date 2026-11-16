@@ -21,7 +21,7 @@ it("preserves unsaved round edits when switching locale", async () => {
     can_edit: true,
     opens_at: "2026-11-20T08:00:00+07:00",
     closes_at: "2026-11-21T18:00:00+07:00",
-    delivery_at: "2026-11-22T09:00:00+07:00",
+    delivery_date: "2026-11-22",
   });
   render(
     <AdminI18nProvider initialLocale="en">

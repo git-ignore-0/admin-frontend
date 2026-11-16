@@ -2899,7 +2899,7 @@ h3 {
 }
 
 .store-order-directory .list-toolbar {
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -2910,15 +2910,15 @@ h3 {
 }
 
 .store-order-directory .list-toolbar-actions {
-  grid-column: 3;
-  grid-row: 1;
+  grid-column: 1 / -1;
+  grid-row: 2;
   flex-wrap: wrap;
 }
 
 .store-order-directory .store-order-filters {
   grid-column: 2;
   grid-row: 1;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .store-order-status-filters {
@@ -2971,6 +2971,13 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+.store-order-status-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
 }
 .store-order-state-line {
   justify-content: flex-start;
@@ -5732,6 +5739,7 @@ h3 {
   .store-order-directory .store-order-filters {
     grid-column: 1;
     grid-row: 2;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-list-table.store-order-list-table {

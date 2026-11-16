@@ -70,20 +70,23 @@ async function open(name: string) {
 }
 
 describe("Store order actions", () => {
-  it("requires recording payment before approval becomes available", async () => {
+  it("legacy paid review approves with combined receipt without a separate payment prerequisite", async () => {
     const item = pending();
     view(item);
-    await screen.findByRole("button", { name: "Ghi nhận đã nhận tiền" });
-    expect(screen.queryByRole("button", { name: "Duyệt đơn" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeEnabled();
-    vi.mocked(api).mockResolvedValueOnce({ ...item, payment_status: "received" });
-    const dialog = await open("Ghi nhận đã nhận tiền");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
     expect(await screen.findByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeEnabled();
+    vi.mocked(api).mockResolvedValueOnce({
+      ...item,
+      status: "pending_delivery",
+      payment_status: "received",
+      payment_received_at: "2026-10-31T10:00:00Z",
+      expires_at: null,
+    });
     const approval = await open("Duyệt đơn");
     expect(within(approval).queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(within(approval).getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
+    fireEvent.click(within(approval).getByRole("button", { name: "Duyệt đơn" }));
+    expect(await screen.findByRole("button", { name: "Xác nhận đã giao" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).not.toBeInTheDocument();
   });
 
   it("allows a zero-total order to be approved without recording payment", async () => {
@@ -141,20 +144,23 @@ describe("Store order actions", () => {
       cancelled_at: "2026-10-31T10:00:00Z",
     };
     view(item);
-    vi.mocked(api).mockResolvedValueOnce({ ...item, payment_status: "refund_required" });
+    vi.mocked(api).mockResolvedValueOnce({
+      ...item,
+      payment_status: "refund_required",
+      refund_status: "pending",
+      payment_received_at: "2026-10-31T10:00:00Z",
+    });
     const dialog = await open("Ghi nhận đã nhận tiền");
     fireEvent.click(within(dialog).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(
-      await screen.findByText("Chờ hoàn tiền", { selector: ".store-order-status" }),
-    ).toBeVisible();
+    expect(await screen.findByText("Chờ hoàn", { selector: ".status" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Duyệt đơn" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Xác nhận đã giao" })).not.toBeInTheDocument();
   });
 
   it("anchors the countdown to the receipt time of a mutation response", async () => {
     const clientStart = Date.parse("2026-10-31T10:00:00Z");
-    const clock = vi.spyOn(Date, "now").mockReturnValue(clientStart);
+    const clock = vi.spyOn(performance, "now").mockReturnValue(clientStart);
     const item = pending();
     view(item);
     expect(await screen.findByText("Còn 8 phút")).toBeVisible();
@@ -194,6 +200,8 @@ describe("Store order actions", () => {
       ...pending(),
       status: "cancelled" as const,
       payment_status: "refund_required" as const,
+      refund_status: "pending" as const,
+      payment_received_at: "2026-10-31T10:00:00Z",
       cancelled_at: "x",
     };
     view(item);
@@ -203,7 +211,7 @@ describe("Store order actions", () => {
     expect(
       within(dialog).getByText("Hoàn tiền thủ công cho khách trước khi xác nhận tại đây."),
     ).toBeVisible();
-    expect(screen.getByText("Cần hoàn tiền")).toBeVisible();
+    expect(screen.getByText("Chờ hoàn", { selector: ".status" })).toBeVisible();
     const confirm = within(dialog).getByRole("button", { name: "Xác nhận hoàn tiền" });
     expect(confirm).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("Ghi chú hoàn tiền"), {

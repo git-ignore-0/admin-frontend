@@ -19,11 +19,12 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
   const router = useRouter();
-  const [form, setForm] = useState({ name: "", opens_at: "", closes_at: "", delivery_at: "" });
+  const [form, setForm] = useState({ name: "", opens_at: "", closes_at: "", delivery_date: "" });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
   const loadVersion = useRef(0);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const mounted = useRef(true);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [editable, setEditable] = useState(true);
@@ -31,6 +32,7 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
     const version = ++loadVersion.current;
     setLoading(true);
     setLoadError(null);
+    setError(null);
     try {
       const item = roundId ? await getRound(roundId) : undefined;
       if (version !== loadVersion.current) return;
@@ -40,8 +42,9 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
           name: item.name,
           opens_at: roundDateInput(item.opens_at),
           closes_at: roundDateInput(item.closes_at),
-          delivery_at: roundDateInput(item.delivery_at),
+          delivery_date: item.delivery_date,
         });
+      else setForm({ name: "", opens_at: "", closes_at: "", delivery_date: "" });
     } catch (e) {
       if (version === loadVersion.current) setLoadError(e);
     } finally {
@@ -49,39 +52,42 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
     }
   }, [roundId]);
   useEffect(() => {
+    mounted.current = true;
     void load();
     return () => {
+      mounted.current = false;
       loadVersion.current += 1;
     };
   }, [load]);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (lock.current) return;
+    if (lock.current || loading || !editable) return;
     const dates = {
       opens_at: roundDateToApi(form.opens_at) ?? "",
       closes_at: roundDateToApi(form.closes_at) ?? "",
-      delivery_at: roundDateToApi(form.delivery_at) ?? "",
+      delivery_date: form.delivery_date,
     };
     if (!form.name.trim()) {
-      setError(c.nameRequired);
+      setError("nameRequired");
       return;
     }
     const invalid = validateRoundDates(dates);
     if (invalid) {
-      setError(c[invalid]);
+      setError(invalid);
       return;
     }
+    const version = loadVersion.current;
     lock.current = true;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const saved = await saveRound({ name: form.name.trim(), ...dates }, roundId);
-      router.push(`/csa-rounds/${saved.id}`);
+      if (version === loadVersion.current) router.push(`/csa-rounds/${saved.id}`);
     } catch (e) {
-      setError(csaRoundError(e, locale, requestErrorMessage(e, t)));
+      if (version === loadVersion.current) setError(e);
     } finally {
       lock.current = false;
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
   return (
@@ -120,18 +126,18 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
                 [
                   ["opens_at", c.opens],
                   ["closes_at", c.closes],
-                  ["delivery_at", c.delivery],
+                  ["delivery_date", c.delivery],
                 ] as const
               ).map(([key, label]) => (
                 <FormField
                   key={key}
                   label={label}
-                  className={key === "delivery_at" ? styles.deliveryField : undefined}
+                  className={key === "delivery_date" ? styles.deliveryField : undefined}
                 >
                   <FormInput
-                    type="datetime-local"
+                    type={key === "delivery_date" ? "date" : "datetime-local"}
                     required
-                    step={60}
+                    step={key === "delivery_date" ? undefined : 60}
                     value={form[key]}
                     disabled={busy}
                     onChange={(e) => setForm({ ...form, [key]: e.target.value })}
@@ -140,12 +146,27 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
               ))}
             </div>
           </fieldset>
-          {error && (
+          {Boolean(error) && (
             <p className="error-box" role="alert">
-              {error}
+              {error === "nameRequired" || error === "schedule"
+                ? c[error]
+                : csaRoundError(error, locale, requestErrorMessage(error, t))}
             </p>
           )}
-          <Button type="submit" loading={busy}>
+          <Button
+            type="submit"
+            loading={busy}
+            disabled={
+              !form.name.trim() ||
+              Boolean(
+                validateRoundDates({
+                  opens_at: roundDateToApi(form.opens_at) ?? "",
+                  closes_at: roundDateToApi(form.closes_at) ?? "",
+                  delivery_date: form.delivery_date,
+                }),
+              )
+            }
+          >
             {roundId ? c.saveChanges : c.save}
           </Button>
         </form>

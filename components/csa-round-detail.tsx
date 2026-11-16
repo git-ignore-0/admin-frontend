@@ -16,7 +16,7 @@ import {
   Section,
   Status,
 } from "@/components/nfv-controls";
-import { formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
@@ -44,12 +44,15 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
   const [error, setError] = useState<unknown>(null);
   const [action, setAction] = useState<"publish" | "cancel" | null>(null);
   const [reason, setReason] = useState("");
-  const [actionError, setActionError] = useState("");
+  const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [companionBusy, setCompanionBusy] = useState(false);
   const [companionRefresh, setCompanionRefresh] = useState(0);
   const roundReceivedAt = useRef(0);
   const lock = useRef(false);
+  const mounted = useRef(true);
+  const currentRoundId = useRef(roundId);
+  currentRoundId.current = roundId;
   const [reopen, setReopen] = useState<CSASelection | null>(null);
   const requests = useRef(0);
   const roundSnapshot = useRef<{ round: CSARound; page: number; receivedAt: number } | null>(null);
@@ -96,27 +99,42 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       counter.current++;
     };
   }, [load]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    setAction(null);
+    setActionError(null);
+    setReason("");
+    setReopen(null);
+  }, [roundId]);
   async function mutate() {
-    if (lock.current || !round || !action) return;
+    if (lock.current || !round || !action || loading) return;
     if (action === "cancel" && !reason.trim()) {
-      setActionError(c.reasonRequired);
+      setActionError("reasonRequired");
       return;
     }
+    const identity = round.id;
     lock.current = true;
+    requests.current += 1;
     setBusy(true);
-    setActionError("");
+    setActionError(null);
     try {
       await api(`admin/csa-rounds/${round.id}/${action}`, {
         method: "POST",
         body: JSON.stringify(action === "cancel" ? { reason: reason.trim() } : {}),
       });
+      if (!mounted.current || identity !== currentRoundId.current) return;
       setAction(null);
       await loadRef.current();
     } catch (e) {
-      setActionError(csaRoundError(e, locale, requestErrorMessage(e, t)));
+      if (mounted.current && identity === currentRoundId.current) setActionError(e);
     } finally {
       lock.current = false;
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
   if (!round || round.id !== roundId)
@@ -165,7 +183,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
               <Button
                 disabled={disabled}
                 onClick={() => {
-                  setActionError("");
+                  setActionError(null);
                   setAction("publish");
                 }}
               >
@@ -178,11 +196,11 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
           {[
             [c.opens, round.opens_at],
             [c.closes, round.closes_at],
-            [c.delivery, round.delivery_at],
+            [c.delivery, round.delivery_date],
           ].map(([label, value]) => (
             <div key={label}>
               <dt>{label}</dt>
-              <dd>{formatAdminDateTime(value)}</dd>
+              <dd>{label === c.delivery ? formatAdminDate(value) : formatAdminDateTime(value)}</dd>
             </div>
           ))}
         </dl>
@@ -301,7 +319,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
             variant="plain"
             disabled={disabled}
             onClick={() => {
-              setActionError("");
+              setActionError(null);
               setReason("");
               setAction("cancel");
             }}
@@ -318,7 +336,13 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
           busyLabel={c.busy}
           busy={busy}
           danger={action === "cancel"}
-          error={actionError}
+          error={
+            actionError === "reasonRequired"
+              ? c.reasonRequired
+              : actionError
+                ? csaRoundError(actionError, locale, requestErrorMessage(actionError, t))
+                : ""
+          }
           onCancel={() => setAction(null)}
           onConfirm={() => void mutate()}
         >
@@ -340,7 +364,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
         <CSAReopenDialog
           selectionId={reopen.id}
           orderId={reopen.order_id}
-          deliveryAt={round.delivery_at}
+          deliveryDate={round.delivery_date}
           onClose={() => setReopen(null)}
           onSaved={() => {
             setReopen(null);

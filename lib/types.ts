@@ -672,7 +672,12 @@ export type FarmStockBatch = {
 export type StockBatchInput = Pick<FarmStockBatch, "start_date" | "end_date" | "quantity_units">;
 
 export type StoreOrderStatus =
-  "payment_pending" | "pending_review" | "pending_delivery" | "delivered" | "cancelled";
+  | "payment_pending"
+  | "pending_review"
+  | "payment_review"
+  | "pending_delivery"
+  | "delivered"
+  | "cancelled";
 
 export type StorePaymentStatus =
   "not_required" | "unconfirmed" | "received" | "refund_required" | "refunded";
@@ -745,8 +750,10 @@ export type StoreOrder = {
   };
   id: string;
   reference_code: string;
+  workflow_version: 1 | 2;
   status: StoreOrderStatus;
   payment_status: StorePaymentStatus;
+  refund_status: "pending" | "refunded" | null;
   locale: "vi" | "en";
   lines: StoreOrderLine[];
   shipping_address: {
@@ -766,7 +773,8 @@ export type StoreOrder = {
     round_id: string;
     selection_id: string;
     csa_order_id: string;
-    delivery_at: string;
+    delivery_date?: string;
+    delivery_at?: string;
     decided_at: string;
   } | null;
   shipping_discount_reason: string | null;
@@ -793,9 +801,24 @@ export type StoreOrder = {
   expires_at: string | null;
   server_time: string;
   transfer_reported_at: string | null;
+  transfer_reported_by: string | null;
+  payment_received_at: string | null;
+  payment_received_by: string | null;
+  refund_requested_at: string | null;
+  refund_requested_by: string | null;
+  refund_request_closed_at: string | null;
+  refund_request_closed_by: string | null;
+  refund_request_closed_reason: string | null;
+  refunded_at: string | null;
+  refunded_by: string | null;
+  refund_amount_vnd: string | null;
+  refund_note: string;
   approved_at: string | null;
+  approved_by: string | null;
   delivered_at: string | null;
+  delivered_by: string | null;
   cancelled_at: string | null;
+  cancelled_by: string | null;
   cancellation_reason: string | null;
   reconciliation_note: string;
   created_at: string;
@@ -815,7 +838,13 @@ export type StoreOrder = {
 };
 
 export type StoreOrderAction =
-  "approve" | "cancel" | "record-payment" | "refund" | "deliver" | "restock";
+  | "approve"
+  | "cancel"
+  | "record-payment"
+  | "close-refund-request"
+  | "refund"
+  | "deliver"
+  | "restock";
 
 export type MediaAsset = {
   id: string;

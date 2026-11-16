@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { CSAReopenDialog } from "@/components/csa-reopen-dialog";
 import { ActionLink, Button, Section, Status } from "@/components/nfv-controls";
-import { formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { csaRoundsCopy } from "@/lib/csa-rounds-copy";
 import type { StoreOrder } from "@/lib/types";
 
@@ -31,7 +31,7 @@ export function CSAOrderPanel({
         <Status status={selection.state} label={c.states[selection.state]} />
       </p>
       <p>
-        <strong>{c.delivery}:</strong> {formatAdminDateTime(round.delivery_at)}
+        <strong>{c.delivery}:</strong> {formatAdminDate(round.delivery_date)}
       </p>
       {selection.reopen_until && (
         <p>
@@ -55,7 +55,7 @@ export function CSAOrderPanel({
         <CSAReopenDialog
           selectionId={selection.id}
           orderId={order.id}
-          deliveryAt={round.delivery_at}
+          deliveryDate={round.delivery_date}
           onClose={() => setOpen(false)}
           onSaved={() => {
             setOpen(false);

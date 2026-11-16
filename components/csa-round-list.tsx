@@ -5,7 +5,7 @@ import { ActionLink, DataState, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import type { PaginationMeta } from "@/lib/types";
 import { PageHeading } from "@/components/page-heading";
-import { formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { getRounds, type CSARound } from "@/lib/csa-rounds";
 import { csaRoundsCopy } from "@/lib/csa-rounds-copy";
@@ -82,7 +82,7 @@ export function CSARoundList() {
                     </small>
                   </td>
                   <td data-label={c.delivery}>
-                    <time dateTime={item.delivery_at}>{formatAdminDateTime(item.delivery_at)}</time>
+                    <time dateTime={item.delivery_date}>{formatAdminDate(item.delivery_date)}</time>
                   </td>
                   <td data-label={c.action}>
                     <ActionLink href={`/csa-rounds/${item.id}`} small variant="outline">

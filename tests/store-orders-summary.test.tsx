@@ -160,7 +160,7 @@ describe("saved delivery snapshot", () => {
               round_id: "saved-round",
               selection_id: "selection",
               csa_order_id: "saved-order",
-              delivery_at: "2026-11-20T08:00:00+07:00",
+              delivery_date: "2026-11-20",
               decided_at: "2026-11-19T08:00:00+07:00",
             },
           })}
@@ -218,7 +218,7 @@ describe("saved delivery snapshot", () => {
             status: "closed",
             opens_at: "2026-11-18T08:00:00+07:00",
             closes_at: "2026-11-19T18:00:00+07:00",
-            delivery_at: "2026-11-20T08:00:00+07:00",
+            delivery_date: "2026-11-20",
             server_time: "2026-11-19T18:00:00+07:00",
           },
           selection: {
@@ -251,4 +251,32 @@ describe("saved delivery snapshot", () => {
 
 it.each(["vi", "en"] as const)("retains unknown shipping reason fallback in %s", (locale) => {
   expect(storeShippingDiscountReason("other_reason", locale)).toBe("other_reason");
+});
+
+it.each([
+  [{ delivery_date: "2027-01-01" }, "01/01/2027"],
+  [{ delivery_at: "2026-12-31T17:30:00Z" }, "01/01/2027"],
+] as const)("reads the saved companion source date without changing totals: %o", (date, label) => {
+  render(
+    <AdminI18nProvider initialLocale="vi">
+      <StoreOrderTotals
+        order={storeOrderFixture({
+          delivery_date: "2027-01-01",
+          shipping_discount_reason: "csa_companion_delivery",
+          shipping_benefit: {
+            reason: "csa_companion_delivery",
+            round_id: "round",
+            selection_id: "selection",
+            csa_order_id: "csa-order",
+            decided_at: "2026-12-30T08:00:00+07:00",
+            ...date,
+          },
+        })}
+      />
+    </AdminI18nProvider>,
+  );
+  expect(screen.getByRole("link", { name: "Đợt CSA" })).toHaveAttribute("title", label);
+  expect(
+    within(screen.getByText("Tổng phải trả").parentElement!).getByText(/105.000/),
+  ).toBeVisible();
 });

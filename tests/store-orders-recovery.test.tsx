@@ -28,9 +28,8 @@ const renderOrder = () =>
     </AdminI18nProvider>,
   );
 
-it("a late expiry GET must not roll back a successful delivery", async () => {
+it("pending delivery never polls an inactive expiry and blocks refresh during delivery", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
   const initial = storeOrderFixture({
     status: "pending_delivery",
     payment_status: "received",
@@ -38,7 +37,6 @@ it("a late expiry GET must not roll back a successful delivery", async () => {
     expires_at: "2026-11-02T00:01:00Z",
   });
   let resolveMutation!: (value: StoreOrder) => void;
-  let resolveGet!: (value: StoreOrder) => void;
   vi.mocked(api)
     .mockResolvedValueOnce(initial)
     .mockImplementationOnce(
@@ -46,30 +44,20 @@ it("a late expiry GET must not roll back a successful delivery", async () => {
         new Promise<StoreOrder>((resolve) => {
           resolveMutation = resolve;
         }) as never,
-    )
-    .mockImplementationOnce(
-      () =>
-        new Promise<StoreOrder>((resolve) => {
-          resolveGet = resolve;
-        }) as never,
     );
   renderOrder();
   fireEvent.click(await screen.findByRole("button", { name: "Xác nhận đã giao" }));
   const dialog = screen.getByRole("dialog");
   fireEvent.click(within(dialog).getByRole("checkbox"));
   fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận đã giao" }));
+  expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeDisabled();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(60_000);
   });
-  expect(api).toHaveBeenCalledTimes(3);
-  await act(async () => {
-    resolveMutation({ ...initial, status: "delivered" });
-  });
+  expect(api).toHaveBeenCalledTimes(2);
+  await act(async () => resolveMutation({ ...initial, status: "delivered" }));
   expect(screen.getByText("Đã giao", { selector: ".status" })).toBeVisible();
-  await act(async () => {
-    resolveGet(initial);
-  });
-  expect(screen.getByText("Đã giao", { selector: ".status" })).toBeVisible();
+  expect(api).toHaveBeenCalledTimes(2);
 });
 
 it("409 must disable the modal confirm button until reload", async () => {
@@ -151,11 +139,19 @@ it.each([0, 1])(
     fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
     const second = JSON.parse(String(vi.mocked(api).mock.calls[3][1]?.body));
     expect(second.allocations).toEqual(first.allocations);
-    expect(second.idempotency_key === first.idempotency_key).toBe(completed === 0);
+    expect(second.idempotency_key).toBe(first.idempotency_key);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    vi.mocked(api).mockResolvedValueOnce(reconciled);
+    fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn" }));
+    const deliberate = screen.getByRole("dialog");
+    fireEvent.change(within(deliberate).getByRole("spinbutton"), { target: { value: "1" } });
+    fireEvent.click(within(deliberate).getByRole("button", { name: "Hoàn tồn" }));
+    const third = JSON.parse(String(vi.mocked(api).mock.calls[4][1]?.body));
+    expect(third.idempotency_key).not.toBe(first.idempotency_key);
   },
 );
 
-it("keeps the same restock intent key when a background GET updates the ledger inside its dialog", async () => {
+it("keeps exact unresolved restock intent when a manual refresh updates its ledger", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
   const initial = {
@@ -182,9 +178,10 @@ it("keeps the same restock intent key when a background GET updates the ledger i
   fireEvent.click(confirm);
   await within(dialog).findByRole("alert");
   const first = JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body));
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(60_000);
-  });
+  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeEnabled(),
+  );
   expect(api).toHaveBeenCalledTimes(3);
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);

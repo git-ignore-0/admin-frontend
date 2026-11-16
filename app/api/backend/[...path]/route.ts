@@ -38,6 +38,7 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     const statuses = new Set([
       "payment_pending",
       "pending_review",
+      "payment_review",
       "pending_delivery",
       "delivered",
       "cancelled",

@@ -1,4 +1,4 @@
-import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type {
   PaginationMeta,
@@ -21,35 +21,33 @@ export type StoreOrderQuery = {
 };
 
 export const storeOrderDisplayStatuses = [
-  "payment_pending",
   "pending_review",
+  "payment_pending",
+  "payment_review",
   "pending_delivery",
   "delivered",
   "cancelled",
-  "refund_required",
-  "refunded",
 ] as const;
 
 export type StoreOrderDisplayStatus = (typeof storeOrderDisplayStatuses)[number];
 
 export function getStoreOrderDisplayStatus(
-  order: Pick<StoreOrder, "status" | "payment_status">,
+  order: Pick<StoreOrder, "status">,
 ): StoreOrderDisplayStatus {
-  if (
-    order.status === "cancelled" &&
-    (order.payment_status === "refund_required" || order.payment_status === "refunded")
-  ) {
-    return order.payment_status;
-  }
   return order.status;
 }
 
 export function storeOrderStatusQuery(
   status: StoreOrderDisplayStatus | "",
-): Pick<StoreOrderQuery, "status" | "paymentStatus"> {
-  return status === "refund_required" || status === "refunded"
-    ? { status: "cancelled", paymentStatus: status }
-    : { status };
+): Pick<StoreOrderQuery, "status"> {
+  return { status };
+}
+
+export function storeOrderHasDeadline(order: Pick<StoreOrder, "status" | "expires_at">) {
+  return (
+    Boolean(order.expires_at) &&
+    ["pending_review", "payment_pending", "payment_review"].includes(order.status)
+  );
 }
 
 export function buildStoreOrderQuery(query: StoreOrderQuery) {
@@ -105,25 +103,48 @@ export function storeDeadlineRemainingMs(
   return Math.max(0, Date.parse(order.expires_at) - (clientNow + serverOffset));
 }
 
-export function getStoreOrderActions(order: StoreOrder): StoreOrderAction[] {
+export function getStoreOrderActions(
+  order: StoreOrder,
+  { expired = false }: { expired?: boolean } = {},
+): StoreOrderAction[] {
   const actions: StoreOrderAction[] = [];
+  const knownWorkflow = order.workflow_version === 1 || order.workflow_version === 2;
+  const hasMoney = /^\d+$/u.test(order.total_vnd) && BigInt(order.total_vnd) > 0n;
+  const csaReady = !order.csa || ["locked", "confirmed"].includes(order.csa.selection.state);
+  if (knownWorkflow && order.status === "pending_review" && csaReady) actions.push("approve");
   if (
-    order.status === "pending_review" &&
-    (!order.csa || ["locked", "confirmed"].includes(order.csa.selection.state)) &&
-    (order.total_vnd === "0" || order.payment_status === "received")
-  ) {
-    actions.push("approve");
-  }
-  if (["payment_pending", "pending_review", "pending_delivery"].includes(order.status)) {
+    knownWorkflow &&
+    ["payment_pending", "pending_review", "payment_review", "pending_delivery"].includes(
+      order.status,
+    )
+  )
     actions.push("cancel");
-  }
-  if (order.total_vnd !== "0" && order.payment_status === "unconfirmed") {
+  const v2Store = order.workflow_version === 2 && !order.csa;
+  const reconciliationOpen = order.refund_status === "pending" && !order.refund_request_closed_at;
+  const canReceive = v2Store
+    ? order.status === "cancelled"
+      ? reconciliationOpen
+      : Boolean(order.approved_at) && ["payment_pending", "payment_review"].includes(order.status)
+    : order.workflow_version === 1 &&
+      ["cancelled", "payment_pending", "pending_review"].includes(order.status);
+  if (
+    hasMoney &&
+    !order.csa &&
+    order.payment_status === "unconfirmed" &&
+    order.payment_received_at === null &&
+    canReceive
+  )
     actions.push("record-payment");
+  if (hasMoney && order.status === "cancelled" && order.refund_status === "pending") {
+    if (
+      order.payment_status === "unconfirmed" &&
+      order.payment_received_at === null &&
+      (!v2Store || reconciliationOpen)
+    )
+      actions.push("close-refund-request");
+    if (order.payment_status === "refund_required") actions.push("refund");
   }
-  if (order.status === "cancelled" && order.payment_status === "refund_required") {
-    actions.push("refund");
-  }
-  if (order.status === "pending_delivery") actions.push("deliver");
+  if (knownWorkflow && order.status === "pending_delivery") actions.push("deliver");
   if (
     order.status === "cancelled" &&
     order.approved_at &&
@@ -131,10 +152,11 @@ export function getStoreOrderActions(order: StoreOrder): StoreOrderAction[] {
       (allocation) =>
         allocation.restock_remaining_quantity > 0 && allocation.restock_eligible === true,
     )
-  ) {
+  )
     actions.push("restock");
-  }
-  return actions;
+  return expired && storeOrderHasDeadline(order)
+    ? actions.filter((action) => !["approve", "cancel", "deliver"].includes(action))
+    : actions;
 }
 
 export function getStoreOrderPrimaryAction(
@@ -225,6 +247,11 @@ export class IdempotencyKeyStore {
 
 export function formatStoreDeliveryDate(order: Pick<StoreOrder, "csa" | "delivery_date">) {
   return order.csa
-    ? formatAdminDateTime(order.csa.round.delivery_at)
+    ? formatAdminDate(order.csa.round.delivery_date)
     : formatAdminDate(order.delivery_date);
+}
+
+export function formatStoreShippingBenefitDate(order: Pick<StoreOrder, "shipping_benefit">) {
+  const benefit = order.shipping_benefit;
+  return formatAdminDate(benefit?.delivery_date ?? benefit?.delivery_at);
 }

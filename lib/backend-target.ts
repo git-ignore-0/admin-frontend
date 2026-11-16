@@ -147,7 +147,15 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     return (
       path.length === 4 &&
       normalizedMethod === "POST" &&
-      ["approve", "cancel", "record-payment", "refund", "deliver", "restock"].includes(action)
+      [
+        "approve",
+        "cancel",
+        "record-payment",
+        "close-refund-request",
+        "refund",
+        "deliver",
+        "restock",
+      ].includes(action)
     );
   }
   if (extra !== undefined) return false;

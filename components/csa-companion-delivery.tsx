@@ -10,7 +10,7 @@ import {
   Section,
   Status,
 } from "@/components/nfv-controls";
-import { formatAdminDateTime } from "@/lib/admin-date";
+import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   getCompanionDelivery,
@@ -20,6 +20,7 @@ import {
   type CompanionDelivery,
 } from "@/lib/csa-companion-delivery";
 import {
+  csaDeadlineInputMax,
   roundDateInput,
   roundDateToApi,
   validateReopenDeadline,
@@ -144,7 +145,7 @@ function CompanionDeliveryForm({
   }, []);
   const now = roundServerNow(round, receivedAt);
   const value = roundDateToApi(deadline);
-  const valid = Boolean(value && validateReopenDeadline(value, round.delivery_at, now));
+  const valid = Boolean(value && validateReopenDeadline(value, round.delivery_date, now));
   const unchanged =
     config?.companion_delivery_enabled &&
     deadline ===
@@ -161,7 +162,7 @@ function CompanionDeliveryForm({
   async function submit(close: boolean) {
     if (blocked || (!close && (unchanged || !valid))) return;
     const currentNow = roundServerNow(round, receivedAt);
-    if (!close && (!value || !validateReopenDeadline(value, round.delivery_at, currentNow))) {
+    if (!close && (!value || !validateReopenDeadline(value, round.delivery_date, currentNow))) {
       setError(new Error("csa_companion_deadline_invalid"));
       return;
     }
@@ -220,7 +221,7 @@ function CompanionDeliveryForm({
           <dl className="detail-list">
             <div>
               <dt>{c.delivery}</dt>
-              <dd>{formatAdminDateTime(round.delivery_at)}</dd>
+              <dd>{formatAdminDate(round.delivery_date)}</dd>
             </div>
             <div>
               <dt>{copy.cutoff}</dt>
@@ -235,7 +236,7 @@ function CompanionDeliveryForm({
               type="datetime-local"
               value={deadline}
               disabled={blocked}
-              max={roundDateInput(round.delivery_at)}
+              max={csaDeadlineInputMax(round.delivery_date)}
               aria-invalid={Boolean(deadline && !valid)}
               onChange={(event) => {
                 dirty.current =

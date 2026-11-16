@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSARoundDetail } from "@/components/csa-round-detail";
@@ -18,7 +18,7 @@ const round = {
   status: "draft",
   opens_at: "2026-11-20T08:00:00+07:00",
   closes_at: "2026-11-21T18:00:00+07:00",
-  delivery_at: "2026-11-22T09:00:00+07:00",
+  delivery_date: "2026-11-22",
   server_time: "2026-11-19T08:00:00+07:00",
 };
 it("publishes only after confirmation and reloads the round", async () => {
@@ -209,3 +209,42 @@ it("pages participants without fetching history or losing full demand labels", a
   );
   expect(apiEnvelope).toHaveBeenCalledTimes(2);
 });
+
+it.each([false, true])(
+  "ignores an old mutation after round identity change or unmount (%s)",
+  async (unmount) => {
+    let finish!: (value: unknown) => void;
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (init?.method === "POST")
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      return { ...round, id: path.endsWith("/new-round") ? "new-round" : id };
+    });
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [],
+      demand: [],
+      meta: { page: 1, page_size: 20, total: 0 },
+    } as never);
+    const result = render(
+      <AdminI18nProvider initialLocale="en">
+        <CSARoundDetail roundId={id} />
+      </AdminI18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Publish round" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    if (unmount) result.unmount();
+    else {
+      result.rerender(
+        <AdminI18nProvider initialLocale="en">
+          <CSARoundDetail roundId="new-round" />
+        </AdminI18nProvider>,
+      );
+      await waitFor(() => expect(api).toHaveBeenCalledWith("admin/csa-rounds/new-round"));
+    }
+    const reads = vi.mocked(api).mock.calls.filter(([, init]) => !init?.method).length;
+    await act(async () => finish(round));
+    expect(vi.mocked(api).mock.calls.filter(([, init]) => !init?.method)).toHaveLength(reads);
+  },
+);

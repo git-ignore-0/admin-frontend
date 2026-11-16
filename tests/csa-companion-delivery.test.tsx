@@ -25,7 +25,7 @@ const round: CSARound = {
   status: "closed",
   opens_at: "2026-11-19T08:00:00+07:00",
   closes_at: "2026-11-20T08:00:00+07:00",
-  delivery_at: "2026-11-22T09:00:00+07:00",
+  delivery_date: "2026-11-22",
   server_time: "2026-11-20T09:00:00+07:00",
 };
 const empty = { companion_delivery_enabled: false, companion_delivery_cutoff: null };

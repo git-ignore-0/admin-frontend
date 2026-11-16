@@ -21,7 +21,7 @@ const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
 const dates = {
   opens_at: "2026-11-20T08:00:00+07:00",
   closes_at: "2026-11-21T18:00:00+07:00",
-  delivery_at: "2026-11-22T09:00:00+07:00",
+  delivery_date: "2026-11-22",
 };
 
 describe("CSA rounds", () => {
@@ -49,17 +49,19 @@ describe("CSA rounds", () => {
       false,
     );
   });
-  it("validates A<B<C locally and leaves cross-round checks to publication", () => {
+  it("validates opening, closing and the delivery day locally and leaves cross-round checks to publication", () => {
     expect(validateRoundDates(dates)).toBeNull();
     expect(validateRoundDates({ ...dates, closes_at: dates.opens_at })).toBe("schedule");
-    expect(validateRoundDates({ ...dates, delivery_at: dates.closes_at })).toBe("schedule");
+    expect(validateRoundDates({ ...dates, delivery_date: dates.closes_at })).toBe("schedule");
     expect(validateRoundDates({ ...dates, opens_at: "" })).toBe("schedule");
   });
-  it("requires a future reopen deadline strictly before C", () => {
+  it("requires a future reopen deadline strictly before the delivery day", () => {
     const now = Date.parse(dates.closes_at);
-    expect(validateReopenDeadline(dates.closes_at, dates.delivery_at, now)).toBe(false);
-    expect(validateReopenDeadline(dates.delivery_at, dates.delivery_at, now)).toBe(false);
-    expect(validateReopenDeadline("2026-11-21T20:00:00+07:00", dates.delivery_at, now)).toBe(true);
+    expect(validateReopenDeadline(dates.closes_at, dates.delivery_date, now)).toBe(false);
+    expect(validateReopenDeadline(dates.delivery_date, dates.delivery_date, now)).toBe(false);
+    expect(validateReopenDeadline("2026-11-21T20:00:00+07:00", dates.delivery_date, now)).toBe(
+      true,
+    );
   });
   it("does not render an editable form when existing round loading fails", async () => {
     vi.mocked(api).mockRejectedValue(new Error("request_failed"));
@@ -82,7 +84,7 @@ describe("CSA rounds", () => {
     for (const [label, value] of [
       ["Selection opens", "2026-11-20T08:00"],
       ["Selection closes", "2026-11-21T18:00"],
-      ["Delivery", "2026-11-22T09:00"],
+      ["Delivery", "2026-11-22"],
     ])
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
@@ -101,14 +103,14 @@ describe("CSA rounds", () => {
       status: "pending_delivery",
       approved_at: dates.closes_at,
       server_time: dates.closes_at,
-      csa: { round: { delivery_at: dates.delivery_at }, selection: { id, state: "locked" } },
+      csa: { round: { delivery_date: dates.delivery_date }, selection: { id, state: "locked" } },
     });
     render(
       <AdminI18nProvider initialLocale="en">
         <CSAReopenDialog
           selectionId={id}
           orderId={id}
-          deliveryAt={dates.delivery_at}
+          deliveryDate={dates.delivery_date}
           onClose={vi.fn()}
           onSaved={vi.fn()}
         />
@@ -184,7 +186,7 @@ it("reopens with a Vietnam deadline, blocks duplicate submissions and calls refr
       <CSAReopenDialog
         selectionId={id}
         orderId={id}
-        deliveryAt={dates.delivery_at}
+        deliveryDate={dates.delivery_date}
         onClose={vi.fn()}
         onSaved={onSaved}
       />
@@ -222,7 +224,7 @@ it("keeps the deadline form when backend rejects the selected deadline", async (
       <CSAReopenDialog
         selectionId={id}
         orderId={id}
-        deliveryAt={dates.delivery_at}
+        deliveryDate={dates.delivery_date}
         onClose={vi.fn()}
         onSaved={vi.fn()}
       />
@@ -232,13 +234,16 @@ it("keeps the deadline form when backend rejects the selected deadline", async (
   await waitFor(() => expect(input).toBeEnabled());
   fireEvent.change(input, { target: { value: "2026-11-21T20:00" } });
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(/before the delivery time/);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/before the delivery day/);
   expect(input).toHaveValue("2026-11-21T20:00");
 });
 
 it("does not offer allocation approval while a CSA member is choosing again", async () => {
   const { getStoreOrderActions } = await import("@/lib/store-orders");
   const order = {
+    workflow_version: 1,
+    expires_at: null,
+    approved_at: null,
     status: "pending_review",
     total_vnd: "0",
     payment_status: "not_required",
@@ -321,4 +326,87 @@ it("translates expired CSA reselection cancellation in Store orders", () => {
   expect(storeCancellationReason("reselection_expired", "en")).toBe("Reselection deadline expired");
   expect(storeCancellationReason("reselection_expired", "vi")).not.toBe("reselection_expired");
   expect(storeCancellationReason("Farmer unavailable", "en")).toBe("Farmer unavailable");
+});
+
+it("blocks extending an existing reselection after its own deadline passes", async () => {
+  let elapsed = 1000;
+  const monotonic = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+  vi.mocked(api).mockResolvedValueOnce({
+    status: "pending_review",
+    approved_at: null,
+    server_time: "2026-11-21T18:00:00+07:00",
+    csa: {
+      round,
+      selection: { ...selection, state: "reselecting", reopen_until: "2026-11-21T18:01:00+07:00" },
+    },
+  });
+  const view = () => (
+    <AdminI18nProvider initialLocale="en">
+      <CSAReopenDialog
+        selectionId={id}
+        orderId={id}
+        deliveryDate={dates.delivery_date}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    </AdminI18nProvider>
+  );
+  const rendered = render(view());
+  try {
+    fireEvent.change(await screen.findByLabelText("Selection deadline"), {
+      target: { value: "2026-11-21T18:30" },
+    });
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeEnabled();
+    // Click before a clock-tick rerender: the handler itself must recheck eligibility.
+    elapsed = 61000;
+    fireEvent.click(confirm);
+    expect(api).toHaveBeenCalledTimes(1);
+    rendered.rerender(view());
+    expect(confirm).toBeDisabled();
+  } finally {
+    monotonic.mockRestore();
+  }
+});
+
+it("requires refreshing a stale selection before another reopen request", async () => {
+  vi.mocked(api)
+    .mockResolvedValueOnce({
+      status: "pending_review",
+      approved_at: null,
+      server_time: dates.closes_at,
+      csa: { round, selection },
+    })
+    .mockRejectedValueOnce(Object.assign(new Error("csa_selection_stale"), { status: 409 }))
+    .mockResolvedValueOnce({
+      status: "pending_review",
+      approved_at: null,
+      server_time: dates.closes_at,
+      csa: { round, selection: { ...selection, revision: 3, state: "confirmed" } },
+    })
+    .mockResolvedValueOnce({});
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSAReopenDialog
+        selectionId={id}
+        orderId={id}
+        deliveryDate={dates.delivery_date}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    </AdminI18nProvider>,
+  );
+  fireEvent.change(await screen.findByLabelText("Selection deadline"), {
+    target: { value: "2026-11-21T20:00" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const input = await screen.findByLabelText("Selection deadline");
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, { target: { value: "2026-11-21T21:00" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(4));
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[3][1]?.body)).expected_revision).toBe(3);
 });
