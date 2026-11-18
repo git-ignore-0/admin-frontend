@@ -2951,6 +2951,43 @@ h3 {
 .store-order-detail-page .acc-heading h2 {
   font-size: 0.9375rem;
 }
+.store-order-csa-panel .acc-heading {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.store-order-csa-panel .acc-heading > div:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.store-order-csa-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+.store-order-csa-meta > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.store-order-csa-meta dt {
+  color: var(--text-muted);
+  font-size: var(--store-order-secondary-size);
+}
+.store-order-csa-meta dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.store-order-csa-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
 .store-order-detail-page .detail-list > div {
   gap: 12px;
   padding-block: 8px;
@@ -3232,6 +3269,9 @@ h3 {
   }
   .store-order-actions .acc-heading {
     display: none;
+  }
+  .store-order-csa-actions {
+    --nfv-btn-small-height: 44px;
   }
   .store-order-detail-page .nfv-button,
   .store-order-detail-page .nfv-control {

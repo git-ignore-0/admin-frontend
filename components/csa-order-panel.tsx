@@ -26,27 +26,39 @@ export function CSAOrderPanel({
     !order.approved_at &&
     ["locked", "confirmed", "reselecting"].includes(selection.state);
   return (
-    <Section title={`${c.title}: ${round.name}`}>
-      <p>
-        <Status status={selection.state} label={c.states[selection.state]} />
-      </p>
-      <p>
-        <strong>{c.delivery}:</strong> {formatAdminDate(round.delivery_date)}
-      </p>
-      {selection.reopen_until && (
-        <p>
-          <strong>{c.deadline}:</strong> {formatAdminDateTime(selection.reopen_until)}
-        </p>
-      )}
-      <div className="confirmation-actions">
-        <ActionLink variant="outline" href={`/csa-rounds/${round.id}`}>
+    <Section
+      title={c.title}
+      description={round.name}
+      actions={<Status status={selection.state} label={c.states[selection.state]} />}
+      className="store-order-csa-panel"
+    >
+      <dl className="store-order-csa-meta">
+        <div>
+          <dt>{c.delivery}</dt>
+          <dd>
+            <time dateTime={round.delivery_date}>{formatAdminDate(round.delivery_date)}</time>
+          </dd>
+        </div>
+        {selection.reopen_until && (
+          <div>
+            <dt>{c.deadline}</dt>
+            <dd>
+              <time dateTime={selection.reopen_until}>
+                {formatAdminDateTime(selection.reopen_until)}
+              </time>
+            </dd>
+          </div>
+        )}
+      </dl>
+      <div className="store-order-csa-actions">
+        <ActionLink small variant="outline" href={`/csa-rounds/${round.id}`}>
           {c.view}
         </ActionLink>
-        <ActionLink variant="outline" href={`/memberships/${selection.membership_id}`}>
+        <ActionLink small variant="outline" href={`/memberships/${selection.membership_id}`}>
           {c.membership}
         </ActionLink>
         {canReopen && (
-          <Button disabled={disabled} onClick={() => setOpen(true)}>
+          <Button small disabled={disabled} onClick={() => setOpen(true)}>
             {c.reopen}
           </Button>
         )}
