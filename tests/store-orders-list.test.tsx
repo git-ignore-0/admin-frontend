@@ -1,3 +1,4 @@
+import { selectOption } from "@/tests/select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -34,18 +35,20 @@ describe("Store order list", () => {
       meta: { page: 1, page_size: 20, total: 21 },
     });
     view();
-    const statuses = screen.getByRole("group", { name: "Trạng thái" });
-    const pending = within(statuses).getByRole("button", { name: "Chờ thanh toán" });
+    const statuses = screen.getByRole("radiogroup", { name: "Trạng thái" });
+    const pending = within(statuses).getByRole("radio", { name: "Chờ thanh toán" });
     expect(pending).toBeVisible();
     expect(
-      await screen.findByText("Chờ thanh toán", { selector: ".store-order-status" }),
+      await screen.findByText("Chờ thanh toán", {
+        selector: ".store-order-status .mantine-Badge-label",
+      }),
     ).toBeVisible();
     expect(screen.queryByText("Chờ khách báo chuyển tiền")).not.toBeInTheDocument();
     fireEvent.click(pending);
     await waitFor(() => {
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=payment_pending");
     });
-    expect(pending).toHaveAttribute("aria-pressed", "true");
+    expect(pending).toBeChecked();
   });
 
   it("filters a complete all-orders snapshot locally without another loading state", async () => {
@@ -58,12 +61,12 @@ describe("Store order list", () => {
     });
     view();
     await screen.findByText("PAID-ORDER");
-    const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-    fireEvent.click(tabs.getByRole("button", { name: "Chờ xác nhận đơn" }));
+    const tabs = within(screen.getByRole("radiogroup", { name: "Trạng thái" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Chờ xác nhận đơn" }));
     expect(screen.getByText("NFV-STORE-001")).toBeVisible();
     expect(screen.queryByText("PAID-ORDER")).not.toBeInTheDocument();
     expect(screen.queryByText("Đang tải đơn hàng…")).not.toBeInTheDocument();
-    fireEvent.click(tabs.getByRole("button", { name: "Tất cả" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Tất cả" }));
     expect(screen.getByText("PAID-ORDER")).toBeVisible();
     expect(apiEnvelope).toHaveBeenCalledTimes(1);
   });
@@ -80,12 +83,12 @@ describe("Store order list", () => {
       });
     view();
     await screen.findByText("NFV-STORE-001");
-    const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-    fireEvent.click(tabs.getByRole("button", { name: "Đã giao" }));
+    const tabs = within(screen.getByRole("radiogroup", { name: "Trạng thái" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Đã giao" }));
     await screen.findByText("DELIVERED");
-    fireEvent.click(tabs.getByRole("button", { name: "Tất cả" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Tất cả" }));
     expect(screen.getByText("NFV-STORE-001")).toBeVisible();
-    fireEvent.click(tabs.getByRole("button", { name: "Đã giao" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Đã giao" }));
     expect(screen.getByText("DELIVERED")).toBeVisible();
     expect(screen.queryByText("Đang tải đơn hàng…")).not.toBeInTheDocument();
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
@@ -118,18 +121,20 @@ describe("Store order list", () => {
     });
     view();
     await screen.findByText("REFUNDED");
-    const money = screen.getByLabelText("Trạng thái tiền");
-    expect(within(money).getByRole("option", { name: "Đã nhận tiền, cần hoàn" })).toBeVisible();
-    fireEvent.change(money, { target: { value: "refund_required" } });
+    const money = screen.getByRole("combobox", { name: "Trạng thái tiền" });
+    fireEvent.click(money);
+    expect(screen.getByRole("option", { name: "Đã nhận tiền, cần hoàn" })).toBeVisible();
+    fireEvent.keyDown(money, { key: "Escape" });
+    selectOption(money, "refund_required");
     expect(screen.getByText("NEEDS-REFUND")).toBeVisible();
     expect(screen.queryByText("REFUNDED")).not.toBeInTheDocument();
     expect(screen.queryByText("UNVERIFIED-CLAIM")).not.toBeInTheDocument();
-    fireEvent.change(money, { target: { value: "refunded" } });
+    selectOption(money, "refunded");
     expect(screen.getByText("REFUNDED")).toBeVisible();
     expect(screen.queryByText("NEEDS-REFUND")).not.toBeInTheDocument();
-    fireEvent.change(money, { target: { value: "" } });
+    selectOption(money, "");
     fireEvent.click(
-      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+      within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Đã hủy",
       }),
     );
@@ -152,9 +157,9 @@ describe("Store order list", () => {
     view();
     await screen.findByText("NFV-STORE-001");
     fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
-    await screen.findByText("Đã giao", { selector: ".status" });
-    const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-    fireEvent.click(tabs.getByRole("button", { name: "Chờ xác nhận đơn" }));
+    await screen.findByText("Đã giao", { selector: ".mantine-Badge-label" });
+    const tabs = within(screen.getByRole("radiogroup", { name: "Trạng thái" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Chờ xác nhận đơn" }));
     expect(screen.getByText("Không có đơn hàng phù hợp.")).toBeVisible();
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
@@ -182,8 +187,8 @@ describe("Store order list", () => {
         });
       view();
       await screen.findByText("ALL");
-      const pending = within(screen.getByRole("group", { name: "Trạng thái" })).getByRole(
-        "button",
+      const pending = within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole(
+        "radio",
         { name: "Chờ xác nhận đơn" },
       );
       fireEvent.click(pending);
@@ -196,7 +201,7 @@ describe("Store order list", () => {
       await waitFor(() => expect(screen.queryByText("Đang tải đơn hàng…")).not.toBeInTheDocument());
       if (total) expect(screen.queryByText("Không có đơn hàng phù hợp.")).not.toBeInTheDocument();
       else expect(screen.getByText("Không có đơn hàng phù hợp.")).toBeVisible();
-      expect(pending).toHaveAttribute("aria-pressed", "true");
+      expect(pending).toBeChecked();
       const path = vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0] as string;
       expect(path).toContain("page=1&");
       expect(path).toContain("status=pending_review");
@@ -250,16 +255,20 @@ describe("Store order list", () => {
 
     expect(await screen.findByText("NFV-STORE-001")).toBeVisible();
     expect(
-      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+      within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Chờ thanh toán",
       }),
     ).toBeVisible();
-    expect(screen.getAllByText("Chờ duyệt", { selector: ".store-order-status" })).toHaveLength(2);
     expect(
-      screen.queryByText("Chưa xác nhận tiền", { selector: ".store-order-status" }),
+      screen.getAllByText("Chờ duyệt", { selector: ".store-order-status .mantine-Badge-label" }),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByText("Chưa xác nhận tiền", {
+        selector: ".store-order-status .mantine-Badge-label",
+      }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Dùng điểm CSA")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Trạng thái tiền")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Trạng thái tiền" })).toBeVisible();
     const zeroOrder = screen.getByRole("link", { name: /NFV-STORE-002/u });
     expect(zeroOrder.tagName).toBe("A");
     expect(zeroOrder).toHaveAttribute("href", "/store-orders/99999999-9999-4999-8999-999999999999");
@@ -280,14 +289,14 @@ describe("Store order list", () => {
       storeOrderFixture().expires_at,
     );
     expect(screen.getByText(/105\.000/)).toBeVisible();
-    expect(screen.getByRole("searchbox")).toHaveClass("nfv-control");
+    expect(screen.getByRole("searchbox")).toHaveClass("mantine-TextInput-input");
     for (const select of screen.getAllByRole("combobox")) {
-      expect(select).toHaveClass("nfv-control");
+      expect(select).toHaveClass("mantine-Select-input");
     }
-    expect(screen.getByRole("button", { name: "Tìm kiếm" })).toHaveClass("nfv-button");
-    expect(screen.getAllByText("Chờ duyệt", { selector: ".store-order-status" })[0]).toHaveClass(
-      "status",
-    );
+    expect(screen.getByRole("button", { name: "Tìm kiếm" })).toHaveClass("mantine-Button-root");
+    expect(
+      screen.getAllByText("Chờ duyệt", { selector: ".store-order-status .mantine-Badge-label" })[0],
+    ).toBeVisible();
   });
 
   it("shows cancelled plus a refund status without presenting the old checkout deadline as a refund deadline", async () => {
@@ -312,14 +321,14 @@ describe("Store order list", () => {
     const awaiting = await screen.findByRole("link", { name: /NFV-STORE-001/u });
     const refunded = screen.getByRole("link", { name: /REFUNDED-ORDER/u });
     expect(
-      within(awaiting.closest("tr")!).getByText("Chờ hoàn", { selector: ".status" }),
+      within(awaiting.closest("tr")!).getByText("Chờ hoàn", { selector: ".mantine-Badge-label" }),
     ).toBeVisible();
     expect(
-      within(refunded.closest("tr")!).getByText("Đã hoàn", { selector: ".status" }),
+      within(refunded.closest("tr")!).getByText("Đã hoàn", { selector: ".mantine-Badge-label" }),
     ).toBeVisible();
     for (const row of [awaiting.closest("tr")!, refunded.closest("tr")!]) {
-      expect(row.querySelectorAll(".status")).toHaveLength(2);
-      expect(within(row).getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+      expect(row.querySelectorAll(".mantine-Badge-root")).toHaveLength(2);
+      expect(within(row).getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
       expect(within(row).queryByText(/Hạn xử lý:/u)).not.toBeInTheDocument();
     }
   });
@@ -335,14 +344,16 @@ describe("Store order list", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "  Nguyễn An  " } });
     fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
     fireEvent.click(
-      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+      within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Đã hủy",
       }),
     );
-    fireEvent.change(screen.getByLabelText("Trạng thái tiền"), {
-      target: { value: "refund_required" },
-    });
-    fireEvent.change(screen.getByLabelText("Sắp xếp"), { target: { value: "total_desc" } });
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Trạng thái tiền" })).toBeEnabled(),
+    );
+    selectOption(screen.getByRole("combobox", { name: "Trạng thái tiền" }), "refund_required");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Sắp xếp" })).toBeEnabled());
+    selectOption(screen.getByRole("combobox", { name: "Sắp xếp" }), "total_desc");
 
     await waitFor(() => {
       const path = vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0] as string;
@@ -354,9 +365,9 @@ describe("Store order list", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sau" }));
     await waitFor(() => expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("page=2"));
-    fireEvent.change(screen.getByLabelText("Trạng thái tiền"), { target: { value: "" } });
+    selectOption(screen.getByRole("combobox", { name: "Trạng thái tiền" }), "");
     fireEvent.click(
-      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+      within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Đã hủy",
       }),
     );
@@ -398,7 +409,7 @@ describe("Store order list", () => {
       });
     view();
     fireEvent.click(
-      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+      within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Chờ xác nhận đơn",
       }),
     );
@@ -439,11 +450,11 @@ it("keeps six order states and shows an unverified refund claim alongside cancel
   view();
   const link = await screen.findByRole("link", { name: /NFV-STORE-001/u });
   const row = within(link.closest("tr")!);
-  expect(row.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
-  expect(row.getByText("Chờ đối soát", { selector: ".status" })).toBeVisible();
-  const tabs = within(screen.getByRole("group", { name: "Trạng thái" }));
-  expect(tabs.getAllByRole("button")).toHaveLength(7);
-  fireEvent.click(tabs.getByRole("button", { name: "Chờ xác nhận thanh toán" }));
+  expect(row.getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
+  expect(row.getByText("Chờ đối soát", { selector: ".mantine-Badge-label" })).toBeVisible();
+  const tabs = within(screen.getByRole("radiogroup", { name: "Trạng thái" }));
+  expect(tabs.getAllByRole("radio")).toHaveLength(7);
+  fireEvent.click(tabs.getByRole("radio", { name: "Chờ xác nhận thanh toán" }));
   await waitFor(() =>
     expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=payment_review"),
   );
@@ -473,13 +484,15 @@ it("reconciles a mounted page at the backend deadline without inventing a local 
       });
     view();
     await act(async () => {});
-    expect(screen.getByText("Chờ xác nhận thanh toán", { selector: ".status" })).toBeVisible();
+    expect(
+      screen.getByText("Chờ xác nhận thanh toán", { selector: ".mantine-Badge-label" }),
+    ).toBeVisible();
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
-    expect(screen.getByText("Chờ đối soát", { selector: ".status" })).toBeVisible();
+    expect(screen.getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
+    expect(screen.getByText("Chờ đối soát", { selector: ".mantine-Badge-label" })).toBeVisible();
   } finally {
     vi.useRealTimers();
   }
@@ -513,7 +526,7 @@ it("refreshes filtered counts when a known cached pending order expires off the 
     view();
     await act(async () => {});
     fireEvent.click(
-      within(screen.getByRole("group", { name: "Trạng thái" })).getByRole("button", {
+      within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Đã hủy",
       }),
     );
@@ -523,7 +536,7 @@ it("refreshes filtered counts when a known cached pending order expires off the 
     });
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
     expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=cancelled");
-    expect(screen.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+    expect(screen.getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
   } finally {
     vi.useRealTimers();
   }

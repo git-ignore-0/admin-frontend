@@ -1,10 +1,11 @@
 "use client";
+import { Button } from "@mantine/core";
 
 import { ReactNode, RefObject, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { Button, DataState, FormSelect, Status } from "@/components/nfv-controls";
+import { DataState, FormField, FormSelect, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { StockBatchFields } from "@/components/stock-batch-fields";
 import { formatAdminDate } from "@/lib/admin-date";
@@ -196,7 +197,7 @@ export function FarmStockBatches({
       <Button
         aria-label={c.backToProducts}
         className="farm-stock-mobile-back"
-        variant="plain"
+        variant="subtle"
         onClick={onBack}
       >
         ← {c.backToProducts}
@@ -208,6 +209,7 @@ export function FarmStockBatches({
           </h3>
           <p>{c.stockBatchesHint}</p>
           <Status
+            domain="farm-stock"
             status={
               !product.is_active
                 ? "inactive"
@@ -219,30 +221,26 @@ export function FarmStockBatches({
           />
         </div>
         <div className="farm-stock-batches-actions">
-          <Button small onClick={openNew}>
+          <Button size="xs" onClick={openNew}>
             {c.addBatch}
           </Button>
           {actions}
         </div>
       </div>
       <div className="farm-stock-batches-filter">
-        <label className="nfv-field">
-          <span className="nfv-field-label">{c.batchStatus}</span>
+        <FormField label={c.batchStatus}>
           <FormSelect
             value={status}
-            onChange={(event) => {
+            onChange={(value) => {
               setPage(1);
-              setStatus(event.target.value as StockBatchStatus | "");
+              setStatus((value ?? "") as StockBatchStatus | "");
             }}
-          >
-            <option value="">{c.batchStatusAll}</option>
-            {Object.entries(statusLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </FormSelect>
-        </label>
+            data={[
+              { value: "", label: c.batchStatusAll },
+              ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
+            ]}
+          />
+        </FormField>
       </div>
       {error ? (
         <DataState
@@ -274,16 +272,20 @@ export function FarmStockBatches({
                 <strong>
                   {formatStockQuantityTotal(batch.remaining_quantity, product.unit_size, unitLabel)}
                 </strong>
-                <Status status={batch.status} label={statusLabels[batch.status]} />
+                <Status
+                  domain="farm-stock"
+                  status={batch.status}
+                  label={statusLabels[batch.status]}
+                />
                 <div className="farm-stock-batch-row-actions">
                   {editable ? (
                     <>
-                      <Button small variant="plain" onClick={() => openEdit(batch)}>
+                      <Button size="xs" variant="subtle" onClick={() => openEdit(batch)}>
                         {c.edit}
                       </Button>
                       <Button
-                        small
-                        variant="plain"
+                        size="xs"
+                        variant="subtle"
                         onClick={() => {
                           setActionError("");
                           setCancelTarget(batch);

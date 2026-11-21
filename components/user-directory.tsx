@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useState } from "react";
+import { Anchor, Button as MantineButton, Group, Paper, Stack, Table, Text } from "@mantine/core";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
-import { Button } from "@/components/nfv-controls";
+import { Button, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { UserAccountDialog } from "@/components/user-account-dialog";
 import { formatAdminDateTime } from "@/lib/admin-date";
@@ -72,9 +73,14 @@ export function UserDirectory({
       <ListToolbar
         actions={
           detailBasePath === "/users" ? (
-            <Button onClick={() => setCreating(true)} variant="outline">
-              {t.users.accountActions.create}
-            </Button>
+            <Group gap="xs">
+              <Button onClick={() => setCreating(true)} variant="outline">
+                {t.users.accountActions.create}
+              </Button>
+              <MantineButton component={Link} href="/points" variant="subtle">
+                {t.common.managePoints}
+              </MantineButton>
+            </Group>
           ) : null
         }
         busy={loading}
@@ -102,45 +108,61 @@ export function UserDirectory({
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table user-directory-table">
-            <thead>
-              <tr>
-                <th>{t.users.name}</th>
-                <th>{t.users.loginPhone}</th>
-                <th>{t.users.created}</th>
-                <th>{t.users.status}</th>
-                <th>{t.users.balance}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((user) => (
-                <tr key={user.id}>
-                  <td data-label={t.users.name}>
-                    <Link
-                      aria-label={`${detailLabel}: ${user.name}`}
-                      className="admin-list-primary-link"
-                      href={`${detailBasePath}/${user.id}`}
-                    >
-                      {user.name}
-                    </Link>
-                    {user.email && <small className="table-secondary">{user.email}</small>}
-                    <small className="table-secondary">{userEmailStatus(user, t)}</small>
-                  </td>
-                  <td data-label={t.users.loginPhone}>{user.login_phone_number || "—"}</td>
-                  <td data-label={t.users.created}>{formatAdminDateTime(user.date_joined)}</td>
-                  <td data-label={t.users.status}>
-                    <span className="badge">
-                      {t.users.statuses[user.status as keyof typeof t.users.statuses] ??
-                        user.status}
-                    </span>
-                  </td>
-                  <td data-label={t.users.balance}>{user.points_balance}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Paper withBorder radius="md" style={{ minWidth: 0 }}>
+          <Table.ScrollContainer minWidth={680}>
+            <Table aria-label={t.common.users}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t.users.name}</Table.Th>
+                  <Table.Th>{t.users.loginPhone}</Table.Th>
+                  <Table.Th>{t.users.created}</Table.Th>
+                  <Table.Th>{t.users.status}</Table.Th>
+                  <Table.Th ta="right">{t.users.balance}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {items.map((user) => (
+                  <Table.Tr key={user.id}>
+                    <Table.Td>
+                      <Stack gap={3}>
+                        <Anchor
+                          component={Link}
+                          aria-label={`${detailLabel}: ${user.name}`}
+                          href={`${detailBasePath}/${user.id}`}
+                          fw={600}
+                          size="sm"
+                        >
+                          {user.name}
+                        </Anchor>
+                        {user.email && (
+                          <Text size="xs" c="dimmed">
+                            {user.email}
+                          </Text>
+                        )}
+                        <Text size="xs" c="dimmed">
+                          {userEmailStatus(user, t)}
+                        </Text>
+                      </Stack>
+                    </Table.Td>
+                    <Table.Td>{user.login_phone_number || "—"}</Table.Td>
+                    <Table.Td>{formatAdminDateTime(user.date_joined)}</Table.Td>
+                    <Table.Td>
+                      <Status
+                        domain="user"
+                        status={user.status}
+                        label={
+                          t.users.statuses[user.status as keyof typeof t.users.statuses] ??
+                          user.status
+                        }
+                      />
+                    </Table.Td>
+                    <Table.Td ta="right">{user.points_balance}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        </Paper>
       )}
       {meta && (
         <Pagination

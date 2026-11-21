@@ -1,9 +1,11 @@
 "use client";
+import { Alert } from "@mantine/core";
 
 import { useCallback, useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DetailPageHeading } from "@/components/detail-page-heading";
+import { DataState } from "@/components/nfv-controls";
 import { PointLedger } from "@/components/point-ledger";
 import { userIdentityLabel } from "@/lib/admin-users";
 import { apiEnvelope } from "@/lib/client-api";
@@ -24,8 +26,13 @@ export function PointDetail({ userId }: { userId: string }) {
 
   useEffect(load, [load]);
 
-  if (error) return <p className="error-box">{error}</p>;
-  if (!user) return <div className="panel">{t.users.loading}</div>;
+  if (error)
+    return (
+      <Alert color="red" role="alert">
+        {error}
+      </Alert>
+    );
+  if (!user) return <DataState kind="loading" title={t.users.loading} />;
 
   return (
     <>

@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -67,12 +68,14 @@ it("enables Growth Tracker for an existing Farm without resubmitting shared fiel
   mocks.profile.mockRejectedValue(Object.assign(new Error("not_found"), { status: 404 }));
   mocks.enable.mockResolvedValue(profile);
   view(<FarmTrackerProfileEditor />);
+  const farmSelect = await screen.findByRole("combobox", { name: "Chọn trang trại" });
+  await waitFor(() => expect(farmSelect).toBeEnabled());
+  fireEvent.click(farmSelect);
   expect(await screen.findByRole("option", { name: "Nông trại Xanh" })).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("");
+  fireEvent.keyDown(farmSelect, { key: "Escape" });
+  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("Chọn trang trại");
   expect(screen.queryByLabelText("Số người đăng ký 6 tháng")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole("combobox", { name: "Chọn trang trại" }), {
-    target: { value: "farm-1" },
-  });
+  selectOption(screen.getByRole("combobox", { name: "Chọn trang trại" }), "farm-1");
   fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
     target: { value: "12" },
   });
@@ -119,7 +122,7 @@ it("keeps unsaved Growth Tracker counts when the Admin language changes", async 
   fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
     target: { value: "29" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "EN" }));
+  fireEvent.click(screen.getByRole("radio", { name: "EN" }));
   expect(screen.getByLabelText("6-month signup count")).toHaveValue(29);
   expect(mocks.profile).toHaveBeenCalledTimes(1);
   expect(mocks.farm).toHaveBeenCalledTimes(1);
@@ -134,21 +137,19 @@ it("keeps an unsaved profile draft when the Farm search and page change", async 
     }),
   );
   view(<FarmTrackerProfileEditor />);
-  fireEvent.change(await screen.findByRole("combobox", { name: "Chọn trang trại" }), {
-    target: { value: "farm-1" },
-  });
+  selectOption(await screen.findByRole("combobox", { name: "Chọn trang trại" }), "farm-1");
   const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
   fireEvent.change(count, { target: { value: "19" } });
   fireEvent.click(screen.getByRole("button", { name: "Sau" }));
   await waitFor(() => expect(mocks.farms).toHaveBeenCalledWith({ page: 2, search: "" }));
   expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(19);
-  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("farm-1");
+  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("Nông trại Xanh");
   fireEvent.change(screen.getByRole("searchbox", { name: "Tìm Farm" }), {
     target: { value: "khác" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
   await waitFor(() => expect(mocks.farms).toHaveBeenCalledWith({ page: 1, search: "khác" }));
   expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(19);
-  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("farm-1");
+  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("Nông trại Xanh");
   expect(mocks.profile).toHaveBeenCalledTimes(1);
 });

@@ -1,5 +1,9 @@
 "use client";
 
+import { FormSelect, Status, FormField } from "@/components/nfv-controls";
+
+import { Table } from "@mantine/core";
+
 import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 
@@ -63,25 +67,23 @@ export function RedemptionList() {
         busy={loading}
         clearLabel={t.common.clearFilters}
         filter={
-          <label className="field">
-            <span>{t.redemptions.filterStatus}</span>
-            <select
-              className="input"
+          <FormField className="field" label={t.redemptions.filterStatus}>
+            <FormSelect
               disabled={loading}
-              onChange={(event) => {
-                setStatus(event.target.value as RedemptionStatus | "");
+              value={status}
+              onChange={(value) => {
+                setStatus((value ?? "") as RedemptionStatus | "");
                 setPage(1);
               }}
-              value={status}
-            >
-              <option value="">{t.redemptions.allStatuses}</option>
-              {(Object.keys(statusLabels) as RedemptionStatus[]).map((value) => (
-                <option key={value} value={value}>
-                  {statusLabels[value]}
-                </option>
-              ))}
-            </select>
-          </label>
+              data={[
+                { value: "", label: t.redemptions.allStatuses },
+                ...(Object.keys(statusLabels) as RedemptionStatus[]).map((value) => ({
+                  value,
+                  label: statusLabels[value],
+                })),
+              ]}
+            />
+          </FormField>
         }
         hasFilters={Boolean(query || search || status)}
         onClear={clearFilters}
@@ -108,20 +110,20 @@ export function RedemptionList() {
       />
       {items && items.length > 0 && (
         <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table redemption-list-table">
-            <thead>
-              <tr>
-                <th>{t.redemptions.member}</th>
-                <th>{t.redemptions.reward}</th>
-                <th>{t.redemptions.points}</th>
-                <th>{t.redemptions.requestedAt}</th>
-                <th>{t.redemptions.status}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="admin-list-table redemption-list-table">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t.redemptions.member}</Table.Th>
+                <Table.Th>{t.redemptions.reward}</Table.Th>
+                <Table.Th>{t.redemptions.points}</Table.Th>
+                <Table.Th>{t.redemptions.requestedAt}</Table.Th>
+                <Table.Th>{t.redemptions.status}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td data-label={t.redemptions.member}>
+                <Table.Tr key={item.id}>
+                  <Table.Td data-label={t.redemptions.member}>
                     <Link
                       aria-label={`${t.redemptions.view}: ${item.user.name}`}
                       className="admin-list-primary-link"
@@ -131,23 +133,25 @@ export function RedemptionList() {
                     </Link>
                     <small className="table-secondary">{item.user.email}</small>
                     <small className="table-secondary">{item.user.phone || "—"}</small>
-                  </td>
-                  <td data-label={t.redemptions.reward}>
+                  </Table.Td>
+                  <Table.Td data-label={t.redemptions.reward}>
                     {locale === "en" ? item.reward_name_en_snapshot : item.reward_name_vi_snapshot}
-                  </td>
-                  <td data-label={t.redemptions.points}>{item.point_cost_snapshot}</td>
-                  <td data-label={t.redemptions.requestedAt}>
+                  </Table.Td>
+                  <Table.Td data-label={t.redemptions.points}>{item.point_cost_snapshot}</Table.Td>
+                  <Table.Td data-label={t.redemptions.requestedAt}>
                     {formatAdminDateTime(item.created_at)}
-                  </td>
-                  <td data-label={t.redemptions.status}>
-                    <span className={`badge redemption-status ${item.status}`}>
-                      {statusLabels[item.status]}
-                    </span>
-                  </td>
-                </tr>
+                  </Table.Td>
+                  <Table.Td data-label={t.redemptions.status}>
+                    <Status
+                      domain="redemption"
+                      status={item.status}
+                      label={statusLabels[item.status]}
+                    />
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (

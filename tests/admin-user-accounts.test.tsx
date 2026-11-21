@@ -200,10 +200,9 @@ describe("CMS account administration", () => {
     fireEvent.change(email, { target: { value: "member@example.com" } });
     const { password1 } = passwords(dialog, password, password, copy.locale);
     fireEvent.click(within(dialog).getByRole("button", { name: copy.create }));
-    expect(phone.closest("label")).toContainElement(
-      await within(dialog).findByText(copy.phoneError),
-    );
-    expect(email.closest("label")).toContainElement(within(dialog).getByText(copy.emailError));
+    await within(dialog).findByText(copy.phoneError);
+    expect(phone).toHaveAccessibleDescription(copy.phoneError);
+    expect(email).toHaveAccessibleDescription(copy.emailError);
     expect(phone).toHaveValue("0912345678");
     expect(email).toHaveValue("member@example.com");
     expect(password1).toHaveValue(password);
@@ -529,7 +528,8 @@ describe("CMS account administration", () => {
       const confirmation = field === "password2" ? "  different  " : password;
       const { password1, password2 } = passwords(dialog, password, confirmation, locale);
       fireEvent.click(within(dialog).getByRole("button", { name: action }));
-      expect(input.closest("label")).toContainElement(await within(dialog).findByText(message));
+      await within(dialog).findByText(message);
+      expect(input).toHaveAccessibleDescription(message);
       expect(input).toHaveAttribute("aria-invalid", "true");
       expect(password1).toHaveValue(password);
       expect(password2).toHaveValue(confirmation);
@@ -677,7 +677,9 @@ describe("CMS account administration", () => {
     const form = screen.getByRole("form", { name: /find account/i });
     fireEvent.change(search, { target: { value: "garden" } });
     fireEvent.submit(form);
-    fireEvent.click(await screen.findByRole("radio", { name: /Garden Member/ }));
+    const gardenOption = await screen.findByRole("radio", { name: /Garden Member/ });
+    fireEvent.click(gardenOption.closest(".assignment-user")!);
+    expect(gardenOption).toBeChecked();
     expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled();
 
     fireEvent.change(search, { target: { value: "orchard" } });

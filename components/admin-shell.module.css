@@ -1,0 +1,33 @@
+.main {
+  min-width: 0;
+  /* AppShell owns outer padding; tables scroll within their own containers. */
+  background: var(--mantine-color-body);
+}
+.navbar {
+  background: var(--mantine-color-white);
+}
+.account {
+  max-width: 240px;
+  border-radius: var(--mantine-radius-md);
+}
+.account:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 3px;
+}
+.breadcrumbs {
+  min-width: 0;
+}
+.breadcrumbs > :last-child {
+  min-width: 0;
+}
+
+.brandSection {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--surface-subtle);
+}
+.brandIcon {
+  background: linear-gradient(145deg, #267e50, #174e34);
+  box-shadow: 0 4px 9px #2a8e5830;
+}

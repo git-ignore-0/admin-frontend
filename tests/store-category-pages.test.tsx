@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { selectOption } from "./select-option";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StoreCategoryEditor } from "@/components/store-category-editor";
@@ -21,6 +22,7 @@ vi.mock("@/lib/commerce-api", () => ({
   deleteStoreCategory: mocks.remove,
 }));
 vi.mock("@/components/admin-i18n-provider", () => ({
+  useOptionalAdminI18n: () => undefined,
   useAdminI18n: () => ({ locale: "vi", t: adminDictionaries.vi }),
 }));
 vi.mock("@/components/toast-provider", () => ({ useToast: () => mocks.toast }));
@@ -75,8 +77,9 @@ describe("store category administration", () => {
     render(<StoreCategoryEditor categoryId="child" />);
     const parent = await screen.findByLabelText("Danh mục cha");
     expect(parent).toHaveValue("root");
+    fireEvent.click(parent);
     expect(screen.queryByRole("option", { name: "leaf" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Trạng thái"), { target: { value: "inactive" } });
+    selectOption(screen.getByLabelText("Trạng thái"), "inactive");
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][0].is_active).toBe(false);
@@ -94,6 +97,7 @@ describe("store category administration", () => {
 
     const parent = await screen.findByLabelText("Danh mục cha");
     expect(parent).toHaveValue("root");
+    fireEvent.click(parent);
     expect(screen.getByRole("option", { name: "root" })).toBeInTheDocument();
   });
 
@@ -103,7 +107,7 @@ describe("store category administration", () => {
     mocks.save.mockResolvedValue({ ...category("root", null, 1), is_active: false });
     render(<StoreCategoryDetail categoryId="root" />);
     fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
-    fireEvent.click(screen.getByRole("dialog").querySelector(".button.danger")!);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
     expect(await screen.findByText(/đang được sử dụng/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Tắt hiển thị" }));
     await waitFor(() =>

@@ -1,5 +1,8 @@
 "use client";
 
+import { Button, Radio, Table, Alert, Group } from "@mantine/core";
+import { FormInput, FormTextarea, Status as UiStatus } from "@/components/nfv-controls";
+
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -300,19 +303,20 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
 
   if (!item) {
     return (
-      <div className={loadError ? "error-box retry-error" : "panel"}>
-        <span>{loadError || t.csaPurchases.loadingDetail}</span>
-        {loadError && (
-          <button
-            className="button secondary"
-            disabled={loading}
-            onClick={() => void load()}
-            type="button"
-          >
-            {t.common.retry}
-          </button>
-        )}
-      </div>
+      <Alert
+        color={loadError ? "red" : "gray"}
+        variant={loadError ? "light" : "transparent"}
+        role={loadError ? "alert" : "status"}
+      >
+        <Group gap="sm" justify="space-between" align="center">
+          <span>{loadError || t.csaPurchases.loadingDetail}</span>
+          {loadError && (
+            <Button variant="default" disabled={loading} onClick={() => void load()} type="button">
+              {t.common.retry}
+            </Button>
+          )}
+        </Group>
+      </Alert>
     );
   }
 
@@ -356,47 +360,42 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
         {(canApprove || canReject || canMarkRefunded) && (
           <div className="detail-actions" aria-label={t.csaPurchases.actions}>
             {canApprove && (
-              <button
-                className="button"
-                disabled={saving}
-                onClick={() => openAction("approve")}
-                type="button"
-              >
+              <Button disabled={saving} onClick={() => openAction("approve")} type="button">
                 {t.csaPurchases.approve}
-              </button>
+              </Button>
             )}
             {canReject && (
-              <button
-                className="button danger"
+              <Button
+                color="red"
                 disabled={saving}
                 onClick={() => openAction("reject")}
                 type="button"
               >
                 {t.csaPurchases.reject}
-              </button>
+              </Button>
             )}
             {canMarkRefunded && (
-              <button
-                className="button secondary"
+              <Button
+                variant="default"
                 disabled={saving}
                 onClick={() => openAction("mark-refunded")}
                 type="button"
               >
                 {t.csaPurchases.markRefunded}
-              </button>
+              </Button>
             )}
           </div>
         )}
       </section>
       {refundFeedback && (
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {refundFeedback}
-        </p>
+        </Alert>
       )}
       {paymentFeedback && (
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {paymentFeedback}
-        </p>
+        </Alert>
       )}
 
       <div className="csa-purchase-detail-sections">
@@ -464,22 +463,22 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           )}
           {orderedPayments.length ? (
             <div className="table-wrap csa-installment-wrap">
-              <table className="table csa-installment-table">
-                <thead>
-                  <tr>
-                    <th>{installmentCopy.installmentNumber.replace("{count}", "#")}</th>
-                    <th>{installmentCopy.dueAmount}</th>
-                    <th>{installmentCopy.paidAmount}</th>
-                    <th>{installmentCopy.cycles}</th>
-                    <th>{installmentCopy.dueAt}</th>
-                    <th>{installmentCopy.paymentStatus}</th>
-                    <th>{t.csaPurchases.actions}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table className="csa-installment-table">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{installmentCopy.installmentNumber.replace("{count}", "#")}</Table.Th>
+                    <Table.Th>{installmentCopy.dueAmount}</Table.Th>
+                    <Table.Th>{installmentCopy.paidAmount}</Table.Th>
+                    <Table.Th>{installmentCopy.cycles}</Table.Th>
+                    <Table.Th>{installmentCopy.dueAt}</Table.Th>
+                    <Table.Th>{installmentCopy.paymentStatus}</Table.Th>
+                    <Table.Th>{t.csaPurchases.actions}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {orderedPayments.map((payment) => (
-                    <tr key={payment.id}>
-                      <th
+                    <Table.Tr key={payment.id}>
+                      <Table.Th
                         data-label={installmentCopy.installmentNumber.replace("{count}", "#")}
                         scope="row"
                       >
@@ -487,23 +486,25 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                           "{count}",
                           String(payment.installment_sequence),
                         )}
-                      </th>
-                      <td data-label={installmentCopy.dueAmount}>
+                      </Table.Th>
+                      <Table.Td data-label={installmentCopy.dueAmount}>
                         {formatMembershipMoney(payment.amount_due, locale)}
-                      </td>
-                      <td data-label={installmentCopy.paidAmount}>
+                      </Table.Td>
+                      <Table.Td data-label={installmentCopy.paidAmount}>
                         {payment.amount_paid
                           ? formatMembershipMoney(payment.amount_paid, locale)
                           : "—"}
-                      </td>
-                      <td data-label={installmentCopy.cycles}>{payment.cycle_count}</td>
-                      <td data-label={installmentCopy.dueAt}>
+                      </Table.Td>
+                      <Table.Td data-label={installmentCopy.cycles}>{payment.cycle_count}</Table.Td>
+                      <Table.Td data-label={installmentCopy.dueAt}>
                         {formatAdminDateTime(payment.due_at)}
-                      </td>
-                      <td data-label={installmentCopy.paymentStatus}>
-                        <span className={`badge csa-installment-status ${payment.status}`}>
-                          {installmentCopy.statuses[payment.status]}
-                        </span>
+                      </Table.Td>
+                      <Table.Td data-label={installmentCopy.paymentStatus}>
+                        <UiStatus
+                          domain="installment"
+                          status={payment.status}
+                          label={installmentCopy.statuses[payment.status]}
+                        />
                         {payment.confirmed_at && (
                           <small className="table-secondary">
                             {installmentCopy.confirmedAt}:{" "}
@@ -535,33 +536,33 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                             {installmentCopy.note}: {payment.note}
                           </small>
                         )}
-                      </td>
-                      <td data-label={t.csaPurchases.actions}>
+                      </Table.Td>
+                      <Table.Td data-label={t.csaPurchases.actions}>
                         {item.status === "approved" && payment.status === "reported" && (
                           <div className="detail-actions csa-installment-actions">
-                            <button
-                              className="button secondary"
+                            <Button
+                              variant="default"
                               disabled={paymentSaving}
                               onClick={() => openPaymentAction(payment, "confirm")}
                               type="button"
                             >
                               {installmentCopy.confirm}
-                            </button>
-                            <button
-                              className="button danger"
+                            </Button>
+                            <Button
+                              color="red"
                               disabled={paymentSaving}
                               onClick={() => openPaymentAction(payment, "reject")}
                               type="button"
                             >
                               {installmentCopy.reject}
-                            </button>
+                            </Button>
                           </div>
                         )}
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
-              </table>
+                </Table.Tbody>
+              </Table>
             </div>
           ) : (
             <p>{installmentCopy.noSchedule}</p>
@@ -730,8 +731,7 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           {action === "mark-refunded" ? (
             <label className="field" htmlFor="purchase-refund-note">
               <span>{t.csaPurchases.refundNote}</span>
-              <textarea
-                className="textarea"
+              <FormTextarea
                 disabled={saving}
                 id="purchase-refund-note"
                 maxLength={1000}
@@ -749,7 +749,6 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                       displayedStartDateError ? "purchase-start-date-error" : undefined
                     }
                     aria-invalid={Boolean(displayedStartDateError)}
-                    className="input"
                     id="purchase-start-date"
                     onValueChange={(value) => {
                       setStartDateInput(value);
@@ -807,11 +806,15 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                   ) : (
                     <p>{t.csaPurchases.noExistingPackages}</p>
                   )}
-                  <div className="resolution-options">
+                  <div
+                    className="resolution-options"
+                    role="radiogroup"
+                    aria-label={t.csaPurchases.resolutionTitle}
+                  >
                     {(["keep_existing", "use_request_data", "reject_conflict"] as const).map(
                       (value) => (
                         <label className="radio-option" key={value}>
-                          <input
+                          <Radio
                             checked={resolution === value}
                             name="customer-resolution"
                             onChange={() => {
@@ -819,14 +822,17 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                               setActionError("");
                               setFieldError("");
                             }}
-                            type="radio"
                             value={value}
                           />
-                          {value === "keep_existing"
-                            ? t.csaPurchases.keepExisting
-                            : value === "use_request_data"
-                              ? t.csaPurchases.useRequestData
-                              : t.csaPurchases.rejectConflict}
+                          {
+                            <>
+                              {value === "keep_existing"
+                                ? t.csaPurchases.keepExisting
+                                : value === "use_request_data"
+                                  ? t.csaPurchases.useRequestData
+                                  : t.csaPurchases.rejectConflict}
+                            </>
+                          }
                         </label>
                       ),
                     )}
@@ -834,13 +840,13 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                   {isConflictRejection && (
                     <label className="field" htmlFor="purchase-conflict-rejection-reason">
                       <span>{t.csaPurchases.rejectReason}</span>
-                      <textarea
+                      <FormTextarea
                         aria-describedby={
                           fieldError ? "purchase-conflict-rejection-error" : undefined
                         }
                         aria-invalid={Boolean(fieldError)}
                         autoFocus
-                        className="textarea"
+
                         id="purchase-conflict-rejection-reason"
                         maxLength={1000}
                         onChange={(event) => {
@@ -862,11 +868,11 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           ) : (
             <label className="field" htmlFor="purchase-rejection-reason">
               <span>{t.csaPurchases.rejectReason}</span>
-              <textarea
+              <FormTextarea
                 aria-describedby={fieldError ? "purchase-rejection-error" : undefined}
                 aria-invalid={Boolean(fieldError)}
                 autoFocus
-                className="textarea"
+
                 id="purchase-rejection-reason"
                 maxLength={1000}
                 onChange={(event) => {
@@ -919,12 +925,12 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
             <>
               <label className="field" htmlFor="installment-amount-received">
                 <span>{installmentCopy.amountReceived}</span>
-                <input
+                <FormInput
                   aria-describedby={
                     paymentFieldError ? "installment-payment-field-error" : undefined
                   }
                   aria-invalid={Boolean(paymentFieldError)}
-                  className="input"
+
                   disabled={paymentSaving}
                   id="installment-amount-received"
                   inputMode="numeric"
@@ -945,8 +951,7 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
               </label>
               <label className="field" htmlFor="installment-payment-note">
                 <span>{installmentCopy.note}</span>
-                <textarea
-                  className="textarea"
+                <FormTextarea
                   disabled={paymentSaving}
                   id="installment-payment-note"
                   maxLength={1000}
@@ -958,10 +963,10 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           ) : (
             <label className="field" htmlFor="installment-rejection-reason">
               <span>{installmentCopy.rejectionReason}</span>
-              <textarea
+              <FormTextarea
                 aria-describedby={paymentFieldError ? "installment-payment-field-error" : undefined}
                 aria-invalid={Boolean(paymentFieldError)}
-                className="textarea"
+
                 disabled={paymentSaving}
                 id="installment-rejection-reason"
                 maxLength={1000}

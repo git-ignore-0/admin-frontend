@@ -43,6 +43,10 @@ export function AdminI18nProvider({
   return <AdminI18nContext.Provider value={value}>{children}</AdminI18nContext.Provider>;
 }
 
+export function useOptionalAdminI18n() {
+  return useContext(AdminI18nContext);
+}
+
 export function useAdminI18n() {
   const value = useContext(AdminI18nContext);
   if (!value) throw new Error("useAdminI18n must be used inside AdminI18nProvider");

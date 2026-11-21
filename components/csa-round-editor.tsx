@@ -1,4 +1,5 @@
 "use client";
+import { Alert } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -93,6 +94,7 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
   return (
     <div className={styles.screen}>
       <DetailPageHeading
+        bottomSpacing={0}
         backHref={roundId ? `/csa-rounds/${roundId}` : "/csa-rounds"}
         backLabel={c.back}
         title={roundId ? c.edit : c.create}
@@ -147,11 +149,11 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
             </div>
           </fieldset>
           {Boolean(error) && (
-            <p className="error-box" role="alert">
+            <Alert color="red" role="alert">
               {error === "nameRequired" || error === "schedule"
                 ? c[error]
                 : csaRoundError(error, locale, requestErrorMessage(error, t))}
-            </p>
+            </Alert>
           )}
           <Button
             type="submit"

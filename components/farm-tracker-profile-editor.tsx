@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Stack, Alert, Button, Checkbox } from "@mantine/core";
+
+import { FormField, FormInput, FormSelect } from "@/components/nfv-controls";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -193,42 +197,38 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
         {!farmId && (
           <>
             <form className="farm-product-picker" role="search" onSubmit={searchFarms}>
-              <label className="field">
-                <span>{c.search}</span>
-                <input
-                  className="input"
+              <FormField label={c.search} className="field">
+                <FormInput
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-              </label>
-              <button className="button secondary" type="submit">
+              </FormField>
+              <Button variant="default" type="submit">
                 {c.find}
-              </button>
+              </Button>
             </form>
-            <label className="field">
-              <span>{c.select}</span>
-              <select
-                className="input"
+            <FormField label={c.select} className="field">
+              <FormSelect
                 value={selectedId}
-                onChange={(event) => {
-                  const id = event.target.value;
+                onChange={(selection) => {
+                  const id = selection ?? "";
                   setFarm(farms.find((row) => row.id === id) ?? null);
                   setSelectedId(id);
                 }}
                 disabled={!farms.length && !farm}
-              >
-                <option value="">{c.select}</option>
-                {farm && !farms.some((row) => row.id === farm.id) && (
-                  <option value={farm.id}>{locale === "vi" ? farm.name_vi : farm.name_en}</option>
-                )}
-                {farms.map((row) => (
-                  <option value={row.id} key={row.id}>
-                    {locale === "vi" ? row.name_vi : row.name_en}
-                  </option>
-                ))}
-              </select>
-            </label>
+                data={[
+                  { value: "", label: c.select },
+                  ...(farm && !farms.some((row) => row.id === farm.id)
+                    ? [{ value: farm.id, label: locale === "vi" ? farm.name_vi : farm.name_en }]
+                    : []),
+                  ...farms.map((row) => ({
+                    value: row.id,
+                    label: locale === "vi" ? row.name_vi : row.name_en,
+                  })),
+                ]}
+              />
+            </FormField>
             {!farms.length && !farm && !listError && (
               <p className="empty">
                 {c.empty} <Link href="/farms/new">{t.common.farmList}</Link>
@@ -236,25 +236,25 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
             )}
             {meta.total > meta.page_size && (
               <div className="farm-profile-navigation">
-                <button
+                <Button
                   type="button"
-                  className="button secondary"
+                  variant="default"
                   disabled={page <= 1}
                   onClick={() => setPage((n) => n - 1)}
                 >
                   {t.common.previous}
-                </button>
+                </Button>
                 <span>
                   {page} / {Math.ceil(meta.total / meta.page_size)}
                 </span>
-                <button
+                <Button
                   type="button"
-                  className="button secondary"
+                  variant="default"
                   disabled={page * meta.page_size >= meta.total}
                   onClick={() => setPage((n) => n + 1)}
                 >
                   {t.common.next}
-                </button>
+                </Button>
               </div>
             )}
           </>
@@ -268,43 +268,37 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
           </div>
         )}
         {listError && (
-          <div className="error-box" role="alert">
-            {listError}
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => setListRetry((n) => n + 1)}
-            >
-              {t.common.retry}
-            </button>
-          </div>
+          <Alert color="red" role="alert">
+            <Stack gap="sm" align="flex-start">
+              {listError}
+              <Button variant="default" type="button" onClick={() => setListRetry((n) => n + 1)}>
+                {t.common.retry}
+              </Button>
+            </Stack>
+          </Alert>
         )}
         {farmError && (
-          <div className="error-box" role="alert">
-            {farmError}
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => setFarmRetry((n) => n + 1)}
-            >
-              {t.common.retry}
-            </button>
-          </div>
+          <Alert color="red" role="alert">
+            <Stack gap="sm" align="flex-start">
+              {farmError}
+              <Button variant="default" type="button" onClick={() => setFarmRetry((n) => n + 1)}>
+                {t.common.retry}
+              </Button>
+            </Stack>
+          </Alert>
         )}
         {profileError && (
-          <div className="error-box" role="alert">
-            {profileError}
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => setProfileRetry((n) => n + 1)}
-            >
-              {t.common.retry}
-            </button>
-          </div>
+          <Alert color="red" role="alert">
+            <Stack gap="sm" align="flex-start">
+              {profileError}
+              <Button variant="default" type="button" onClick={() => setProfileRetry((n) => n + 1)}>
+                {t.common.retry}
+              </Button>
+            </Stack>
+          </Alert>
         )}
         {checking ? (
-          <p role="status">{c.loading}</p>
+          <DataState kind="loading" title={c.loading} />
         ) : (
           selectedId &&
           !farmError &&
@@ -315,10 +309,8 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
             </p>
           ) : (
             <form className="form-grid" onSubmit={submit}>
-              <label className="field">
-                <span>{c.sixMonths}</span>
-                <input
-                  className="input"
+              <FormField label={c.sixMonths} className="field">
+                <FormInput
                   inputMode="numeric"
                   type="number"
                   min="0"
@@ -328,11 +320,9 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
                   onChange={(event) => setCount(event.target.value)}
                   required
                 />
-              </label>
-              <label className="field">
-                <span>{c.month}</span>
-                <input
-                  className="input"
+              </FormField>
+              <FormField label={c.month} className="field">
+                <FormInput
                   inputMode="numeric"
                   type="number"
                   min="0"
@@ -342,24 +332,22 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
                   onChange={(event) => setMonthCount(event.target.value)}
                   required
                 />
-              </label>
-              <label className="field full">
-                <input
-                  type="checkbox"
-                  checked={visible}
-                  onChange={(event) => setVisible(event.target.checked)}
-                />{" "}
-                {c.visible}
-              </label>
+              </FormField>
+              <Checkbox
+                className="full"
+                label={c.visible}
+                checked={visible}
+                onChange={(event) => setVisible(event.currentTarget.checked)}
+              />
               {error && (
-                <p className="error-box full" role="alert">
+                <Alert color="red" className="full" role="alert">
                   {error}
-                </p>
+                </Alert>
               )}
               <div className="catalog-editor-actions full">
-                <button className="button" type="submit" disabled={saving}>
+                <Button type="submit" disabled={saving}>
                   {profile ? c.edit : c.new}
-                </button>
+                </Button>
               </div>
             </form>
           ))

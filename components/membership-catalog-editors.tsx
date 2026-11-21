@@ -1,5 +1,8 @@
 "use client";
 
+import { ActionIcon, Button, Checkbox, Alert, Group } from "@mantine/core";
+import { FormInput, FormSelect, FormField } from "@/components/nfv-controls";
+
 import { useRouter } from "next/navigation";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 
@@ -49,12 +52,12 @@ function EditorActions({ busy, onCancel }: { busy: boolean; onCancel: () => void
   const { t } = useAdminI18n();
   return (
     <div className="catalog-editor-actions">
-      <button className="button secondary" disabled={busy} onClick={onCancel} type="button">
+      <Button variant="default" disabled={busy} onClick={onCancel} type="button">
         {t.membershipCatalog.cancel}
-      </button>
-      <button className="button" disabled={busy} type="submit">
+      </Button>
+      <Button disabled={busy} type="submit">
         {busy ? t.membershipCatalog.saving : t.membershipCatalog.save}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -71,12 +74,12 @@ function LoadFailure({ error, retry }: { error: unknown; retry: () => void }) {
   const { t } = useAdminI18n();
   return (
     <div className="panel load-error-state">
-      <p className="error-box" role="alert">
+      <Alert color="red" role="alert">
         {requestErrorMessage(error, t)}
-      </p>
-      <button className="button secondary" onClick={retry} type="button">
+      </Alert>
+      <Button variant="default" onClick={retry} type="button">
         {t.common.retry}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -205,9 +208,9 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
   return (
     <form className="catalog-editor" noValidate onSubmit={save}>
       {error && (
-        <p className="error-box full" role="alert">
+        <Alert color="red" className="full" role="alert">
           {error}
-        </p>
+        </Alert>
       )}
       <BilingualContentFields
         busy={busy}
@@ -229,9 +232,9 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
         <div className="form-grid">
           <label className="field">
             <span>{t.membershipCatalog.unitSize} *</span>
-            <input
+            <FormInput
               aria-invalid={Boolean(unitSizeError)}
-              className="input"
+
               disabled={busy}
               inputMode="decimal"
               onChange={(event) => {
@@ -250,8 +253,7 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
           </label>
           <label className="field">
             <span>{t.membershipCatalog.unitVi} *</span>
-            <input
-              className="input"
+            <FormInput
               disabled={busy}
               maxLength={40}
               onChange={(event) => update("unitVi", event.target.value)}
@@ -261,8 +263,7 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
           </label>
           <label className="field">
             <span>{t.membershipCatalog.unitEn} *</span>
-            <input
-              className="input"
+            <FormInput
               disabled={busy}
               maxLength={40}
               onChange={(event) => update("unitEn", event.target.value)}
@@ -270,15 +271,18 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
               value={form.unitEn}
             />
           </label>
-          <label className="checkbox field">
-            <input
+          <div className="field">
+            <Checkbox
               checked={form.isActive}
               disabled={busy}
               onChange={(event) => update("isActive", event.target.checked)}
-              type="checkbox"
+              label={
+                <>
+                  <span>{t.membershipCatalog.active}</span>
+                </>
+              }
             />
-            <span>{t.membershipCatalog.active}</span>
-          </label>
+          </div>
         </div>
       </section>
       <EditorActions
@@ -594,9 +598,9 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
       onSubmit={save}
     >
       {error && (
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {error}
-        </p>
+        </Alert>
       )}
       <BilingualContentFields
         busy={busy}
@@ -615,34 +619,36 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
       <section className="catalog-editor-section">
         <h2>{t.membershipCatalog.packageInformation}</h2>
         <div className="form-grid">
-          <label className="field">
-            <span>{t.membershipCatalog.policy} *</span>
-            <select
-              className="input"
+          <FormField label={t.membershipCatalog.policy + " *"} className="field">
+            <FormSelect
               disabled={busy}
-              onChange={(event) =>
+              onChange={(selectedValue) =>
                 setForm((value) => ({
                   ...value,
-                  policy: event.target.value as PackageForm["policy"],
+                  policy: (selectedValue ?? "") as PackageForm["policy"],
                 }))
               }
               value={form.policy}
-            >
-              <option value="expire">{t.membershipCatalog.expire}</option>
-              <option value="rollover">{t.membershipCatalog.rollover}</option>
-            </select>
-          </label>
-          <label className="checkbox field">
-            <input
+              data={[
+                { value: "expire", label: t.membershipCatalog.expire },
+                { value: "rollover", label: t.membershipCatalog.rollover },
+              ]}
+            />
+          </FormField>
+          <div className="field">
+            <Checkbox
               checked={form.isActive}
               disabled={busy}
               onChange={(event) =>
                 setForm((value) => ({ ...value, isActive: event.target.checked }))
               }
-              type="checkbox"
+              label={
+                <>
+                  <span>{t.membershipCatalog.active}</span>
+                </>
+              }
             />
-            <span>{t.membershipCatalog.active}</span>
-          </label>
+          </div>
         </div>
       </section>
       <section className="catalog-editor-section price-options-section">
@@ -651,8 +657,8 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
             <h2>{t.membershipCatalog.priceOptions}</h2>
             <p className="catalog-section-help">{t.membershipCatalog.priceOptionsHelp}</p>
           </div>
-          <button
-            className="button secondary"
+          <Button
+            variant="default"
             disabled={busy}
             onClick={() =>
               setForm((current) => ({
@@ -670,7 +676,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
             type="button"
           >
             {t.membershipCatalog.addPriceOption}
-          </button>
+          </Button>
         </div>
         {([true, false] as const).map((active) => {
           const options = form.priceOptions
@@ -722,10 +728,10 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                       <div className="price-option-grid">
                         <label className="field price-option-duration-field">
                           <span>{t.membershipCatalog.duration} *</span>
-                          <input
+                          <FormInput
                             aria-describedby={durationError ? durationErrorId : undefined}
                             aria-invalid={Boolean(durationError)}
-                            className="input price-option-duration-input"
+                            className="price-option-duration-input"
                             inputMode="numeric"
                             onChange={(event) =>
                               updatePriceOption(index, {
@@ -743,10 +749,10 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                         </label>
                         <label className="field price-option-monthly-price-field">
                           <span>{t.membershipCatalog.monthlyPrice} *</span>
-                          <input
+                          <FormInput
                             aria-describedby={monthlyPriceError ? monthlyPriceErrorId : undefined}
                             aria-invalid={Boolean(monthlyPriceError)}
-                            className="input price-option-monthly-price-input"
+                            className="price-option-monthly-price-input"
                             inputMode="numeric"
                             maxLength={19}
                             onBlur={() => setFocusedPrice(null)}
@@ -777,19 +783,23 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                               : "—"}
                           </output>
                         </div>
-                        <label className="checkbox price-option-active-field">
-                          <input
+                        <div className="price-option-active-field">
+                          <Checkbox
                             checked={option.isActive}
                             onChange={(event) =>
                               updatePriceOption(index, { isActive: event.target.checked })
                             }
-                            type="checkbox"
+                            label={
+                              <>
+                                <span>{t.membershipCatalog.active}</span>
+                              </>
+                            }
                           />
-                          <span>{t.membershipCatalog.active}</span>
-                        </label>
-                        <button
+                        </div>
+                        <ActionIcon
                           aria-label={removePriceOptionLabel}
-                          className="button secondary icon-only-action price-option-remove-action"
+                          className="icon-only-action price-option-remove-action"
+                          variant="default"
                           disabled={busy || form.priceOptions.length === 1}
                           onClick={() =>
                             setForm((current) => ({
@@ -811,7 +821,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                               strokeWidth="1.8"
                             />
                           </svg>
-                        </button>
+                        </ActionIcon>
                       </div>
                       {option.durationMonths === "1" ? (
                         persistedOption?.duration_months === 1 &&
@@ -861,26 +871,28 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
             {t.membershipCatalog.loadingProducts}
           </p>
         ) : productsError ? (
-          <div className="error-box retry-error" role="alert">
-            <span>{productsError}</span>
-            <button
-              className="button secondary"
-              onClick={() => setProductsAttempt((value) => value + 1)}
-              type="button"
-            >
-              {t.common.retry}
-            </button>
-          </div>
+          <Alert color="red" role="alert">
+            <Group gap="sm" justify="space-between" align="center">
+              <span>{productsError}</span>
+              <Button
+                variant="default"
+                onClick={() => setProductsAttempt((value) => value + 1)}
+                type="button"
+              >
+                {t.common.retry}
+              </Button>
+            </Group>
+          </Alert>
         ) : productMeta && productMeta.total > productMeta.page_size ? (
           <div className="package-product-pagination">
-            <button
-              className="button secondary"
+            <Button
+              variant="default"
               disabled={busy || productMeta.page <= 1}
               onClick={() => setProductPage((value) => Math.max(1, value - 1))}
               type="button"
             >
               {t.common.previous}
-            </button>
+            </Button>
             <span>
               {t.common.pagination
                 .replace("{page}", String(productMeta.page))
@@ -889,48 +901,45 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                   String(Math.max(1, Math.ceil(productMeta.total / productMeta.page_size))),
                 )}
             </span>
-            <button
-              className="button secondary"
+            <Button
+              variant="default"
               disabled={busy || productMeta.page * productMeta.page_size >= productMeta.total}
               onClick={() => setProductPage((value) => value + 1)}
               type="button"
             >
               {t.common.next}
-            </button>
+            </Button>
           </div>
         ) : null}
         <div className="package-lines">
           {form.lines.map((line, index) => (
             <div className="package-line" key={index}>
-              <label className="field">
-                <span>{t.membershipCatalog.product} *</span>
-                <select
+              <FormField label={t.membershipCatalog.product + " *"} className="field">
+                <FormSelect
                   aria-label={`${t.membershipCatalog.product} ${index + 1}`}
-                  className="input"
                   disabled={busy || productsLoading || Boolean(productsError)}
-                  onChange={(event) => updateLine(index, { quotaGroupId: event.target.value })}
+                  onChange={(selectedValue) =>
+                    updateLine(index, { quotaGroupId: selectedValue ?? "" })
+                  }
                   required
                   value={line.quotaGroupId}
-                >
-                  <option value="">{t.membershipCatalog.chooseProduct}</option>
-                  {visibleProducts
-                    .filter((item) => !selected.has(item.id) || item.id === line.quotaGroupId)
-                    .map((item) => {
-                      const translated = localizedCatalogTranslation(item.translations, locale);
-                      return (
-                        <option key={item.id} value={item.id}>
-                          {translated?.name || item.name}
-                        </option>
-                      );
-                    })}
-                </select>
-              </label>
+                  data={[
+                    { value: "", label: t.membershipCatalog.chooseProduct },
+                    ...(visibleProducts
+                      .filter((item) => !selected.has(item.id) || item.id === line.quotaGroupId)
+                      .map((item) => {
+                        const translated = localizedCatalogTranslation(item.translations, locale);
+                        return { value: item.id, label: translated?.name || item.name };
+                      }) ?? []),
+                  ]}
+                />
+              </FormField>
               <label className="field">
                 <span>{t.membershipCatalog.quotaUnits} *</span>
-                <input
+                <FormInput
                   aria-label={`${t.membershipCatalog.quotaUnits} ${index + 1}`}
                   aria-invalid={Boolean(inputErrors.quotaUnits[index])}
-                  className="input"
+
                   disabled={busy}
                   inputMode="numeric"
                   onChange={(event) => {
@@ -950,8 +959,8 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                   </small>
                 )}
               </label>
-              <button
-                className="button secondary"
+              <Button
+                variant="default"
                 disabled={busy || form.lines.length === 1}
                 onClick={() =>
                   setForm((value) => ({
@@ -962,12 +971,13 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                 type="button"
               >
                 {t.membershipCatalog.removeProduct}
-              </button>
+              </Button>
             </div>
           ))}
         </div>
-        <button
-          className="button secondary add-product-line"
+        <Button
+          className="add-product-line"
+          variant="default"
           disabled={busy || productsLoading || Boolean(productsError)}
           onClick={() =>
             setForm((value) => ({
@@ -978,7 +988,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
           type="button"
         >
           {t.membershipCatalog.addProductLine}
-        </button>
+        </Button>
       </section>
       <EditorActions
         busy={busy}

@@ -1,11 +1,15 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Stack, Alert, ActionIcon, Button, Menu } from "@mantine/core";
+
+import { IconDots } from "@tabler/icons-react";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FarmStockBatches } from "@/components/farm-stock-batches";
-import { Button, FormInput, FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { FormInput, FormField, FormSelect, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { StockBatchFields } from "@/components/stock-batch-fields";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -282,30 +286,31 @@ export function FarmProducts({
             role="search"
             onSubmit={searchLinks}
           >
-            <label className="nfv-field">
-              <span className="sr-only">{c.searchLinked}</span>
+            <FormField label={c.searchLinked} className="nfv-field">
               <FormInput
                 type="search"
                 placeholder={c.searchLinked}
                 value={linkedQuery}
                 onChange={(event) => setLinkedQuery(event.target.value)}
               />
-            </label>
-            <Button variant="outline" type="submit" disabled={loading}>
+            </FormField>
+            <Button variant="default" type="submit" disabled={loading}>
               {c.searchButton}
             </Button>
           </form>
           {error && (
-            <div className="error-box" role="alert">
-              {error}
-              <Button variant="outline" onClick={() => setRetry((n) => n + 1)}>
-                {t.common.retry}
-              </Button>
-            </div>
+            <Alert color="red" role="alert">
+              <Stack gap="sm" align="flex-start">
+                {error}
+                <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
+                  {t.common.retry}
+                </Button>
+              </Stack>
+            </Alert>
           )}
-          {loading && <p role="status">{c.loading}</p>}
+          {loading && <DataState kind="loading" title={c.loading} />}
           {!loading && !error && links?.length === 0 && (
-            <p className="empty">{linkedSearch ? c.noLinkedMatch : c.linkedEmpty}</p>
+            <DataState kind="empty" title={linkedSearch ? c.noLinkedMatch : c.linkedEmpty} />
           )}
           {!loading && !error && visibleLinks.length > 0 && (
             <div className="farm-product-options">
@@ -318,12 +323,26 @@ export function FarmProducts({
                     ? c.remainingUnits.replace("{count}", String(row.available_quantity))
                     : c.outOfStock;
                 return (
-                  <button
+                  <Button
                     ref={(node) => {
                       if (node) productButtonRefs.current.set(row.product_id, node);
                       else productButtonRefs.current.delete(row.product_id);
                     }}
                     className="farm-product-option"
+                    variant="default"
+                    fullWidth
+                    h="auto"
+                    styles={{
+                      inner: { width: "100%" },
+                      label: {
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto",
+                        gap: "7px 12px",
+                        width: "100%",
+                        textAlign: "left",
+                        whiteSpace: "normal",
+                      },
+                    }}
                     type="button"
                     key={row.id}
                     aria-label={`${name}, ${stockLabel}`}
@@ -334,12 +353,13 @@ export function FarmProducts({
                       setMobileDetailOpen(true);
                     }}
                   >
-                    <span>
+                    <span style={{ display: "grid", minWidth: 0, gap: 3 }}>
                       <strong>{name}</strong>
                       <small>{row.sku}</small>
                     </span>
-                    <small>{unit}</small>
+                    <small style={{ gridColumn: 1 }}>{unit}</small>
                     <Status
+                      domain="farm-stock"
                       status={
                         !row.is_active
                           ? "inactive"
@@ -349,7 +369,7 @@ export function FarmProducts({
                       }
                       label={stockLabel}
                     />
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -369,9 +389,9 @@ export function FarmProducts({
         </div>
         <div className="farm-product-detail-pane">
           {actionError && !addOpen && (
-            <p className="error-box" role="alert">
+            <Alert color="red" role="alert">
               {actionError}
-            </p>
+            </Alert>
           )}
           {selectedLink ? (
             <FarmStockBatches
@@ -388,32 +408,38 @@ export function FarmProducts({
                 onInventoryChanged?.();
               }}
               actions={
-                <details className="farm-action-menu">
-                  <summary
-                    aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
-                  >
-                    ···
-                  </summary>
-                  <button type="button" disabled={busy} onClick={() => void toggle(selectedLink)}>
-                    {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
-                  </button>
-                  {!selectedLink.has_supply_history ? (
-                    <button
-                      type="button"
+                <Menu position="bottom-end" returnFocus>
+                  <Menu.Target>
+                    <ActionIcon
+                      variant="default"
                       disabled={busy}
-                      onClick={() => {
-                        setRemoveTarget(selectedLink);
-                        setRemoveError("");
-                      }}
+                      aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
                     >
-                      {c.removeLink}
-                    </button>
-                  ) : null}
-                </details>
+                      <IconDots aria-hidden="true" size={18} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item disabled={busy} onClick={() => void toggle(selectedLink)}>
+                      {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
+                    </Menu.Item>
+                    {!selectedLink.has_supply_history ? (
+                      <Menu.Item
+                        color="red"
+                        disabled={busy}
+                        onClick={() => {
+                          setRemoveTarget(selectedLink);
+                          setRemoveError("");
+                        }}
+                      >
+                        {c.removeLink}
+                      </Menu.Item>
+                    ) : null}
+                  </Menu.Dropdown>
+                </Menu>
               }
             />
           ) : !loading ? (
-            <p className="empty">{c.linkedEmpty}</p>
+            <DataState kind="empty" title={c.linkedEmpty} />
           ) : null}
         </div>
       </div>
@@ -451,42 +477,44 @@ export function FarmProducts({
                 onChange={(event) => setQuery(event.target.value)}
               />
             </FormField>
-            <Button variant="outline" type="submit" disabled={catalogLoading}>
+            <Button variant="default" type="submit" disabled={catalogLoading}>
               {c.searchButton}
             </Button>
           </form>
           {catalogError && (
-            <p className="error-box" role="alert">
-              {catalogError}{" "}
-              <Button variant="outline" onClick={() => setRetry((n) => n + 1)}>
-                {t.common.retry}
-              </Button>
-            </p>
+            <Alert color="red" role="alert">
+              <Stack gap="sm" align="flex-start">
+                {catalogError}{" "}
+                <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
+                  {t.common.retry}
+                </Button>
+              </Stack>
+            </Alert>
           )}
           {detailError && (
-            <p className="error-box" role="alert">
-              {detailError}{" "}
-              <Button variant="outline" onClick={() => setRetry((n) => n + 1)}>
-                {t.common.retry}
-              </Button>
-            </p>
+            <Alert color="red" role="alert">
+              <Stack gap="sm" align="flex-start">
+                {detailError}{" "}
+                <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
+                  {t.common.retry}
+                </Button>
+              </Stack>
+            </Alert>
           )}
           <FormField label={c.productColumn}>
             <FormSelect
               value={selectedProduct}
-              onChange={(event) => setSelected(event.target.value)}
+              onChange={(value) => setSelected(value ?? "")}
               disabled={catalogLoading || !catalog.length}
-            >
-              {catalog.length ? (
-                catalog.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {locale === "vi" ? product.name_vi : product.name_en} · {product.sku}
-                  </option>
-                ))
-              ) : (
-                <option value="">{catalogLoading ? c.loading : c.noCatalogMatch}</option>
-              )}
-            </FormSelect>
+              data={
+                catalog.length
+                  ? catalog.map((product) => ({
+                      value: product.id,
+                      label: `${locale === "vi" ? product.name_vi : product.name_en} · ${product.sku}`,
+                    }))
+                  : [{ value: "", label: catalogLoading ? c.loading : c.noCatalogMatch }]
+              }
+            />
           </FormField>
           {selectedDetail ? (
             <StockBatchFields
@@ -505,12 +533,12 @@ export function FarmProducts({
               onPresetChange={setBatchPreset}
             />
           ) : detailLoading ? (
-            <p role="status">{c.loading}</p>
+            <DataState kind="loading" title={c.loading} />
           ) : null}
           {catalogMeta.total > catalogMeta.page_size && (
             <div className="farm-catalog-pagination">
               <Button
-                variant="outline"
+                variant="default"
                 disabled={catalogPage <= 1 || catalogLoading}
                 onClick={() => setCatalogPage((n) => n - 1)}
               >
@@ -522,7 +550,7 @@ export function FarmProducts({
                   .replace("{pages}", String(Math.ceil(catalogMeta.total / catalogMeta.page_size)))}
               </span>
               <Button
-                variant="outline"
+                variant="default"
                 disabled={
                   catalogPage * catalogMeta.page_size >= catalogMeta.total || catalogLoading
                 }

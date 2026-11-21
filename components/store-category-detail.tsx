@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Group, Button } from "@mantine/core";
+
+import { Status } from "@/components/nfv-controls";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -86,16 +90,13 @@ export function StoreCategoryDetail({ categoryId }: { categoryId: string }) {
 
   if (error)
     return (
-      <div className="panel">
-        <p role="alert" className="error-box">
-          {error}
-        </p>
-        <button className="button secondary" onClick={() => setRetry((value) => value + 1)}>
-          {t.common.retry}
-        </button>
-      </div>
+      <DataState
+        kind="error"
+        title={error}
+        action={{ label: t.common.retry, onClick: () => setRetry((value) => value + 1) }}
+      />
     );
-  if (!item) return <p role="status">{copy.loading}</p>;
+  if (!item) return <DataState kind="loading" title={copy.loading} />;
   return (
     <>
       <DetailPageHeading
@@ -105,11 +106,13 @@ export function StoreCategoryDetail({ categoryId }: { categoryId: string }) {
         description={`/${item.slug}`}
       />
       <div className="panel">
-        <p>
-          <span className={`badge ${item.is_active ? "" : "warm"}`}>
-            {item.is_active ? copy.active : copy.inactive}
-          </span>
-        </p>
+        <Group gap="xs" mb="sm">
+          <Status
+            domain="availability"
+            status={item.is_active ? "active" : "inactive"}
+            label={item.is_active ? copy.active : copy.inactive}
+          />
+        </Group>
         <p>
           {copy.level.replace("{level}", String(item.depth))} · {copy.order}: {item.sort_order}
         </p>
@@ -125,12 +128,12 @@ export function StoreCategoryDetail({ categoryId }: { categoryId: string }) {
           </section>
         ))}
         <div className="catalog-editor-actions">
-          <Link className="button" href={`/store-catalog/categories/${item.id}/edit`}>
+          <Button component={Link} href={`/store-catalog/categories/${item.id}/edit`}>
             {copy.edit}
-          </Link>
-          <button className="button danger" onClick={() => setDialog(true)} type="button">
+          </Button>
+          <Button color="red" onClick={() => setDialog(true)} type="button">
             {copy.delete}
-          </button>
+          </Button>
         </div>
       </div>
       {dialog && (

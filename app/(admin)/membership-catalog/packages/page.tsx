@@ -1,3 +1,4 @@
+import { Button } from "@mantine/core";
 import Link from "next/link";
 
 import { MembershipPackageList } from "@/components/membership-catalog-lists";
@@ -11,9 +12,9 @@ export default async function PackageListPage() {
     <>
       <PageHeading
         action={
-          <Link className="button" href="/membership-catalog/packages/new">
+          <Button component={Link} href="/membership-catalog/packages/new">
             {t.membershipCatalog.addPackage}
-          </Link>
+          </Button>
         }
         backHref="/membership-catalog"
         backLabel={t.membershipCatalog.catalogTitle}

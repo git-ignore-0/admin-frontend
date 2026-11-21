@@ -1,3 +1,6 @@
+"use client";
+
+import { Button } from "@mantine/core";
 import Link from "next/link";
 
 import { MembershipStatusBadge } from "@/components/membership-status-badge";
@@ -31,9 +34,14 @@ export function CustomerMembershipCard({ item, t }: { item: AdminMembership; t: 
           </div>
         )}
       </dl>
-      <Link className="button secondary customer-membership-link" href={`/memberships/${item.id}`}>
+      <Button
+        component={Link}
+        className="customer-membership-link"
+        variant="default"
+        href={`/memberships/${item.id}`}
+      >
         {t.memberships.view}
-      </Link>
+      </Button>
     </article>
   );
 }

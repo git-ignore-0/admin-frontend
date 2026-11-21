@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@mantine/core";
+
 import Link from "next/link";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -13,18 +15,18 @@ export function MembershipCatalogOverview() {
           <h2>{t.membershipCatalog.products}</h2>
           <p>{t.membershipCatalog.productsOverview}</p>
         </div>
-        <Link className="button" href="/membership-catalog/products">
+        <Button component={Link} href="/membership-catalog/products">
           {t.membershipCatalog.manageProducts}
-        </Link>
+        </Button>
       </section>
       <section className="panel catalog-overview-card">
         <div>
           <h2>{t.membershipCatalog.packages}</h2>
           <p>{t.membershipCatalog.packagesOverview}</p>
         </div>
-        <Link className="button" href="/membership-catalog/packages">
+        <Button component={Link} href="/membership-catalog/packages">
           {t.membershipCatalog.managePackages}
-        </Link>
+        </Button>
       </section>
     </div>
   );

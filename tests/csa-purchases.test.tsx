@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -507,12 +508,9 @@ describe("CSA purchase request admin", () => {
       name: "Mở lịch chọn ngày bắt đầu",
     });
     expect(pickerButton).toBeEnabled();
-    expect(pickerButton).toHaveAttribute("aria-controls", "purchase-start-date");
-    const picker = dialog.querySelector<HTMLInputElement>('input[type="date"]');
-    expect(picker).not.toBeNull();
-    expect(picker).toHaveAttribute("min", expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
-
-    fireEvent.change(picker!, { target: { value: "2099-11-30" } });
+    fireEvent.change(input, { target: { value: "29112099" } });
+    fireEvent.click(pickerButton);
+    fireEvent.click(screen.getByRole("button", { name: "30 November 2099" }));
     expect(input).toHaveValue("30/11/2099");
 
     fireEvent.change(input, { target: { value: "31022099" } });
@@ -556,9 +554,7 @@ describe("CSA purchase request admin", () => {
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("search=ABC"),
     );
-    fireEvent.change(screen.getByLabelText("Trạng thái"), {
-      target: { value: "approved" },
-    });
+    selectOption(screen.getByLabelText("Trạng thái"), "approved");
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=approved"),
     );
@@ -582,10 +578,8 @@ describe("CSA purchase request admin", () => {
     const row = await screen.findByRole("link", {
       name: `${expiredRequest.request_code}: ${expiredRequest.name}`,
     });
-    expect(within(row).getByText("Đã hết hạn")).toHaveClass("csa-purchase-status", "expired");
-    fireEvent.change(screen.getByLabelText("Trạng thái"), {
-      target: { value: "expired" },
-    });
+    expect(within(row).getByText("Đã hết hạn")).toBeVisible();
+    selectOption(screen.getByLabelText("Trạng thái"), "expired");
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=expired"),
     );
@@ -741,7 +735,7 @@ describe("CSA purchase request admin", () => {
     mockDetailApi(expiredRequest);
     renderWithProviders(<CSAPurchaseRequestDetail requestId={expiredRequest.id} />);
 
-    expect(await screen.findByText("Đã hết hạn")).toHaveClass("expired");
+    expect(await screen.findByText("Đã hết hạn")).toBeVisible();
     expect(screen.getByText(expiredRequest.request_code)).toBeVisible();
     expect(screen.getByText("17/09/2026 08:00")).toBeVisible();
     expect(screen.getByText("18/09/2026 10:00")).toBeVisible();
@@ -964,7 +958,7 @@ describe("CSA purchase request admin", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("heading", { name: "Từ chối yêu cầu mua CSA" })).toBeVisible();
     const confirm = within(dialog).getByRole("button", { name: "Xác nhận từ chối" });
-    expect(confirm).toHaveClass("danger");
+    expect(confirm).toHaveStyle({ "--button-bg": "var(--mantine-color-red-filled)" });
     expect(confirm).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("Lý do từ chối"), {
       target: { value: "Thông tin không khớp" },
@@ -1110,7 +1104,7 @@ describe("CSA bank settings", () => {
     fireEvent.click(save);
     expect(await screen.findByText("Hãy chọn ngân hàng.")).toBeInTheDocument();
     expect(screen.getByText("Số tài khoản phải gồm 6–19 chữ số.")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Ngân hàng/), { target: { value: "970436" } });
+    selectOption(screen.getByLabelText(/Ngân hàng/), "970436");
     fireEvent.change(screen.getByLabelText(/Số tài khoản/), {
       target: { value: "123456789" },
     });

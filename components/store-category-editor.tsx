@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Alert, Button } from "@mantine/core";
+
+import { FormField, FormSelect, FormInput } from "@/components/nfv-controls";
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -21,7 +25,7 @@ export function StoreCategoryEditor({ categoryId }: { categoryId?: string }) {
   const router = useRouter();
   const savingRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
-  const errorRef = useRef<HTMLParagraphElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const [all, setAll] = useState<StoreCategory[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -69,7 +73,11 @@ export function StoreCategoryEditor({ categoryId }: { categoryId?: string }) {
   function fail(message: string, field?: string) {
     setError(message);
     requestAnimationFrame(() => {
-      const input = field ? formRef.current?.querySelector<HTMLElement>(`[name="${field}"]`) : null;
+      const input = field
+        ? formRef.current?.querySelector<HTMLElement>(
+            `[data-focus-field="${field}"], [name="${field}"]:not([type="hidden"])`,
+          )
+        : null;
       (input ?? errorRef.current)?.focus();
     });
   }
@@ -125,16 +133,13 @@ export function StoreCategoryEditor({ categoryId }: { categoryId?: string }) {
 
   if (loadError)
     return (
-      <div className="panel">
-        <p className="error-box" role="alert">
-          {loadError}
-        </p>
-        <button className="button secondary" onClick={() => setRetry((value) => value + 1)}>
-          {t.common.retry}
-        </button>
-      </div>
+      <DataState
+        kind="error"
+        title={loadError}
+        action={{ label: t.common.retry, onClick: () => setRetry((value) => value + 1) }}
+      />
     );
-  if (!loaded) return <p role="status">{copy.loading}</p>;
+  if (!loaded) return <DataState kind="loading" title={copy.loading} />;
   const excluded = categoryId ? categoryDescendantIds(all, categoryId) : new Set<string>();
   const parents = categoryTreeRows(all).filter(
     ({ category, depth }) =>
@@ -146,9 +151,9 @@ export function StoreCategoryEditor({ categoryId }: { categoryId?: string }) {
   return (
     <form className="catalog-editor" noValidate onSubmit={submit} ref={formRef}>
       {error && (
-        <p className="error-box" ref={errorRef} role="alert" tabIndex={-1}>
+        <Alert color="red" ref={errorRef} role="alert" tabIndex={-1}>
           {error}
-        </p>
+        </Alert>
       )}
       <BilingualContentFields
         busy={busy}
@@ -166,61 +171,51 @@ export function StoreCategoryEditor({ categoryId }: { categoryId?: string }) {
       <section className="catalog-editor-section">
         <h2>{copy.category}</h2>
         <div className="form-grid">
-          <label className="field">
-            <span>{copy.parent}</span>
-            <select
-              className="input"
+          <FormField label={copy.parent} className="field">
+            <FormSelect
               disabled={busy}
+              data-focus-field="parent_id"
               name="parent_id"
               value={parentId}
-              onChange={(event) => setParentId(event.target.value)}
-            >
-              <option value="">{copy.root}</option>
-              {parents.map(({ category, depth }) => (
-                <option key={category.id} value={category.id}>
-                  {"— ".repeat(depth - 1)}
-                  {categoryName(category, locale)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>{copy.order}</span>
-            <input
-              className="input"
+              onChange={(selection) => setParentId(selection ?? "")}
+              data={[
+                { value: "", label: copy.root },
+                ...parents.map(({ category, depth }) => ({
+                  value: category.id,
+                  label: "— ".repeat(depth - 1) + categoryName(category, locale),
+                })),
+              ]}
+            />
+          </FormField>
+          <FormField label={copy.order} className="field">
+            <FormInput
               disabled={busy}
               inputMode="numeric"
               name="sort_order"
               value={order}
               onChange={(event) => setOrder(event.target.value)}
             />
-          </label>
-          <label className="field">
-            <span>{copy.status}</span>
-            <select
-              className="input"
+          </FormField>
+          <FormField label={copy.status} className="field">
+            <FormSelect
               disabled={busy}
               value={active ? "active" : "inactive"}
-              onChange={(event) => setActive(event.target.value === "active")}
-            >
-              <option value="inactive">{copy.inactive}</option>
-              <option value="active">{copy.active}</option>
-            </select>
-          </label>
+              onChange={(selection) => setActive((selection ?? "") === "active")}
+              data={[
+                { value: "inactive", label: copy.inactive },
+                { value: "active", label: copy.active },
+              ]}
+            />
+          </FormField>
         </div>
       </section>
       <div className="catalog-editor-actions">
-        <button
-          className="button secondary"
-          disabled={busy}
-          onClick={() => router.back()}
-          type="button"
-        >
+        <Button variant="default" disabled={busy} onClick={() => router.back()} type="button">
           {copy.cancel}
-        </button>
-        <button className="button" disabled={busy} type="submit">
+        </Button>
+        <Button disabled={busy} type="submit">
           {busy ? copy.saving : copy.save}
-        </button>
+        </Button>
       </div>
     </form>
   );

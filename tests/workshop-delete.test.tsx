@@ -13,8 +13,8 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
 }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn() }));
-vi.mock("@/components/rich-text-editor", () => ({
-  RichTextEditor: () => <div role="textbox" aria-label="Nội dung workshop" />,
+vi.mock("@/components/lazy-rich-text-editor", () => ({
+  LazyRichTextEditor: () => <div role="textbox" aria-label="Nội dung workshop" />,
 }));
 
 const draftWorkshop: Workshop = {

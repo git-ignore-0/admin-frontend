@@ -1,3 +1,4 @@
+import { Button } from "@mantine/core";
 import Link from "next/link";
 
 import { PageHeading } from "@/components/page-heading";
@@ -15,9 +16,9 @@ export default async function StoreProductsPage() {
         backHref="/store-catalog"
         backLabel={t.title}
         action={
-          <Link className="button" href="/store-catalog/products/new">
+          <Button component={Link} href="/store-catalog/products/new">
             {t.addProduct}
-          </Link>
+          </Button>
         }
       />
       <StoreProductList />

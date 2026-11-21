@@ -1,4 +1,7 @@
 "use client";
+import { Status as UiStatus } from "@/components/nfv-controls";
+
+import { Button, Table, Badge, Alert } from "@mantine/core";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -23,12 +26,12 @@ function LoadError({ error, retry }: { error: unknown; retry: () => void }) {
   const { t } = useAdminI18n();
   return (
     <div className="panel load-error-state">
-      <p className="error-box" role="alert">
+      <Alert color="red" role="alert">
         {requestErrorMessage(error, t)}
-      </p>
-      <button className="button secondary" onClick={retry} type="button">
+      </Alert>
+      <Button variant="default" onClick={retry} type="button">
         {t.common.retry}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -36,9 +39,11 @@ function LoadError({ error, retry }: { error: unknown; retry: () => void }) {
 function Status({ active }: { active: boolean }) {
   const { t } = useAdminI18n();
   return (
-    <span className={`badge ${active ? "" : "warm"}`}>
-      {active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
-    </span>
+    <UiStatus
+      domain="availability"
+      status={active ? "active" : "inactive"}
+      label={active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
+    />
   );
 }
 
@@ -57,7 +62,7 @@ function BilingualReview({
       <div className="panel-head">
         <h3>{t.membershipCatalog.bilingualContent}</h3>
         {!hasCompleteCatalogTranslations(translations) && (
-          <span className="badge warm">{t.membershipCatalog.translationNeedsReview}</span>
+          <Badge color="orange">{t.membershipCatalog.translationNeedsReview}</Badge>
         )}
       </div>
       <div className="catalog-bilingual-grid">
@@ -163,12 +168,12 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
         <div className="panel-head">
           <h2>{t.membershipCatalog.productDetails}</h2>
           <div className="row-actions">
-            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">
+            <Button color="red" onClick={() => setDeleteOpen(true)} type="button">
               {t.membershipCatalog.delete}
-            </button>
-            <Link className="button" href={`/membership-catalog/products/${item.id}/edit`}>
+            </Button>
+            <Button component={Link} href={`/membership-catalog/products/${item.id}/edit`}>
               {t.membershipCatalog.editProduct}
-            </Link>
+            </Button>
           </div>
         </div>
         <dl className="detail-list">
@@ -291,12 +296,12 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
         <div className="panel-head">
           <h2>{t.membershipCatalog.packageDetails}</h2>
           <div className="row-actions">
-            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">
+            <Button color="red" onClick={() => setDeleteOpen(true)} type="button">
               {t.membershipCatalog.delete}
-            </button>
-            <Link className="button" href={`/membership-catalog/packages/${item.id}/edit`}>
+            </Button>
+            <Button component={Link} href={`/membership-catalog/packages/${item.id}/edit`}>
               {t.membershipCatalog.editPackage}
-            </Link>
+            </Button>
           </div>
         </div>
         <dl className="detail-list catalog-package-summary">
@@ -338,24 +343,28 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
                   {active ? t.membershipCatalog.activeOptions : t.membershipCatalog.inactiveOptions}
                 </h4>
                 <div className="table-wrap">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>{t.membershipCatalog.duration}</th>
-                        <th>{t.membershipCatalog.monthlyPrice}</th>
-                        <th>{t.membershipCatalog.totalPreview}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  <Table>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>{t.membershipCatalog.duration}</Table.Th>
+                        <Table.Th>{t.membershipCatalog.monthlyPrice}</Table.Th>
+                        <Table.Th>{t.membershipCatalog.totalPreview}</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
                       {options.map((option) => (
-                        <tr key={option.id}>
-                          <td>{option.duration_months}</td>
-                          <td>{formatMembershipMoney(option.monthly_price_vnd, locale)}</td>
-                          <td>{formatMembershipMoney(option.total_price_vnd, locale)}</td>
-                        </tr>
+                        <Table.Tr key={option.id}>
+                          <Table.Td>{option.duration_months}</Table.Td>
+                          <Table.Td>
+                            {formatMembershipMoney(option.monthly_price_vnd, locale)}
+                          </Table.Td>
+                          <Table.Td>
+                            {formatMembershipMoney(option.total_price_vnd, locale)}
+                          </Table.Td>
+                        </Table.Tr>
                       ))}
-                    </tbody>
-                  </table>
+                    </Table.Tbody>
+                  </Table>
                 </div>
               </div>
             );
@@ -365,20 +374,20 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
         <div className="catalog-package-products">
           <h3>{t.membershipCatalog.packageProducts}</h3>
           <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t.membershipCatalog.product}</th>
-                  <th>{t.membershipCatalog.quotaUnits}</th>
-                  <th>{t.membershipCatalog.unitConversion}</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t.membershipCatalog.product}</Table.Th>
+                  <Table.Th>{t.membershipCatalog.quotaUnits}</Table.Th>
+                  <Table.Th>{t.membershipCatalog.unitConversion}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {item.items.map((raw) => {
                   const line = legacyPackageItemView(raw);
                   return (
-                    <tr key={line.quotaGroupId}>
-                      <td>
+                    <Table.Tr key={line.quotaGroupId}>
+                      <Table.Td>
                         <strong>
                           {localizedCatalogTranslation(line.translations, locale)?.name ||
                             line.name}
@@ -389,20 +398,20 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
                             line.shortDescription ||
                             "—"}
                         </small>
-                      </td>
-                      <td>{line.quotaUnits}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{line.quotaUnits}</Table.Td>
+                      <Table.Td>
                         {formatUnitConversion(
                           t.membershipCatalog.unitConversionValue,
                           line.unitSize,
                           locale === "vi" ? line.unitLabelVi : line.unitLabelEn,
                         )}
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
-            </table>
+              </Table.Tbody>
+            </Table>
           </div>
         </div>
       </section>

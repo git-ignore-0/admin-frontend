@@ -1,4 +1,5 @@
 "use client";
+import { Table } from "@mantine/core";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -93,35 +94,27 @@ export function StoreOrderList() {
                 aria-label={c.paymentStatus}
                 disabled={loading}
                 value={paymentStatus}
-                onChange={(event) => {
-                  setPaymentStatus(event.target.value as StorePaymentStatus | "");
+                onChange={(value) => {
+                  setPaymentStatus((value ?? "") as StorePaymentStatus | "");
                   setPage(1);
                 }}
-              >
-                <option value="">{c.all}</option>
-                {(Object.keys(c.paymentStatuses) as StorePaymentStatus[]).map((value) => (
-                  <option key={value} value={value}>
-                    {c.paymentStatuses[value]}
-                  </option>
-                ))}
-              </FormSelect>
+                data={[
+                  { value: "", label: c.all },
+                  ...Object.entries(c.paymentStatuses).map(([value, label]) => ({ value, label })),
+                ]}
+              />
             </FormField>
             <FormField label={c.sort}>
               <FormSelect
                 aria-label={c.sort}
                 disabled={loading}
                 value={sort}
-                onChange={(event) => {
-                  setSort(event.target.value as StoreOrderSort);
+                onChange={(value) => {
+                  setSort(value as StoreOrderSort);
                   setPage(1);
                 }}
-              >
-                {(Object.keys(c.sorts) as StoreOrderSort[]).map((value) => (
-                  <option key={value} value={value}>
-                    {c.sorts[value]}
-                  </option>
-                ))}
-              </FormSelect>
+                data={Object.entries(c.sorts).map(([value, label]) => ({ value, label }))}
+              />
             </FormField>
           </div>
         }
@@ -152,23 +145,23 @@ export function StoreOrderList() {
       ) : null}
       {items?.length ? (
         <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table store-order-list-table">
-            <thead>
-              <tr>
-                <th scope="col">{c.reference}</th>
-                <th scope="col">{c.recipient}</th>
-                <th scope="col">{c.total}</th>
-                <th scope="col">{c.orderStatus}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="admin-list-table store-order-list-table">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th scope="col">{c.reference}</Table.Th>
+                <Table.Th scope="col">{c.recipient}</Table.Th>
+                <Table.Th scope="col">{c.total}</Table.Th>
+                <Table.Th scope="col">{c.orderStatus}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => (
-                <tr
+                <Table.Tr
                   className="admin-list-clickable-row"
                   key={item.id}
                   onClick={() => router.push(`/store-orders/${item.id}`)}
                 >
-                  <td data-label={c.reference}>
+                  <Table.Td data-label={c.reference}>
                     <Link
                       aria-label={`${item.reference_code}: ${item.shipping_address.recipient_name}`}
                       className="store-order-reference"
@@ -184,15 +177,17 @@ export function StoreOrderList() {
                     <small className="table-secondary">
                       {c.deliveryDate}: {formatStoreDeliveryDate(item)}
                     </small>
-                  </td>
-                  <td data-label={c.recipient}>
+                  </Table.Td>
+                  <Table.Td data-label={c.recipient}>
                     {item.shipping_address.recipient_name}
                     <small className="table-secondary store-order-contact">
                       {item.shipping_address.phone_number}
                     </small>
-                  </td>
-                  <td data-label={c.total}>{formatStoreMoney(item.total_vnd, locale)}</td>
-                  <td data-label={c.orderStatus}>
+                  </Table.Td>
+                  <Table.Td data-label={c.total}>
+                    {formatStoreMoney(item.total_vnd, locale)}
+                  </Table.Td>
+                  <Table.Td data-label={c.orderStatus}>
                     <StoreOrderStatusBadge order={item} />
                     {storeOrderHasDeadline(item) ? (
                       <small className="table-secondary store-order-deadline-meta">
@@ -202,11 +197,11 @@ export function StoreOrderList() {
                         </time>
                       </small>
                     ) : null}
-                  </td>
-                </tr>
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       ) : null}
       {meta ? (

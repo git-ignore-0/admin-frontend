@@ -1,3 +1,4 @@
+import { Button } from "@mantine/core";
 import Link from "next/link";
 
 import { PageHeading } from "@/components/page-heading";
@@ -18,9 +19,9 @@ export default async function WorkshopsPage() {
         title={t.common.workshops}
         description={t.page.workshopsDescription}
         action={
-          <Link className="button" href="/workshops/new">
+          <Button component={Link} href="/workshops/new">
             {t.workshops.create}
-          </Link>
+          </Button>
         }
       />
       <WorkshopList />

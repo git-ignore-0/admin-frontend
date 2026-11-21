@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Status as UiStatus } from "@/components/nfv-controls";
+
+import { Button, Alert, Group } from "@mantine/core";
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -48,12 +52,14 @@ export function CSACustomerDetail({ customerId }: { customerId: string }) {
 
   if (error) {
     return (
-      <div className="error-box retry-error" role="alert">
-        <p>{error}</p>
-        <button className="button secondary" onClick={() => void load()} type="button">
-          {t.common.retry}
-        </button>
-      </div>
+      <Alert color="red" role="alert">
+        <Group gap="sm" justify="space-between" align="center">
+          <p>{error}</p>
+          <Button variant="default" onClick={() => void load()} type="button">
+            {t.common.retry}
+          </Button>
+        </Group>
+      </Alert>
     );
   }
   if (!item)
@@ -92,13 +98,9 @@ export function CSACustomerDetail({ customerId }: { customerId: string }) {
             <p>{item.user?.name || item.name}</p>
           </div>
           {!item.user && (
-            <button
-              className="button secondary"
-              onClick={() => setLinkDialogOpen(true)}
-              type="button"
-            >
+            <Button variant="default" onClick={() => setLinkDialogOpen(true)} type="button">
               {t.csaCustomers.linkUser}
-            </button>
+            </Button>
           )}
         </div>
         <dl className="detail-list customer-account-list">
@@ -117,9 +119,11 @@ export function CSACustomerDetail({ customerId }: { customerId: string }) {
           <div>
             <dt>{t.csaCustomers.websiteAccount}</dt>
             <dd>
-              <span className={`badge ${item.user ? "customer-account-linked" : "warm"}`}>
-                {item.user ? t.csaCustomers.linkedAccount : t.csaCustomers.unlinkedAccount}
-              </span>
+              <UiStatus
+                domain="account-link"
+                status={item.user ? "linked" : "managed"}
+                label={item.user ? t.csaCustomers.linkedAccount : t.csaCustomers.unlinkedAccount}
+              />
             </dd>
           </div>
           <div>
@@ -144,12 +148,13 @@ export function CSACustomerDetail({ customerId }: { customerId: string }) {
       >
         <div className="panel-head customer-history-heading">
           <h2 id="customer-history-title">{t.csaCustomers.membershipHistory}</h2>
-          <Link
-            className="button"
+          <Button
+            component={Link}
+
             href={`/memberships/assign?customerId=${encodeURIComponent(item.id)}`}
           >
             {t.csaCustomers.assignPackage}
-          </Link>
+          </Button>
         </div>
         {memberships.length ? (
           <div className="customer-membership-list">
@@ -158,7 +163,7 @@ export function CSACustomerDetail({ customerId }: { customerId: string }) {
             ))}
           </div>
         ) : (
-          <div className="empty customer-membership-empty">{t.csaCustomers.noHistory}</div>
+          <DataState kind="empty" title={t.csaCustomers.noHistory} />
         )}
       </section>
 

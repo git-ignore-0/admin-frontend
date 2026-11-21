@@ -1,4 +1,9 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { Button, Radio, TextInput, Alert } from "@mantine/core";
+import { FormSelect, Status as UiStatus, FormField } from "@/components/nfv-controls";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -204,9 +209,9 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
     return (
       <section className="panel empty" role="status">
         <p>{t.memberships.customerRequired}</p>
-        <Link className="button" href="/csa-customers">
+        <Button component={Link} href="/csa-customers">
           {t.memberships.backToCustomers}
-        </Link>
+        </Button>
       </section>
     );
   }
@@ -214,7 +219,7 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
   if (customerLoading) {
     return (
       <section className="panel" aria-busy="true">
-        <p>{t.csaCustomers.detailLoading}</p>
+        <DataState kind="loading" title={t.csaCustomers.detailLoading} />
       </section>
     );
   }
@@ -223,9 +228,9 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
     return (
       <section className="panel empty" role="alert">
         <p>{customerError}</p>
-        <Link className="button" href="/csa-customers">
+        <Button component={Link} href="/csa-customers">
           {t.memberships.backToCustomers}
-        </Link>
+        </Button>
       </section>
     );
   }
@@ -248,9 +253,11 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
           <div>
             <dt>{t.csaCustomers.websiteAccount}</dt>
             <dd>
-              <span className={`badge ${customer.user ? "customer-account-linked" : "warm"}`}>
-                {customer.user ? t.memberships.linkedCustomer : t.memberships.managedCustomer}
-              </span>
+              <UiStatus
+                domain="account-link"
+                status={customer.user ? "linked" : "managed"}
+                label={customer.user ? t.memberships.linkedCustomer : t.memberships.managedCustomer}
+              />
             </dd>
           </div>
           <div>
@@ -270,17 +277,19 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
       <section className="panel assignment-fields" aria-busy={packagesLoading}>
         <h2>{t.memberships.assignmentDetails}</h2>
         {formError && (
-          <div className="error-box" role="alert">
+          <Alert color="red" role="alert">
             <p>{formError}</p>
-          </div>
+          </Alert>
         )}
         {packagesError && (
-          <p className="error-box" role="alert">
+          <Alert color="red" role="alert">
             {packagesError}
-          </p>
+          </Alert>
         )}
         {packagesLoading && <p>{t.memberships.loadingPackages}</p>}
-        {packages?.length === 0 && <p className="empty compact">{t.memberships.noPackages}</p>}
+        {packages?.length === 0 && (
+          <DataState kind="empty" title={t.memberships.noPackages} compact />
+        )}
         {packages && (
           <div className="assignment-package-results" role="radiogroup">
             {packages.map((item) => {
@@ -294,7 +303,7 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
                   className={`assignment-package ${selectedPackage?.id === item.id ? "selected" : ""} ${selectable ? "" : "disabled"}`}
                   key={item.id}
                 >
-                  <input
+                  <Radio
                     checked={selectedPackage?.id === item.id}
                     disabled={!selectable}
                     name="membership-package"
@@ -303,62 +312,71 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
                       setPriceOptionId("");
                       setFormError("");
                     }}
-                    type="radio"
                   />
-                  <span>
-                    <strong>{packageName}</strong>
-                    {packageDescription && <small>{packageDescription}</small>}
-                    {selectable ? (
-                      activeOptions.map((option) => (
-                        <small key={option.id}>
-                          {t.membershipCatalog.priceOptionSummary
-                            .replace("{months}", String(option.duration_months))
-                            .replace(
-                              "{price}",
-                              formatMembershipMoney(option.monthly_price_vnd, locale),
-                            )}{" "}
-                          · {t.membershipCatalog.totalPreview}:{" "}
-                          {formatMembershipMoney(option.total_price_vnd, locale)}
-                        </small>
-                      ))
-                    ) : (
-                      <small className="field-error">{t.memberships.packageNoActiveOptions}</small>
-                    )}
-                  </span>
+                  {
+                    <>
+                      <span>
+                        <strong>{packageName}</strong>
+                        {packageDescription && <small>{packageDescription}</small>}
+                        {selectable ? (
+                          activeOptions.map((option) => (
+                            <small key={option.id}>
+                              {t.membershipCatalog.priceOptionSummary
+                                .replace("{months}", String(option.duration_months))
+                                .replace(
+                                  "{price}",
+                                  formatMembershipMoney(option.monthly_price_vnd, locale),
+                                )}{" "}
+                              · {t.membershipCatalog.totalPreview}:{" "}
+                              {formatMembershipMoney(option.total_price_vnd, locale)}
+                            </small>
+                          ))
+                        ) : (
+                          <small className="field-error">
+                            {t.memberships.packageNoActiveOptions}
+                          </small>
+                        )}
+                      </span>
+                    </>
+                  }
                 </label>
               );
             })}
           </div>
         )}
         <div className="form-grid one assignment-order-fields">
-          <label className="field">
-            <span>{t.memberships.priceOption} *</span>
-            <select
-              className="input"
+          <FormField label={t.memberships.priceOption + " *"} className="field">
+            <FormSelect
               disabled={!selectedPackageIsValid}
               value={priceOptionId}
-              onChange={(e) => {
-                setPriceOptionId(e.target.value);
+              onChange={(selectedValue) => {
+                setPriceOptionId(selectedValue ?? "");
                 setFormError("");
               }}
-            >
-              <option value="">{t.memberships.choosePriceOption}</option>
-              {options.map((option) => (
-                <option value={option.id} key={option.id}>
-                  {t.membershipCatalog.priceOptionSummary
+              data={[
+                { value: "", label: t.memberships.choosePriceOption },
+                ...(options.map((option) => ({
+                  value: option.id,
+                  label: t.membershipCatalog.priceOptionSummary
                     .replace("{months}", String(option.duration_months))
-                    .replace("{price}", formatMembershipMoney(option.monthly_price_vnd, locale))}
-                </option>
-              ))}
-            </select>
-          </label>
+                    .replace("{price}", formatMembershipMoney(option.monthly_price_vnd, locale)),
+                })) ?? []),
+              ]}
+            />
+          </FormField>
           <label className="field">
             <span>{t.memberships.orderReference}</span>
-            <input
+            <TextInput
+              error={Boolean(orderReferenceError)}
+              attributes={{
+                input: {
+                  "aria-describedby": orderReferenceError ? ORDER_REFERENCE_ERROR_ID : undefined,
+                },
+              }}
               aria-describedby={orderReferenceError ? ORDER_REFERENCE_ERROR_ID : undefined}
               aria-invalid={Boolean(orderReferenceError)}
               aria-label={t.memberships.orderReference}
-              className="input"
+
               maxLength={120}
               ref={orderReferenceRef}
               required
@@ -390,7 +408,6 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
                   : undefined
               }
               aria-invalid={startDateInvalid || startDateBeforeMinimum || overlaps}
-              className="input"
               disabled={!selectedOption}
               id="membership-start-date"
               onValueChange={(value) => {
@@ -443,18 +460,17 @@ export function MembershipAssignmentForm({ customerId }: { customerId?: string }
             ))}
           </div>
         ) : (
-          <p className="empty compact">{t.csaCustomers.noHistory}</p>
+          <DataState kind="empty" title={t.csaCustomers.noHistory} compact />
         )}
       </section>
       <div className="form-actions">
-        <button
-          className="button"
+        <Button
           disabled={!formReady || saving}
           onClick={() => validate() && setConfirmOpen(true)}
           type="button"
         >
           {t.memberships.confirmAssignment}
-        </button>
+        </Button>
       </div>
       {confirmOpen && selectedPackage && selectedOption && (
         <ConfirmationDialog

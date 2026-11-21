@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { selectOption } from "./select-option";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StoreProductList } from "@/components/store-product-list";
@@ -40,7 +41,7 @@ describe("store product filters", () => {
         expect.objectContaining({ page: 2, search: "rau", is_published: false }),
       ),
     );
-    fireEvent.change(screen.getByLabelText("Hình thức bán"), { target: { value: "true" } });
+    selectOption(screen.getByLabelText("Hình thức bán"), "true");
     expect(mocks.push).toHaveBeenCalledWith(
       "/store-catalog/products?search=rau&is_published=false&csa_eligible=true",
       { scroll: false },

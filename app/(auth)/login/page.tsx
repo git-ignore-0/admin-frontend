@@ -1,3 +1,4 @@
+import { Alert, Button } from "@mantine/core";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -32,12 +33,20 @@ export default async function LoginPage({
         <p className="eyebrow">NFV Admin</p>
         <h1>{t.login.title}</h1>
         <p className="lede">{t.login.description}</p>
-        {error === "forbidden" && <p className="error-box">{t.login.forbidden}</p>}
-        {error === "oauth" && <p className="error-box">{t.login.oauthError}</p>}
+        {error === "forbidden" && (
+          <Alert color="red" role="alert">
+            {t.login.forbidden}
+          </Alert>
+        )}
+        {error === "oauth" && (
+          <Alert color="red" role="alert">
+            {t.login.oauthError}
+          </Alert>
+        )}
         <div className="auth-action">
-          <Link className="button" href="/api/auth/login">
+          <Button component={Link} href="/api/auth/login">
             {t.login.action}
-          </Link>
+          </Button>
         </div>
       </section>
     </main>

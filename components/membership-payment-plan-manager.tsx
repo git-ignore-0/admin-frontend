@@ -1,5 +1,8 @@
 "use client";
 
+import { ActionIcon, Button, Radio } from "@mantine/core";
+import { FormInput, Status as UiStatus } from "@/components/nfv-controls";
+
 import { useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -394,8 +397,8 @@ export function MembershipPaymentPlanManager({
       <div className="panel-head">
         <h5>{copy.title}</h5>
         {!draft ? (
-          <button
-            className="button secondary"
+          <Button
+            variant="default"
             disabled={busy || needsReload}
             onClick={() => {
               setFieldErrors({});
@@ -405,7 +408,7 @@ export function MembershipPaymentPlanManager({
             type="button"
           >
             {copy.add}
-          </button>
+          </Button>
         ) : null}
       </div>
       {plans.length === 0 && !draft ? <p>{copy.empty}</p> : null}
@@ -414,9 +417,11 @@ export function MembershipPaymentPlanManager({
           <li key={plan.id}>
             <div>
               <strong>{paymentPlanDisplayName(plan, copy)}</strong>{" "}
-              <span className={`badge ${plan.is_active ? "" : "warm"}`}>
-                {plan.is_active ? copy.active : copy.inactive}
-              </span>
+              <UiStatus
+                domain="availability"
+                status={plan.is_active ? "active" : "inactive"}
+                label={plan.is_active ? copy.active : copy.inactive}
+              />
               {plan.in_use ? <small>{copy.inUse}</small> : null}
               {invalidOneMonthPlan(plan, option.duration_months) ? (
                 <p className="field-error" role="alert">
@@ -431,8 +436,8 @@ export function MembershipPaymentPlanManager({
             </div>
             <div className="row-actions">
               {!plan.is_active && !plan.in_use ? (
-                <button
-                  className="button secondary"
+                <Button
+                  variant="default"
                   disabled={busy || needsReload}
                   onClick={() => {
                     setFieldErrors({});
@@ -442,10 +447,10 @@ export function MembershipPaymentPlanManager({
                   type="button"
                 >
                   {copy.edit}
-                </button>
+                </Button>
               ) : null}
-              <button
-                className="button secondary"
+              <Button
+                variant="default"
                 disabled={
                   busy ||
                   needsReload ||
@@ -460,16 +465,16 @@ export function MembershipPaymentPlanManager({
                 type="button"
               >
                 {plan.is_active ? copy.deactivate : copy.activate}
-              </button>
+              </Button>
               {!plan.is_active && !plan.in_use ? (
-                <button
-                  className="button danger"
+                <Button
+                  color="red"
                   disabled={busy || needsReload}
                   onClick={() => setDeleting(plan)}
                   type="button"
                 >
                   {copy.delete}
-                </button>
+                </Button>
               ) : null}
             </div>
           </li>
@@ -495,16 +500,19 @@ export function MembershipPaymentPlanManager({
                     className={`payment-plan-type-option${draft.payment_type === paymentType ? " selected" : ""}`}
                     key={paymentType}
                   >
-                    <input
+                    <Radio
                       aria-checked={draft.payment_type === paymentType}
                       checked={draft.payment_type === paymentType}
                       disabled={busy || needsReload}
                       name={fieldId("type")}
                       onChange={() => selectPaymentType(paymentType)}
-                      type="radio"
                       value={paymentType}
                     />
-                    <span>{paymentType === "full" ? copy.full : copy.installment}</span>
+                    {
+                      <>
+                        <span>{paymentType === "full" ? copy.full : copy.installment}</span>
+                      </>
+                    }
                   </label>
                 ))}
             </div>
@@ -517,8 +525,7 @@ export function MembershipPaymentPlanManager({
           <div className="payment-plan-total-row">
             <label className="field payment-plan-total-field">
               <span>{copy.total}</span>
-              <input
-                className="input"
+              <FormInput
                 disabled={busy || needsReload}
                 inputMode="numeric"
                 maxLength={19}
@@ -559,8 +566,7 @@ export function MembershipPaymentPlanManager({
               <strong>{copy.sequence.replace("{number}", String(index + 1))}</strong>
               <label className="field payment-plan-amount-field">
                 <span className="payment-plan-schedule-field-label">{copy.amount}</span>
-                <input
-                  className="input"
+                <FormInput
                   disabled={busy || needsReload}
                   inputMode="numeric"
                   maxLength={19}
@@ -587,8 +593,8 @@ export function MembershipPaymentPlanManager({
               </label>
               <label className="field payment-plan-months-field">
                 <span className="payment-plan-schedule-field-label">{copy.cycleCount}</span>
-                <input
-                  className="input"
+                <FormInput
+                  style={{ width: "min(96px, 100%)" }}
                   disabled={busy || needsReload}
                   inputMode="numeric"
                   maxLength={3}
@@ -620,9 +626,10 @@ export function MembershipPaymentPlanManager({
                 {integer(row.amount) !== null ? formatMembershipMoney(row.amount, locale) : "—"}
               </span>
               {draft.payment_type === "installment" && draft.installments.length > 2 ? (
-                <button
+                <ActionIcon
                   aria-label={copy.removePayment.replace("{number}", String(index + 1))}
-                  className="button danger icon-only-action payment-plan-remove-payment"
+                  className="icon-only-action payment-plan-remove-payment"
+                  color="red"
                   disabled={busy || needsReload}
                   onClick={() =>
                     setDraft({
@@ -646,7 +653,7 @@ export function MembershipPaymentPlanManager({
                       strokeWidth="1.8"
                     />
                   </svg>
-                </button>
+                </ActionIcon>
               ) : null}
             </div>
           ))}
@@ -661,14 +668,14 @@ export function MembershipPaymentPlanManager({
             </p>
           ) : null}
           {draft.payment_type === "installment" ? (
-            <button
-              className="button secondary"
+            <Button
+              variant="default"
               disabled={busy || needsReload || draft.installments.length >= option.duration_months}
               onClick={addInstallment}
               type="button"
             >
               {copy.addInstallment}
-            </button>
+            </Button>
           ) : null}
           <div className="payment-plan-preview" aria-live="polite">
             <h6>{copy.preview}</h6>
@@ -766,22 +773,21 @@ export function MembershipPaymentPlanManager({
             </p>
           ) : null}
           <div className="row-actions">
-            <button
-              className="button secondary"
+            <Button
+              variant="default"
               disabled={busy || needsReload}
               onClick={() => setDraft(null)}
               type="button"
             >
               {copy.cancel}
-            </button>
-            <button
-              className="button"
+            </Button>
+            <Button
               disabled={busy || needsReload || !preview?.valid}
               onClick={() => void save()}
               type="button"
             >
               {copy.save}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -791,14 +797,9 @@ export function MembershipPaymentPlanManager({
         </p>
       ) : null}
       {needsReload ? (
-        <button
-          className="button secondary"
-          disabled={busy}
-          onClick={() => void retryReload()}
-          type="button"
-        >
+        <Button variant="default" disabled={busy} onClick={() => void retryReload()} type="button">
           {copy.retryReload}
-        </button>
+        </Button>
       ) : null}
       {deleting ? (
         <ConfirmationDialog

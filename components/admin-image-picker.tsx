@@ -1,5 +1,7 @@
 "use client";
 
+import { ActionIcon, Button, UnstyledButton } from "@mantine/core";
+
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
@@ -145,7 +147,7 @@ export function AdminImagePicker({
             </>
           );
           return gallery ? (
-            <button
+            <UnstyledButton
               key={item.id}
               type="button"
               className="admin-image-picker-tile"
@@ -155,7 +157,7 @@ export function AdminImagePicker({
               onClick={() => setSelectedId((current) => (current === item.id ? null : item.id))}
             >
               {contents}
-            </button>
+            </UnstyledButton>
           ) : (
             <div key={item.id} className="admin-image-picker-tile">
               {contents}
@@ -163,7 +165,7 @@ export function AdminImagePicker({
           );
         })}
         {items.length < maxItems && (
-          <button
+          <UnstyledButton
             className="admin-image-picker-add"
             type="button"
             disabled={busy}
@@ -172,7 +174,7 @@ export function AdminImagePicker({
           >
             <PickerIcon kind="plus" />
             {items.length === 0 && <small>{labels.choose}</small>}
-          </button>
+          </UnstyledButton>
         )}
       </div>
       {items.length === 0 && <span className="admin-image-picker-note">{labels.empty}</span>}
@@ -197,7 +199,9 @@ export function AdminImagePicker({
           )}
           {gallery && onMove && (
             <>
-              <button
+              <ActionIcon
+                size={36}
+                variant="default"
                 className="admin-image-picker-action"
                 type="button"
                 disabled={busy || selectedIndex === 0}
@@ -206,8 +210,10 @@ export function AdminImagePicker({
                 onClick={() => onMove(selectedIndex, -1)}
               >
                 <PickerIcon kind="left" />
-              </button>
-              <button
+              </ActionIcon>
+              <ActionIcon
+                size={36}
+                variant="default"
                 className="admin-image-picker-action"
                 type="button"
                 disabled={busy || selectedIndex === items.length - 1}
@@ -216,11 +222,12 @@ export function AdminImagePicker({
                 onClick={() => onMove(selectedIndex, 1)}
               >
                 <PickerIcon kind="right" />
-              </button>
+              </ActionIcon>
             </>
           )}
           {gallery && onSetCover && selectedIndex > 0 && (
-            <button
+            <Button
+              variant="default"
               className="admin-image-picker-action admin-image-picker-text-action"
               type="button"
               disabled={busy}
@@ -228,19 +235,23 @@ export function AdminImagePicker({
               onClick={() => onSetCover(selectedIndex)}
             >
               {labels.setCover}
-            </button>
+            </Button>
           )}
           {!gallery && (
-            <button
+            <Button
+              variant="default"
               className="admin-image-picker-action admin-image-picker-text-action"
               type="button"
               disabled={busy}
               onClick={choose}
             >
               {labels.replace}
-            </button>
+            </Button>
           )}
-          <button
+          <ActionIcon
+            size={36}
+            variant="light"
+            color="red"
             className="admin-image-picker-action admin-image-picker-remove"
             type="button"
             disabled={busy}
@@ -252,7 +263,7 @@ export function AdminImagePicker({
             }}
           >
             <PickerIcon kind="trash" />
-          </button>
+          </ActionIcon>
         </div>
       )}
     </div>

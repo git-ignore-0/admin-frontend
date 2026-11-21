@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import {
   act,
   cleanup,
@@ -231,6 +232,9 @@ async function fillBilingualNames() {
   fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "CSA package" } });
   fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
   fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "Gói CSA" } });
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "CSA quota group 1" })).toBeEnabled(),
+  );
 }
 
 describe("CSA package price options", () => {
@@ -242,7 +246,7 @@ describe("CSA package price options", () => {
     vi.mocked(api).mockResolvedValue(inactivePackage);
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipPackageEditor packageId={packageItem.id} />);
-    await screen.findByLabelText("CSA quota group 1");
+    await screen.findByRole("combobox", { name: "CSA quota group 1" });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Inactive");
     expect(vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(
@@ -265,7 +269,7 @@ describe("CSA package price options", () => {
     fireEvent.blur(monthly);
     expect(monthly).toHaveValue("₫750,000");
     expect(screen.getByText("₫4,500,000")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
+    selectOption(screen.getByRole("combobox", { name: "CSA quota group 1" }), product.id);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(api).toHaveBeenCalled());
@@ -347,7 +351,7 @@ describe("CSA package price options", () => {
     providers(<MembershipPackageEditor />);
     await fillBilingualNames();
     fireEvent.change(screen.getByLabelText("Monthly price *"), { target: { value: "750000" } });
-    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
+    selectOption(screen.getByRole("combobox", { name: "CSA quota group 1" }), product.id);
     fireEvent.click(screen.getByRole("button", { name: "+ Add price option" }));
     const durations = screen.getAllByLabelText("Months *");
     const prices = screen.getAllByLabelText("Monthly price *");
@@ -374,7 +378,7 @@ describe("CSA package price options", () => {
     fireEvent.change(screen.getByLabelText("Monthly price *"), {
       target: { value: "5000000000000000000" },
     });
-    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
+    selectOption(screen.getByRole("combobox", { name: "CSA quota group 1" }), product.id);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("total price exceeds");
     expect(api).not.toHaveBeenCalled();
@@ -931,7 +935,7 @@ describe("Membership detail snapshots and usage regressions", () => {
       expect(within(table).getByRole("columnheader", { name: heading })).toBeVisible();
     }
     expect(within(table).queryByRole("columnheader", { name: "Trạng thái" })).toBeNull();
-    expect(table.querySelector(".membership-status")).toBeNull();
+    expect(table.querySelector(".mantine-Badge-root")).toBeNull();
     expect(screen.getByText("Đang hoạt động")).toBeVisible();
     expect(
       within(within(table).getByRole("row", { name: /Kỳ 1/ }))
@@ -1132,7 +1136,7 @@ describe("Membership detail snapshots and usage regressions", () => {
           .getByText(warning)
           .closest("p"),
       ).toHaveClass("membership-snapshot-warning");
-      expect(screen.getAllByText(status, { selector: ".membership-status" })).toHaveLength(1);
+      expect(screen.getAllByText(status, { selector: ".mantine-Badge-label" })).toHaveLength(1);
       expect(
         screen.queryByRole("button", {
           name: locale === "vi" ? "Hoàn tác lần nhận hàng" : "Undo product collection",
@@ -1245,10 +1249,10 @@ describe("Membership detail snapshots and usage regressions", () => {
     fireEvent.click(trigger);
     expect(screen.getByLabelText("Revoke reason")).toHaveFocus();
 
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText("Revoke reason"), { key: "Escape" });
 
     expect(screen.queryByRole("dialog", { name: "Confirm CSA package revocation" })).toBeNull();
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("requires a reason, submits revoke once, and reloads the revoked detail", async () => {
@@ -1307,7 +1311,7 @@ describe("Membership detail snapshots and usage regressions", () => {
 
     await act(async () => resolveRevoke(revoked));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
+    expect(screen.getByText("Revoked", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     expect(screen.getByRole("heading", { name: packageItem.name })).toHaveFocus();
     expect(
@@ -1369,7 +1373,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Revoke CSA package" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
+    expect(screen.getByText("Revoked", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.getByText("Assigned by mistake")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Record received products" })).toBeNull();

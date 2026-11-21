@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Group, Button } from "@mantine/core";
+
+import { Status } from "@/components/nfv-controls";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -8,7 +12,7 @@ import { useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
-import { RichTextEditor } from "@/components/rich-text-editor";
+import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
 import { descriptionDocument } from "@/lib/store-product-description";
 import { useToast } from "@/components/toast-provider";
 import { deleteStoreProduct, getStoreProduct, saveStoreProduct } from "@/lib/commerce-api";
@@ -95,16 +99,13 @@ export function StoreProductDetail({ productId }: { productId: string }) {
   }
   if (error)
     return (
-      <div className="panel">
-        <p className="error-box" role="alert">
-          {error}
-        </p>
-        <button className="button secondary" onClick={() => setRetry((value) => value + 1)}>
-          {t.common.retry}
-        </button>
-      </div>
+      <DataState
+        kind="error"
+        title={error}
+        action={{ label: t.common.retry, onClick: () => setRetry((value) => value + 1) }}
+      />
     );
-  if (!item) return <p role="status">{copy.loading}</p>;
+  if (!item) return <DataState kind="loading" title={copy.loading} />;
   const name =
     item.translations.find((value) => value.locale === locale)?.name ||
     item.translations[0]?.name ||
@@ -130,12 +131,16 @@ export function StoreProductDetail({ productId }: { productId: string }) {
           )}
         </div>
         <div>
-          <p>
-            <span className={`badge ${item.is_published ? "" : "warm"}`}>
-              {item.is_published ? copy.published : copy.draft}
-            </span>{" "}
-            {!item.is_active && <span className="badge warm">{copy.inactive}</span>}
-          </p>
+          <Group gap="xs" mb="sm">
+            <Status
+              domain="publication"
+              status={item.is_published ? "published" : "draft"}
+              label={item.is_published ? copy.published : copy.draft}
+            />{" "}
+            {!item.is_active && (
+              <Status domain="availability" status={"inactive"} label={copy.inactive} />
+            )}
+          </Group>
           <p>
             {copy.category}: {item.category_slug}
           </p>
@@ -174,7 +179,7 @@ export function StoreProductDetail({ productId }: { productId: string }) {
               {value.locale.toUpperCase()}: {value.name}
             </h2>
             <p>{value.short_description}</p>
-            <RichTextEditor
+            <LazyRichTextEditor
               readOnly
               variant="product"
               imageAlt=""
@@ -185,12 +190,12 @@ export function StoreProductDetail({ productId }: { productId: string }) {
           </section>
         ))}
         <div className="catalog-editor-actions">
-          <Link className="button" href={`/store-catalog/products/${item.id}/edit`}>
+          <Button component={Link} href={`/store-catalog/products/${item.id}/edit`}>
             {copy.edit}
-          </Link>
-          <button className="button danger" onClick={() => setDialog(true)}>
+          </Button>
+          <Button color="red" onClick={() => setDialog(true)}>
             {copy.delete}
-          </button>
+          </Button>
         </div>
       </div>
       {dialog && (

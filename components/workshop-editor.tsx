@@ -1,10 +1,16 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { FormInput, FormTextarea, Status } from "@/components/nfv-controls";
+
+import { Button, Alert, Tabs } from "@mantine/core";
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { normalizeTiptapLinks, RichTextEditor } from "@/components/rich-text-editor";
+import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
+import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -117,14 +123,6 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
       }));
     }
     setActiveLocale(locale);
-  }
-
-  function moveLocaleTab(event: React.KeyboardEvent<HTMLButtonElement>, locale: Locale) {
-    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    event.preventDefault();
-    const nextLocale: Locale = locale === "vi" ? "en" : "vi";
-    selectLocale(nextLocale);
-    document.getElementById(`workshop-locale-${nextLocale}`)?.focus();
   }
 
   function payload() {
@@ -254,8 +252,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
     }
   }
 
-  if (loading) return <div className="panel">{t.editor.loading}</div>;
-  if (loadError) return <p className="error-box">{loadError}</p>;
+  if (loading) return <DataState kind="loading" title={t.editor.loading} />;
+  if (loadError) return <Alert color="red">{loadError}</Alert>;
 
   return (
     <>
@@ -265,87 +263,79 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
             <p className="eyebrow editor-step">{t.editor.step1}</p>
             <h2>{t.editor.localizedContent}</h2>
           </div>
-          {data.has_published_revision && <span className="badge">{t.editor.publicBadge}</span>}
+          {data.has_published_revision && (
+            <Status domain="publication" status="published" label={t.editor.publicBadge} />
+          )}
         </div>
 
         <div className="workshop-language-picker">
           <p className="label">{t.editor.contentLanguage}</p>
-          <div className="tabs" role="tablist" aria-label={t.editor.contentLanguage}>
-            {(["vi", "en"] as Locale[]).map((locale) => {
-              const item = data.translations.find((entry) => entry.locale === locale);
-              const state = item ? completeness(item) : "empty";
-              const stateLabel =
-                state === "ready"
-                  ? t.editor.ready
-                  : state === "partial"
-                    ? t.editor.partial
-                    : t.editor.empty;
-              return (
-                <button
-                  id={`workshop-locale-${locale}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeLocale === locale}
-                  aria-controls={`workshop-translation-${locale}`}
-                  tabIndex={activeLocale === locale ? 0 : -1}
-                  className={`tab ${activeLocale === locale ? "active" : ""}`}
-                  onClick={() => selectLocale(locale)}
-                  onKeyDown={(event) => moveLocaleTab(event, locale)}
-                  key={locale}
-                >
-                  <span className="locale-code" aria-hidden="true">
-                    {locale.toUpperCase()}
-                  </span>
-                  <span className="locale-copy">
-                    <strong>{localeNames[locale]}</strong>
-                    <small className={`locale-status ${state}`}>{stateLabel}</small>
-                  </span>
-                  {locale === "en" && !item && (
-                    <span className="locale-add" aria-hidden="true">
-                      +
+          <Tabs
+            value={activeLocale}
+            onChange={(locale) => {
+              if (locale) selectLocale(locale as Locale);
+            }}
+            keepMounted={false}
+          >
+            <Tabs.List aria-label={t.editor.contentLanguage}>
+              {(["vi", "en"] as Locale[]).map((locale) => {
+                const item = data.translations.find((entry) => entry.locale === locale);
+                const state = item ? completeness(item) : "empty";
+                const stateLabel =
+                  state === "ready"
+                    ? t.editor.ready
+                    : state === "partial"
+                      ? t.editor.partial
+                      : t.editor.empty;
+                return (
+                  <Tabs.Tab value={locale} key={locale}>
+                    <span className="locale-code" aria-hidden="true">
+                      {locale.toUpperCase()}
                     </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                    <span className="locale-copy">
+                      <strong>{localeNames[locale]}</strong>
+                      <small className={`locale-status ${state}`}>{stateLabel}</small>
+                    </span>
+                    {locale === "en" && !item && (
+                      <span className="locale-add" aria-hidden="true">
+                        +
+                      </span>
+                    )}
+                  </Tabs.Tab>
+                );
+              })}
+            </Tabs.List>
 
-        <div
-          id={`workshop-translation-${activeLocale}`}
-          className="form-grid"
-          role="tabpanel"
-          aria-labelledby={`workshop-locale-${activeLocale}`}
-        >
-          <div className="field full">
-            <label htmlFor={`workshop-title-${activeLocale}`}>{t.editor.title}</label>
-            <input
-              id={`workshop-title-${activeLocale}`}
-              className="input"
-              type="text"
-              maxLength={240}
-              value={translation.title}
-              onChange={(event) => updateTranslation({ title: event.target.value })}
-            />
-          </div>
-          <div className="field full">
-            <label htmlFor={`workshop-summary-${activeLocale}`}>{t.editor.summary}</label>
-            <textarea
-              id={`workshop-summary-${activeLocale}`}
-              className="textarea"
-              maxLength={800}
-              value={translation.summary}
-              onChange={(event) => updateTranslation({ summary: event.target.value })}
-            />
-          </div>
-          <div className="field full">
-            <label>{t.editor.body}</label>
-            <RichTextEditor
-              value={translation.body}
-              imageAlt={translation.title}
-              onChange={(body) => updateTranslation({ body })}
-            />
-          </div>
+            <Tabs.Panel value={activeLocale} className="form-grid">
+              <div className="field full">
+                <label htmlFor={`workshop-title-${activeLocale}`}>{t.editor.title}</label>
+                <FormInput
+                  id={`workshop-title-${activeLocale}`}
+                  type="text"
+                  maxLength={240}
+                  value={translation.title}
+                  onChange={(event) => updateTranslation({ title: event.target.value })}
+                />
+              </div>
+              <div className="field full">
+                <label htmlFor={`workshop-summary-${activeLocale}`}>{t.editor.summary}</label>
+                <FormTextarea
+                  id={`workshop-summary-${activeLocale}`}
+                  maxLength={800}
+                  value={translation.summary}
+                  onChange={(event) => updateTranslation({ summary: event.target.value })}
+                />
+              </div>
+              <div className="field full">
+                <label>{t.editor.body}</label>
+                <LazyRichTextEditor
+                  value={translation.body}
+                  imageAlt={translation.title}
+                  onChange={(body) => updateTranslation({ body })}
+                />
+              </div>
+            </Tabs.Panel>
+          </Tabs>
         </div>
       </section>
 
@@ -359,9 +349,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
         <div className="form-grid">
           <div className="field">
             <label htmlFor="workshop-start">{t.editor.start}</label>
-            <input
+            <FormInput
               id="workshop-start"
-              className="input"
               type="datetime-local"
               required
               value={formatZonedDateTimeInput(data.start_at, data.event_timezone)}
@@ -374,9 +363,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           </div>
           <div className="field">
             <label htmlFor="workshop-end">{t.editor.end}</label>
-            <input
+            <FormInput
               id="workshop-end"
-              className="input"
               type="datetime-local"
               required
               value={formatZonedDateTimeInput(data.end_at, data.event_timezone)}
@@ -387,9 +375,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           </div>
           <div className="field full">
             <label htmlFor="workshop-registration-url">{t.editor.registrationUrl}</label>
-            <input
+            <FormInput
               id="workshop-registration-url"
-              className="input"
               type="url"
               inputMode="url"
               maxLength={500}
@@ -403,9 +390,10 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
 
       <div className="form-actions">
         {workshopId && (
-          <button
+          <Button
             type="button"
-            className="button danger destructive-action"
+            className="destructive-action"
+            color="red"
             disabled={saving || publishing || deleting}
             onClick={() => void deleteWorkshop()}
           >
@@ -416,35 +404,34 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
               : data.has_published_revision
                 ? t.editor.archive
                 : t.editor.delete}
-          </button>
+          </Button>
         )}
         {data.has_published_revision && (
-          <button
+          <Button
             type="button"
-            className="button danger"
+            color="red"
             disabled={saving || publishing || deleting}
             onClick={() => void unpublish()}
           >
             {t.editor.unpublish}
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className="button secondary"
+          variant="default"
           disabled={saving || publishing || deleting}
           onClick={() => void save()}
         >
           {saving ? t.editor.saving : t.editor.saveDraft}
-        </button>
+        </Button>
         {workshopId && (
-          <button
+          <Button
             type="button"
-            className="button"
             disabled={saving || publishing || deleting}
             onClick={() => void publish()}
           >
             {publishing ? t.editor.publishing : t.editor.publish}
-          </button>
+          </Button>
         )}
       </div>
     </>

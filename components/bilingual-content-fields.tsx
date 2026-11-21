@@ -1,6 +1,7 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
+import { Badge, Paper, Stack, Tabs, TextInput, Textarea, Title } from "@mantine/core";
 
 import type { AdminLocale } from "@/lib/admin-i18n";
 
@@ -46,7 +47,6 @@ export function BilingualContentFields({
   title: string;
   value: BilingualContentValue;
 }) {
-  const id = useId();
   const [internalLocale, setInternalLocale] = useState<AdminLocale>(defaultLocale);
   const currentLocale = activeLocale ?? internalLocale;
   const locales = ["vi", "en"] as const;
@@ -56,87 +56,76 @@ export function BilingualContentFields({
     onLocaleChange?.(locale);
   }
 
-  function moveTab(event: React.KeyboardEvent<HTMLButtonElement>, locale: AdminLocale) {
-    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    event.preventDefault();
-    const nextLocale = locale === "vi" ? "en" : "vi";
-    selectLocale(nextLocale);
-    document.getElementById(`${id}-${nextLocale}-tab`)?.focus();
-  }
-
-  const active = value[currentLocale];
   return (
-    <section className="catalog-editor-section bilingual-content-editor">
-      <h2>{title}</h2>
-      <div aria-label={title} className="catalog-language-tabs" role="tablist">
-        {locales.map((locale) => {
-          const complete = isLocaleComplete
-            ? isLocaleComplete(locale)
-            : Boolean(value[locale].name.trim());
-          return (
-            <button
-              aria-controls={`${id}-${locale}-panel`}
-              aria-selected={currentLocale === locale}
-              className={currentLocale === locale ? "active" : ""}
-              disabled={busy}
-              id={`${id}-${locale}-tab`}
-              key={locale}
-              onClick={() => selectLocale(locale)}
-              onKeyDown={(event) => moveTab(event, locale)}
-              role="tab"
-              type="button"
-            >
-              <span>{languageLabels[locale]}</span>
-              <small className={complete ? "complete" : "incomplete"}>
-                {complete ? completionLabels.complete : completionLabels.incomplete}
-              </small>
-            </button>
-          );
-        })}
-      </div>
-      <div
-        aria-labelledby={`${id}-${currentLocale}-tab`}
-        className="catalog-language-panel form-grid"
-        id={`${id}-${currentLocale}-panel`}
-        role="tabpanel"
-      >
-        <label className="field full">
-          <span>
-            {nameLabel}
-            {requireNames ? " *" : ""}
-          </span>
-          <input
-            className="input"
-            disabled={busy}
-            maxLength={200}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                [currentLocale]: { ...active, name: event.target.value },
-              })
-            }
-            required={requireNames}
-            value={active.name}
-          />
-        </label>
-        {renderAfterName?.(currentLocale)}
-        <label className="field full">
-          <span>{descriptionLabel}</span>
-          <textarea
-            className="textarea"
-            disabled={busy}
-            maxLength={descriptionMaxLength}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                [currentLocale]: { ...active, description: event.target.value },
-              })
-            }
-            value={active.description}
-          />
-        </label>
-        {renderAfterDescription?.(currentLocale)}
-      </div>
-    </section>
+    <Paper component="section" withBorder p="md">
+      <Stack gap="md">
+        <Title order={2}>{title}</Title>
+        <Tabs
+          value={currentLocale}
+          onChange={(locale) => {
+            if (!busy && (locale === "vi" || locale === "en")) selectLocale(locale);
+          }}
+          keepMounted={false}
+        >
+          <Tabs.List aria-label={title} mb="md">
+            {locales.map((locale) => {
+              const complete = isLocaleComplete
+                ? isLocaleComplete(locale)
+                : Boolean(value[locale].name.trim());
+              return (
+                <Tabs.Tab
+                  key={locale}
+                  value={locale}
+                  disabled={busy}
+                  rightSection={
+                    <Badge size="xs" variant="light" color={complete ? "green" : "gray"}>
+                      {complete ? completionLabels.complete : completionLabels.incomplete}
+                    </Badge>
+                  }
+                >
+                  {languageLabels[locale]}
+                </Tabs.Tab>
+              );
+            })}
+          </Tabs.List>
+          {locales.map((locale) => (
+            <Tabs.Panel key={locale} value={locale}>
+              <Stack gap="md">
+                <TextInput
+                  data-bilingual-name
+                  label={nameLabel}
+                  required={requireNames}
+                  disabled={busy}
+                  maxLength={200}
+                  value={value[locale].name}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      [locale]: { ...value[locale], name: event.currentTarget.value },
+                    })
+                  }
+                />
+                {renderAfterName?.(locale)}
+                <Textarea
+                  label={descriptionLabel}
+                  disabled={busy}
+                  maxLength={descriptionMaxLength}
+                  minRows={3}
+                  autosize
+                  value={value[locale].description}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      [locale]: { ...value[locale], description: event.currentTarget.value },
+                    })
+                  }
+                />
+                {renderAfterDescription?.(locale)}
+              </Stack>
+            </Tabs.Panel>
+          ))}
+        </Tabs>
+      </Stack>
+    </Paper>
   );
 }

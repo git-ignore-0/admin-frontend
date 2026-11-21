@@ -1,5 +1,7 @@
+"use client";
+
+import { Button, Flex, Group, Stack, Text, TextInput } from "@mantine/core";
 import type { FormEvent, ReactNode } from "react";
-import { Button, FormInput } from "@/components/nfv-controls";
 
 export function ListToolbar({
   busy,
@@ -16,7 +18,6 @@ export function ListToolbar({
   resultCountSingularLabel,
   searchLabel,
   searchSubmitLabel,
-  controls = "default",
   actions,
 }: {
   busy: boolean;
@@ -36,57 +37,40 @@ export function ListToolbar({
   controls?: "default" | "nfv";
   actions?: ReactNode;
 }) {
-  const SearchInput = controls === "nfv" ? FormInput : "input";
-  const ActionButton = controls === "nfv" ? Button : "button";
   return (
-    <div className="list-toolbar-row">
-      <form
-        aria-busy={busy}
-        className={`list-toolbar${filter ? "" : " list-toolbar-search-only"}`}
-        onSubmit={onSubmit}
-        role="search"
-      >
-        <label className={`${controls === "nfv" ? "nfv-field" : "field"} list-toolbar-search`}>
-          <span className={controls === "nfv" ? "nfv-field-label" : undefined}>{searchLabel}</span>
-          <SearchInput
-            className={controls === "nfv" ? undefined : "input"}
+    <Stack gap="xs">
+      <form role="search" aria-busy={busy} onSubmit={onSubmit}>
+        <Flex gap="sm" wrap="wrap" align="flex-end">
+          <TextInput
+            label={searchLabel}
             disabled={busy}
-            onChange={(event) => onQueryChange(event.target.value)}
+            onChange={(event) => onQueryChange(event.currentTarget.value)}
             placeholder={placeholder}
             type="search"
             value={query}
+            flex="1 1 240px"
+            miw={0}
           />
-        </label>
-        {filter}
-        <div className="list-toolbar-actions">
-          <ActionButton
-            className={controls === "nfv" ? undefined : "button"}
-            disabled={busy}
-            type="submit"
-          >
-            {searchSubmitLabel}
-          </ActionButton>
-          {actions}
-          {hasFilters && (
-            <ActionButton
-              {...(controls === "nfv"
-                ? { variant: "outline" as const }
-                : { className: "button secondary" })}
-              disabled={busy}
-              onClick={onClear}
-              type="button"
-            >
-              {clearLabel}
-            </ActionButton>
-          )}
-        </div>
+          {filter}
+          <Group gap="sm">
+            <Button disabled={busy} type="submit">
+              {searchSubmitLabel}
+            </Button>
+            {actions}
+            {hasFilters && (
+              <Button variant="default" disabled={busy} onClick={onClear} type="button">
+                {clearLabel}
+              </Button>
+            )}
+          </Group>
+        </Flex>
       </form>
       <ListResultSummary
         count={resultCount}
         label={resultCountLabel}
         singularLabel={resultCountSingularLabel}
       />
-    </div>
+    </Stack>
   );
 }
 
@@ -101,8 +85,8 @@ export function ListResultSummary({
 }) {
   if (count === undefined) return null;
   return (
-    <p aria-atomic="true" aria-live="polite" className="list-result-summary">
+    <Text size="sm" c="dimmed" aria-atomic="true" aria-live="polite">
       {(count === 1 ? singularLabel : label).replace("{count}", String(count))}
-    </p>
+    </Text>
   );
 }

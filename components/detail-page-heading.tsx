@@ -1,21 +1,26 @@
-import { DetailBackLink } from "@/components/detail-back-link";
+import type { MantineSpacing } from "@mantine/core";
+import { PageHeading } from "@/components/page-heading";
 
 export function DetailPageHeading({
   backHref,
   backLabel,
   title,
   description,
+  bottomSpacing,
 }: {
   backHref: string;
   backLabel: string;
   title: string;
   description?: string;
+  bottomSpacing?: MantineSpacing;
 }) {
   return (
-    <header className="detail-page-heading">
-      <DetailBackLink href={backHref} label={backLabel} />
-      <h1>{title}</h1>
-      {description && <p>{description}</p>}
-    </header>
+    <PageHeading
+      bottomSpacing={bottomSpacing}
+      backHref={backHref}
+      backLabel={backLabel}
+      title={title}
+      description={description}
+    />
   );
 }

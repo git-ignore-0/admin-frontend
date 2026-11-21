@@ -1,5 +1,8 @@
 "use client";
 
+import { Table, Badge } from "@mantine/core";
+import { FormSelect, Status as UiStatus, FormField } from "@/components/nfv-controls";
+
 import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 
@@ -24,9 +27,11 @@ type ActiveFilter = "" | "true" | "false";
 function Status({ active }: { active: boolean }) {
   const { t } = useAdminI18n();
   return (
-    <span className={`badge ${active ? "" : "warm"}`}>
-      {active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
-    </span>
+    <UiStatus
+      domain="availability"
+      status={active ? "active" : "inactive"}
+      label={active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
+    />
   );
 }
 
@@ -74,22 +79,21 @@ export function MembershipProductList() {
         busy={loading}
         clearLabel={t.common.clearFilters}
         filter={
-          <label className="field">
-            <span>{t.membershipCatalog.filterStatus}</span>
-            <select
-              className="input"
+          <FormField label={t.membershipCatalog.filterStatus} className="field">
+            <FormSelect
               disabled={loading}
-              onChange={(event) => {
-                setActive(event.target.value as ActiveFilter);
+              onChange={(selectedValue) => {
+                setActive((selectedValue ?? "") as ActiveFilter);
                 setPage(1);
               }}
               value={active}
-            >
-              <option value="">{t.membershipCatalog.allStatuses}</option>
-              <option value="true">{t.membershipCatalog.active}</option>
-              <option value="false">{t.membershipCatalog.inactive}</option>
-            </select>
-          </label>
+              data={[
+                { value: "", label: t.membershipCatalog.allStatuses },
+                { value: "true", label: t.membershipCatalog.active },
+                { value: "false", label: t.membershipCatalog.inactive },
+              ]}
+            />
+          </FormField>
         }
         hasFilters={Boolean(query || search || active)}
         onClear={clearFilters}
@@ -115,20 +119,20 @@ export function MembershipProductList() {
       />
       {items && items.length > 0 && (
         <div className="table-wrap csa-list-wrap">
-          <table className="table csa-list-table csa-product-list">
-            <thead>
-              <tr>
-                <th>{t.membershipCatalog.product}</th>
-                <th>{t.membershipCatalog.unitConversion}</th>
-                <th>{t.membershipCatalog.status}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="csa-list-table csa-product-list">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t.membershipCatalog.product}</Table.Th>
+                <Table.Th>{t.membershipCatalog.unitConversion}</Table.Th>
+                <Table.Th>{t.membershipCatalog.status}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => {
                 const translation = localizedCatalogTranslation(item.translations, locale);
                 return (
-                  <tr key={item.id}>
-                    <td data-label={t.membershipCatalog.product}>
+                  <Table.Tr key={item.id}>
+                    <Table.Td data-label={t.membershipCatalog.product}>
                       <Link
                         className="csa-list-primary-link"
                         href={`/membership-catalog/products/${item.id}`}
@@ -136,26 +140,26 @@ export function MembershipProductList() {
                         {translation?.name || item.name}
                       </Link>
                       {!hasCompleteCatalogTranslations(item.translations) && (
-                        <span className="badge warm catalog-translation-warning">
+                        <Badge color="orange" className="catalog-translation-warning">
                           {t.membershipCatalog.translationNeedsReview}
-                        </span>
+                        </Badge>
                       )}
                       <small className="table-secondary">
                         {translation?.short_description || item.short_description || "—"}
                       </small>
-                    </td>
-                    <td data-label={t.membershipCatalog.unitConversion}>
+                    </Table.Td>
+                    <Table.Td data-label={t.membershipCatalog.unitConversion}>
                       {formatDecimalInput(item.unit_size)} {item.unit_label_vi} /{" "}
                       {item.unit_label_en}
-                    </td>
-                    <td data-label={t.membershipCatalog.status}>
+                    </Table.Td>
+                    <Table.Td data-label={t.membershipCatalog.status}>
                       <Status active={item.is_active} />
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (
@@ -236,20 +240,20 @@ export function MembershipPackageList() {
       />
       {items && items.length > 0 && (
         <div className="table-wrap csa-list-wrap">
-          <table className="table csa-list-table csa-package-list">
-            <thead>
-              <tr>
-                <th>{t.membershipCatalog.package}</th>
-                <th>{t.membershipCatalog.priceOptions}</th>
-                <th>{t.membershipCatalog.status}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="csa-list-table csa-package-list">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t.membershipCatalog.package}</Table.Th>
+                <Table.Th>{t.membershipCatalog.priceOptions}</Table.Th>
+                <Table.Th>{t.membershipCatalog.status}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => {
                 const translation = localizedCatalogTranslation(item.translations, locale);
                 return (
-                  <tr key={item.id}>
-                    <td data-label={t.membershipCatalog.package}>
+                  <Table.Tr key={item.id}>
+                    <Table.Td data-label={t.membershipCatalog.package}>
                       <Link
                         className="csa-list-primary-link"
                         href={`/membership-catalog/packages/${item.id}`}
@@ -257,9 +261,9 @@ export function MembershipPackageList() {
                         {translation?.name || item.name}
                       </Link>
                       {!hasCompleteCatalogTranslations(item.translations) && (
-                        <span className="badge warm catalog-translation-warning">
+                        <Badge color="orange" className="catalog-translation-warning">
                           {t.membershipCatalog.translationNeedsReview}
-                        </span>
+                        </Badge>
                       )}
                       <small className="table-secondary">
                         {item.items
@@ -269,8 +273,8 @@ export function MembershipPackageList() {
                           })
                           .join(" · ") || "—"}
                       </small>
-                    </td>
-                    <td data-label={t.membershipCatalog.priceOptions}>
+                    </Table.Td>
+                    <Table.Td data-label={t.membershipCatalog.priceOptions}>
                       {item.price_options
                         .filter((option) => option.is_active)
                         .map((option) => (
@@ -283,15 +287,15 @@ export function MembershipPackageList() {
                               )}
                           </small>
                         ))}
-                    </td>
-                    <td data-label={t.membershipCatalog.status}>
+                    </Table.Td>
+                    <Table.Td data-label={t.membershipCatalog.status}>
                       <Status active={item.is_active} />
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (

@@ -100,29 +100,29 @@ export function StoreOrderAllocationEditor({
                         aria-invalid={sourceError ? "true" : undefined}
                         disabled={disabled}
                         value={row.batch_id}
-                        onChange={(event) => update(index, { batch_id: event.target.value })}
-                      >
-                        {!candidate ? (
-                          <option disabled value={row.batch_id}>
-                            {c.sourceUnavailableOption}
-                          </option>
-                        ) : null}
-                        {lineCandidates.map((candidate) => (
-                          <option
-                            disabled={value.some(
+                        onChange={(value) => update(index, { batch_id: value ?? "" })}
+                        data={[
+                          ...(!candidate
+                            ? [
+                                {
+                                  value: row.batch_id,
+                                  label: c.sourceUnavailableOption,
+                                  disabled: true,
+                                },
+                              ]
+                            : []),
+                          ...lineCandidates.map((candidate) => ({
+                            value: candidate.batch_id,
+                            label: `${candidate.farm_name} · ${candidate.start_date}–${candidate.end_date} · ${c.available.replace("{count}", String(candidate.available_quantity))}`,
+                            disabled: value.some(
                               (item, otherIndex) =>
                                 otherIndex !== index &&
                                 item.line_id === line.id &&
                                 item.batch_id === candidate.batch_id,
-                            )}
-                            key={candidate.batch_id}
-                            value={candidate.batch_id}
-                          >
-                            {candidate.farm_name} · {candidate.start_date}–{candidate.end_date} ·{" "}
-                            {c.available.replace("{count}", String(candidate.available_quantity))}
-                          </option>
-                        ))}
-                      </FormSelect>
+                            ),
+                          })),
+                        ]}
+                      />
                       {sourceError ? (
                         <small className="nfv-field-error" id={sourceErrorId}>
                           {sourceError}

@@ -113,7 +113,8 @@ describe("admin account identity", () => {
       login_phone_number: "+84912345678",
     });
 
-    expect(screen.getByText("Nguyễn An")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
+    expect(screen.getByRole("menu")).toHaveTextContent("Nguyễn An");
     expect(screen.getByText("+84912345678")).toBeVisible();
   });
 
@@ -124,282 +125,221 @@ describe("admin account identity", () => {
       login_phone_number: "+84912345678",
     });
 
-    expect(screen.getByText("Nguyễn An")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
+    expect(screen.getByRole("menu")).toHaveTextContent("Nguyễn An");
     expect(screen.getByText("admin@example.com")).toBeVisible();
     expect(screen.queryByText("+84912345678")).not.toBeInTheDocument();
   });
 
   it("renders only the name when neither identifier is present", () => {
-    const { container } = renderShell("/dashboard", "en", {
+    renderShell("/dashboard", "en", {
       name: "Nguyễn An",
       email: null,
       login_phone_number: null,
     });
 
-    expect(screen.getByText("Nguyễn An")).toBeVisible();
-    expect(container.querySelector(".sidebar-user span")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
+    expect(screen.getByRole("menu")).toHaveTextContent("Nguyễn An");
+    expect(screen.queryByText("+84912345678")).not.toBeInTheDocument();
   });
 
   it("keeps a label when the account has no display details", () => {
-    const { container } = renderShell("/dashboard", "en", {
+    renderShell("/dashboard", "en", {
       name: "",
       email: null,
       login_phone_number: null,
     });
 
-    expect(container.querySelector(".sidebar-user")).toHaveTextContent("NFV Admin");
+    expect(screen.getByRole("button", { name: "Admin account" })).toHaveAttribute(
+      "title",
+      "NFV Admin",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
+    expect(screen.getByRole("menu")).toHaveTextContent("NFV Admin");
   });
 });
 
 describe("admin sidebar navigation", () => {
-  it("keeps every Admin route in one navigation model", () => {
+  function mobileViewport() {
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: query.includes("47.99"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  }
+  it("keeps all current workflow destinations in one localized model", () => {
     const sections = adminNavigation(adminDictionaries.en);
     const routes = sections.flatMap((section) => section.items.map((item) => item.href));
-
     expect(routes).toEqual([
       "/dashboard",
-      "/users",
-      "/csa-coupons",
-      "/points",
-      "/rewards",
-      "/redemptions",
-      "/csa-rounds",
-      "/csa-customers",
-      "/csa-purchase-requests",
-      "/csa-terms",
-      "/membership-catalog",
       "/store-orders",
-      "/store-catalog",
-      "/shipping-settings",
+      "/store-catalog/products",
+      "/store-catalog/categories",
+      "/csa-rounds",
+      "/csa-purchase-requests",
+      "/csa-customers",
+      "/membership-catalog/packages",
+      "/membership-catalog/products",
+      "/csa-terms",
       "/farms",
       "/tracker-farms",
-      "/settings",
-      "/membership-payment-settings",
+      "/csa-coupons",
+      "/users",
+      "/rewards",
+      "/redemptions",
       "/workshops",
       "/testimonials",
+      "/shipping-settings",
+      "/membership-payment-settings",
+      "/settings",
     ]);
     expect(new Set(routes).size).toBe(routes.length);
+    expect(sections.map((section) => section.key)).toEqual([
+      "overview",
+      "store",
+      "csa",
+      "farms",
+      "promotions",
+      "community",
+      "website",
+      "settings",
+    ]);
   });
-
   it.each([
-    ["/farms/24803641-2dce-4cac-8fc4-91e55f03e95f", "/farms", "farms"],
-    ["/store-orders/24803641-2dce-4cac-8fc4-91e55f03e95f", "/store-orders", "store"],
-    ["/store-catalog/products/new", "/store-catalog", "store"],
-    ["/membership-catalog/packages/123/edit", "/membership-catalog", "csa"],
-    ["/csa-coupons/voucher-id", "/csa-coupons", "main"],
-  ])("resolves nested path %s to %s in section %s", (pathname, activeHref, sectionKey) => {
+    ["/farms/a", "/farms", "farms"],
+    ["/store-orders/a", "/store-orders", "store"],
+    ["/store-catalog/products/new", "/store-catalog/products", "store"],
+    ["/membership-catalog/packages/a/edit", "/membership-catalog/packages", "csa"],
+    ["/csa-coupons/a", "/csa-coupons", "promotions"],
+    ["/points/a", "/users", "community"],
+    ["/memberships/assign", "/csa-customers", "csa"],
+  ])("resolves nested path %s to %s in %s", (path, href, group) => {
     const sections = adminNavigation(adminDictionaries.en);
-
-    expect(isActiveAdminRoute(pathname, activeHref)).toBe(true);
-    expect(activeAdminSection(pathname, sections)?.key).toBe(sectionKey);
+    expect(isActiveAdminRoute(path, href)).toBe(true);
+    expect(activeAdminSection(path, sections)?.key).toBe(group);
   });
-
-  it("shows every route in expanded sections without accordion controls", () => {
+  it("shows real destinations without section accordion controls", () => {
     renderShell();
-
-    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("href", "/dashboard");
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
-    expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute("href", "/points");
-    expect(screen.getByRole("link", { name: "Rewards" })).toHaveAttribute("href", "/rewards");
-    expect(screen.getByRole("link", { name: "CSA purchase requests" })).toHaveAttribute(
-      "href",
-      "/csa-purchase-requests",
-    );
-    expect(screen.getByRole("link", { name: "Farm list" })).toHaveAttribute("href", "/farms");
+    expect(screen.getByRole("link", { name: "CSA rounds" })).toHaveAttribute("href", "/csa-rounds");
     expect(screen.getByRole("link", { name: "Payment settings" })).toHaveAttribute(
       "href",
       "/membership-payment-settings",
     );
+    expect(screen.queryByRole("link", { name: "Manage points" })).toBeNull();
     expect(screen.queryByRole("button", { name: "CSA" })).toBeNull();
   });
-
-  it("uses the localized payment settings label", () => {
+  it("localizes payment settings", () => {
     renderShell("/dashboard", "vi");
-
     expect(screen.getByRole("link", { name: "Cài đặt thanh toán" })).toHaveAttribute(
       "href",
       "/membership-payment-settings",
     );
-    expect(screen.queryByText("Thanh toán CSA")).toBeNull();
   });
-
   it.each([
-    ["/membership-catalog/packages/123/edit", "CSA package catalog"],
-    ["/store-catalog/products/new", "Store catalog"],
-    ["/farms/24803641-2dce-4cac-8fc4-91e55f03e95f", "Farm list"],
-    ["/testimonials/testimonial-id/edit", "Testimonials"],
-  ])("highlights the owning item for nested path %s", (pathname, linkName) => {
+    ["/membership-catalog/packages/a/edit", "CSA packages"],
+    ["/store-catalog/products/new", "Products"],
+    ["/farms/a", "Farm list"],
+    ["/testimonials/a/edit", "Testimonials"],
+    ["/points/a", "Users"],
+    ["/memberships/a", "CSA customers"],
+  ])("highlights exactly one item for %s", (pathname, label) => {
     renderShell(pathname);
-
-    const activeLink = screen.getByRole("link", { name: linkName });
-    expect(activeLink).toHaveAttribute("aria-current", "page");
-    expect(activeLink).toHaveClass("active");
+    expect(screen.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page"),
+    ).toHaveLength(1);
   });
-
-  it("collapses the desktop sidebar, updates its label, and persists the preference", () => {
-    const { container } = renderShell();
-    const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
-
-    fireEvent.click(collapse);
-
-    expect(container.querySelector(".admin-shell")).toHaveAttribute("data-sidebar", "collapsed");
+  it("persists desktop collapse and restores a saved preference", async () => {
+    const { container, unmount } = renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(container.querySelector("[data-sidebar]")).toHaveAttribute("data-sidebar", "collapsed");
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
     expect(window.localStorage.getItem("nfv-admin-sidebar-collapsed")).toBe("true");
-    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute("title", "Overview");
+    unmount();
+    renderShell();
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   });
-
-  it("restores a valid stored collapse preference", async () => {
-    window.localStorage.setItem("nfv-admin-sidebar-collapsed", "true");
-    const { container } = renderShell();
-
-    await waitFor(() =>
-      expect(container.querySelector(".admin-shell")).toHaveAttribute("data-sidebar", "collapsed"),
-    );
-  });
-
-  it("falls back to expanded when the stored preference is invalid", () => {
+  it("ignores an invalid collapse preference", () => {
     window.localStorage.setItem("nfv-admin-sidebar-collapsed", "sometimes");
-    const { container } = renderShell();
-
-    expect(container.querySelector(".admin-shell")).toHaveAttribute("data-sidebar", "expanded");
+    renderShell();
     expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
   });
-
-  it("opens one accessible grouped flyout while collapsed and closes it with Escape", () => {
-    const { container } = renderShell("/csa-customers/new");
+  it("opens a keyboard accessible collapsed menu and closes on Escape", async () => {
+    renderShell("/csa-customers/new");
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-
-    const navigationRegion = screen.getByRole("navigation", { name: "Administration" });
-    const csaToggle = within(navigationRegion).getByRole("button", { name: "CSA" });
-    fireEvent.click(csaToggle);
-
-    expect(csaToggle).toHaveAttribute("aria-expanded", "true");
-    const activeLink = within(navigationRegion).getByRole("link", { name: "CSA customers" });
-    expect(activeLink).toHaveAttribute("aria-current", "page");
-
-    fireEvent.keyDown(container.querySelector(".sidebar")!, { key: "Escape" });
-    expect(csaToggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(navigationRegion).queryByRole("link", { name: "CSA customers" })).toBeNull();
-  });
-
-  it("keeps the mobile drawer closed until its trigger is used", () => {
-    const { container } = renderShell();
-    const trigger = screen.getByRole("button", { name: "Open navigation" });
-
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector(".sidebar")).toHaveAttribute("data-mobile-open", "false");
-    expect(screen.queryByRole("button", { name: "Close navigation" })).toBeNull();
-  });
-
-  it("removes the closed mobile drawer from keyboard and accessibility navigation", async () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn().mockReturnValue({
-        matches: true,
-        media: "(max-width: 820px)",
-        onchange: null,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      }),
-    );
-    const { container } = renderShell();
-    const sidebar = container.querySelector(".sidebar");
-
-    await waitFor(() => expect(sidebar).toHaveAttribute("inert"));
-    expect(sidebar).toHaveAttribute("aria-hidden", "true");
-
-    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
-    expect(sidebar).not.toHaveAttribute("inert");
-    expect(sidebar).not.toHaveAttribute("aria-hidden");
-  });
-
-  it("moves focus into the mobile drawer and restores it after the close button", () => {
-    renderShell();
-    const trigger = screen.getByRole("button", { name: "Open navigation" });
+    const trigger = screen.getByRole("button", { name: "CSA" });
+    trigger.focus();
     fireEvent.click(trigger);
-
-    const close = screen.getByRole("button", { name: "Close navigation" });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(close).toHaveFocus();
-
-    fireEvent.click(close);
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(trigger).toHaveFocus();
-  });
-
-  it("keeps Tab focus inside the open mobile drawer", () => {
-    const { container } = renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
-    const sidebar = container.querySelector(".sidebar") as HTMLElement;
-    const first = within(sidebar).getByRole("link", { name: "NFV Admin" });
-    const logout = screen.getByRole("button", { name: "Sign out" });
-
-    logout.focus();
-    fireEvent.keyDown(document, { key: "Tab" });
-    expect(first).toHaveFocus();
-
-    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(logout).toHaveFocus();
-  });
-
-  it("closes the mobile drawer with Escape and restores trigger focus", () => {
-    renderShell();
-    const trigger = screen.getByRole("button", { name: "Open navigation" });
-    fireEvent.click(trigger);
-
-    fireEvent.keyDown(document, { key: "Escape" });
-
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(trigger).toHaveFocus();
-  });
-
-  it("closes the mobile drawer from its backdrop", () => {
-    renderShell();
-    const trigger = screen.getByRole("button", { name: "Open navigation" });
-    fireEvent.click(trigger);
-
-    fireEvent.click(screen.getByTestId("sidebar-backdrop"));
-
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(trigger).toHaveFocus();
-  });
-
-  it("closes the mobile drawer after selecting an active nested route", () => {
-    renderShell("/farms/24803641-2dce-4cac-8fc4-91e55f03e95f");
-    const trigger = screen.getByRole("button", { name: "Open navigation" });
-    fireEvent.click(trigger);
-
-    const activeLink = screen.getByRole("link", { name: "Farm list" });
-    expect(activeLink).toHaveAttribute("aria-current", "page");
-    activeLink.addEventListener("click", (event) => event.preventDefault(), { once: true });
-    fireEvent.click(activeLink);
-
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(trigger).toHaveFocus();
-  });
-
-  it("exposes stable layout hooks for the responsive sidebar composition", () => {
-    const { container } = renderShell();
-    const shell = container.querySelector(".admin-shell")!;
-
-    expect(shell).toHaveAttribute("data-sidebar", "expanded");
-    expect(container.querySelector(".sidebar-header .brand-mark")).not.toBeNull();
-    expect(container.querySelector(".nav.nav-scroll")).not.toBeNull();
-    expect(container.querySelector(".sidebar-footer")).not.toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute(
-      "data-tooltip",
-      "Overview",
+    expect(screen.getByRole("menuitem", { name: "CSA customers" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    fireEvent.click(screen.getByRole("button", { name: "CSA" }));
-    expect(container.querySelector(".nav-flyout")).not.toBeNull();
-
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: "CSA customers" })).toBeNull(),
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+  it("excludes the closed mobile navigation from accessibility and keyboard traversal", async () => {
+    mobileViewport();
+    const { container } = renderShell();
+    await waitFor(() =>
+      expect(container.querySelector(".mantine-AppShell-navbar")).toHaveAttribute("inert"),
+    );
+    expect(container.querySelector(".mantine-AppShell-navbar")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByRole("navigation", { name: "Administration" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it.each(["close", "escape", "outside", "route"])(
+    "closes mobile navigation by %s and restores focus",
+    async (action) => {
+      mobileViewport();
+      const { container } = renderShell("/farms/a");
+      const trigger = screen.getByRole("button", { name: "Open navigation" });
+      trigger.focus();
+      fireEvent.click(trigger);
+      const dialog = await screen.findByRole("dialog");
+      const close = within(dialog).getByRole("button", { name: "Close navigation" });
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+      expect(within(dialog).getByRole("link", { name: "Farm list" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      if (action === "close") fireEvent.click(close);
+      if (action === "escape") fireEvent.keyDown(close, { key: "Escape" });
+      if (action === "outside") fireEvent.click(document.querySelector(".mantine-Drawer-overlay")!);
+      if (action === "route") {
+        const link = within(dialog).getByRole("link", { name: "Farm list" });
+        link.addEventListener("click", (event) => event.preventDefault(), { once: true });
+        fireEvent.click(link);
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+      await waitFor(() => expect(trigger).toHaveFocus());
+      expect(container.querySelector(".mantine-AppShell-navbar")).toHaveAttribute("inert");
+    },
+  );
+  it("keeps keyboard focus within the open mobile Drawer", async () => {
+    mobileViewport();
+    renderShell();
     fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
-    expect(container.querySelector('.sidebar[data-mobile-open="true"]')).not.toBeNull();
-    expect(screen.getByTestId("sidebar-backdrop")).toHaveClass("sidebar-backdrop");
+    const dialog = await screen.findByRole("dialog");
+    const first = within(dialog).getByRole("link", { name: "NFV Admin" });
+    const last = within(dialog).getByRole("link", { name: "Website information" });
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
   });
 });

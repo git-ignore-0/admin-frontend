@@ -56,7 +56,7 @@ it("pending delivery never polls an inactive expiry and blocks refresh during de
   });
   expect(api).toHaveBeenCalledTimes(2);
   await act(async () => resolveMutation({ ...initial, status: "delivered" }));
-  expect(screen.getByText("Đã giao", { selector: ".status" })).toBeVisible();
+  expect(screen.getByText("Đã giao", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(api).toHaveBeenCalledTimes(2);
 });
 

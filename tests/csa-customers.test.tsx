@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -137,10 +138,9 @@ describe("CSA customer administration", () => {
     providers(<CSACustomerList />);
     await screen.findByText(customer.name);
 
-    fireEvent.change(screen.getByLabelText("Website account"), { target: { value: "linked" } });
-    fireEvent.change(screen.getByLabelText("CSA package status"), {
-      target: { value: "active" },
-    });
+    selectOption(screen.getByLabelText("Website account"), "linked");
+    await waitFor(() => expect(screen.getByLabelText("CSA package status")).toBeEnabled());
+    selectOption(screen.getByLabelText("CSA package status"), "active");
 
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenCalledWith(
@@ -168,7 +168,7 @@ describe("CSA customer administration", () => {
       account.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     const back = screen.getByRole("link", { name: "CSA customers" });
-    expect(back).toHaveClass("detail-back-link");
+    expect(back).toBeVisible();
     expect(back).toHaveAttribute("href", "/csa-customers");
     expect(back.querySelector("svg")).toBeInTheDocument();
     const assign = screen.getAllByRole("link", { name: "Assign CSA package" });
@@ -328,7 +328,7 @@ describe("CSA customer administration", () => {
     expect(view.container).not.toHaveTextContent("Package");
     expect(screen.queryByLabelText(/Farmbrite/)).toBeNull();
 
-    await screen.findByRole("option", { name: "Ho Chi Minh City" });
+    await waitFor(() => expect(screen.getByLabelText("Province/city *")).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
     expect(screen.getByText("Name is required.")).toBeVisible();
     expect(screen.getByText("Phone number is required.")).toBeVisible();
@@ -357,16 +357,14 @@ describe("CSA customer administration", () => {
     fireEvent.change(phone, { target: { value: "0912e345678" } });
     expect(phone).toHaveValue("0912345678");
     const province = await screen.findByRole("combobox", { name: /Province\/city/ });
-    await screen.findByRole("option", { name: "Ho Chi Minh City" });
-    fireEvent.change(province, { target: { value: "79" } });
+    await waitFor(() => expect(screen.getByLabelText("Province/city *")).toBeEnabled());
+    selectOption(province, "79");
     const ward = screen.getByRole("combobox", { name: /Ward\/commune/ });
-    await screen.findByRole("option", { name: "Ben Nghe Ward" });
-    fireEvent.change(ward, { target: { value: "001" } });
-    fireEvent.change(province, { target: { value: "" } });
-    expect(ward).toHaveValue("");
-    fireEvent.change(province, { target: { value: "79" } });
-    await screen.findByRole("option", { name: "Ben Nghe Ward" });
-    fireEvent.change(ward, { target: { value: "001" } });
+    selectOption(ward, "001");
+    selectOption(province, "");
+    expect(ward).toHaveValue("Choose a ward or commune");
+    selectOption(province, "79");
+    selectOption(ward, "001");
     fireEvent.change(screen.getByRole("textbox", { name: /Delivery address/ }), {
       target: { value: "12 Main Street" },
     });
@@ -407,10 +405,9 @@ describe("CSA customer administration", () => {
     const view = providers(<CSACustomerForm />);
     fireEvent.change(screen.getByLabelText("Name *"), { target: { value: customer.name } });
     fireEvent.change(screen.getByLabelText("Phone number *"), { target: { value: "0912345678" } });
-    await screen.findByRole("option", { name: "Ho Chi Minh City" });
-    fireEvent.change(screen.getByLabelText("Province/city *"), { target: { value: "79" } });
-    await screen.findByRole("option", { name: "Ben Nghe Ward" });
-    fireEvent.change(screen.getByLabelText("Ward/commune *"), { target: { value: "001" } });
+    await waitFor(() => expect(screen.getByLabelText("Province/city *")).toBeEnabled());
+    selectOption(screen.getByLabelText("Province/city *"), "79");
+    selectOption(screen.getByLabelText("Ward/commune *"), "001");
     fireEvent.change(screen.getByLabelText("Delivery address *"), {
       target: { value: "12 Main Street" },
     });
@@ -423,7 +420,7 @@ describe("CSA customer administration", () => {
     expect(duplicateError).toHaveClass("field-error");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
     expect(phoneInput).toHaveAttribute("aria-describedby", duplicateError.id);
-    expect(phoneInput.nextElementSibling).toBe(duplicateError);
+    expect(phoneInput.closest("label")).toContainElement(duplicateError);
     expect(phoneInput).toHaveValue("0912345678");
     expect(
       [...view.container.querySelectorAll(".error-box")].some((box) =>
@@ -734,13 +731,12 @@ describe("CSA customer administration", () => {
     expect(assignButton).toBeDisabled();
     fireEvent.click(await screen.findByRole("radio", { name: /English three-month package/ }));
     expect(assignButton).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Price option *"), { target: { value: price.id } });
+    selectOption(screen.getByLabelText("Price option *"), price.id);
     expect(startDateInput).toBeEnabled();
     expect(pickerButton).toBeEnabled();
-    const picker = view.container.querySelector<HTMLInputElement>('input[type="date"]');
-    expect(picker).not.toBeNull();
-    expect(picker).toHaveAttribute("min", expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
-    fireEvent.change(picker!, { target: { value: "2099-04-30" } });
+    fireEvent.change(startDateInput, { target: { value: "29042099" } });
+    fireEvent.click(pickerButton);
+    fireEvent.click(screen.getByRole("button", { name: "30 April 2099" }));
     expect(startDateInput).toHaveValue("30/04/2099");
     fireEvent.change(startDateInput, { target: { value: "" } });
     expect(assignButton).toBeDisabled();
@@ -832,7 +828,7 @@ describe("CSA customer administration", () => {
     expect(orderReferenceInput).toHaveAttribute("aria-invalid", "true");
 
     fireEvent.click(screen.getByRole("radio", { name: /Gói ba tháng/ }));
-    fireEvent.change(screen.getByLabelText("Lựa chọn giá *"), { target: { value: price.id } });
+    selectOption(screen.getByLabelText("Lựa chọn giá *"), price.id);
     fireEvent.change(orderReferenceInput, { target: { value: "ORDER-100" } });
     fireEvent.change(screen.getByLabelText(/Ngày bắt đầu/), { target: { value: "01/05/2099" } });
     fireEvent.click(screen.getByRole("button", { name: "Gán gói CSA" }));
@@ -842,7 +838,7 @@ describe("CSA customer administration", () => {
 
     const duplicateError = await screen.findByText("Mã đơn hàng này đã được sử dụng.");
     expect(duplicateError).toHaveClass("field-error");
-    expect(orderReferenceInput.nextElementSibling).toBe(duplicateError);
+    expect(orderReferenceInput.closest("label")).toContainElement(duplicateError);
     expect(orderReferenceInput).toHaveAttribute("aria-invalid", "true");
     expect(orderReferenceInput).toHaveAttribute("aria-describedby", duplicateError.id);
     await waitFor(() => expect(orderReferenceInput).toHaveFocus());
@@ -944,12 +940,18 @@ describe("CSA customer administration", () => {
     fireEvent.click(screen.getByRole("radio", { name: /First active package/ }));
     const optionSelect = screen.getByLabelText("Price option *");
     expect(optionSelect).toBeEnabled();
-    expect(optionSelect.querySelector('option[value="price-inactive"]')).toBeNull();
-    fireEvent.change(optionSelect, { target: { value: firstActiveOption.id } });
-    expect(optionSelect).toHaveValue(firstActiveOption.id);
+    fireEvent.click(optionSelect);
+    expect(
+      screen
+        .getAllByRole("option")
+        .some((option) => option.getAttribute("value") === "price-inactive"),
+    ).toBe(false);
+    fireEvent.keyDown(optionSelect, { key: "Escape" });
+    selectOption(optionSelect, firstActiveOption.id);
+    expect(optionSelect).toHaveValue("3 months · ₫500,000/month");
 
     fireEvent.click(screen.getByRole("radio", { name: /Second active package/ }));
-    expect(optionSelect).toHaveValue("");
+    expect(optionSelect).toHaveValue("Choose an active duration and price");
     expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeDisabled();
   });
 
@@ -987,7 +989,7 @@ describe("CSA customer administration", () => {
     providers(<MembershipAssignmentForm customerId={customer.id} />);
 
     fireEvent.click(await screen.findByRole("radio", { name: /CSA overlap package/ }));
-    fireEvent.change(screen.getByLabelText("Price option *"), { target: { value: price.id } });
+    selectOption(screen.getByLabelText("Price option *"), price.id);
     fireEvent.change(screen.getByLabelText("Order reference"), {
       target: { value: "FB-OVERLAP" },
     });
@@ -1038,7 +1040,7 @@ describe("CSA customer administration", () => {
     providers(<MembershipAssignmentForm customerId={customer.id} />);
     expect(await screen.findByText(customer.name)).toBeVisible();
     fireEvent.click(await screen.findByRole("radio", { name: /CSA 3 months/ }));
-    fireEvent.change(screen.getByLabelText("Price option *"), { target: { value: price.id } });
+    selectOption(screen.getByLabelText("Price option *"), price.id);
     fireEvent.change(screen.getByLabelText("Order reference"), {
       target: { value: "FB-INCOMPLETE" },
     });

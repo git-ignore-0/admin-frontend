@@ -1,5 +1,8 @@
 "use client";
 
+import { Table } from "@mantine/core";
+import { FormSelect, Status as UiStatus, FormField } from "@/components/nfv-controls";
+
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useState } from "react";
 
@@ -15,9 +18,7 @@ import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function CSAPurchaseStatusBadge({ status }: { status: CSAPurchaseRequestStatus }) {
   const { t } = useAdminI18n();
-  return (
-    <span className={`badge csa-purchase-status ${status}`}>{t.csaPurchases.statuses[status]}</span>
-  );
+  return <UiStatus domain="csa-purchase" status={status} label={t.csaPurchases.statuses[status]} />;
 }
 
 export function CSAPurchaseRequestList() {
@@ -69,25 +70,22 @@ export function CSAPurchaseRequestList() {
         busy={loading}
         clearLabel={t.common.clearFilters}
         filter={
-          <label className="field">
-            <span>{t.csaPurchases.filterStatus}</span>
-            <select
-              className="input"
+          <FormField label={t.csaPurchases.filterStatus} className="field">
+            <FormSelect
               disabled={loading}
-              onChange={(event) => {
-                setStatus(event.target.value as CSAPurchaseRequestStatus | "");
+              onChange={(selectedValue) => {
+                setStatus((selectedValue ?? "") as CSAPurchaseRequestStatus | "");
                 setPage(1);
               }}
               value={status}
-            >
-              <option value="">{t.csaPurchases.allStatuses}</option>
-              {(Object.keys(t.csaPurchases.statuses) as CSAPurchaseRequestStatus[]).map((value) => (
-                <option key={value} value={value}>
-                  {t.csaPurchases.statuses[value]}
-                </option>
-              ))}
-            </select>
-          </label>
+              data={[
+                { value: "", label: t.csaPurchases.allStatuses },
+                ...((Object.keys(t.csaPurchases.statuses) as CSAPurchaseRequestStatus[]).map(
+                  (value) => ({ value: value, label: t.csaPurchases.statuses[value] }),
+                ) ?? []),
+              ]}
+            />
+          </FormField>
         }
         hasFilters={Boolean(query || search || status)}
         onClear={clear}
@@ -119,20 +117,20 @@ export function CSAPurchaseRequestList() {
       />
       {items && items.length > 0 && (
         <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table csa-purchase-list-table">
-            <thead>
-              <tr>
-                <th>{t.csaPurchases.requestCode}</th>
-                <th>{t.csaPurchases.customer}</th>
-                <th>{t.csaPurchases.phone}</th>
-                <th>{t.csaPurchases.package}</th>
-                <th>{t.csaPurchases.status}</th>
-                <th>{t.csaPurchases.createdAt}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="admin-list-table csa-purchase-list-table">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t.csaPurchases.requestCode}</Table.Th>
+                <Table.Th>{t.csaPurchases.customer}</Table.Th>
+                <Table.Th>{t.csaPurchases.phone}</Table.Th>
+                <Table.Th>{t.csaPurchases.package}</Table.Th>
+                <Table.Th>{t.csaPurchases.status}</Table.Th>
+                <Table.Th>{t.csaPurchases.createdAt}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => (
-                <tr
+                <Table.Tr
                   aria-label={`${item.request_code}: ${item.name}`}
                   className="admin-list-clickable-row"
                   key={item.id}
@@ -145,14 +143,17 @@ export function CSAPurchaseRequestList() {
                   role="link"
                   tabIndex={0}
                 >
-                  <td className="csa-purchase-request-cell" data-label={t.csaPurchases.requestCode}>
+                  <Table.Td
+                    className="csa-purchase-request-cell"
+                    data-label={t.csaPurchases.requestCode}
+                  >
                     <strong className="csa-purchase-request-code">{item.request_code}</strong>
-                  </td>
-                  <td data-label={t.csaPurchases.customer}>{item.name}</td>
-                  <td className="csa-purchase-phone-cell" data-label={t.csaPurchases.phone}>
+                  </Table.Td>
+                  <Table.Td data-label={t.csaPurchases.customer}>{item.name}</Table.Td>
+                  <Table.Td className="csa-purchase-phone-cell" data-label={t.csaPurchases.phone}>
                     {item.phone}
-                  </td>
-                  <td data-label={t.csaPurchases.package}>
+                  </Table.Td>
+                  <Table.Td data-label={t.csaPurchases.package}>
                     {item.package_snapshot.name}
                     <small className="table-secondary">{item.price_option_snapshot.name}</small>
                     <small className="table-secondary">
@@ -163,17 +164,20 @@ export function CSAPurchaseRequestList() {
                           )
                         : t.csaPurchases.installments.full}
                     </small>
-                  </td>
-                  <td className="csa-purchase-status-cell" data-label={t.csaPurchases.status}>
+                  </Table.Td>
+                  <Table.Td className="csa-purchase-status-cell" data-label={t.csaPurchases.status}>
                     <CSAPurchaseStatusBadge status={item.status} />
-                  </td>
-                  <td className="csa-purchase-created-cell" data-label={t.csaPurchases.createdAt}>
+                  </Table.Td>
+                  <Table.Td
+                    className="csa-purchase-created-cell"
+                    data-label={t.csaPurchases.createdAt}
+                  >
                     {formatAdminDateTime(item.created_at)}
-                  </td>
-                </tr>
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (

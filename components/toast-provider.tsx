@@ -1,52 +1,70 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
-
+import { Notifications, notifications, notificationsStore } from "@mantine/notifications";
+import { IconCheck, IconExclamationMark } from "@tabler/icons-react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 
 type ToastType = "success" | "error";
-type Toast = { id: number; message: string; type: ToastType };
-
 const ToastContext = createContext<((message: string, type?: ToastType) => void) | null>(null);
+
+/** Clear the Mantine store as well as its queue when a protected admin session changes. */
+const RESET_NOTIFICATIONS_EVENT = "nfv-admin-clear-notifications";
+export function clearAdminNotifications() {
+  notifications.clean();
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(RESET_NOTIFICATIONS_EVENT));
+}
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const { t } = useAdminI18n();
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const nextId = useRef(0);
-
-  const dismiss = useCallback((id: number) => {
-    setToasts((current) => current.filter((toast) => toast.id !== id));
+  const [instance, setInstance] = useState(0);
+  const acceptsNotifications = useRef(true);
+  useEffect(() => {
+    acceptsNotifications.current = true;
+    const reset = () => {
+      acceptsNotifications.current = false;
+      setInstance((current) => current + 1);
+    };
+    window.addEventListener(RESET_NOTIFICATIONS_EVENT, reset);
+    return () => {
+      window.removeEventListener(RESET_NOTIFICATIONS_EVENT, reset);
+      acceptsNotifications.current = false;
+      notifications.clean();
+    };
   }, []);
-
+  useEffect(() => {
+    notifications.updateState(notificationsStore, (items) =>
+      items.map((item) => ({
+        ...item,
+        closeButtonProps: { ...item.closeButtonProps, "aria-label": t.toast.close },
+      })),
+    );
+  }, [t.toast.close]);
   const showToast = useCallback(
     (message: string, type: ToastType = "success") => {
-      const id = ++nextId.current;
-      setToasts((current) => [...current.slice(-2), { id, message, type }]);
-      window.setTimeout(() => dismiss(id), 4500);
+      if (!acceptsNotifications.current) return;
+      notifications.show({
+        message,
+        color: type === "error" ? "red" : "green",
+        icon:
+          type === "error" ? (
+            <IconExclamationMark size={18} aria-hidden />
+          ) : (
+            <IconCheck size={18} aria-hidden />
+          ),
+        role: type === "error" ? "alert" : "status",
+        "aria-live": type === "error" ? "assertive" : "polite",
+        closeButtonProps: { "aria-label": t.toast.close },
+        autoClose: 4500,
+        withBorder: true,
+      });
     },
-    [dismiss],
+    [t.toast.close],
   );
-
   return (
     <ToastContext.Provider value={showToast}>
       {children}
-      <div className="toast-region" aria-live="polite" aria-relevant="additions">
-        {toasts.map((toast) => (
-          <div
-            className={`toast ${toast.type}`}
-            role={toast.type === "error" ? "alert" : "status"}
-            key={toast.id}
-          >
-            <span className="toast-icon" aria-hidden="true">
-              {toast.type === "success" ? "✓" : "!"}
-            </span>
-            <span>{toast.message}</span>
-            <button type="button" aria-label={t.toast.close} onClick={() => dismiss(toast.id)}>
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
+      <Notifications key={instance} position="top-right" limit={3} autoClose={4500} />
     </ToastContext.Provider>
   );
 }

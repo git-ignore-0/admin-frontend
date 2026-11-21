@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +88,7 @@ describe("users and points", () => {
     );
     expect(screen.getAllByRole("link", { name: `View details: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute("href", "/points");
 
     usersView.unmount();
     providers(<PointsManager />);
@@ -96,6 +98,33 @@ describe("users and points", () => {
     );
     expect(screen.getAllByRole("link", { name: `View points: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View points" })).toBeNull();
+  });
+
+  it("uses the same suspended status treatment in the directory and user detail", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => ({
+      data: path.startsWith("admin/users?")
+        ? [{ ...user, status: "suspended" }]
+        : {
+            ...user,
+            status: "suspended",
+            referral_code: "NFV1234567",
+            source: "organic",
+            referrer: null,
+            invited_count: 0,
+            invited_users: [],
+          },
+      meta: { page: 1, page_size: 30, total: 1, invited: { page: 1, page_size: 30, total: 0 } },
+    }));
+    const directory = providers(<UserDirectory />);
+    const listStatus = (await screen.findByText("Suspended")).closest(".mantine-Badge-root");
+    expect(listStatus).toHaveClass("mantine-Badge-root");
+    const statusStyle = listStatus?.getAttribute("style");
+    expect(statusStyle).toContain("red");
+    directory.unmount();
+    providers(<UserDetail userId={user.id} />);
+    const detailStatus = (await screen.findByText("Suspended")).closest(".mantine-Badge-root");
+    expect(detailStatus).toHaveClass("mantine-Badge-root");
+    expect(detailStatus?.getAttribute("style")).toBe(statusStyle);
   });
 
   it("searches from page one, clears to all users, and updates the pluralized result count", async () => {
@@ -155,7 +184,7 @@ describe("users and points", () => {
     expect(screen.getByRole("button", { name: "Clear filters" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByRole("navigation", { name: "Page {page}/{pages}" })).toHaveAttribute(
+    expect(screen.getByRole("navigation", { name: "Page 1/2" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
@@ -232,6 +261,10 @@ describe("users and points", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "User details" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
+    expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute(
+      "href",
+      `/points/${user.id}`,
+    );
     expect(screen.queryByText("Transaction history")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete|save profile/i })).not.toBeInTheDocument();
   });
@@ -254,7 +287,7 @@ describe("users and points", () => {
     });
     providers(<PointLedger userId={user.id} userName={user.name} />);
     await screen.findByText("Transaction history");
-    fireEvent.change(screen.getByLabelText("Direction"), { target: { value: "debit" } });
+    selectOption(screen.getByLabelText("Direction"), "debit");
     fireEvent.change(screen.getByLabelText("Points"), { target: { value: "100" } });
     fireEvent.change(screen.getByLabelText("Message *"), {
       target: { value: "Redeem vegetables" },
@@ -265,7 +298,7 @@ describe("users and points", () => {
     ).toBeInTheDocument();
     expect(api).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText("Direction"), { target: { value: "credit" } });
+    selectOption(screen.getByLabelText("Direction"), "credit");
     fireEvent.click(screen.getByRole("button", { name: "Create transaction" }));
     expect(await screen.findByRole("dialog", { name: "Confirm transaction" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));

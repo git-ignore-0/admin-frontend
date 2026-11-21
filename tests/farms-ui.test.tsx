@@ -185,7 +185,7 @@ it("keeps Farm edits and temporary photos when the Admin language changes", asyn
     target: { files: [new File(["image"], "farm.webp", { type: "image/webp" })] },
   });
   expect(await screen.findByRole("button", { name: "Chọn ảnh số 1" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "EN" }));
+  fireEvent.click(screen.getByRole("radio", { name: "EN" }));
   expect(screen.getByDisplayValue("Nông trại đang sửa")).toBeVisible();
   expect(screen.getByRole("button", { name: "Select image 1" })).toBeVisible();
   expect(mocks.get).toHaveBeenCalledTimes(1);
@@ -224,6 +224,19 @@ it("opens and focuses the missing language field before saving a Farm", async ()
   expect(screen.getByLabelText("Địa điểm *")).toHaveFocus();
   expect(mocks.save).not.toHaveBeenCalled();
 });
+
+it.each(["vi", "en"] as const)(
+  "focuses the missing %s Farm name through the shared Mantine fields",
+  async (language) => {
+    mocks.get.mockResolvedValue({ ...farm, [`name_${language}`]: "" });
+    view(<FarmEditor farmId="farm-1" />);
+    await screen.findByRole("button", { name: "Lưu thay đổi" });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Nhập tên và địa điểm ở cả hai ngôn ngữ.");
+    expect(screen.getByLabelText("Tên nông trại *")).toHaveFocus();
+    expect(mocks.save).not.toHaveBeenCalled();
+  },
+);
 
 it("preserves an existing cover image when the older Farm has no gallery rows", async () => {
   const cover = { id: "cover-1", url: "/cover.webp", width: 100, height: 100, variants: [] };
@@ -406,7 +419,7 @@ it("keeps product action failures visible in the detail pane", async () => {
 
   await screen.findByRole("button", { name: "Rau muống, Còn 10" });
   fireEvent.click(screen.getByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("button", { name: "Ngừng cung cấp" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Ngừng cung cấp" }));
 
   const detail = document.querySelector(".farm-product-detail-pane");
   expect(detail).not.toBeNull();
@@ -438,7 +451,7 @@ it("refreshes Farm inventory totals after changing a product supply status", asy
 
   expect(await screen.findByText("8 sản phẩm còn hàng")).toBeVisible();
   fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("button", { name: "Ngừng cung cấp" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Ngừng cung cấp" }));
 
   expect(await screen.findByText("7 sản phẩm còn hàng")).toBeVisible();
   expect(mocks.get).toHaveBeenCalledTimes(2);
@@ -478,19 +491,16 @@ it("links a catalog Product together with the first current-week stock batch", a
     );
     fireEvent.click(screen.getByRole("button", { name: "Thêm sản phẩm" }));
     const addDialog = screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" });
-    expect(
-      await within(addDialog).findByRole("option", { name: "Rau muống · RAU-01" }),
-    ).toBeVisible();
+    expect(await within(addDialog).findByRole("combobox", { name: "Sản phẩm" })).toHaveValue(
+      "Rau muống · RAU-01",
+    );
     expect(await within(addDialog).findByText("0.5 kg")).toBeVisible();
     expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("2026-10-26");
     expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("2026-11-01");
     fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
       target: { value: "2026-10-31" },
     });
-    expect(within(addDialog).getByRole("button", { name: "Tùy chọn" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(within(addDialog).getByRole("radio", { name: "Tùy chọn" })).toBeChecked();
     fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
       target: { value: "2026-11-01" },
     });
@@ -516,8 +526,8 @@ it("offers deactivation instead of removal when a Farm product has batch history
   view(<FarmProducts farmId="farm-1" />);
   expect(await screen.findByText("Rau muống", { selector: "strong" })).toBeVisible();
   fireEvent.click(screen.getByLabelText("Tùy chọn khác: Rau muống"));
-  expect(screen.getByRole("button", { name: "Ngừng cung cấp" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Ngừng cung cấp" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
   expect(mocks.removeLink).not.toHaveBeenCalled();
 });
 
@@ -568,10 +578,12 @@ it("lists stock batches and only allows editing an active or upcoming batch", as
   );
 
   view(<FarmProducts farmId="farm-1" />);
-  expect(await screen.findByText("Đang áp dụng", { selector: ".status" })).toBeVisible();
-  expect(screen.getByText("Đã hết hạn", { selector: ".status" })).toBeVisible();
-  expect(screen.getByText("Sắp áp dụng", { selector: ".status" })).toBeVisible();
-  expect(screen.getByText("Đã hủy", { selector: ".status" })).toBeVisible();
+  expect(
+    await screen.findByText("Đang áp dụng", { selector: ".mantine-Badge-label" }),
+  ).toBeVisible();
+  expect(screen.getByText("Đã hết hạn", { selector: ".mantine-Badge-label" })).toBeVisible();
+  expect(screen.getByText("Sắp áp dụng", { selector: ".mantine-Badge-label" })).toBeVisible();
+  expect(screen.getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(screen.getAllByText("Ban đầu 10 · Đã bán ròng 4 · Còn 6 · Khả dụng 6")).toHaveLength(4);
   expect(screen.getAllByText("3000 gói", { selector: "strong" })).toHaveLength(4);
   expect(screen.getAllByRole("button", { name: "Sửa thông tin" })).toHaveLength(2);
@@ -597,9 +609,9 @@ it("lists stock batches and only allows editing an active or upcoming batch", as
   );
   fireEvent.click((await screen.findAllByRole("button", { name: "Hủy đợt hàng" }))[0]);
   const cancelDialog = screen.getByRole("dialog", { name: "Hủy đợt hàng" });
-  expect(within(cancelDialog).getByRole("button", { name: "Hủy đợt hàng" })).toHaveClass(
-    "btn-danger",
-  );
+  expect(within(cancelDialog).getByRole("button", { name: "Hủy đợt hàng" })).toHaveStyle({
+    "--button-bg": "var(--mantine-color-red-filled)",
+  });
   fireEvent.click(within(cancelDialog).getByRole("button", { name: "Hủy đợt hàng" }));
   await waitFor(() =>
     expect(mocks.cancelBatch).toHaveBeenCalledWith("farm-1", "product-1", "batch-active", 2),
@@ -738,7 +750,7 @@ it("explains a concurrent product-link change without claiming stock history", a
   view(<FarmProducts farmId="farm-1" />);
   expect(await screen.findByText("Rau muống", { selector: "strong" })).toBeVisible();
   fireEvent.click(screen.getByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Gỡ sản phẩm" }));
   const dialog = screen.getByRole("dialog", { name: "Gỡ sản phẩm" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Gỡ sản phẩm" }));
   expect(await within(dialog).findByText(/Liên kết sản phẩm đã thay đổi/)).toBeVisible();
@@ -812,4 +824,19 @@ it("cleans an image upload that finishes after the Farm editor closes", async ()
   await waitFor(() =>
     expect(mocks.deleteImage).toHaveBeenCalledWith("orphan-1", { keepalive: true }),
   );
+});
+
+it("closes the product action menu with Escape and restores its trigger focus", async () => {
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  view(<FarmProducts farmId="farm-1" />);
+  const trigger = await screen.findByRole("button", { name: "Tùy chọn khác: Rau muống" });
+  trigger.focus();
+  fireEvent.click(trigger);
+  fireEvent.keyDown(await screen.findByRole("menu"), { key: "ArrowDown" });
+  const action = await screen.findByRole("menuitem", { name: "Ngừng cung cấp" });
+  await waitFor(() => expect(action).toHaveFocus());
+  fireEvent.keyDown(action, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  expect(trigger).toHaveFocus();
+  expect(mocks.active).not.toHaveBeenCalled();
 });

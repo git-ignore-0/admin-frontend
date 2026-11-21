@@ -1,5 +1,9 @@
 "use client";
 
+import { Status } from "@/components/nfv-controls";
+
+import { Button, Table, Alert } from "@mantine/core";
+
 import Image from "next/image";
 import Link from "next/link";
 import { DragEvent, useCallback, useState } from "react";
@@ -116,28 +120,28 @@ export function RewardList() {
             )}
           </div>
           {reorderError && (
-            <p className="error-box" role="alert">
+            <Alert color="red" role="alert">
               {reorderError}
-            </p>
+            </Alert>
           )}
           <div className="table-wrap admin-list-wrap">
-            <table className="table admin-list-table reward-list-table">
-              <thead>
-                <tr>
-                  <th aria-label={t.rewards.order} />
-                  <th>{t.rewards.reward}</th>
-                  <th>{t.rewards.pointCost}</th>
-                  <th>{t.rewards.statusLabel}</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className="admin-list-table reward-list-table">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th aria-label={t.rewards.order} />
+                  <Table.Th>{t.rewards.reward}</Table.Th>
+                  <Table.Th>{t.rewards.pointCost}</Table.Th>
+                  <Table.Th>{t.rewards.statusLabel}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {items.map((reward, index) => {
                   const translation =
                     reward.translations.find((item) => item.locale === locale) ??
                     reward.translations[0];
                   const name = translation?.name || t.rewards.untitled;
                   return (
-                    <tr
+                    <Table.Tr
                       className={draggedId === reward.id ? "is-dragging" : undefined}
                       key={reward.id}
                       onDragOver={(event) => {
@@ -152,9 +156,10 @@ export function RewardList() {
                         void moveReward(sourceId, reward.id);
                       }}
                     >
-                      <td data-label={t.rewards.order}>
+                      <Table.Td data-label={t.rewards.order}>
                         <div className="reward-order-controls">
-                          <button
+                          <Button
+                            variant="default"
                             aria-label={t.rewards.drag.replace("{name}", name)}
                             className="reward-drag-handle"
                             disabled={busy}
@@ -164,28 +169,30 @@ export function RewardList() {
                             type="button"
                           >
                             <span aria-hidden="true">⠿</span>
-                          </button>
+                          </Button>
                           <div className="reward-order-buttons">
-                            <button
+                            <Button
+                              variant="default"
                               aria-label={t.rewards.moveUp.replace("{name}", name)}
                               disabled={busy || index === 0}
                               onClick={() => void moveReward(reward.id, items[index - 1]?.id)}
                               type="button"
                             >
                               <span aria-hidden="true">↑</span>
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              variant="default"
                               aria-label={t.rewards.moveDown.replace("{name}", name)}
                               disabled={busy || index === items.length - 1}
                               onClick={() => void moveReward(reward.id, items[index + 1]?.id)}
                               type="button"
                             >
                               <span aria-hidden="true">↓</span>
-                            </button>
+                            </Button>
                           </div>
                         </div>
-                      </td>
-                      <td data-label={t.rewards.reward}>
+                      </Table.Td>
+                      <Table.Td data-label={t.rewards.reward}>
                         <div className="reward-cell">
                           <Image
                             alt=""
@@ -208,20 +215,22 @@ export function RewardList() {
                             </small>
                           </div>
                         </div>
-                      </td>
-                      <td data-label={t.rewards.pointCost}>
+                      </Table.Td>
+                      <Table.Td data-label={t.rewards.pointCost}>
                         <strong>{reward.point_cost}</strong>
-                      </td>
-                      <td data-label={t.rewards.statusLabel}>
-                        <span className={`badge ${reward.is_active ? "" : "warm"}`}>
-                          {reward.is_active ? t.rewards.active : t.rewards.inactive}
-                        </span>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                      <Table.Td data-label={t.rewards.statusLabel}>
+                        <Status
+                          domain="availability"
+                          status={reward.is_active ? "active" : "inactive"}
+                          label={reward.is_active ? t.rewards.active : t.rewards.inactive}
+                        />
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
-            </table>
+              </Table.Tbody>
+            </Table>
           </div>
         </>
       )}

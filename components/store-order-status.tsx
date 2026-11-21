@@ -19,12 +19,14 @@ export function StoreOrderStatusBadge({
   return (
     <span className="store-order-status-group">
       <Status
+        domain="order"
         className="store-order-status"
-        status={status === "payment_review" ? "pending_review" : status}
+        status={status}
         label={storeOrderStatusLabel(status, locale, order)}
       />
       {order.status === "cancelled" && order.refund_status ? (
         <Status
+          domain="refund"
           className="store-order-refund-status"
           status={order.refund_status === "pending" ? "refund_required" : "refunded"}
           label={storeRefundStatusLabel(order.refund_status, locale, order)}

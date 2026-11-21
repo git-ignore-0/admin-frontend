@@ -28,6 +28,28 @@ afterEach(() => {
 });
 
 describe("site settings form", () => {
+  it("replaces the loading status with an error when settings cannot be loaded", async () => {
+    let rejectLoad!: (reason: Error) => void;
+    vi.mocked(api).mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectLoad = reject;
+      }),
+    );
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <SiteSettingsForm />
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    expect(screen.getByRole("status")).toBeVisible();
+    rejectLoad(new Error("Settings service unavailable"));
+
+    expect(await screen.findByRole("alert")).not.toBeEmptyDOMElement();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+  });
+
   it.each([
     ["en", "See our farms"],
     ["vi", "Xem nông trại"],

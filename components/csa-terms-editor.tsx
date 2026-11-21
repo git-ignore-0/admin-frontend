@@ -1,6 +1,9 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Alert } from "@mantine/core";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Stack, Tabs as MantineTabs } from "@mantine/core";
 import { useRouter } from "next/navigation";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -12,7 +15,6 @@ import {
   FormTextarea,
   Icon,
   Status,
-  Tabs,
 } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { api } from "@/lib/client-api";
@@ -262,41 +264,53 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
   if (loading)
     return (
       <div className="csa-terms-editor">
-        <p>{copy.loading}</p>
+        <DataState kind="loading" title={copy.loading} />
       </div>
     );
 
   if (loadFailed)
     return (
       <div className="csa-terms-editor csa-terms-editor-shell">
-        <PageHeading backHref="/csa-terms" backLabel={copy.back} title={copy.viewTitle} />
-        <p className="error-box" role="alert">
+        <PageHeading
+          bottomSpacing={0}
+          backHref="/csa-terms"
+          backLabel={copy.back}
+          title={copy.viewTitle}
+        />
+        <Alert color="red" role="alert">
           {error}
-        </p>
+        </Alert>
       </div>
     );
 
   const heading = !document ? copy.createTitle : readOnly ? copy.viewTitle : copy.editTitle;
 
   const languageTabs = (
-    <Tabs
-      items={[
-        { value: "vi", label: copy.vietnamese },
-        { value: "en", label: copy.english },
-      ]}
-      label={copy.language}
-      onChange={(value) => setLocale(value as CSATermsLocale)}
-      value={locale}
-    />
+    <MantineTabs.List aria-label={copy.language}>
+      <MantineTabs.Tab value="vi">{copy.vietnamese}</MantineTabs.Tab>
+      <MantineTabs.Tab value="en">{copy.english}</MantineTabs.Tab>
+    </MantineTabs.List>
   );
 
   return (
-    <div className="csa-terms-editor csa-terms-editor-shell">
+    <MantineTabs
+      className="csa-terms-editor csa-terms-editor-shell"
+      value={locale}
+      onChange={(value) => {
+        if (value) setLocale(value as CSATermsLocale);
+      }}
+      keepMounted={false}
+    >
       <PageHeading
+        bottomSpacing={0}
         action={
           readOnly ? (
             <div className="csa-terms-heading-actions">
-              <Status status={document.status} label={copy.statuses[document.status]} />
+              <Status
+                domain="csa-terms"
+                status={document.status}
+                label={copy.statuses[document.status]}
+              />
               <Button
                 onClick={() => {
                   setCloneVersion("");
@@ -316,14 +330,14 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
         title={heading}
       />
       {error ? (
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
       {message ? (
-        <p className="success-box" role="status">
+        <Alert color="green" role="status">
           {message}
-        </p>
+        </Alert>
       ) : null}
 
       <div className="csa-terms-meta-bar">
@@ -343,147 +357,159 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
           )}
         </div>
         {!readOnly && document ? (
-          <Status status={document.status} label={copy.statuses[document.status]} />
+          <Status
+            domain="csa-terms"
+            status={document.status}
+            label={copy.statuses[document.status]}
+          />
         ) : null}
         <div className="csa-terms-language-tabs">{languageTabs}</div>
       </div>
 
-      {readOnly ? (
-        <section className="csa-terms-read-document">
-          <header>
-            <span>{copy.documentTitle}</span>
-            <h2>{draft.titles[locale]}</h2>
-          </header>
-          <div className="csa-terms-read-list">
-            {draft.clauses.map((clause, index) => (
-              <article className="csa-terms-read-clause" key={clause.key}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <div>
-                  {clause.headings[locale] ? <h3>{clause.headings[locale]}</h3> : null}
-                  {splitParagraphs(clause.paragraphs[locale]).map((paragraph, paragraphIndex) => (
-                    <p key={`${clause.key}-${paragraphIndex}`}>{paragraph}</p>
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : (
-        <>
-          <section className="csa-terms-title-field">
-            <FormField label={copy.documentTitle}>
-              <FormInput
-                disabled={busy}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    titles: { ...current.titles, [locale]: event.target.value },
-                  }))
-                }
-                value={draft.titles[locale]}
-              />
-            </FormField>
-          </section>
-
-          <div className="csa-terms-clauses">
-            {draft.clauses.map((clause, index) => (
-              <section className="csa-terms-edit-clause" key={clause.key}>
-                <header className="csa-terms-edit-clause-header">
-                  <span>{copy.clause.replace("{number}", String(index + 1))}</span>
-                  <div className="csa-terms-clause-actions">
-                    <Button
-                      aria-label={copy.moveUp}
-                      disabled={busy || index === 0}
-                      onClick={() => moveClause(index, -1)}
-                      small
-                      variant="plain"
-                    >
-                      <Icon name="up" />
-                    </Button>
-                    <Button
-                      aria-label={copy.moveDown}
-                      disabled={busy || index === draft.clauses.length - 1}
-                      onClick={() => moveClause(index, 1)}
-                      small
-                      variant="plain"
-                    >
-                      <Icon name="down" />
-                    </Button>
-                    <Button
-                      aria-label={copy.deleteClause}
-                      disabled={busy}
-                      onClick={() =>
-                        setDraft((current) => ({
-                          ...current,
-                          clauses: current.clauses.filter((_, itemIndex) => itemIndex !== index),
-                        }))
-                      }
-                      small
-                      variant="plain"
-                    >
-                      <Icon name="trash" />
-                    </Button>
-                  </div>
-                </header>
-                <div className="csa-terms-edit-clause-body">
-                  <FormField label={copy.heading}>
-                    <FormInput
-                      disabled={busy}
-                      onChange={(event) =>
-                        updateClause(index, (current) => ({
-                          ...current,
-                          headings: { ...current.headings, [locale]: event.target.value },
-                        }))
-                      }
-                      value={clause.headings[locale]}
-                    />
-                  </FormField>
-                  <FormField label={copy.content}>
-                    <FormTextarea
-                      disabled={busy}
-                      onChange={(event) =>
-                        updateClause(index, (current) => ({
-                          ...current,
-                          paragraphs: {
-                            ...current.paragraphs,
-                            [locale]: event.target.value,
-                          },
-                        }))
-                      }
-                      value={clause.paragraphs[locale]}
-                    />
-                  </FormField>
-                </div>
+      <MantineTabs.Panel value={locale}>
+        <Stack gap="md">
+          {readOnly ? (
+            <section className="csa-terms-read-document">
+              <header>
+                <span>{copy.documentTitle}</span>
+                <h2>{draft.titles[locale]}</h2>
+              </header>
+              <div className="csa-terms-read-list">
+                {draft.clauses.map((clause, index) => (
+                  <article className="csa-terms-read-clause" key={clause.key}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <div>
+                      {clause.headings[locale] ? <h3>{clause.headings[locale]}</h3> : null}
+                      {splitParagraphs(clause.paragraphs[locale]).map(
+                        (paragraph, paragraphIndex) => (
+                          <p key={`${clause.key}-${paragraphIndex}`}>{paragraph}</p>
+                        ),
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <>
+              <section className="csa-terms-title-field">
+                <FormField label={copy.documentTitle}>
+                  <FormInput
+                    disabled={busy}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        titles: { ...current.titles, [locale]: event.target.value },
+                      }))
+                    }
+                    value={draft.titles[locale]}
+                  />
+                </FormField>
               </section>
-            ))}
-          </div>
 
-          <Button
-            className="csa-terms-add-clause"
-            disabled={busy}
-            onClick={addClause}
-            variant="outline"
-          >
-            <Icon name="plus" />
-            {copy.addClause}
-          </Button>
+              <div className="csa-terms-clauses">
+                {draft.clauses.map((clause, index) => (
+                  <section className="csa-terms-edit-clause" key={clause.key}>
+                    <header className="csa-terms-edit-clause-header">
+                      <span>{copy.clause.replace("{number}", String(index + 1))}</span>
+                      <div className="csa-terms-clause-actions">
+                        <Button
+                          aria-label={copy.moveUp}
+                          disabled={busy || index === 0}
+                          onClick={() => moveClause(index, -1)}
+                          small
+                          variant="plain"
+                        >
+                          <Icon name="up" />
+                        </Button>
+                        <Button
+                          aria-label={copy.moveDown}
+                          disabled={busy || index === draft.clauses.length - 1}
+                          onClick={() => moveClause(index, 1)}
+                          small
+                          variant="plain"
+                        >
+                          <Icon name="down" />
+                        </Button>
+                        <Button
+                          aria-label={copy.deleteClause}
+                          disabled={busy}
+                          onClick={() =>
+                            setDraft((current) => ({
+                              ...current,
+                              clauses: current.clauses.filter(
+                                (_, itemIndex) => itemIndex !== index,
+                              ),
+                            }))
+                          }
+                          small
+                          variant="plain"
+                        >
+                          <Icon name="trash" />
+                        </Button>
+                      </div>
+                    </header>
+                    <div className="csa-terms-edit-clause-body">
+                      <FormField label={copy.heading}>
+                        <FormInput
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateClause(index, (current) => ({
+                              ...current,
+                              headings: { ...current.headings, [locale]: event.target.value },
+                            }))
+                          }
+                          value={clause.headings[locale]}
+                        />
+                      </FormField>
+                      <FormField label={copy.content}>
+                        <FormTextarea
+                          disabled={busy}
+                          onChange={(event) =>
+                            updateClause(index, (current) => ({
+                              ...current,
+                              paragraphs: {
+                                ...current.paragraphs,
+                                [locale]: event.target.value,
+                              },
+                            }))
+                          }
+                          value={clause.paragraphs[locale]}
+                        />
+                      </FormField>
+                    </div>
+                  </section>
+                ))}
+              </div>
 
-          <div className="csa-terms-footer-actions">
-            {document ? (
-              <Button disabled={busy} onClick={() => setDialog("delete")} variant="plain">
-                <Icon name="trash" />
-                {copy.deleteDraft}
+              <Button
+                className="csa-terms-add-clause"
+                disabled={busy}
+                onClick={addClause}
+                variant="outline"
+              >
+                <Icon name="plus" />
+                {copy.addClause}
               </Button>
-            ) : null}
-            <Button loading={busy} onClick={() => void saveDraft()} variant="outline">
-              {busy ? copy.saving : copy.save}
-            </Button>
-            <Button disabled={busy} onClick={() => setDialog("publish")}>
-              {copy.publish}
-            </Button>
-          </div>
-        </>
-      )}
+
+              <div className="csa-terms-footer-actions">
+                {document ? (
+                  <Button disabled={busy} onClick={() => setDialog("delete")} variant="plain">
+                    <Icon name="trash" />
+                    {copy.deleteDraft}
+                  </Button>
+                ) : null}
+                <Button loading={busy} onClick={() => void saveDraft()} variant="outline">
+                  {busy ? copy.saving : copy.save}
+                </Button>
+                <Button disabled={busy} onClick={() => setDialog("publish")}>
+                  {copy.publish}
+                </Button>
+              </div>
+            </>
+          )}
+        </Stack>
+      </MantineTabs.Panel>
 
       {dialog === "publish" ? (
         <ConfirmationDialog
@@ -536,6 +562,6 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
           </FormField>
         </ConfirmationDialog>
       ) : null}
-    </div>
+    </MantineTabs>
   );
 }

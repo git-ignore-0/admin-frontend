@@ -1,5 +1,8 @@
 "use client";
 
+import { Button, Table } from "@mantine/core";
+import { FormSelect, Status as UiStatus, FormField } from "@/components/nfv-controls";
+
 import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 
@@ -20,7 +23,7 @@ export function CustomerStatusBadge({ status }: { status: CSACustomer["status"] 
     history_only: t.csaCustomers.historyOnly,
     new: t.csaCustomers.newStatus,
   };
-  return <span className={`badge customer-status-${status}`}>{labels[status]}</span>;
+  return <UiStatus domain="csa-customer" status={status} label={labels[status]} />;
 }
 
 export function CSACustomerList() {
@@ -77,40 +80,38 @@ export function CSACustomerList() {
         clearLabel={t.common.clearFilters}
         filter={
           <div className="list-toolbar-filters">
-            <label className="field">
-              <span>{t.csaCustomers.linkedFilter}</span>
-              <select
-                className="input"
+            <FormField label={t.csaCustomers.linkedFilter} className="field">
+              <FormSelect
                 disabled={loading}
                 value={linked}
-                onChange={(event) => {
-                  setLinked(event.target.value);
+                onChange={(selectedValue) => {
+                  setLinked(selectedValue ?? "");
                   setPage(1);
                 }}
-              >
-                <option value="all">{t.csaCustomers.allLinks}</option>
-                <option value="linked">{t.csaCustomers.linked}</option>
-                <option value="managed">{t.csaCustomers.managed}</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>{t.csaCustomers.statusFilter}</span>
-              <select
-                className="input"
+                data={[
+                  { value: "all", label: t.csaCustomers.allLinks },
+                  { value: "linked", label: t.csaCustomers.linked },
+                  { value: "managed", label: t.csaCustomers.managed },
+                ]}
+              />
+            </FormField>
+            <FormField label={t.csaCustomers.statusFilter} className="field">
+              <FormSelect
                 disabled={loading}
                 value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value);
+                onChange={(selectedValue) => {
+                  setStatus(selectedValue ?? "");
                   setPage(1);
                 }}
-              >
-                <option value="">{t.csaCustomers.allStatuses}</option>
-                <option value="active">{t.csaCustomers.active}</option>
-                <option value="scheduled">{t.csaCustomers.scheduled}</option>
-                <option value="ended">{t.memberships.statuses.ended}</option>
-                <option value="revoked">{t.memberships.statuses.revoked}</option>
-              </select>
-            </label>
+                data={[
+                  { value: "", label: t.csaCustomers.allStatuses },
+                  { value: "active", label: t.csaCustomers.active },
+                  { value: "scheduled", label: t.csaCustomers.scheduled },
+                  { value: "ended", label: t.memberships.statuses.ended },
+                  { value: "revoked", label: t.memberships.statuses.revoked },
+                ]}
+              />
+            </FormField>
           </div>
         }
         hasFilters={hasFilters}
@@ -137,43 +138,45 @@ export function CSACustomerList() {
       />
       {items && items.length > 0 && (
         <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table customer-list-table">
-            <thead>
-              <tr>
-                <th>{t.csaCustomers.customer}</th>
-                <th>{t.csaCustomers.phone}</th>
-                <th>{t.csaCustomers.websiteAccount}</th>
-                <th>{t.csaCustomers.status}</th>
-                <th>{t.csaCustomers.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="admin-list-table customer-list-table">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t.csaCustomers.customer}</Table.Th>
+                <Table.Th>{t.csaCustomers.phone}</Table.Th>
+                <Table.Th>{t.csaCustomers.websiteAccount}</Table.Th>
+                <Table.Th>{t.csaCustomers.status}</Table.Th>
+                <Table.Th>{t.csaCustomers.actions}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td data-label={t.csaCustomers.customer}>
+                <Table.Tr key={item.id}>
+                  <Table.Td data-label={t.csaCustomers.customer}>
                     <strong>{item.name}</strong>
-                  </td>
-                  <td data-label={t.csaCustomers.phone}>{item.phone || "—"}</td>
-                  <td data-label={t.csaCustomers.websiteAccount}>
-                    <span className={`badge ${item.user ? "customer-account-linked" : "warm"}`}>
-                      {item.user ? t.csaCustomers.linkedAccount : t.csaCustomers.managed}
-                    </span>
-                  </td>
-                  <td data-label={t.csaCustomers.status}>
+                  </Table.Td>
+                  <Table.Td data-label={t.csaCustomers.phone}>{item.phone || "—"}</Table.Td>
+                  <Table.Td data-label={t.csaCustomers.websiteAccount}>
+                    <UiStatus
+                      domain="account-link"
+                      status={item.user ? "linked" : "managed"}
+                      label={item.user ? t.csaCustomers.linkedAccount : t.csaCustomers.managed}
+                    />
+                  </Table.Td>
+                  <Table.Td data-label={t.csaCustomers.status}>
                     <CustomerStatusBadge status={item.status} />
-                  </td>
-                  <td
+                  </Table.Td>
+                  <Table.Td
                     className="row-actions customer-list-action"
                     data-label={t.csaCustomers.actions}
                   >
-                    <Link className="button secondary" href={`/csa-customers/${item.id}`}>
+                    <Button component={Link} variant="default" href={`/csa-customers/${item.id}`}>
                       {t.csaCustomers.view}
-                    </Link>
-                  </td>
-                </tr>
+                    </Button>
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (

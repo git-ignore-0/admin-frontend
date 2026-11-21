@@ -1,4 +1,5 @@
 "use client";
+import { Table } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
@@ -140,7 +141,12 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
   if (!round || round.id !== roundId)
     return (
       <div className={styles.screen}>
-        <DetailPageHeading backHref="/csa-rounds" backLabel={c.back} title={c.title} />
+        <DetailPageHeading
+          bottomSpacing={0}
+          backHref="/csa-rounds"
+          backLabel={c.back}
+          title={c.title}
+        />
         {error ? (
           <DataState
             kind="error"
@@ -155,7 +161,12 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
   const disabled = loading || Boolean(error) || busy || companionBusy;
   return (
     <div className={styles.screen}>
-      <DetailPageHeading backHref="/csa-rounds" backLabel={c.back} title={round.name} />
+      <DetailPageHeading
+        bottomSpacing={0}
+        backHref="/csa-rounds"
+        backLabel={c.back}
+        title={round.name}
+      />
       {Boolean(error) && (
         <DataState
           kind="error"
@@ -165,7 +176,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       )}
       <section className={styles.overview} aria-label={c.scheduleTitle}>
         <div className={styles.overviewHeader}>
-          <Status status={round.status} label={c.statuses[round.status]} />
+          <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
           <div className={styles.actions}>
             <Button
               variant="outline"
@@ -220,22 +231,22 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       <Section title={c.demand}>
         {participants.demand.length ? (
           <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>{c.product}</th>
-                  <th>{c.quantity}</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className={styles.table}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{c.product}</Table.Th>
+                  <Table.Th>{c.quantity}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {participants.demand.map((row) => (
-                  <tr key={row.product_id}>
-                    <td data-label={c.product}>{row.name}</td>
-                    <td data-label={c.quantity}>{formatCsaQuantity(row, locale)}</td>
-                  </tr>
+                  <Table.Tr key={row.product_id}>
+                    <Table.Td data-label={c.product}>{row.name}</Table.Td>
+                    <Table.Td data-label={c.quantity}>{formatCsaQuantity(row, locale)}</Table.Td>
+                  </Table.Tr>
                 ))}
-              </tbody>
-            </table>
+              </Table.Tbody>
+            </Table>
           </div>
         ) : (
           <DataState kind="empty" title={c.emptyDemand} />
@@ -248,7 +259,11 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
               <article className={styles.person} key={person.id}>
                 <div className={styles.personHeader}>
                   <h3>{person.customer_name || c.customer}</h3>
-                  <Status status={person.state} label={c.states[person.state]} />
+                  <Status
+                    domain="csa-selection"
+                    status={person.state}
+                    label={c.states[person.state]}
+                  />
                 </div>
                 {person.lines.length ? (
                   <ul className={styles.personProducts}>

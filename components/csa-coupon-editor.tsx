@@ -1,4 +1,5 @@
 "use client";
+import { Alert, Stack } from "@mantine/core";
 
 import { useRouter } from "next/navigation";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -318,16 +319,7 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
   const headingAction = coupon ? (
     <div className="csa-coupon-heading-meta">
       <strong className="csa-coupon-code">{coupon.code}</strong>
-      <Status
-        status={
-          coupon.status === "scheduled"
-            ? "upcoming"
-            : coupon.status === "exhausted"
-              ? "inactive"
-              : coupon.status
-        }
-        label={copy.statuses[coupon.status]}
-      />
+      <Status domain="voucher" status={coupon.status} label={copy.statuses[coupon.status]} />
     </div>
   ) : null;
   const header = (
@@ -369,22 +361,24 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
           </p>
         )}
         {needsReload && (
-          <div className="error-box csa-coupon-global-error" role="alert">
-            <p>{copy.reloadFailed}</p>
-            <Button variant="outline" onClick={() => void reload()} type="button">
-              {copy.retry}
-            </Button>
-          </div>
+          <Alert color="red" className="csa-coupon-global-error" role="alert">
+            <Stack gap="sm" align="flex-start">
+              <p>{copy.reloadFailed}</p>
+              <Button variant="outline" onClick={() => void reload()} type="button">
+                {copy.retry}
+              </Button>
+            </Stack>
+          </Alert>
         )}
         {loadError && !needsReload && (
-          <p className="error-box csa-coupon-global-error" role="alert">
+          <Alert color="red" className="csa-coupon-global-error" role="alert">
             {loadError}
-          </p>
+          </Alert>
         )}
         {submitError && !needsReload && (
-          <p className="error-box csa-coupon-global-error" role="alert">
+          <Alert color="red" className="csa-coupon-global-error" role="alert">
             {submitError}
-          </p>
+          </Alert>
         )}
 
         <form aria-busy={busy || loading} className="csa-coupon-form" noValidate onSubmit={submit}>
@@ -398,21 +392,19 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
                   id="coupon-scope"
                   value={draft.application_scope}
                   disabled={locked || busy}
-                  onChange={(event) => {
-                    const scope = event.target.value as CouponApplicationScope;
+                  onChange={(value) => {
+                    const scope = value as CouponApplicationScope;
                     setDraft((current) => ({
                       ...current,
                       application_scope: scope,
                     }));
                     setFieldErrors({});
                   }}
-                >
-                  {(["csa", "store", "both"] as const).map((scope) => (
-                    <option key={scope} value={scope}>
-                      {copy.applicationScopes[scope]}
-                    </option>
-                  ))}
-                </FormSelect>
+                  data={(["csa", "store", "both"] as const).map((value) => ({
+                    value,
+                    label: copy.applicationScopes[value],
+                  }))}
+                />
               </div>
             </div>
             <div className="field csa-coupon-form-row">
@@ -447,17 +439,18 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
                 <FormSelect
                   disabled={locked || busy}
                   id="coupon-type"
-                  onChange={(event) => {
-                    update("discount_type", event.target.value as CouponDiscountType);
+                  onChange={(value) => {
+                    update("discount_type", value as CouponDiscountType);
                     update("discount_value", "");
                     update("maximum_discount_amount", "");
                     setFocusedMoney(null);
                   }}
                   value={draft.discount_type}
-                >
-                  <option value="percent">{copy.types.percent}</option>
-                  <option value="fixed">{copy.types.fixed}</option>
-                </FormSelect>
+                  data={[
+                    { value: "percent", label: copy.types.percent },
+                    { value: "fixed", label: copy.types.fixed },
+                  ]}
+                />
               </div>
             </div>
             <div className="csa-coupon-offer-rows">

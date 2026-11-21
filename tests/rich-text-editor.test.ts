@@ -3,12 +3,8 @@ import { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  normalizeLinkHref,
-  normalizeTiptapLinks,
-  setLinkForSelection,
-  toggleHeadingForSelection,
-} from "@/components/rich-text-editor";
+import { setLinkForSelection, toggleHeadingForSelection } from "@/components/rich-text-editor";
+import { normalizeLinkHref, normalizeTiptapLinks } from "@/lib/rich-text-links";
 
 let editor: Editor | undefined;
 

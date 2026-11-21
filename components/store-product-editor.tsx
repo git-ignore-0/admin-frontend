@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Stack, Alert, Button } from "@mantine/core";
+
+import { FormField, FormInput, FormSelect } from "@/components/nfv-controls";
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -9,7 +13,8 @@ import {
   BilingualContentFields,
   emptyBilingualContent,
 } from "@/components/bilingual-content-fields";
-import { RichTextEditor, normalizeTiptapLinks } from "@/components/rich-text-editor";
+import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
+import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import {
   descriptionChanged,
   descriptionDocument,
@@ -56,7 +61,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   const saveInFlightRef = useRef(false);
   const pendingImageIdRef = useRef<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const errorRef = useRef<HTMLParagraphElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const translationRef = useRef(t);
   translationRef.current = t;
   const [categories, setCategories] = useState<StoreCategory[]>([]);
@@ -217,7 +222,11 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   function fail(message: string, field?: string) {
     setError(message);
     requestAnimationFrame(() => {
-      const input = field ? formRef.current?.querySelector<HTMLElement>(`[name="${field}"]`) : null;
+      const input = field
+        ? formRef.current?.querySelector<HTMLElement>(
+            `[data-focus-field="${field}"], [name="${field}"]:not([type="hidden"])`,
+          )
+        : null;
       (input ?? errorRef.current)?.focus();
     });
   }
@@ -402,32 +411,28 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
 
   if (loadError)
     return (
-      <div className="panel">
-        <p className="error-box" role="alert">
-          {loadError}
-        </p>
-        <button className="button secondary" onClick={() => setLoadRetry((value) => value + 1)}>
-          {t.common.retry}
-        </button>
-      </div>
+      <DataState
+        kind="error"
+        title={loadError}
+        action={{ label: t.common.retry, onClick: () => setLoadRetry((value) => value + 1) }}
+      />
     );
-  if (!loaded) return <p role="status">{copy.loading}</p>;
+  if (!loaded) return <DataState kind="loading" title={copy.loading} />;
   const leafCategories = categories.filter(isSelectableCategory);
   return (
     <form className="catalog-editor" noValidate onSubmit={submit} ref={formRef}>
       {error && (
-        <p className="error-box" ref={errorRef} role="alert" tabIndex={-1}>
+        <Alert color="red" ref={errorRef} role="alert" tabIndex={-1}>
           {error}
-        </p>
+        </Alert>
       )}
       <section className="catalog-editor-section">
         <h2>{copy.products}</h2>
         <div className="form-grid">
-          <label className="field">
-            <span>{copy.sku} *</span>
-            <input
+          <FormField label={copy.sku + " *"} className="field">
+            <FormInput
               aria-describedby="store-product-sku-help"
-              className="input"
+
               disabled={busy}
               maxLength={80}
               name="sku"
@@ -438,32 +443,29 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
             <small className="field-help" id="store-product-sku-help">
               {copy.skuHelp}
             </small>
-          </label>
-          <label className="field">
-            <span>{copy.productCategory} *</span>
-            <select
+          </FormField>
+          <FormField label={copy.productCategory + " *"} className="field">
+            <FormSelect
               aria-describedby="store-product-category-help"
-              className="input"
               disabled={busy}
+              data-focus-field="category_id"
               name="category_id"
               value={categoryId}
-              onChange={(event) => setCategoryId(event.target.value)}
-            >
-              <option value="">{copy.selectLeaf}</option>
-              {leafCategories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {categoryPath(category, categories, locale)}
-                </option>
-              ))}
-            </select>
+              onChange={(selection) => setCategoryId(selection ?? "")}
+              data={[
+                { value: "", label: copy.selectLeaf },
+                ...leafCategories.map((category) => ({
+                  value: category.id,
+                  label: categoryPath(category, categories, locale),
+                })),
+              ]}
+            />
             <small className="field-help" id="store-product-category-help">
               {copy.categoryHelp}
             </small>
-          </label>
-          <label className="field">
-            <span>{copy.unitVi} *</span>
-            <input
-              className="input"
+          </FormField>
+          <FormField label={copy.unitVi + " *"} className="field">
+            <FormInput
               disabled={busy}
               maxLength={40}
               name="unit_label_vi"
@@ -471,11 +473,9 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
               value={unitVi}
               onChange={(event) => setUnitVi(event.target.value)}
             />
-          </label>
-          <label className="field">
-            <span>{copy.unitEn} *</span>
-            <input
-              className="input"
+          </FormField>
+          <FormField label={copy.unitEn + " *"} className="field">
+            <FormInput
               disabled={busy}
               maxLength={40}
               name="unit_label_en"
@@ -483,12 +483,11 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
               value={unitEn}
               onChange={(event) => setUnitEn(event.target.value)}
             />
-          </label>
-          <label className="field">
-            <span>{copy.unitSize} *</span>
-            <input
+          </FormField>
+          <FormField label={copy.unitSize + " *"} className="field">
+            <FormInput
               aria-describedby="store-product-unit-size-help"
-              className="input"
+
               disabled={busy}
               inputMode="decimal"
               name="unit_size"
@@ -499,18 +498,16 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
             <small className="field-help" id="store-product-unit-size-help">
               {copy.unitSizeHelp}
             </small>
-          </label>
-          <label className="field">
-            <span>{copy.price} *</span>
-            <input
-              className="input"
+          </FormField>
+          <FormField label={copy.price + " *"} className="field">
+            <FormInput
               disabled={busy}
               inputMode="numeric"
               name="retail_price_vnd"
               value={price}
               onChange={(event) => setPrice(sanitizeIntegerInput(event.target.value))}
             />
-          </label>
+          </FormField>
         </div>
       </section>
       <BilingualContentFields
@@ -522,7 +519,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         renderAfterDescription={(language) => (
           <div className="field full store-product-rich-description">
             <span>{copy.descriptionLabel}</span>
-            <RichTextEditor
+            <LazyRichTextEditor
               key={language}
               ariaLabel={copy.descriptionLabel}
               disabled={busy}
@@ -546,76 +543,75 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       />
       <section className="catalog-editor-section">
         <h2>{copy.saleType}</h2>
-        <label className="field">
-          <span>{copy.saleType}</span>
-          <select
-            className="input"
+        <FormField label={copy.saleType} className="field">
+          <FormSelect
             disabled={busy}
             value={csa ? "yes" : "no"}
-            onChange={(event) => {
-              const enabled = event.target.value === "yes";
+            onChange={(selection) => {
+              const enabled = (selection ?? "") === "yes";
               setCsa(enabled);
               if (!enabled) {
                 setGroupId("");
                 setQuotaCost("");
               }
             }}
-          >
-            <option value="no">{copy.retailOnly}</option>
-            <option value="yes">{copy.csaSaleOption}</option>
-          </select>
-        </label>
+            data={[
+              { value: "no", label: copy.retailOnly },
+              { value: "yes", label: copy.csaSaleOption },
+            ]}
+          />
+        </FormField>
         {csa && (
           <div className="form-grid">
-            <label className="field">
-              <span>{copy.quotaGroup} *</span>
-              <select
-                className="input"
+            <FormField label={copy.quotaGroup + " *"} className="field">
+              <FormSelect
                 disabled={busy || groupLoading}
+                data-focus-field="csa_quota_group_id"
                 name="csa_quota_group_id"
                 value={groupId}
-                onChange={(event) => setGroupId(event.target.value)}
-              >
-                <option value="">{copy.quotaGroup}</option>
-                {groups.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {localizedCatalogTranslation(group.translations, locale)?.name || group.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>{copy.quotaCost} *</span>
-              <input
-                className="input"
+                onChange={(selection) => setGroupId(selection ?? "")}
+                data={[
+                  { value: "", label: copy.quotaGroup },
+                  ...groups.map((group) => ({
+                    value: group.id,
+                    label:
+                      localizedCatalogTranslation(group.translations, locale)?.name || group.name,
+                  })),
+                ]}
+              />
+            </FormField>
+            <FormField label={copy.quotaCost + " *"} className="field">
+              <FormInput
                 disabled={busy}
                 inputMode="decimal"
                 name="csa_quota_cost"
                 value={quotaCost}
                 onChange={(event) => setQuotaCost(event.target.value.replace(/,/g, "."))}
               />
-            </label>
+            </FormField>
             {groupError && (
-              <p className="error-box" role="alert">
-                {groupError}
-                <button
-                  className="button secondary"
-                  onClick={() => setGroupRetry((value) => value + 1)}
-                  type="button"
-                >
-                  {t.common.retry}
-                </button>
-              </p>
+              <Alert color="red" role="alert">
+                <Stack gap="sm" align="flex-start">
+                  {groupError}
+                  <Button
+                    variant="default"
+                    onClick={() => setGroupRetry((value) => value + 1)}
+                    type="button"
+                  >
+                    {t.common.retry}
+                  </Button>
+                </Stack>
+              </Alert>
             )}
             {moreGroups && (
-              <button
-                className="button secondary"
+              <Button
+                variant="default"
                 disabled={groupLoading}
                 onClick={() => setGroupPage((value) => value + 1)}
                 type="button"
               >
                 {t.common.next}
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -651,43 +647,41 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       <section className="catalog-editor-section">
         <h2>{copy.status}</h2>
         <div className="form-grid">
-          <label className="field">
-            <span>{copy.activeLabel}</span>
-            <select
-              className="input"
+          <FormField label={copy.activeLabel} className="field">
+            <FormSelect
               disabled={busy}
               value={active ? "true" : "false"}
-              onChange={(event) => {
-                const value = event.target.value === "true";
+              onChange={(selection) => {
+                const value = (selection ?? "") === "true";
                 setActive(value);
                 if (!value) setPublished(false);
               }}
-            >
-              <option value="true">{copy.active}</option>
-              <option value="false">{copy.inactive}</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>{copy.publish}</span>
-            <select
-              className="input"
+              data={[
+                { value: "true", label: copy.active },
+                { value: "false", label: copy.inactive },
+              ]}
+            />
+          </FormField>
+          <FormField label={copy.publish} className="field">
+            <FormSelect
               disabled={busy}
               value={published ? "true" : "false"}
-              onChange={(event) => setPublished(event.target.value === "true")}
-            >
-              <option value="false">{copy.draft}</option>
-              <option value="true">{copy.published}</option>
-            </select>
-          </label>
+              onChange={(selection) => setPublished((selection ?? "") === "true")}
+              data={[
+                { value: "false", label: copy.draft },
+                { value: "true", label: copy.published },
+              ]}
+            />
+          </FormField>
         </div>
       </section>
       <div className="catalog-editor-actions">
-        <button className="button secondary" disabled={busy} onClick={cancel} type="button">
+        <Button variant="default" disabled={busy} onClick={cancel} type="button">
           {copy.cancel}
-        </button>
-        <button className="button" disabled={busy} type="submit">
+        </Button>
+        <Button disabled={busy} type="submit">
           {busy ? copy.saving : copy.save}
-        </button>
+        </Button>
       </div>
     </form>
   );

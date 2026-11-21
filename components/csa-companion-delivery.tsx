@@ -1,4 +1,5 @@
 "use client";
+import { Alert } from "@mantine/core";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -211,12 +212,7 @@ function CompanionDeliveryForm({
       ) : (
         <form className={styles.form} onSubmit={onSubmit}>
           <div>
-            <Status
-              status={
-                state === "accepting" ? "active" : state === "expired" ? "expired" : "inactive"
-              }
-              label={copy.states[state]}
-            />
+            <Status domain="companion-delivery" status={state} label={copy.states[state]} />
           </div>
           <dl className="detail-list">
             <div>
@@ -250,9 +246,9 @@ function CompanionDeliveryForm({
             />
           </FormField>
           {Boolean(error) && (
-            <p role="alert" className="error-box">
+            <Alert color="red" role="alert">
               {csaRoundError(error, locale, requestErrorMessage(error, t, fieldLabels))}
-            </p>
+            </Alert>
           )}
           <div className={styles.actions}>
             <Button type="submit" disabled={blocked || !valid || Boolean(unchanged)}>

@@ -153,7 +153,7 @@ describe("Store order actions", () => {
     const dialog = await open("Ghi nhận đã nhận tiền");
     fireEvent.click(within(dialog).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("Chờ hoàn", { selector: ".status" })).toBeVisible();
+    expect(await screen.findByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Duyệt đơn" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Xác nhận đã giao" })).not.toBeInTheDocument();
   });
@@ -211,7 +211,7 @@ describe("Store order actions", () => {
     expect(
       within(dialog).getByText("Hoàn tiền thủ công cho khách trước khi xác nhận tại đây."),
     ).toBeVisible();
-    expect(screen.getByText("Chờ hoàn", { selector: ".status" })).toBeVisible();
+    expect(screen.getByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeVisible();
     const confirm = within(dialog).getByRole("button", { name: "Xác nhận hoàn tiền" });
     expect(confirm).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("Ghi chú hoàn tiền"), {

@@ -9,6 +9,12 @@ export function normalizeAdminLocale(value?: string | null): AdminLocale {
 const vi = {
   common: {
     navigation: "Quản trị",
+    overviewGroup: "Tổng quan",
+    promotionsGroup: "Khuyến mãi",
+    communityGroup: "Cộng đồng",
+    websiteContentGroup: "Nội dung website",
+    settingsGroup: "Cài đặt",
+    accountMenu: "Tài khoản quản trị",
     dashboard: "Tổng quan",
     users: "Người dùng",
     pointsAndRewards: "Điểm & quà",
@@ -36,6 +42,7 @@ const vi = {
     testimonials: "Testimonials",
     logout: "Đăng xuất",
     language: "Ngôn ngữ",
+    passwordVisibility: "Hiện hoặc ẩn mật khẩu",
     vietnamese: "Tiếng Việt",
     english: "English",
     close: "Đóng",
@@ -1478,6 +1485,12 @@ export type AdminDictionary = typeof vi;
 const en: AdminDictionary = {
   common: {
     navigation: "Administration",
+    overviewGroup: "Overview",
+    promotionsGroup: "Promotions",
+    communityGroup: "Community",
+    websiteContentGroup: "Website content",
+    settingsGroup: "Settings",
+    accountMenu: "Admin account",
     dashboard: "Overview",
     users: "Users",
     pointsAndRewards: "Points & rewards",
@@ -1505,6 +1518,7 @@ const en: AdminDictionary = {
     testimonials: "Testimonials",
     logout: "Sign out",
     language: "Language",
+    passwordVisibility: "Show or hide password",
     vietnamese: "Tiếng Việt",
     english: "English",
     close: "Close",

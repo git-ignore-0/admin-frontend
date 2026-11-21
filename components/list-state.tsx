@@ -1,3 +1,7 @@
+"use client";
+
+import { Alert, Button, Group, Loader, Paper, Stack, Text } from "@mantine/core";
+
 export function ListState({
   empty,
   error,
@@ -17,30 +21,42 @@ export function ListState({
   onRetry: () => void;
   retryLabel: string;
 }) {
-  if (!hasData && loading) {
+  if (!hasData && loading)
     return (
-      <p className="list-state list-state-loading" role="status">
-        {loadingLabel}
-      </p>
+      <Paper p="md" withBorder>
+        <Group role="status" gap="sm">
+          <Loader size="sm" />
+          <Text size="sm">{loadingLabel}</Text>
+        </Group>
+      </Paper>
     );
-  }
-  if (error) {
+  if (error)
     return (
-      <div className="error-box retry-error" role="alert">
-        <p>{error}</p>
-        <button className="button secondary" onClick={onRetry} type="button">
-          {retryLabel}
-        </button>
-      </div>
+      <Alert color="red" role="alert">
+        <Stack gap="sm" align="flex-start">
+          <Text size="sm">{error}</Text>
+          <Button variant="default" onClick={onRetry} type="button">
+            {retryLabel}
+          </Button>
+        </Stack>
+      </Alert>
     );
-  }
-  if (loading) {
+  if (loading)
     return (
-      <p aria-live="polite" className="list-progress" role="status">
-        {loadingLabel}
-      </p>
+      <Group role="status" aria-live="polite" gap="xs" py="xs">
+        <Loader size="xs" />
+        <Text size="sm" c="dimmed">
+          {loadingLabel}
+        </Text>
+      </Group>
     );
-  }
-  if (isEmpty) return <div className="empty">{empty}</div>;
+  if (isEmpty)
+    return (
+      <Paper p="lg" withBorder>
+        <Text size="sm" c="dimmed" ta="center">
+          {empty}
+        </Text>
+      </Paper>
+    );
   return null;
 }

@@ -1,10 +1,13 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { Button as MantineButton, Group, Alert } from "@mantine/core";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DetailPageHeading } from "@/components/detail-page-heading";
-import { Button } from "@/components/nfv-controls";
+import { Button, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { UserAccountDialog, type UserAccountDialogAction } from "@/components/user-account-dialog";
@@ -103,15 +106,17 @@ function UserDetailView({ userId }: { userId: string }) {
   }
 
   const loadError = error && (
-    <div className="error-box" role="alert">
-      {error}{" "}
-      <Button onClick={reload} small variant="outline">
-        {t.common.retry}
-      </Button>
-    </div>
+    <Alert color="red" role="alert">
+      <Group gap="sm">
+        <span>{error}</span>
+        <Button onClick={reload} small variant="outline">
+          {t.common.retry}
+        </Button>
+      </Group>
+    </Alert>
   );
   if (!user || user.id !== userId) {
-    return loadError || <div className="panel">{t.users.loading}</div>;
+    return loadError || <DataState kind="loading" title={t.users.loading} />;
   }
   const statusAction =
     user.status === "pending_activation"
@@ -123,9 +128,9 @@ function UserDetailView({ userId }: { userId: string }) {
           : null;
   const actionsDisabled = loading || busy || Boolean(error) || dialog !== null;
   const actionAlert = actionError && (
-    <p className="error-box" role="alert">
+    <Alert color="red" role="alert">
       {actionError}
-    </p>
+    </Alert>
   );
   return (
     <>
@@ -135,6 +140,15 @@ function UserDetailView({ userId }: { userId: string }) {
         title={t.users.detailTitle}
         description={userIdentityLabel(user)}
       />
+      <Group gap="xs">
+        <MantineButton
+          component={Link}
+          href={`/points/${encodeURIComponent(user.id)}`}
+          variant="outline"
+        >
+          {t.common.managePoints}
+        </MantineButton>
+      </Group>
       {loadError}
       {statusAction ? (
         <section className="panel" aria-label={copy.title}>
@@ -198,9 +212,13 @@ function UserDetailView({ userId }: { userId: string }) {
           <div>
             <dt>{t.users.status}</dt>
             <dd>
-              <span className="badge">
-                {t.users.statuses[user.status as keyof typeof t.users.statuses] ?? user.status}
-              </span>
+              <Status
+                domain="user"
+                status={user.status}
+                label={
+                  t.users.statuses[user.status as keyof typeof t.users.statuses] ?? user.status
+                }
+              />
             </dd>
           </div>
           <div>
@@ -227,7 +245,7 @@ function UserDetailView({ userId }: { userId: string }) {
             <h2>{t.users.invited.replace("{count}", String(user.invited_count))}</h2>
           </div>
           {user.invited_users.length === 0 ? (
-            <div className="empty">{t.users.invitedEmpty}</div>
+            <DataState kind="empty" title={t.users.invitedEmpty} />
           ) : (
             <ul className="invited-list">
               {user.invited_users.map((invitee) => (
@@ -236,10 +254,14 @@ function UserDetailView({ userId }: { userId: string }) {
                     <strong>{invitee.name}</strong>
                     <small>{invitee.email || t.users.emailMissing}</small>
                   </span>
-                  <span className="badge">
-                    {t.users.statuses[invitee.status as keyof typeof t.users.statuses] ??
-                      invitee.status}
-                  </span>
+                  <Status
+                    domain="user"
+                    status={invitee.status}
+                    label={
+                      t.users.statuses[invitee.status as keyof typeof t.users.statuses] ??
+                      invitee.status
+                    }
+                  />
                 </li>
               ))}
             </ul>

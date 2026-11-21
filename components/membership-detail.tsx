@@ -1,4 +1,14 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { Button, Table, Badge, Alert } from "@mantine/core";
+import {
+  FormInput,
+  FormSelect,
+  FormTextarea,
+  Status as UiStatus,
+  FormField,
+} from "@/components/nfv-controls";
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -331,16 +341,17 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   if (loadError && !item)
     return (
       <div className="panel load-error-state">
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {requestErrorMessage(loadError, t)}
-        </p>
-        <button
-          className="button secondary"
+        </Alert>
+        <Button
+          type="submit"
+          variant="default"
           disabled={loading}
           onClick={() => void loadMembership()}
         >
           {t.common.retry}
-        </button>
+        </Button>
       </div>
     );
   if (!item) return <div className="panel">{t.memberships.loadingDetail}</div>;
@@ -380,17 +391,17 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
       </div>
       {loadError && (
         <div className="load-error-state">
-          <p className="error-box" role="alert">
+          <Alert color="red" role="alert">
             {requestErrorMessage(loadError, t)}
-          </p>
-          <button
-            className="button secondary"
+          </Alert>
+          <Button
+            variant="default"
             disabled={loading}
             onClick={() => void loadMembership()}
             type="button"
           >
             {t.common.retry}
-          </button>
+          </Button>
         </div>
       )}
       <section className="membership-hero" aria-labelledby="membership-summary-title">
@@ -445,17 +456,19 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
         </div>
         <div className="membership-hero-actions">
           {item.status === "active" && (
-            <button
-              className="button"
+            <Button
+              type="submit"
+
               disabled={saving || !item.quota?.length}
               onClick={openCreate}
             >
               {t.memberships.createUsage}
-            </button>
+            </Button>
           )}
           {(item.status === "active" || item.status === "scheduled") && (
-            <button
-              className="button danger"
+            <Button
+              type="submit"
+              color="red"
               disabled={saving}
               onClick={() => {
                 setRevokeReason("");
@@ -465,11 +478,11 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
               ref={revokeButtonRef}
             >
               {t.memberships.revokeButton}
-            </button>
+            </Button>
           )}
         </div>
       </section>
-      {item.status === "scheduled" && <p className="notice-box">{t.memberships.scheduledNotice}</p>}
+      {item.status === "scheduled" && <Alert color="yellow">{t.memberships.scheduledNotice}</Alert>}
       <div className="membership-detail-grid">
         <section className="panel membership-wide">
           <div className="panel-head">
@@ -516,19 +529,15 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
             <p>{t.memberships.contractLoading}</p>
           ) : contractError ? (
             <div className="load-error-state">
-              <p className="error-box" role="alert">
+              <Alert color="red" role="alert">
                 {contractError}
-              </p>
-              <button
-                className="button secondary"
-                onClick={() => void loadContract()}
-                type="button"
-              >
+              </Alert>
+              <Button variant="default" onClick={() => void loadContract()} type="button">
                 {t.common.retry}
-              </button>
+              </Button>
             </div>
           ) : !contract ? (
-            <div className="empty compact">{t.memberships.contractEmpty}</div>
+            <DataState kind="empty" title={t.memberships.contractEmpty} compact />
           ) : (
             <>
               <dl className="detail-list">
@@ -545,8 +554,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
               {!contract.current_version && !contract.versions?.length ? (
                 <div className="membership-contract-actions">
                   {contract.available_locales.includes("vi") && (
-                    <button
-                      className="button secondary"
+                    <Button
+                      variant="default"
                       disabled={downloadingContracts.has("current:vi")}
                       onClick={() => void downloadContract("vi")}
                       type="button"
@@ -554,11 +563,11 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                       {downloadingContracts.has("current:vi")
                         ? t.memberships.downloadingContract
                         : t.memberships.downloadContractVi}
-                    </button>
+                    </Button>
                   )}
                   {contract.available_locales.includes("en") && (
-                    <button
-                      className="button secondary"
+                    <Button
+                      variant="default"
                       disabled={downloadingContracts.has("current:en")}
                       onClick={() => void downloadContract("en")}
                       type="button"
@@ -566,7 +575,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                       {downloadingContracts.has("current:en")
                         ? t.memberships.downloadingContract
                         : t.memberships.downloadContractEn}
-                    </button>
+                    </Button>
                   )}
                 </div>
               ) : null}
@@ -585,7 +594,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                               {t.memberships.contractVersion} {version.version_number}
                             </h4>
                             {current && (
-                              <span className="badge">{t.memberships.contractCurrentVersion}</span>
+                              <Badge color="gray">{t.memberships.contractCurrentVersion}</Badge>
                             )}
                           </div>
                           <dl className="membership-contract-version-meta">
@@ -630,8 +639,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                             {version.available_locales.map((pdfLocale) => {
                               const key = `${version.id}:${pdfLocale}`;
                               return (
-                                <button
-                                  className="button secondary"
+                                <Button
+                                  variant="default"
                                   disabled={downloadingContracts.has(key)}
                                   key={pdfLocale}
                                   onClick={() => void downloadContract(pdfLocale, version.id)}
@@ -642,7 +651,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                                     : pdfLocale === "vi"
                                       ? t.memberships.downloadContractVi
                                       : t.memberships.downloadContractEn}
-                                </button>
+                                </Button>
                               );
                             })}
                           </div>
@@ -653,9 +662,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                 )}
               </div>
               {contractPdfError && (
-                <p className="error-box" role="alert">
+                <Alert color="red" role="alert">
                   {contractPdfError}
-                </p>
+                </Alert>
               )}
             </>
           )}
@@ -665,49 +674,49 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
             <h2>{t.memberships.cycles}</h2>
           </div>
           {!cycleRows.length ? (
-            <div className="empty compact">{t.memberships.noCycles}</div>
+            <DataState kind="empty" title={t.memberships.noCycles} compact />
           ) : (
             <div className="table-wrap">
-              <table aria-label={t.memberships.cycles} className="table cycle-quota-table">
-                <thead>
-                  <tr>
-                    <th>{t.memberships.cycleReceipt}</th>
-                    <th>{t.memberships.cycleRange}</th>
-                    <th>{t.memberships.granted}</th>
-                    <th>{t.memberships.received}</th>
-                    <th>{t.memberships.remaining}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table aria-label={t.memberships.cycles} className="cycle-quota-table">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t.memberships.cycleReceipt}</Table.Th>
+                    <Table.Th>{t.memberships.cycleRange}</Table.Th>
+                    <Table.Th>{t.memberships.granted}</Table.Th>
+                    <Table.Th>{t.memberships.received}</Table.Th>
+                    <Table.Th>{t.memberships.remaining}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {cycleRows.map(({ cycle, quantities }) => (
-                    <tr key={cycle.sequence}>
-                      <td>
+                    <Table.Tr key={cycle.sequence}>
+                      <Table.Td>
                         <strong>
                           {t.memberships.cycle.replace("{number}", String(cycle.sequence))}
                         </strong>
-                      </td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>
                         {formatAdminDate(cycle.start_date)} –{" "}
                         {formatAdminDate(membershipLastReceiptDate(cycle.end_date))}
-                      </td>
-                      <td>{quantity(quantities?.granted)}</td>
-                      <td>{quantity(quantities?.received)}</td>
-                      <td>
+                      </Table.Td>
+                      <Table.Td>{quantity(quantities?.granted)}</Table.Td>
+                      <Table.Td>{quantity(quantities?.received)}</Table.Td>
+                      <Table.Td>
                         <strong>{quantity(quantities?.remaining)}</strong>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <th scope="row">{t.memberships.total}</th>
-                    <td />
-                    <td>{quantity(cycleTotal?.granted)}</td>
-                    <td>{quantity(cycleTotal?.received)}</td>
-                    <td>{quantity(cycleTotal?.remaining)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+                </Table.Tbody>
+                <Table.Tfoot>
+                  <Table.Tr>
+                    <Table.Th scope="row">{t.memberships.total}</Table.Th>
+                    <Table.Td />
+                    <Table.Td>{quantity(cycleTotal?.granted)}</Table.Td>
+                    <Table.Td>{quantity(cycleTotal?.received)}</Table.Td>
+                    <Table.Td>{quantity(cycleTotal?.remaining)}</Table.Td>
+                  </Table.Tr>
+                </Table.Tfoot>
+              </Table>
             </div>
           )}
         </section>
@@ -717,36 +726,43 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <h2>{t.memberships.usageHistory}</h2>
         </div>
         {historyError && (
-          <p className="error-box" role="alert">
+          <Alert color="red" role="alert">
             {historyError}
-          </p>
+          </Alert>
         )}
         {!history ? (
           historyError ? null : (
             <p>{t.memberships.loadingHistory}</p>
           )
         ) : !history.length ? (
-          <div className="empty compact">{t.memberships.noUsage}</div>
+          <DataState kind="empty" title={t.memberships.noUsage} compact />
         ) : (
           <div className="usage-list">
             {history.map((usage) => (
               <article className="usage-card" key={usage.id}>
                 <div className="usage-card-head">
                   <div>
-                    <span className={`badge membership-status ${usage.status}`}>
-                      {t.memberships.usageStatuses[usage.status]}
-                    </span>
+                    <UiStatus
+                      domain="membership-usage"
+                      status={usage.status}
+                      label={t.memberships.usageStatuses[usage.status]}
+                    />
                     <time>{formatAdminDateTime(usage.created_at)}</time>
                   </div>
                   {usage.order_id ? (
-                    <Link className="button secondary" href={`/store-orders/${usage.order_id}`}>
+                    <Button
+                      component={Link}
+                      variant="default"
+                      href={`/store-orders/${usage.order_id}`}
+                    >
                       {csaRoundsCopy(locale).order}
-                    </Link>
+                    </Button>
                   ) : (
                     usage.status === "applied" &&
                     item.status !== "revoked" && (
-                      <button
-                        className="button secondary"
+                      <Button
+                        type="submit"
+                        variant="default"
                         disabled={saving}
                         onClick={() => {
                           setUndoItem(usage);
@@ -755,7 +771,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                         }}
                       >
                         {t.memberships.undoUsage}
-                      </button>
+                      </Button>
                     )
                   )}
                 </div>
@@ -764,7 +780,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     <li key={line.product_id}>
                       <strong>{line.product_name}</strong>
                       {line.snapshot_complete === false && (
-                        <span className="badge warm">{t.memberships.legacySnapshotWarning}</span>
+                        <Badge color="orange">{t.memberships.legacySnapshotWarning}</Badge>
                       )}
                       <span>
                         {line.units} {t.memberships.units}
@@ -825,33 +841,39 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <div className="usage-lines">
             {usageLines.map((line, index) => (
               <div className="usage-line" key={index}>
-                <label className="field">
-                  <span>{t.memberships.product} *</span>
-                  <select
+                <FormField label={t.memberships.product + " *"} className="field">
+                  <FormSelect
                     aria-label={`${t.memberships.product} ${index + 1}`}
-                    className="input"
                     disabled={saving}
-                    onChange={(event) => updateUsageLine(index, { productId: event.target.value })}
+                    onChange={(selectedValue) =>
+                      updateUsageLine(index, { productId: selectedValue ?? "" })
+                    }
                     value={line.productId}
-                  >
-                    {item.quota
-                      ?.filter(
-                        (quota) =>
-                          !selected.has(quota.product_id) || quota.product_id === line.productId,
-                      )
-                      .map((quota) => (
-                        <option key={quota.product_id} value={quota.product_id}>
-                          {quota.product_name} ({t.memberships.remaining}: {quota.remaining_units})
-                        </option>
-                      ))}
-                  </select>
-                </label>
+                    data={[
+                      ...(item.quota
+                        ?.filter(
+                          (quota) =>
+                            !selected.has(quota.product_id) || quota.product_id === line.productId,
+                        )
+                        .map((quota) => ({
+                          value: quota.product_id,
+                          label:
+                            quota.product_name +
+                            "(" +
+                            t.memberships.remaining +
+                            ":" +
+                            quota.remaining_units +
+                            ")",
+                        })) ?? []),
+                    ]}
+                  />
+                </FormField>
                 <label className="field">
                   <span>{t.memberships.units} *</span>
-                  <input
+                  <FormInput
                     aria-label={`${t.memberships.units} ${index + 1}`}
                     aria-invalid={Boolean(usageUnitErrors[index])}
-                    className="input"
+
                     disabled={saving}
                     inputMode="decimal"
                     onChange={(event) => {
@@ -869,8 +891,8 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     </small>
                   ) : null}
                 </label>
-                <button
-                  className="button secondary"
+                <Button
+                  variant="default"
                   disabled={saving || usageLines.length === 1}
                   onClick={() =>
                     setUsageLines((current) =>
@@ -880,12 +902,13 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                   type="button"
                 >
                   {t.memberships.removeLine}
-                </button>
+                </Button>
               </div>
             ))}
           </div>
-          <button
-            className="button secondary add-usage-line"
+          <Button
+            className="add-usage-line"
+            variant="default"
             disabled={saving || selected.size >= (item.quota?.length ?? 0)}
             onClick={() => {
               const next = item.quota?.find((quota) => !selected.has(quota.product_id));
@@ -898,11 +921,10 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
             type="button"
           >
             {t.memberships.addLine}
-          </button>
+          </Button>
           <label className="field usage-note">
             <span>{t.memberships.note}</span>
-            <textarea
-              className="textarea"
+            <FormTextarea
               disabled={saving}
               maxLength={500}
               onChange={(event) => setUsageNote(event.target.value)}
@@ -928,9 +950,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <p>{t.memberships.undoBody}</p>
           <label className="field">
             <span>{t.memberships.reason} *</span>
-            <textarea
+            <FormTextarea
               autoFocus
-              className="textarea"
+
               disabled={saving}
               maxLength={1000}
               onChange={(event) => setUndoReason(event.target.value)}
@@ -957,9 +979,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <p>{t.memberships.revokeBody.replace("{package}", item.package_name)}</p>
           <label className="field">
             <span>{t.memberships.revokeReason}</span>
-            <textarea
+            <FormTextarea
               autoFocus
-              className="textarea"
+
               disabled={saving}
               maxLength={500}
               onChange={(event) => setRevokeReason(event.target.value)}

@@ -1,4 +1,5 @@
 "use client";
+import { Table } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ActionLink, DataState, Status } from "@/components/nfv-controls";
@@ -41,6 +42,7 @@ export function CSARoundList() {
   return (
     <section className="admin-list-section" aria-busy={items === null && !error}>
       <PageHeading
+        bottomSpacing={0}
         title={c.title}
         action={<ActionLink href="/csa-rounds/new">{c.create}</ActionLink>}
       />
@@ -56,43 +58,47 @@ export function CSARoundList() {
         <DataState kind="empty" title={c.empty} />
       ) : (
         <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table" aria-label={c.title}>
-            <thead>
-              <tr>
+          <Table className="admin-list-table" aria-label={c.title}>
+            <Table.Thead>
+              <Table.Tr>
                 {[c.name, c.state, c.selectionWindow, c.delivery, c.action].map((label) => (
-                  <th key={label} scope="col">
+                  <Table.Th key={label} scope="col">
                     {label}
-                  </th>
+                  </Table.Th>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td data-label={c.name}>
+                <Table.Tr key={item.id}>
+                  <Table.Td data-label={c.name}>
                     <strong>{item.name}</strong>
-                  </td>
-                  <td data-label={c.state}>
-                    <Status status={item.status} label={c.statuses[item.status]} />
-                  </td>
-                  <td data-label={c.selectionWindow}>
+                  </Table.Td>
+                  <Table.Td data-label={c.state}>
+                    <Status
+                      domain="csa-round"
+                      status={item.status}
+                      label={c.statuses[item.status]}
+                    />
+                  </Table.Td>
+                  <Table.Td data-label={c.selectionWindow}>
                     <time dateTime={item.opens_at}>{formatAdminDateTime(item.opens_at)}</time>
                     <small className="table-secondary">
                       → <time dateTime={item.closes_at}>{formatAdminDateTime(item.closes_at)}</time>
                     </small>
-                  </td>
-                  <td data-label={c.delivery}>
+                  </Table.Td>
+                  <Table.Td data-label={c.delivery}>
                     <time dateTime={item.delivery_date}>{formatAdminDate(item.delivery_date)}</time>
-                  </td>
-                  <td data-label={c.action}>
+                  </Table.Td>
+                  <Table.Td data-label={c.action}>
                     <ActionLink href={`/csa-rounds/${item.id}`} small variant="outline">
                       {c.view}
                     </ActionLink>
-                  </td>
-                </tr>
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (

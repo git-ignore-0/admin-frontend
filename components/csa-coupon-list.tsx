@@ -1,4 +1,5 @@
 "use client";
+import { Table } from "@mantine/core";
 
 import { useCallback, useState } from "react";
 
@@ -56,49 +57,47 @@ export function CSACouponList() {
           <FormSelect
             disabled={loading}
             value={applicationScope}
-            onChange={(event) => {
-              setApplicationScope(event.target.value as CouponApplicationScope | "");
+            onChange={(value) => {
+              setApplicationScope((value ?? "") as CouponApplicationScope | "");
               setPage(1);
             }}
-          >
-            <option value="">{copy.all}</option>
-            {(["csa", "store", "both"] as const).map((scope) => (
-              <option key={scope} value={scope}>
-                {copy.applicationScopes[scope]}
-              </option>
-            ))}
-          </FormSelect>
+            data={[
+              { value: "", label: copy.all },
+              ...(["csa", "store", "both"] as const).map((value) => ({
+                value,
+                label: copy.applicationScopes[value],
+              })),
+            ]}
+          />
         </FormField>
         <FormField label={copy.filterStatus}>
           <FormSelect
             disabled={loading}
-            onChange={(event) => {
-              setStatus(event.target.value as CouponStatus | "");
+            onChange={(value) => {
+              setStatus((value ?? "") as CouponStatus | "");
               setPage(1);
             }}
             value={status}
-          >
-            <option value="">{copy.all}</option>
-            {(Object.keys(copy.statuses) as CouponStatus[]).map((key) => (
-              <option key={key} value={key}>
-                {copy.statuses[key]}
-              </option>
-            ))}
-          </FormSelect>
+            data={[
+              { value: "", label: copy.all },
+              ...Object.entries(copy.statuses).map(([value, label]) => ({ value, label })),
+            ]}
+          />
         </FormField>
         <FormField label={copy.filterType}>
           <FormSelect
             disabled={loading}
-            onChange={(event) => {
-              setDiscountType(event.target.value as CouponDiscountType | "");
+            onChange={(value) => {
+              setDiscountType((value ?? "") as CouponDiscountType | "");
               setPage(1);
             }}
             value={discountType}
-          >
-            <option value="">{copy.all}</option>
-            <option value="percent">{copy.types.percent}</option>
-            <option value="fixed">{copy.types.fixed}</option>
-          </FormSelect>
+            data={[
+              { value: "", label: copy.all },
+              { value: "percent", label: copy.types.percent },
+              { value: "fixed", label: copy.types.fixed },
+            ]}
+          />
         </FormField>
       </div>
       {error ? (
@@ -110,79 +109,74 @@ export function CSACouponList() {
       ) : null}
       {items && items.length > 0 && (
         <div className={styles.tableWrap}>
-          <table aria-label={copy.title} className={styles.table} role="table">
-            <thead role="rowgroup">
-              <tr role="row">
-                <th scope="col" role="columnheader">
+          <Table aria-label={copy.title} className={styles.table} role="table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th scope="col" role="columnheader">
                   {copy.code}
-                </th>
-                <th scope="col" role="columnheader">
+                </Table.Th>
+                <Table.Th scope="col" role="columnheader">
                   {copy.offer}
-                </th>
-                <th scope="col" role="columnheader">
+                </Table.Th>
+                <Table.Th scope="col" role="columnheader">
                   {copy.scope}
-                </th>
-                <th scope="col" role="columnheader">
+                </Table.Th>
+                <Table.Th scope="col" role="columnheader">
                   {copy.validity}
-                </th>
-                <th scope="col" role="columnheader">
+                </Table.Th>
+                <Table.Th scope="col" role="columnheader">
                   {copy.used}
-                </th>
-                <th scope="col" role="columnheader">
+                </Table.Th>
+                <Table.Th scope="col" role="columnheader">
                   {copy.status}
-                </th>
-                <th scope="col" role="columnheader">
+                </Table.Th>
+                <Table.Th scope="col" role="columnheader">
                   {copy.action}
-                </th>
-              </tr>
-            </thead>
-            <tbody role="rowgroup">
+                </Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
-                <tr key={item.id} role="row">
-                  <td role="cell" data-label={copy.code}>
+                <Table.Tr key={item.id} role="row">
+                  <Table.Td role="cell" data-label={copy.code}>
                     <strong className={styles.code}>{item.code}</strong>
-                  </td>
-                  <td role="cell" data-label={copy.offer}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={copy.offer}>
                     <span>{couponOffer(item, locale)}</span>
-                  </td>
-                  <td role="cell" data-label={copy.scope}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={copy.scope}>
                     <span>{couponScopeSummary(item, t)}</span>
-                  </td>
-                  <td role="cell" data-label={copy.validity}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={copy.validity}>
                     <span>
                       {formatAdminDate(item.starts_at)} –{" "}
                       {formatAdminDate(
                         new Date(new Date(item.expires_at).getTime() - 1).toISOString(),
                       )}
                     </span>
-                  </td>
-                  <td role="cell" data-label={copy.used}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={copy.used}>
                     <span>
                       {item.used_count} / {item.usage_limit}
                     </span>
-                  </td>
-                  <td role="cell" data-label={copy.status}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={copy.status}>
                     <Status
-                      status={
-                        item.status === "scheduled"
-                          ? "upcoming"
-                          : item.status === "exhausted"
-                            ? "inactive"
-                            : item.status
-                      }
+                      domain="voucher"
+                      status={item.status}
                       label={copy.statuses[item.status]}
                     />
-                  </td>
-                  <td role="cell" data-label={copy.action}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={copy.action}>
                     <ActionLink variant="outline" href={`/csa-coupons/${item.id}`}>
                       <Icon name="edit" />
                       {copy.edit}
                     </ActionLink>
-                  </td>
-                </tr>
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
+            </Table.Tbody>
+          </Table>
         </div>
       )}
       {meta && (

@@ -1,3 +1,4 @@
+import { Button } from "@mantine/core";
 import Link from "next/link";
 import { CSACustomerList } from "@/components/csa-customer-list";
 import { PageHeading } from "@/components/page-heading";
@@ -11,9 +12,9 @@ export default async function Page() {
         title={t.csaCustomers.title}
         description={t.page.csaCustomersDescription}
         action={
-          <Link className="button customer-add-action" href="/csa-customers/new">
+          <Button component={Link} className="customer-add-action" href="/csa-customers/new">
             {t.csaCustomers.add}
-          </Link>
+          </Button>
         }
       />
       <CSACustomerList />

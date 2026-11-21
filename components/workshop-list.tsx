@@ -1,4 +1,9 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { Status } from "@/components/nfv-controls";
+
+import { Button, Table, Alert } from "@mantine/core";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -19,68 +24,77 @@ export function WorkshopList() {
       .catch((caught) => setError(requestErrorMessage(caught, t)));
   }, [t]);
   const statusLabel: Record<string, string> = t.workshops.status;
-  if (error) return <p className="error-box">{error}</p>;
-  if (!items) return <div className="panel">{t.workshops.loading}</div>;
+  if (error) return <Alert color="red">{error}</Alert>;
+  if (!items) return <DataState kind="loading" title={t.workshops.loading} />;
   if (!items.length)
     return (
       <div className="empty">
         <p>{t.workshops.empty}</p>
-        <Link className="button" href="/workshops/new">
+        <Button component={Link} variant="filled" href="/workshops/new">
           {t.workshops.createFirst}
-        </Link>
+        </Button>
       </div>
     );
   return (
     <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>{t.workshops.tableWorkshop}</th>
-            <th>{t.workshops.tableTime}</th>
-            <th>{t.workshops.tableLanguages}</th>
-            <th>{t.workshops.tableStatus}</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>{t.workshops.tableWorkshop}</Table.Th>
+            <Table.Th>{t.workshops.tableTime}</Table.Th>
+            <Table.Th>{t.workshops.tableLanguages}</Table.Th>
+            <Table.Th>{t.workshops.tableStatus}</Table.Th>
+            <Table.Th></Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
           {items.map((item) => {
             const title =
               item.translations.find((translation) => translation.locale === item.default_locale)
                 ?.title || t.workshops.untitled;
             return (
-              <tr key={item.id}>
-                <td>
+              <Table.Tr key={item.id}>
+                <Table.Td>
                   <strong>{title}</strong>
-                </td>
-                <td>{formatAdminDateTimeInZone(item.start_at, item.event_timezone)}</td>
-                <td>
+                </Table.Td>
+                <Table.Td>{formatAdminDateTimeInZone(item.start_at, item.event_timezone)}</Table.Td>
+                <Table.Td>
                   {item.translations.map((t) => (
-                    <span className={`badge ${t.is_ready ? "" : "warm"}`} key={t.locale}>
-                      {t.locale.toUpperCase()}
-                    </span>
+                    <Status
+                      domain="completion"
+                      status={t.is_ready ? "complete" : "incomplete"}
+                      key={t.locale}
+                      label={t.locale.toUpperCase()}
+                    />
                   ))}
-                </td>
-                <td>
-                  <span className="badge">
-                    {statusLabel[item.effective_status] ?? item.effective_status}
-                  </span>
+                </Table.Td>
+                <Table.Td>
+                  <Status
+                    domain="workshop"
+                    status={item.effective_status}
+                    label={statusLabel[item.effective_status] ?? item.effective_status}
+                  />
                   {item.has_published_revision && (
                     <>
                       {" "}
-                      <span className="badge warm">{t.workshops.publiclyVisible}</span>
+                      <Status
+                        domain="visibility"
+                        status="visible"
+                        label={t.workshops.publiclyVisible}
+                      />
                     </>
                   )}
-                </td>
-                <td>
-                  <Link className="button secondary" href={`/workshops/${item.id}`}>
+                </Table.Td>
+                <Table.Td>
+                  <Button component={Link} variant="default" href={`/workshops/${item.id}`}>
                     {t.workshops.edit}
-                  </Link>
-                </td>
-              </tr>
+                  </Button>
+                </Table.Td>
+              </Table.Tr>
             );
           })}
-        </tbody>
-      </table>
+        </Table.Tbody>
+      </Table>
     </div>
   );
 }
