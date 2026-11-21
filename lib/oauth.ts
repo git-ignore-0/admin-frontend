@@ -3,7 +3,7 @@ import "server-only";
 import crypto from "node:crypto";
 
 import { adminOrigin, authOrigin, oauthClientId, oauthClientSecret } from "@/lib/config";
-import { type AdminSession } from "@/lib/session";
+import { parseAdminSessionUser, type AdminSession } from "@/lib/session";
 
 type TokenResponse = {
   access_token: string;
@@ -98,12 +98,14 @@ export async function exchangeCode(code: string, verifier: string): Promise<Admi
     cache: "no-store",
   });
   if (!response.ok) throw new Error("This account is not a website administrator");
-  const payload = (await response.json()) as { data: AdminSession["user"] };
+  const payload = (await response.json()) as { data?: unknown } | null;
+  const user = parseAdminSessionUser(payload?.data);
+  if (!user) throw new AuthServiceUnavailableError("Core Auth returned an invalid admin session");
   return {
     accessToken: token.access_token,
     refreshToken: token.refresh_token ?? "",
     expiresAt: Date.now() + token.expires_in * 1000,
-    user: payload.data,
+    user,
   };
 }
 

@@ -1,10 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminShell } from "@/components/admin-shell";
 import { activeAdminSection, adminNavigation, isActiveAdminRoute } from "@/lib/admin-navigation";
 import { adminDictionaries } from "@/lib/admin-i18n";
+import { api, apiFile } from "@/lib/client-api";
 
 const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
 
@@ -15,6 +16,7 @@ vi.mock("next/navigation", () => ({
 
 afterEach(() => {
   cleanup();
+  delete document.documentElement.dataset.adminPageSession;
   navigation.pathname = "/dashboard";
   vi.clearAllMocks();
   vi.unstubAllGlobals();
@@ -24,16 +26,130 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
-function renderShell(pathname = "/dashboard", locale: "en" | "vi" = "en") {
+function renderShell(
+  pathname = "/dashboard",
+  locale: "en" | "vi" = "en",
+  user: React.ComponentProps<typeof AdminShell>["user"] = {
+    email: "admin@example.com",
+    login_phone_number: null,
+    name: "Admin",
+  },
+) {
   navigation.pathname = pathname;
   return render(
     <AdminI18nProvider initialLocale={locale}>
-      <AdminShell user={{ email: "admin@example.com", name: "Admin" }}>
+      <AdminShell user={user} sessionBinding="test-session">
         <div>Page content</div>
       </AdminShell>
     </AdminI18nProvider>,
   );
 }
+
+describe("admin account identity", () => {
+  it("binds JSON and file requests to the rendered session and asks for a reload", async () => {
+    const fetcher = vi.fn(() =>
+      Promise.resolve(Response.json({ error: "session_changed" }, { status: 409 })),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    renderShell();
+
+    await act(async () => {
+      await expect(api("admin/users", { method: "POST", body: "{}" })).rejects.toThrow(
+        "session_changed",
+      );
+      await expect(apiFile("admin/memberships/fixture/contract/pdf?locale=en")).rejects.toThrow(
+        "session_changed",
+      );
+    });
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "/api/backend/admin/users",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-nfv-admin-session": "test-session",
+          "X-NFV-Admin-Request": "1",
+        }),
+      }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/api/backend/admin/memberships/fixture/contract/pdf?locale=en",
+      expect.objectContaining({ headers: { "x-nfv-admin-session": "test-session" } }),
+    );
+    const feedback = screen.getByRole("alert");
+    expect(feedback).toHaveTextContent("The admin session changed");
+    expect(within(feedback).getByRole("button", { name: "Reload page" })).toBeVisible();
+    expect(screen.queryByText("Page content")).toBeNull();
+  });
+
+  it("retains the original page binding if a partial navigation renders a different login", async () => {
+    const user = { name: "Admin", email: null, login_phone_number: null };
+    const shell = (sessionBinding: string) => (
+      <AdminI18nProvider initialLocale="en">
+        <AdminShell key={sessionBinding} user={user} sessionBinding={sessionBinding}>
+          <div>Page content</div>
+        </AdminShell>
+      </AdminI18nProvider>
+    );
+    const { rerender } = render(shell("a"));
+    rerender(shell("b"));
+    expect(screen.getByRole("alert")).toHaveTextContent("The admin session changed");
+
+    const fetcher = vi.fn(async () => Response.json({ data: [] }));
+    vi.stubGlobal("fetch", fetcher);
+    await api("admin/users");
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/backend/admin/users",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-nfv-admin-session": "a" }),
+      }),
+    );
+  });
+
+  it("displays the login phone when the account has no email", () => {
+    renderShell("/dashboard", "en", {
+      name: "Nguyễn An",
+      email: null,
+      login_phone_number: "+84912345678",
+    });
+
+    expect(screen.getByText("Nguyễn An")).toBeVisible();
+    expect(screen.getByText("+84912345678")).toBeVisible();
+  });
+
+  it("prefers email when the account also has a login phone", () => {
+    renderShell("/dashboard", "en", {
+      name: "Nguyễn An",
+      email: "admin@example.com",
+      login_phone_number: "+84912345678",
+    });
+
+    expect(screen.getByText("Nguyễn An")).toBeVisible();
+    expect(screen.getByText("admin@example.com")).toBeVisible();
+    expect(screen.queryByText("+84912345678")).not.toBeInTheDocument();
+  });
+
+  it("renders only the name when neither identifier is present", () => {
+    const { container } = renderShell("/dashboard", "en", {
+      name: "Nguyễn An",
+      email: null,
+      login_phone_number: null,
+    });
+
+    expect(screen.getByText("Nguyễn An")).toBeVisible();
+    expect(container.querySelector(".sidebar-user span")).not.toBeInTheDocument();
+  });
+
+  it("keeps a label when the account has no display details", () => {
+    const { container } = renderShell("/dashboard", "en", {
+      name: "",
+      email: null,
+      login_phone_number: null,
+    });
+
+    expect(container.querySelector(".sidebar-user")).toHaveTextContent("NFV Admin");
+  });
+});
 
 describe("admin sidebar navigation", () => {
   it("keeps every Admin route in one navigation model", () => {

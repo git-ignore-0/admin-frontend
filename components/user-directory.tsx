@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
+import { Button } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
+import { UserAccountDialog } from "@/components/user-account-dialog";
 import { formatAdminDateTime } from "@/lib/admin-date";
+import { userEmailStatus } from "@/lib/admin-users";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserListItem, PaginationMeta } from "@/lib/types";
@@ -21,6 +25,8 @@ export function UserDirectory({
   actionLabel?: string;
 }) {
   const { t } = useAdminI18n();
+  const router = useRouter();
+  const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const fetchPage = useCallback(
@@ -64,6 +70,13 @@ export function UserDirectory({
   return (
     <section aria-busy={loading} className="admin-list-section">
       <ListToolbar
+        actions={
+          detailBasePath === "/users" ? (
+            <Button onClick={() => setCreating(true)} variant="outline">
+              {t.users.accountActions.create}
+            </Button>
+          ) : null
+        }
         busy={loading}
         clearLabel={t.common.clearFilters}
         hasFilters={Boolean(query || search)}
@@ -94,7 +107,7 @@ export function UserDirectory({
             <thead>
               <tr>
                 <th>{t.users.name}</th>
-                <th>{t.users.phone}</th>
+                <th>{t.users.loginPhone}</th>
                 <th>{t.users.created}</th>
                 <th>{t.users.status}</th>
                 <th>{t.users.balance}</th>
@@ -111,9 +124,10 @@ export function UserDirectory({
                     >
                       {user.name}
                     </Link>
-                    <small className="table-secondary">{user.email}</small>
+                    {user.email && <small className="table-secondary">{user.email}</small>}
+                    <small className="table-secondary">{userEmailStatus(user, t)}</small>
                   </td>
-                  <td data-label={t.users.phone}>{user.phone || "—"}</td>
+                  <td data-label={t.users.loginPhone}>{user.login_phone_number || "—"}</td>
                   <td data-label={t.users.created}>{formatAdminDateTime(user.date_joined)}</td>
                   <td data-label={t.users.status}>
                     <span className="badge">
@@ -138,6 +152,16 @@ export function UserDirectory({
           previousLabel={t.common.previous}
           summary={t.common.pagination}
           total={meta.total}
+        />
+      )}
+      {creating && (
+        <UserAccountDialog
+          action="create"
+          onCancel={() => setCreating(false)}
+          onSuccess={(userId) => {
+            setCreating(false);
+            router.push(`/users/${encodeURIComponent(userId)}`);
+          }}
         />
       )}
     </section>

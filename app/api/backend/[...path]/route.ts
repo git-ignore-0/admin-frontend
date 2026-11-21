@@ -6,9 +6,9 @@ import {
   UUID_PATH_SEGMENT,
 } from "@/lib/backend-target";
 import { adminOrigin, authOrigin } from "@/lib/config";
-import { isTrustedAdminRequest } from "@/lib/csrf";
+import { ADMIN_PAGE_SESSION_HEADER, isTrustedAdminRequest } from "@/lib/csrf";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
-import { clearSession, readSession, writeSession } from "@/lib/session";
+import { adminSessionBinding, clearSession, readSession, writeSession } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +31,9 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     );
   }
   const [, resource, id, action, extra] = path;
+  if (resource === "users" && request.method === "POST" && action !== "points") {
+    return request.nextUrl.searchParams.size > 0;
+  }
   if (resource === "store-orders") {
     const params = request.nextUrl.searchParams;
     if (id !== undefined) return params.size > 0;
@@ -116,6 +119,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   }
   let session = await readSession();
   if (!session) return jsonError("unauthorized", 401);
+  if (request.headers.get(ADMIN_PAGE_SESSION_HEADER) !== adminSessionBinding(session)) {
+    return jsonError("session_changed", 409);
+  }
+  const { path } = await context.params;
+  if (!isAllowedBackendRequest(request.method, path) || invalidBackendQuery(request, path)) {
+    return jsonError("backend_route_not_allowed", 404);
+  }
   if (session.expiresAt < Date.now() + 30_000) {
     try {
       session = await refreshAccessToken(session);
@@ -124,16 +134,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       if (error instanceof AuthServiceUnavailableError) {
         return jsonError("upstream_unavailable", 502);
       }
-      await clearSession();
+      await clearSession(session);
       return jsonError("session_expired", 401);
     }
-  }
-  const { path } = await context.params;
-  if (!isAllowedBackendRequest(request.method, path)) {
-    return jsonError("backend_route_not_allowed", 404);
-  }
-  if (invalidBackendQuery(request, path)) {
-    return jsonError("backend_route_not_allowed", 404);
   }
   const target = buildBackendTarget(authOrigin(), path, request.nextUrl.search);
   const headers = new Headers();
@@ -157,7 +160,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name);
     return jsonError(timedOut ? "upstream_timeout" : "upstream_unavailable", timedOut ? 504 : 502);
   }
-  if (response.status === 401) await clearSession();
+  if (response.status === 401) await clearSession(session);
   const responseHeaders = new Headers({
     "Content-Type": response.headers.get("content-type") || "application/json",
     "Cache-Control": "private, no-store",

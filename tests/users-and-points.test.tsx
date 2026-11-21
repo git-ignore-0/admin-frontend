@@ -59,6 +59,8 @@ const user = {
   id: "58cbea40-4749-4400-9fa3-188de573abaf",
   name: "Green Member",
   email: "green@example.com",
+  email_verified: true,
+  login_phone_number: "+84912345678",
   phone: "+84 912 345 678",
   province_code: "79",
   ward_code: "26734",
@@ -110,7 +112,7 @@ describe("users and points", () => {
     expect(screen.queryByText(/\d+ results?/)).toBeNull();
     expect(await screen.findByText("31 results")).toBeVisible();
     expect(
-      screen.getByRole("searchbox", { name: "Search by email or phone number" }),
+      screen.getByRole("searchbox", { name: "Search by name, email, or phone number" }),
     ).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => expect(apiEnvelope).toHaveBeenLastCalledWith("admin/users?page=2&search="));
@@ -142,7 +144,7 @@ describe("users and points", () => {
 
     const detailLink = await screen.findByRole("link", { name: `View details: ${user.name}` });
     const searchbox = screen.getByRole("searchbox", {
-      name: "Search by email or phone number",
+      name: "Search by name, email, or phone number",
     });
     fireEvent.change(searchbox, { target: { value: "green" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -206,7 +208,7 @@ describe("users and points", () => {
     expect(screen.getByTestId("user-harness-total")).toHaveTextContent("2");
   });
 
-  it("renders localized user status without account-edit controls", async () => {
+  it("renders localized user status without profile-edit controls", async () => {
     vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
       if (path.includes("/points"))
         return { data: [], meta: { page: 1, page_size: 30, total: 0, balance: 50 } };

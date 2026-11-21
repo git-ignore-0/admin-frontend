@@ -1,10 +1,20 @@
 import { redirect } from "next/navigation";
 
 import { AdminShell } from "@/components/admin-shell";
-import { readSession } from "@/lib/session";
+import { adminSessionBinding, readSession } from "@/lib/session";
 
 export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const session = await readSession();
   if (!session) redirect("/login");
-  return <AdminShell user={session.user}>{children}</AdminShell>;
+  const { name, email, login_phone_number } = session.user;
+  const sessionBinding = adminSessionBinding(session);
+  return (
+    <AdminShell
+      key={sessionBinding}
+      sessionBinding={sessionBinding}
+      user={{ name, email, login_phone_number }}
+    >
+      {children}
+    </AdminShell>
+  );
 }

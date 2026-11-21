@@ -13,6 +13,7 @@ vi.mock("@/lib/oauth", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/session", () => ({
+  adminSessionBinding: () => "test-rendered-session",
   clearSession: vi.fn(),
   readSession: vi.fn(async () => ({
     accessToken: "access-token",
@@ -23,9 +24,17 @@ vi.mock("@/lib/session", () => ({
   writeSession: vi.fn(),
 }));
 
-import { DELETE, GET, PATCH, POST } from "@/app/api/backend/[...path]/route";
+import { DELETE, GET, PATCH, POST, PUT } from "@/app/api/backend/[...path]/route";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { clearSession, readSession, writeSession } from "@/lib/session";
+
+function pageRequest(url: string, init?: ConstructorParameters<typeof NextRequest>[1]) {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("x-nfv-admin-session")) {
+    headers.set("x-nfv-admin-session", "test-rendered-session");
+  }
+  return new NextRequest(url, { ...init, headers });
+}
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -35,6 +44,204 @@ afterEach(() => {
 describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
+
+  describe("CMS user accounts", () => {
+    const userId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const base = "https://admin.example.test/api/backend/admin/users";
+    const upstreamBase = "https://auth.example.test/api/v1/admin/users";
+    const trustedHeaders = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+      "content-type": "application/json",
+    };
+    const writes = [
+      {
+        name: "create",
+        suffix: [],
+        body: '{"name":"Nguyễn An", "login_phone_number":"0912345678", "password1":" p@ss Phrase! ", "password2":" p@ss Phrase! "}',
+        status: 201,
+      },
+      { name: "activate", suffix: [userId, "activate"], body: undefined, status: 200 },
+      { name: "suspend", suffix: [userId, "suspend"], body: "{}", status: 200 },
+      { name: "reactivate", suffix: [userId, "reactivate"], body: "{}", status: 200 },
+      {
+        name: "reset-password",
+        suffix: [userId, "reset-password"],
+        body: '{ "password1":" New p@ss Phrase! ", "password2":" New p@ss Phrase! " }',
+        status: 200,
+      },
+    ];
+
+    it("asks an outdated CMS page to reload before using the current session", async () => {
+      const upstream = vi.fn(async () => Response.json({ data: {} }));
+      vi.stubGlobal("fetch", upstream);
+      const response = await POST(
+        pageRequest(`${base}/${userId}/activate`, {
+          method: "POST",
+          headers: { ...trustedHeaders, "x-nfv-admin-session": "outdated-render" },
+          body: "{}",
+        }),
+        { params: Promise.resolve({ path: ["admin", "users", userId, "activate"] }) },
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "session_changed" });
+      expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it.each(writes)(
+      "forwards the exact $name POST with the session bearer token",
+      async ({ suffix, body, status }) => {
+        const path = ["admin", "users", ...suffix];
+        const tail = suffix.length === 0 ? "" : `/${suffix.join("/")}`;
+        const upstream = vi
+          .fn()
+          .mockResolvedValue(Response.json({ data: { id: userId } }, { status }));
+        vi.stubGlobal("fetch", upstream);
+
+        const response = await POST(
+          pageRequest(`${base}${tail}`, {
+            method: "POST",
+            headers: { ...trustedHeaders, authorization: "Bearer browser-token" },
+            body,
+          }),
+          { params: Promise.resolve({ path }) },
+        );
+
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual({ data: { id: userId } });
+        expect(upstream).toHaveBeenCalledTimes(1);
+        const [target, init] = upstream.mock.calls[0];
+        expect(String(target)).toBe(`${upstreamBase}${tail}`);
+        expect(init.method).toBe("POST");
+        expect(init.headers.get("authorization")).toBe("Bearer access-token");
+        expect(init.headers.get("content-type")).toBe("application/json");
+        expect(new TextDecoder().decode(init.body)).toBe(body ?? "");
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+      },
+    );
+
+    it.each(writes)("requires origin, CSRF marker and session for $name", async ({ suffix }) => {
+      const path = ["admin", "users", ...suffix];
+      const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+      const context = { params: Promise.resolve({ path }) };
+      const upstream = vi.fn();
+      vi.stubGlobal("fetch", upstream);
+
+      for (const headers of [
+        { "x-nfv-admin-request": "1" },
+        { ...trustedHeaders, origin: "https://other.example.test" },
+        { origin: trustedHeaders.origin },
+      ] as Record<string, string>[]) {
+        const response = await POST(pageRequest(url, { method: "POST", headers }), context);
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "csrf_rejected" });
+      }
+      expect(readSession).not.toHaveBeenCalled();
+
+      vi.mocked(readSession).mockResolvedValueOnce(null);
+      const response = await POST(
+        pageRequest(url, { method: "POST", headers: trustedHeaders }),
+        context,
+      );
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: "unauthorized" });
+      expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it.each(writes)("rejects query parameters on $name", async ({ suffix }) => {
+      const path = ["admin", "users", ...suffix];
+      const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+      vi.stubGlobal("fetch", upstream);
+
+      const response = await POST(
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}?unexpected=1`, {
+          method: "POST",
+          headers: trustedHeaders,
+        }),
+        { params: Promise.resolve({ path }) },
+      );
+
+      expect(response.status).toBe(404);
+      expect(upstream).not.toHaveBeenCalled();
+    });
+
+    const handlers = { DELETE, GET, PATCH, POST, PUT };
+    it.each<[keyof typeof handlers, string[]]>([
+      ["PATCH", []],
+      ["PUT", []],
+      ["DELETE", []],
+      ["POST", [userId]],
+      ["GET", [userId, "activate"]],
+      ["GET", [userId, "suspend"]],
+      ["GET", [userId, "reactivate"]],
+      ["GET", [userId, "reset-password"]],
+      ["PATCH", [userId, "activate"]],
+      ["PUT", [userId, "suspend"]],
+      ["DELETE", [userId, "reset-password"]],
+      ["GET", ["malformed-id"]],
+      ["GET", ["malformed-id", "points"]],
+      ["POST", ["malformed-id", "activate"]],
+      ["POST", [userId, "delete"]],
+      ["POST", [userId, "activate", "extra"]],
+    ])("returns 404 without forwarding %s %j", async (method, suffix) => {
+      const path = ["admin", "users", ...suffix];
+      const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+      vi.stubGlobal("fetch", upstream);
+
+      const response = await handlers[method](
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
+          method,
+          headers: trustedHeaders,
+        }),
+        { params: Promise.resolve({ path }) },
+      );
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "backend_route_not_allowed" });
+      expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { suffix: [], tail: "?page=2&search=0912345678" },
+      { suffix: [userId], tail: `/${userId}?invited_page=2` },
+      { suffix: [userId, "points"], tail: `/${userId}/points?page=3` },
+    ])("preserves GET /users$tail", async ({ suffix, tail }) => {
+      const path = ["admin", "users", ...suffix];
+      const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+      vi.stubGlobal("fetch", upstream);
+
+      const response = await GET(pageRequest(`${base}${tail}`), {
+        params: Promise.resolve({ path }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(String(upstream.mock.calls[0][0])).toBe(`${upstreamBase}${tail}`);
+    });
+
+    it("preserves POST to the existing user points route", async () => {
+      const path = ["admin", "users", userId, "points"];
+      const body = '{"direction":"credit","amount":50,"message":"Thưởng giới thiệu"}';
+      const upstream = vi
+        .fn()
+        .mockResolvedValue(Response.json({ data: { balance: 50 } }, { status: 201 }));
+      vi.stubGlobal("fetch", upstream);
+
+      const response = await POST(
+        pageRequest(`${base}/${userId}/points`, {
+          method: "POST",
+          headers: trustedHeaders,
+          body,
+        }),
+        { params: Promise.resolve({ path }) },
+      );
+
+      expect(response.status).toBe(201);
+      const [target, init] = upstream.mock.calls[0];
+      expect(String(target)).toBe(`${upstreamBase}/${userId}/points`);
+      expect(new TextDecoder().decode(init.body)).toBe(body);
+    });
+  });
 
   it.each(["vouchers", "csa-coupons"])(
     "forwards valid %s list scopes and rejects unsafe queries",
@@ -47,7 +254,7 @@ describe("admin backend proxy", () => {
       vi.stubGlobal("fetch", upstream);
       for (const scope of ["csa", "store", "both"]) {
         const query = `?application_scope=${scope}&status=active&discount_type=fixed&page=2`;
-        const response = await GET(new NextRequest(`${base}${query}`), {
+        const response = await GET(pageRequest(`${base}${query}`), {
           params: Promise.resolve({ path }),
         });
         expect(response.status).toBe(200);
@@ -70,8 +277,7 @@ describe("admin backend proxy", () => {
         "?page_size=30",
       ]) {
         expect(
-          (await GET(new NextRequest(`${base}${query}`), { params: Promise.resolve({ path }) }))
-            .status,
+          (await GET(pageRequest(`${base}${query}`), { params: Promise.resolve({ path }) })).status,
         ).toBe(404);
       }
       expect(upstream).not.toHaveBeenCalled();
@@ -94,7 +300,7 @@ describe("admin backend proxy", () => {
     ] as Record<string, string>[]) {
       expect(
         (
-          await POST(new NextRequest(url, { method: "POST", headers }), {
+          await POST(pageRequest(url, { method: "POST", headers }), {
             params: Promise.resolve({ path }),
           })
         ).status,
@@ -110,12 +316,12 @@ describe("admin backend proxy", () => {
     vi.mocked(readSession).mockResolvedValueOnce(null);
     expect(
       (
-        await POST(new NextRequest(url, { method: "POST", headers }), {
+        await POST(pageRequest(url, { method: "POST", headers }), {
           params: Promise.resolve({ path }),
         })
       ).status,
     ).toBe(401);
-    const response = await POST(new NextRequest(url, { method: "POST", headers, body: "{}" }), {
+    const response = await POST(pageRequest(url, { method: "POST", headers, body: "{}" }), {
       params: Promise.resolve({ path }),
     });
     expect(response.status).toBe(403);
@@ -141,7 +347,7 @@ describe("admin backend proxy", () => {
         ["POST", [membershipId, "deactivate"]],
       ] as const) {
         const path = ["admin", resource, ...suffix];
-        const request = new NextRequest(
+        const request = pageRequest(
           `https://admin.example.test/api/backend/${path.join("/")}?page=1`,
           { method, headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" } },
         );
@@ -168,7 +374,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const allowed = await GET(
-      new NextRequest(
+      pageRequest(
         `${base}?page=2&page_size=20&search=NFV&status=${status}&payment_status=received&sort=deadline_asc`,
       ),
       { params: Promise.resolve({ path }) },
@@ -188,13 +394,13 @@ describe("admin backend proxy", () => {
       `?search=${"x".repeat(201)}`,
       "?page_size=20&page_size=50",
     ]) {
-      const blocked = await GET(new NextRequest(`${base}${query}`), {
+      const blocked = await GET(pageRequest(`${base}${query}`), {
         params: Promise.resolve({ path }),
       });
       expect(blocked.status).toBe(404);
     }
     const detailPath = [...path, "24803641-2dce-4cac-8fc4-91e55f03e95f"];
-    const blockedDetail = await GET(new NextRequest(`${base}/${detailPath[2]}?page=1`), {
+    const blockedDetail = await GET(pageRequest(`${base}/${detailPath[2]}?page=1`), {
       params: Promise.resolve({ path: detailPath }),
     });
     expect(blockedDetail.status).toBe(404);
@@ -216,7 +422,7 @@ describe("admin backend proxy", () => {
     );
     vi.stubGlobal("fetch", upstream);
     const request = (address: string, method = "POST") =>
-      new NextRequest(address, {
+      pageRequest(address, {
         method,
         headers: {
           origin: "https://admin.example.test",
@@ -261,7 +467,7 @@ describe("admin backend proxy", () => {
 
   it("keeps Store order authorization server-side and preserves permission denials", async () => {
     const path = ["admin", "store-orders"];
-    const request = new NextRequest("https://admin.example.test/api/backend/admin/store-orders");
+    const request = pageRequest("https://admin.example.test/api/backend/admin/store-orders");
     vi.mocked(readSession).mockResolvedValueOnce(null);
     expect((await GET(request, { params: Promise.resolve({ path }) })).status).toBe(401);
 
@@ -281,7 +487,7 @@ describe("admin backend proxy", () => {
     const base = `https://admin.example.test/api/backend/${path.join("/")}`;
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
     vi.stubGlobal("fetch", upstream);
-    const allowed = await GET(new NextRequest(`${base}?status=active&discount_type=fixed&page=1`), {
+    const allowed = await GET(pageRequest(`${base}?status=active&discount_type=fixed&page=1`), {
       params: Promise.resolve({ path }),
     });
     expect(allowed.status).toBe(200);
@@ -293,14 +499,14 @@ describe("admin backend proxy", () => {
       "?page=0",
       "?discount_type=other",
     ]) {
-      const blocked = await GET(new NextRequest(`${base}${query}`), {
+      const blocked = await GET(pageRequest(`${base}${query}`), {
         params: Promise.resolve({ path }),
       });
       expect(blocked.status).toBe(404);
     }
     expect(upstream).not.toHaveBeenCalled();
     const detail = [...path, "24803641-2dce-4cac-8fc4-91e55f03e95f"];
-    const blockedDetail = await GET(new NextRequest(`${base}/${detail[2]}?status=active`), {
+    const blockedDetail = await GET(pageRequest(`${base}/${detail[2]}?status=active`), {
       params: Promise.resolve({ path: detail }),
     });
     expect(blockedDetail.status).toBe(404);
@@ -308,7 +514,7 @@ describe("admin backend proxy", () => {
 
   it("requires an admin session for coupons and preserves upstream permission denial", async () => {
     const path = ["admin", "csa-coupons"];
-    const request = new NextRequest("https://admin.example.test/api/backend/admin/csa-coupons");
+    const request = pageRequest("https://admin.example.test/api/backend/admin/csa-coupons");
     vi.mocked(readSession).mockResolvedValueOnce(null);
     expect((await GET(request, { params: Promise.resolve({ path }) })).status).toBe(401);
     const upstream = vi
@@ -327,7 +533,7 @@ describe("admin backend proxy", () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: option } }));
     vi.stubGlobal("fetch", upstream);
     const created = await POST(
-      new NextRequest(url, {
+      pageRequest(url, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
         body: JSON.stringify({ name: "Full payment" }),
@@ -339,7 +545,7 @@ describe("admin backend proxy", () => {
       "Bearer access-token",
     );
     upstream.mockClear();
-    const blocked = await GET(new NextRequest(`${url}?original=true`), {
+    const blocked = await GET(pageRequest(`${url}?original=true`), {
       params: Promise.resolve({ path }),
     });
     expect(blocked.status).toBe(404);
@@ -355,7 +561,7 @@ describe("admin backend proxy", () => {
     const path = ["admin", "csa-purchase-requests", requestId, "mark-refunded"];
     const url = `https://admin.example.test/api/backend/${path.join("/")}`;
     const allowed = await POST(
-      new NextRequest(url, {
+      pageRequest(url, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
         body: JSON.stringify({ refund_note: "Đã chuyển lại tiền" }),
@@ -372,10 +578,10 @@ describe("admin backend proxy", () => {
     );
 
     upstream.mockClear();
-    const blockedGet = await GET(new NextRequest(url), { params: Promise.resolve({ path }) });
+    const blockedGet = await GET(pageRequest(url), { params: Promise.resolve({ path }) });
     const invalidPath = ["admin", "csa-purchase-requests", "invalid-id", "mark-refunded"];
     const blockedId = await POST(
-      new NextRequest(`https://admin.example.test/api/backend/${invalidPath.join("/")}`, {
+      pageRequest(`https://admin.example.test/api/backend/${invalidPath.join("/")}`, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
@@ -383,7 +589,7 @@ describe("admin backend proxy", () => {
     );
     const otherPath = ["admin", "csa-purchase-requests", requestId, "refund-again"];
     const blockedAction = await POST(
-      new NextRequest(`https://admin.example.test/api/backend/${otherPath.join("/")}`, {
+      pageRequest(`https://admin.example.test/api/backend/${otherPath.join("/")}`, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
@@ -400,7 +606,7 @@ describe("admin backend proxy", () => {
     const path = ["admin", "csa-purchase-requests", requestId, "payments", "2", "confirm"];
     const url = `https://admin.example.test/api/backend/${path.join("/")}`;
     const allowed = await POST(
-      new NextRequest(url, {
+      pageRequest(url, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
         body: JSON.stringify({ amount_paid: "500000", note: "" }),
@@ -415,9 +621,9 @@ describe("admin backend proxy", () => {
       "Bearer access-token",
     );
     upstream.mockClear();
-    const blockedGet = await GET(new NextRequest(url), { params: Promise.resolve({ path }) });
+    const blockedGet = await GET(pageRequest(url), { params: Promise.resolve({ path }) });
     const blockedQuery = await POST(
-      new NextRequest(`${url}?original=true`, {
+      pageRequest(`${url}?original=true`, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
@@ -425,7 +631,7 @@ describe("admin backend proxy", () => {
     );
     const wrongPath = ["admin", "csa-purchase-requests", requestId, "payments", "0", "confirm"];
     const blockedSequence = await POST(
-      new NextRequest(`https://admin.example.test/api/backend/${wrongPath.join("/")}`, {
+      pageRequest(`https://admin.example.test/api/backend/${wrongPath.join("/")}`, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
@@ -457,7 +663,7 @@ describe("admin backend proxy", () => {
       vi.stubGlobal("fetch", upstream);
 
       const response = await GET(
-        new NextRequest(
+        pageRequest(
           `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract/pdf?locale=${locale}`,
         ),
         {
@@ -487,7 +693,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
     const path = ["admin", "memberships", membershipId, "contract", "pdf"];
     const response = await GET(
-      new NextRequest(
+      pageRequest(
         `https://admin.example.test/api/backend/${path.join("/")}?locale=vi&version_id=${versionId}`,
       ),
       { params: Promise.resolve({ path }) },
@@ -512,7 +718,7 @@ describe("admin backend proxy", () => {
     const upstream = vi.fn();
     vi.stubGlobal("fetch", upstream);
     const response = await GET(
-      new NextRequest(
+      pageRequest(
         `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract/pdf${query}`,
       ),
       {
@@ -529,7 +735,7 @@ describe("admin backend proxy", () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "active" } }));
     vi.stubGlobal("fetch", upstream);
     const response = await GET(
-      new NextRequest(
+      pageRequest(
         `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract`,
       ),
       { params: Promise.resolve({ path: ["admin", "memberships", membershipId, "contract"] }) },
@@ -541,7 +747,7 @@ describe("admin backend proxy", () => {
 
     upstream.mockClear();
     const rejected = await GET(
-      new NextRequest(
+      pageRequest(
         `https://admin.example.test/api/backend/admin/memberships/${membershipId}/contract?original=true`,
       ),
       { params: Promise.resolve({ path: ["admin", "memberships", membershipId, "contract"] }) },
@@ -555,7 +761,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const response = await GET(
-      new NextRequest("https://admin.example.test/api/backend/administrative-units/provinces", {
+      pageRequest("https://admin.example.test/api/backend/administrative-units/provinces", {
         headers: { "accept-language": "vi" },
       }),
       { params: Promise.resolve({ path: ["administrative-units", "provinces"] }) },
@@ -573,7 +779,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const response = await GET(
-      new NextRequest("https://admin.example.test/api/backend/public/shipping-areas?locale=en"),
+      pageRequest("https://admin.example.test/api/backend/public/shipping-areas?locale=en"),
       { params: Promise.resolve({ path: ["public", "shipping-areas"] }) },
     );
 
@@ -591,7 +797,7 @@ describe("admin backend proxy", () => {
     const upstream = vi.fn();
     vi.stubGlobal("fetch", upstream);
 
-    const response = await GET(new NextRequest(url), {
+    const response = await GET(pageRequest(url), {
       params: Promise.resolve({ path: ["public", "shipping-areas"] }),
     });
 
@@ -608,7 +814,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const response = await GET(
-      new NextRequest(
+      pageRequest(
         "https://admin.example.test/api/backend/admin/memberships/membership-id?locale=en",
       ),
       { params: Promise.resolve({ path: ["admin", "memberships", "membership-id"] }) },
@@ -627,7 +833,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const allowed = await POST(
-      new NextRequest("https://admin.example.test/api/backend/admin/memberships", {
+      pageRequest("https://admin.example.test/api/backend/admin/memberships", {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
@@ -637,7 +843,7 @@ describe("admin backend proxy", () => {
 
     upstream.mockClear();
     const response = await GET(
-      new NextRequest("https://admin.example.test/api/backend/admin/membership-payment-settings"),
+      pageRequest("https://admin.example.test/api/backend/admin/membership-payment-settings"),
       { params: Promise.resolve({ path: ["admin", "membership-payment-settings"] }) },
     );
 
@@ -654,7 +860,7 @@ describe("admin backend proxy", () => {
     vi.stubGlobal("fetch", upstream);
 
     const response = await POST(
-      new NextRequest("https://admin.example.test/api/backend/admin/membership-requests", {
+      pageRequest("https://admin.example.test/api/backend/admin/membership-requests", {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
       }),
@@ -676,10 +882,11 @@ describe("admin backend proxy", () => {
     };
 
     const allowed = await POST(
-      new NextRequest(
-        "https://admin.example.test/api/backend/admin/memberships/membership-id/revoke",
-        { method: "POST", headers: mutationHeaders, body: JSON.stringify({ reason: "test" }) },
-      ),
+      pageRequest("https://admin.example.test/api/backend/admin/memberships/membership-id/revoke", {
+        method: "POST",
+        headers: mutationHeaders,
+        body: JSON.stringify({ reason: "test" }),
+      }),
       { params: Promise.resolve({ path }) },
     );
     expect(allowed.status).toBe(200);
@@ -690,20 +897,18 @@ describe("admin backend proxy", () => {
 
     upstream.mockClear();
     const blockedGet = await GET(
-      new NextRequest(
-        "https://admin.example.test/api/backend/admin/memberships/membership-id/revoke",
-      ),
+      pageRequest("https://admin.example.test/api/backend/admin/memberships/membership-id/revoke"),
       { params: Promise.resolve({ path }) },
     );
     const blockedDelete = await DELETE(
-      new NextRequest(
-        "https://admin.example.test/api/backend/admin/memberships/membership-id/revoke",
-        { method: "DELETE", headers: mutationHeaders },
-      ),
+      pageRequest("https://admin.example.test/api/backend/admin/memberships/membership-id/revoke", {
+        method: "DELETE",
+        headers: mutationHeaders,
+      }),
       { params: Promise.resolve({ path }) },
     );
     const blockedAction = await POST(
-      new NextRequest(
+      pageRequest(
         "https://admin.example.test/api/backend/admin/memberships/membership-id/unknown",
         { method: "POST", headers: mutationHeaders },
       ),
@@ -730,11 +935,11 @@ describe("admin backend proxy", () => {
     };
 
     const list = await GET(
-      new NextRequest("https://admin.example.test/api/backend/admin/tracker-farms"),
+      pageRequest("https://admin.example.test/api/backend/admin/tracker-farms"),
       { params: Promise.resolve({ path: ["admin", "tracker-farms"] }) },
     );
     const reorder = await PATCH(
-      new NextRequest("https://admin.example.test/api/backend/admin/tracker-farms/reorder", {
+      pageRequest("https://admin.example.test/api/backend/admin/tracker-farms/reorder", {
         method: "PATCH",
         headers: mutationHeaders,
         body: JSON.stringify({ items: [] }),
@@ -742,20 +947,17 @@ describe("admin backend proxy", () => {
       { params: Promise.resolve({ path: ["admin", "tracker-farms", "reorder"] }) },
     );
     const removed = await DELETE(
-      new NextRequest("https://admin.example.test/api/backend/admin/tracker-farms/farm-id", {
+      pageRequest("https://admin.example.test/api/backend/admin/tracker-farms/farm-id", {
         method: "DELETE",
         headers: mutationHeaders,
       }),
       { params: Promise.resolve({ path: ["admin", "tracker-farms", "farm-id"] }) },
     );
     const temporaryMedia = await DELETE(
-      new NextRequest(
-        `https://admin.example.test/api/backend/admin/tracker-farms/media/${mediaId}`,
-        {
-          method: "DELETE",
-          headers: mutationHeaders,
-        },
-      ),
+      pageRequest(`https://admin.example.test/api/backend/admin/tracker-farms/media/${mediaId}`, {
+        method: "DELETE",
+        headers: mutationHeaders,
+      }),
       {
         params: Promise.resolve({
           path: ["admin", "tracker-farms", "media", mediaId],
@@ -784,7 +986,7 @@ describe("admin backend proxy", () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { quantity_units: 10 } }));
     vi.stubGlobal("fetch", upstream);
     const response = await POST(
-      new NextRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
+      pageRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
         method: "POST",
         headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
         body: JSON.stringify({
@@ -809,7 +1011,7 @@ describe("admin backend proxy", () => {
     );
 
     const response = await GET(
-      new NextRequest("https://admin.example.test/api/backend/admin/redemptions"),
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions"),
       { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
     );
 
@@ -828,7 +1030,7 @@ describe("admin backend proxy", () => {
     const detailPath = ["admin", "testimonials", "testimonial-id"];
 
     const patched = await PATCH(
-      new NextRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
+      pageRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
         method: "PATCH",
         headers: mutationHeaders,
         body: JSON.stringify({ featured: true }),
@@ -842,7 +1044,7 @@ describe("admin backend proxy", () => {
 
     upstream.mockClear();
     const removed = await DELETE(
-      new NextRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
+      pageRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
         method: "DELETE",
         headers: mutationHeaders,
       }),
@@ -860,6 +1062,8 @@ describe("admin backend proxy", () => {
       user: {
         id: "11111111-1111-4111-8111-111111111111",
         email: "admin@example.com",
+        email_verified: true,
+        login_phone_number: null,
         name: "Admin",
         locale: "vi",
         roles: ["website_admin"],
@@ -868,7 +1072,7 @@ describe("admin backend proxy", () => {
     vi.mocked(refreshAccessToken).mockRejectedValueOnce(new AuthServiceUnavailableError("offline"));
 
     const response = await GET(
-      new NextRequest("https://admin.example.test/api/backend/admin/redemptions"),
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions"),
       { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
     );
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
+import { AuthServiceUnavailableError, exchangeCode, refreshAccessToken } from "@/lib/oauth";
 import type { AdminSession } from "@/lib/session";
 
 const session: AdminSession = {
@@ -10,13 +10,15 @@ const session: AdminSession = {
   user: {
     id: "11111111-1111-4111-8111-111111111111",
     email: "admin@example.com",
+    email_verified: true,
+    login_phone_number: null,
     name: "Admin",
     locale: "vi",
     roles: ["website_admin"],
   },
 };
 
-describe("admin OAuth refresh", () => {
+describe("admin OAuth", () => {
   beforeEach(() => {
     process.env.AUTH_ORIGIN = "https://auth.example.test";
     process.env.ADMIN_ORIGIN = "https://admin.example.test";
@@ -30,6 +32,47 @@ describe("admin OAuth refresh", () => {
     delete process.env.ADMIN_OAUTH_CLIENT_ID;
     delete process.env.ADMIN_OAUTH_CLIENT_SECRET;
     vi.unstubAllGlobals();
+  });
+
+  it("creates a session for an administrator with a login phone and no email", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/oauth/token")) {
+          return Response.json({
+            access_token: "next-access-token",
+            refresh_token: "next-refresh-token",
+            expires_in: 3600,
+            token_type: "Bearer",
+          });
+        }
+        expect(url).toBe("https://auth.example.test/api/v1/admin/session");
+        return Response.json({
+          data: {
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "Admin",
+            locale: "vi",
+            roles: ["website_admin"],
+            email: null,
+            email_verified: false,
+            login_phone_number: "+84912345678",
+            internal_field: "outside the session contract",
+          },
+        });
+      }),
+    );
+
+    const result = await exchangeCode("oauth-code", "pkce-verifier");
+
+    expect(result.user).toEqual({
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Admin",
+      locale: "vi",
+      roles: ["website_admin"],
+      email: null,
+      email_verified: false,
+      login_phone_number: "+84912345678",
+    });
   });
 
   it("coalesces concurrent rotation of the same refresh token", async () => {

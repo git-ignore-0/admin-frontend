@@ -21,40 +21,47 @@ export function LinkCustomerUserDialog({
 }) {
   const { t } = useAdminI18n();
   const submitRef = useRef(false);
-  const requestId = useRef(0);
+  const pendingSearch = useRef<symbol | null>(null);
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState<AdminUserListItem[] | null>(null);
-  const [selected, setSelected] = useState<AdminUserListItem | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const selectedUser = users?.find((user) => user.id === selectedId && !user.has_csa_customer);
 
   async function search(event: FormEvent) {
     event.preventDefault();
-    if (!query.trim()) return;
-    const current = ++requestId.current;
+    if (!query.trim() || submitRef.current) return;
+    const request = Symbol();
+    pendingSearch.current = request;
+    setUsers(null);
+    setSelectedId(null);
     setBusy(true);
     setError("");
     try {
       const result = await apiEnvelope<AdminUserListItem[], PaginationMeta>(
         `admin/users?page=1&search=${encodeURIComponent(query.trim())}`,
       );
-      if (current === requestId.current) setUsers(result.data);
+      if (request === pendingSearch.current) setUsers(result.data);
     } catch (caught) {
-      if (current === requestId.current) setError(requestErrorMessage(caught, t));
+      if (request === pendingSearch.current) setError(requestErrorMessage(caught, t));
     } finally {
-      if (current === requestId.current) setBusy(false);
+      if (request === pendingSearch.current) {
+        pendingSearch.current = null;
+        setBusy(false);
+      }
     }
   }
 
   async function linkUser() {
-    if (!selected || submitRef.current) return;
+    if (!selectedUser || pendingSearch.current || submitRef.current) return;
     submitRef.current = true;
     setBusy(true);
     setError("");
     try {
       const customer = await api<CSACustomer>(`admin/csa-customers/${customerId}/link-user`, {
         method: "POST",
-        body: JSON.stringify({ user_id: selected.id }),
+        body: JSON.stringify({ user_id: selectedUser.id }),
       });
       onLinked(customer);
     } catch (caught) {
@@ -78,7 +85,7 @@ export function LinkCustomerUserDialog({
       busyLabel={t.csaCustomers.linking}
       cancelLabel={t.membershipCatalog.cancel}
       confirmLabel={t.csaCustomers.linkConfirm}
-      confirmDisabled={!selected}
+      confirmDisabled={!selectedUser}
       error={error}
       fallbackFocusRef={fallbackFocusRef}
       onCancel={() => !busy && onCancel()}
@@ -111,21 +118,27 @@ export function LinkCustomerUserDialog({
         >
           {users.map((user) => (
             <label
-              className={`assignment-user ${selected?.id === user.id ? "selected" : ""} ${user.has_csa_customer ? "disabled" : ""}`}
+              className={`assignment-user ${selectedUser?.id === user.id ? "selected" : ""} ${user.has_csa_customer ? "disabled" : ""}`}
               key={user.id}
             >
               <input
-                checked={selected?.id === user.id}
-                disabled={user.has_csa_customer}
+                checked={selectedUser?.id === user.id}
+                disabled={busy || user.has_csa_customer}
                 name="link-user"
-                onChange={() => setSelected(user)}
+                onChange={() => setSelectedId(user.id)}
                 type="radio"
               />
               <span>
                 <strong>{user.name}</strong>
                 <small>
-                  {user.email} · {user.phone || "—"}
+                  {[user.email, user.login_phone_number].filter(Boolean).join(" · ") ||
+                    t.users.emailMissing}
                 </small>
+                {user.phone && (
+                  <small>
+                    {t.users.phone}: {user.phone}
+                  </small>
+                )}
                 {user.has_csa_customer && (
                   <small className="field-error">{t.csaCustomers.userExists}</small>
                 )}
@@ -134,7 +147,7 @@ export function LinkCustomerUserDialog({
           ))}
         </div>
       )}
-      {!selected && users?.length ? (
+      {!selectedUser && users?.length ? (
         <p className="field-help">{t.csaCustomers.selectUserHelp}</p>
       ) : null}
     </ConfirmationDialog>

@@ -15,8 +15,14 @@ import {
   type AdminNavigationSectionKey,
   isActiveAdminRoute,
 } from "@/lib/admin-navigation";
+import { ADMIN_SESSION_CHANGED_EVENT, pageSessionBinding } from "@/lib/client-api";
+import type { AdminSessionUser } from "@/lib/session";
 
-type Props = { user: { email: string; name: string }; children: React.ReactNode };
+type Props = {
+  user: Pick<AdminSessionUser, "name" | "email" | "login_phone_number">;
+  sessionBinding: string;
+  children: React.ReactNode;
+};
 
 const SIDEBAR_PREFERENCE_KEY = "nfv-admin-sidebar-collapsed";
 const MOBILE_NAVIGATION_QUERY = "(max-width: 820px)";
@@ -126,7 +132,7 @@ function CollapsedSection({
   );
 }
 
-export function AdminShell({ user, children }: Props) {
+export function AdminShell({ user, sessionBinding, children }: Props) {
   const pathname = usePathname();
   const { t } = useAdminI18n();
   const sections = adminNavigation(t);
@@ -140,6 +146,18 @@ export function AdminShell({ user, children }: Props) {
   const [flyoutTop, setFlyoutTop] = useState(8);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileViewport, setMobileViewport] = useState(false);
+  const [sessionChanged, setSessionChanged] = useState(false);
+
+  useEffect(() => {
+    if (pageSessionBinding(sessionBinding) !== sessionBinding) setSessionChanged(true);
+    const showReloadNotice = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail === sessionBinding) {
+        setSessionChanged(true);
+      }
+    };
+    window.addEventListener(ADMIN_SESSION_CHANGED_EVENT, showReloadNotice);
+    return () => window.removeEventListener(ADMIN_SESSION_CHANGED_EVENT, showReloadNotice);
+  }, [sessionBinding]);
 
   useEffect(() => {
     try {
@@ -224,8 +242,11 @@ export function AdminShell({ user, children }: Props) {
     };
   }, [openFlyout]);
 
-  const userLabel = user.name && user.name !== user.email ? user.name : user.email;
-  const userInitial = userLabel.trim().charAt(0).toUpperCase() || "A";
+  const userName = user.name.trim();
+  const email = user.email?.trim();
+  const identifier = email || user.login_phone_number?.trim();
+  const userLabel = userName || identifier || "NFV Admin";
+  const userInitial = (userName || email || "A").charAt(0).toUpperCase();
   const closeMobileDrawer = () => {
     setMobileOpen(false);
     mobileTriggerRef.current?.focus();
@@ -235,6 +256,7 @@ export function AdminShell({ user, children }: Props) {
   return (
     <div
       className="admin-shell"
+      data-admin-session={sessionBinding}
       data-active-section={activeSection?.key}
       data-sidebar={collapsed ? "collapsed" : "expanded"}
     >
@@ -337,11 +359,12 @@ export function AdminShell({ user, children }: Props) {
               {userInitial}
             </span>
             <span className="sidebar-user">
-              {user.name && user.name !== user.email ? <strong>{user.name}</strong> : null}
-              <span>{user.email}</span>
+              <strong>{userLabel}</strong>
+              {identifier && identifier !== userLabel ? <span>{identifier}</span> : null}
             </span>
           </div>
           <form action="/api/auth/logout" method="post">
+            <input type="hidden" name="sessionBinding" value={sessionBinding} />
             <button aria-label={t.common.logout} className="logout-button" title={t.common.logout}>
               <Icon name="logout" />
               <span aria-hidden="true" className="nav-label">
@@ -352,7 +375,18 @@ export function AdminShell({ user, children }: Props) {
         </div>
       </aside>
       <main className="main">
-        <div className="content">{children}</div>
+        <div className="content">
+          {sessionChanged ? (
+            <div className="error-box" role="alert">
+              {t.common.sessionChanged}{" "}
+              <button className="button secondary" onClick={() => window.location.reload()}>
+                {t.common.reloadPage}
+              </button>
+            </div>
+          ) : (
+            children
+          )}
+        </div>
       </main>
     </div>
   );

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DetailPageHeading } from "@/components/detail-page-heading";
 import { PointLedger } from "@/components/point-ledger";
+import { userIdentityLabel } from "@/lib/admin-users";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserDetail, PaginationMeta } from "@/lib/types";
@@ -32,7 +33,7 @@ export function PointDetail({ userId }: { userId: string }) {
         backHref="/points"
         backLabel={t.points.backLabel}
         title={t.points.detailTitle}
-        description={`${user.name} · ${user.email}`}
+        description={userIdentityLabel(user)}
       />
       <PointLedger
         userId={user.id}

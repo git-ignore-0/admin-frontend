@@ -19,8 +19,7 @@ type Props = {
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onCancel: () => void;
-  onConfirm: () => void;
-};
+} & ({ formId: string; onConfirm?: never } | { formId?: never; onConfirm: () => void });
 
 const focusableSelector =
   "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href]";
@@ -41,6 +40,7 @@ export function ConfirmationDialog({
   returnFocusRef,
   onCancel,
   onConfirm,
+  formId,
 }: Props) {
   const titleId = useId();
   const dialogRef = useRef<HTMLElement>(null);
@@ -126,8 +126,10 @@ export function ConfirmationDialog({
           <Button
             className={`button ${danger ? "danger" : ""}`.trim()}
             disabled={busy || confirmDisabled}
+            form={formId}
             loading={busy}
             onClick={onConfirm}
+            type={formId ? "submit" : "button"}
             variant={danger ? "danger" : "primary"}
           >
             {busy ? busyLabel : confirmLabel}

@@ -60,7 +60,7 @@ export type MembershipQuotaPolicy = "expire" | "rollover";
 export type WebsiteAccount = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
 };
 
 export type CSACustomerStatus = "active" | "scheduled" | "history_only" | "new";
@@ -413,7 +413,9 @@ export type MembershipUsage = {
 export type AdminUserListItem = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
+  email_verified: boolean;
+  login_phone_number: string | null;
   phone: string;
   province_code: string;
   ward_code: string;
@@ -423,6 +425,11 @@ export type AdminUserListItem = {
   date_joined: string;
   points_balance: number;
 };
+
+export type AdminAccountSummary = Pick<
+  AdminUserListItem,
+  "id" | "name" | "email" | "email_verified" | "login_phone_number" | "status" | "date_joined"
+> & { locale: Locale };
 
 export type AdministrativeUnit = {
   code: string;
@@ -463,7 +470,7 @@ export type ShippingSettings = {
 export type InvitedAdminUser = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   status: string;
   referred_at: string;
 };

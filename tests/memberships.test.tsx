@@ -119,10 +119,12 @@ const packageItem: MembershipPackage = {
   updated_at: "2026-07-21T02:00:00Z",
 };
 
-const user: AdminUserListItem = {
+const user = {
   id: "58cbea40-4749-4400-9fa3-188de573abaf",
   name: "Green Member",
   email: "green@example.com",
+  email_verified: true,
+  login_phone_number: null,
   phone: "0918765432",
   province_code: "79",
   ward_code: "26734",
@@ -131,7 +133,7 @@ const user: AdminUserListItem = {
   status: "active",
   date_joined: "2026-01-01T00:00:00Z",
   points_balance: 0,
-};
+} satisfies AdminUserListItem;
 
 const membership: AdminMembership = {
   id: "87703641-2dce-4cac-8fc4-91e55f03e95f",
