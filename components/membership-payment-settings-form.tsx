@@ -1,7 +1,7 @@
 "use client";
 
-import { Alert, Button, Checkbox } from "@mantine/core";
-import { FormInput, FormSelect, FormField } from "@/components/nfv-controls";
+import { Alert, Button, Checkbox, Select } from "@mantine/core";
+import { FormInput } from "@/components/nfv-controls";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 
@@ -106,31 +106,23 @@ export function MembershipPaymentSettingsForm() {
   return (
     <form className="payment-settings-form" noValidate onSubmit={submit}>
       <section className="panel vertical-form-section">
-        <FormField label={t.paymentSettings.bank} className="field">
-          <FormSelect
-            aria-describedby={errors.bank ? "payment-bank-error" : undefined}
-            aria-invalid={Boolean(errors.bank)}
-            id="payment-bank"
-            onChange={(selectedValue) => {
-              const bank = banks.find((item) => item.bin === (selectedValue ?? ""));
-              setData({ ...data, bank_bin: bank?.bin ?? "", bank_name: bank?.name ?? "" });
-              setErrors((current) => ({ ...current, bank: undefined }));
-            }}
-            value={data.bank_bin}
-            data={[
-              { value: "", label: t.paymentSettings.chooseBank },
-              ...(banks.map((bank) => ({
-                value: bank.bin,
-                label: bank.short_name + "—" + bank.name,
-              })) ?? []),
-            ]}
-          />
-          {errors.bank && (
-            <small className="field-error" id="payment-bank-error">
-              {errors.bank}
-            </small>
-          )}
-        </FormField>
+        <Select
+          id="payment-bank"
+          role="combobox"
+          className="field"
+          label={t.paymentSettings.bank}
+          error={errors.bank}
+          onChange={(selectedValue) => {
+            const bank = banks.find((item) => item.bin === (selectedValue ?? ""));
+            setData({ ...data, bank_bin: bank?.bin ?? "", bank_name: bank?.name ?? "" });
+            setErrors((current) => ({ ...current, bank: undefined }));
+          }}
+          value={data.bank_bin}
+          data={[
+            { value: "", label: t.paymentSettings.chooseBank },
+            ...banks.map((bank) => ({ value: bank.bin, label: bank.short_name + "—" + bank.name })),
+          ]}
+        />
         <label className="field" htmlFor="payment-account-number">
           <span>{t.paymentSettings.accountNumber}</span>
           <FormInput

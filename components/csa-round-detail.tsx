@@ -230,24 +230,26 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       />
       <Section title={c.demand}>
         {participants.demand.length ? (
-          <div className={styles.tableWrap}>
-            <Table className={styles.table}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>{c.product}</Table.Th>
-                  <Table.Th>{c.quantity}</Table.Th>
+          <Table role="table" className={styles.table}>
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{c.product}</Table.Th>
+                <Table.Th role="columnheader">{c.quantity}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody role="rowgroup">
+              {participants.demand.map((row) => (
+                <Table.Tr role="row" key={row.product_id}>
+                  <Table.Td role="cell" data-label={c.product}>
+                    {row.name}
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={c.quantity}>
+                    {formatCsaQuantity(row, locale)}
+                  </Table.Td>
                 </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {participants.demand.map((row) => (
-                  <Table.Tr key={row.product_id}>
-                    <Table.Td data-label={c.product}>{row.name}</Table.Td>
-                    <Table.Td data-label={c.quantity}>{formatCsaQuantity(row, locale)}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </div>
+              ))}
+            </Table.Tbody>
+          </Table>
         ) : (
           <DataState kind="empty" title={c.emptyDemand} />
         )}

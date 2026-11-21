@@ -81,6 +81,10 @@ describe("users and points", () => {
     const usersView = providers(<UserDirectory />);
 
     expect(await screen.findByText("green@example.com")).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Users" });
+    const scrollArea = table.closest<HTMLElement>(".mantine-ScrollArea-root");
+    expect(scrollArea).toBeInTheDocument();
+    expect(scrollArea?.style.overflowX).toBe("");
     expect(screen.getByText("20/07/2026 09:00")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: `View details: ${user.name}` })).toHaveAttribute(
       "href",

@@ -144,24 +144,33 @@ export function StoreOrderList() {
         <DataState kind="empty" title={c.empty} />
       ) : null}
       {items?.length ? (
-        <div className="table-wrap admin-list-wrap">
-          <Table className="admin-list-table store-order-list-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th scope="col">{c.reference}</Table.Th>
-                <Table.Th scope="col">{c.recipient}</Table.Th>
-                <Table.Th scope="col">{c.total}</Table.Th>
-                <Table.Th scope="col">{c.orderStatus}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table store-order-list-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader" scope="col">
+                  {c.reference}
+                </Table.Th>
+                <Table.Th role="columnheader" scope="col">
+                  {c.recipient}
+                </Table.Th>
+                <Table.Th role="columnheader" scope="col">
+                  {c.total}
+                </Table.Th>
+                <Table.Th role="columnheader" scope="col">
+                  {c.orderStatus}
+                </Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
                 <Table.Tr
+                  role="row"
                   className="admin-list-clickable-row"
                   key={item.id}
                   onClick={() => router.push(`/store-orders/${item.id}`)}
                 >
-                  <Table.Td data-label={c.reference}>
+                  <Table.Td role="cell" data-label={c.reference}>
                     <Link
                       aria-label={`${item.reference_code}: ${item.shipping_address.recipient_name}`}
                       className="store-order-reference"
@@ -178,16 +187,16 @@ export function StoreOrderList() {
                       {c.deliveryDate}: {formatStoreDeliveryDate(item)}
                     </small>
                   </Table.Td>
-                  <Table.Td data-label={c.recipient}>
+                  <Table.Td role="cell" data-label={c.recipient}>
                     {item.shipping_address.recipient_name}
                     <small className="table-secondary store-order-contact">
                       {item.shipping_address.phone_number}
                     </small>
                   </Table.Td>
-                  <Table.Td data-label={c.total}>
+                  <Table.Td role="cell" data-label={c.total}>
                     {formatStoreMoney(item.total_vnd, locale)}
                   </Table.Td>
-                  <Table.Td data-label={c.orderStatus}>
+                  <Table.Td role="cell" data-label={c.orderStatus}>
                     <StoreOrderStatusBadge order={item} />
                     {storeOrderHasDeadline(item) ? (
                       <small className="table-secondary store-order-deadline-meta">
@@ -202,7 +211,7 @@ export function StoreOrderList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       ) : null}
       {meta ? (
         <Pagination

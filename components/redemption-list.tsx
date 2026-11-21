@@ -109,21 +109,21 @@ export function RedemptionList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap admin-list-wrap">
-          <Table className="admin-list-table redemption-list-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t.redemptions.member}</Table.Th>
-                <Table.Th>{t.redemptions.reward}</Table.Th>
-                <Table.Th>{t.redemptions.points}</Table.Th>
-                <Table.Th>{t.redemptions.requestedAt}</Table.Th>
-                <Table.Th>{t.redemptions.status}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table redemption-list-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.redemptions.member}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.reward}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.points}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.requestedAt}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.status}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
-                <Table.Tr key={item.id}>
-                  <Table.Td data-label={t.redemptions.member}>
+                <Table.Tr role="row" key={item.id}>
+                  <Table.Td role="cell" data-label={t.redemptions.member}>
                     <Link
                       aria-label={`${t.redemptions.view}: ${item.user.name}`}
                       className="admin-list-primary-link"
@@ -134,14 +134,16 @@ export function RedemptionList() {
                     <small className="table-secondary">{item.user.email}</small>
                     <small className="table-secondary">{item.user.phone || "—"}</small>
                   </Table.Td>
-                  <Table.Td data-label={t.redemptions.reward}>
+                  <Table.Td role="cell" data-label={t.redemptions.reward}>
                     {locale === "en" ? item.reward_name_en_snapshot : item.reward_name_vi_snapshot}
                   </Table.Td>
-                  <Table.Td data-label={t.redemptions.points}>{item.point_cost_snapshot}</Table.Td>
-                  <Table.Td data-label={t.redemptions.requestedAt}>
+                  <Table.Td role="cell" data-label={t.redemptions.points}>
+                    {item.point_cost_snapshot}
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={t.redemptions.requestedAt}>
                     {formatAdminDateTime(item.created_at)}
                   </Table.Td>
-                  <Table.Td data-label={t.redemptions.status}>
+                  <Table.Td role="cell" data-label={t.redemptions.status}>
                     <Status
                       domain="redemption"
                       status={item.status}
@@ -152,7 +154,7 @@ export function RedemptionList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

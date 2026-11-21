@@ -1,4 +1,5 @@
 "use client";
+import { IconChevronRight } from "@tabler/icons-react";
 import { DataState } from "@/components/nfv-controls";
 
 import { Button, Checkbox } from "@mantine/core";
@@ -281,14 +282,12 @@ export function ShippingAreaManager() {
                   variant="subtle"
                   justify="flex-start"
                   leftSection={
-                    <svg
+                    <IconChevronRight
                       aria-hidden="true"
                       className="shipping-tree-chevron"
-                      fill="none"
-                      viewBox="0 0 20 20"
-                    >
-                      <path d="m7.5 5.5 4.5 4.5-4.5 4.5" />
-                    </svg>
+                      size={16}
+                      stroke={1.5}
+                    />
                   }
                   className="shipping-province-toggle"
                   onClick={() => toggleProvince(province.code)}

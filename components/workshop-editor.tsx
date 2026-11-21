@@ -1,19 +1,17 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
 
-import { FormInput, FormTextarea, Status } from "@/components/nfv-controls";
-
-import { Button, Alert, Tabs } from "@mantine/core";
-
+import { Alert, Button, Stack, Tabs, Text } from "@mantine/core";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
-import { normalizeTiptapLinks } from "@/lib/rich-text-links";
+import { DataState, FormInput, FormTextarea, Status } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import {
   emptyTranslation,
   type Locale,
@@ -21,6 +19,10 @@ import {
   type WorkshopTranslation,
 } from "@/lib/types";
 import { formatZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/zoned-date-time";
+
+const workshopLocales = ["vi", "en"] as const;
+type ConfirmationAction = "publish" | "unpublish" | "delete" | "archive";
+type WorkshopAction = ConfirmationAction | "save";
 
 function initialWorkshop(): Workshop {
   const eventTimezone = "Asia/Ho_Chi_Minh";
@@ -71,17 +73,46 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
   const [data, setData] = useState<Workshop>(initialWorkshop());
   const [activeLocale, setActiveLocale] = useState<Locale>("vi");
   const [loading, setLoading] = useState(Boolean(workshopId));
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [publishing, setPublishing] = useState(false);
-  const publishingRef = useRef(false);
-  const [deleting, setDeleting] = useState(false);
-  const deletingRef = useRef(false);
   const [loadError, setLoadError] = useState("");
+  const [dialog, setDialog] = useState<ConfirmationAction | null>(null);
+  const [pendingAction, setPendingAction] = useState<WorkshopAction | null>(null);
+  const pendingMutation = useRef<symbol | null>(null);
+  const dialogTrigger = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const busy = pendingAction !== null;
   const localeNames: Record<Locale, string> = {
     vi: t.common.vietnamese,
     en: t.common.english,
   };
+  const copy = t.editor;
+  const confirmationCopy = {
+    publish: { label: copy.publish, busyLabel: copy.publishing, message: copy.confirmPublish },
+    unpublish: {
+      label: copy.unpublish,
+      busyLabel: copy.unpublishing,
+      message: copy.confirmUnpublish,
+    },
+    delete: { label: copy.delete, busyLabel: copy.deleting, message: copy.confirmDelete },
+    archive: { label: copy.archive, busyLabel: copy.archiving, message: copy.confirmArchive },
+  };
+  const removalAction = data.has_published_revision ? "archive" : "delete";
+  const translationStates = workshopLocales.map((locale) => {
+    const item = data.translations.find((entry) => entry.locale === locale);
+    return { locale, added: Boolean(item), state: item ? completeness(item) : "empty" } as const;
+  });
+  const readyLanguages = translationStates
+    .filter(({ state }) => state === "ready")
+    .map(({ locale }) => localeNames[locale]);
+  const skippedLanguages = translationStates
+    .filter(({ state }) => state !== "ready")
+    .map(({ locale }) => localeNames[locale]);
+
+  useLayoutEffect(() => {
+    // The protected shell unmounts this editor on session changes.
+    return () => {
+      pendingMutation.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!workshopId) return;
@@ -141,24 +172,24 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
     };
   }
 
-  async function save(notify = true) {
-    if (savingRef.current) return null;
+  async function save(isCurrent: () => boolean, notify: boolean) {
     if (!data.translations.some((item) => item.title.trim())) {
       showToast(t.editor.titleRequired, "error");
       return null;
     }
-    savingRef.current = true;
-    setSaving(true);
     try {
       const saved = await api<Workshop>(
         workshopId ? `admin/workshops/${workshopId}/` : "admin/workshops/",
         { method: workshopId ? "PATCH" : "POST", body: JSON.stringify(payload()) },
+        { shouldRedirectToLogin: isCurrent },
       );
+      if (!isCurrent()) return null;
       setData(saved);
       if (notify) showToast(t.editor.draftSaved);
       if (!workshopId) router.replace(`/workshops/${saved.id}`);
       return saved;
     } catch (caught) {
+      if (!isCurrent()) return null;
       const error = caught as Error & { status?: number };
       showToast(
         error.status === 409
@@ -175,80 +206,65 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
         "error",
       );
       return null;
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
     }
   }
 
-  async function publish() {
-    if (publishingRef.current) return;
-    const readyLocales = (["vi", "en"] as Locale[]).filter((locale) => {
-      const item = data.translations.find((entry) => entry.locale === locale);
-      return item && completeness(item) === "ready";
-    });
-    if (!readyLocales.length) {
+  function openDialog(action: ConfirmationAction, trigger: HTMLButtonElement) {
+    if (dialog || pendingMutation.current) return;
+    if (action === "publish" && readyLanguages.length === 0) {
       showToast(t.editor.noReadyTranslation, "error");
       return;
     }
-    const skippedLocales = (["vi", "en"] as Locale[]).filter(
-      (locale) => !readyLocales.includes(locale),
-    );
-    const confirmation = [
-      t.editor.confirmPublish,
-      `${t.editor.publishReady}: ${readyLocales.map((locale) => localeNames[locale]).join(", ")}`,
-      `${t.editor.publishSkipped}: ${skippedLocales.map((locale) => localeNames[locale]).join(", ")}`,
-    ].join("\n\n");
-    if (!window.confirm(confirmation)) return;
-    publishingRef.current = true;
-    setPublishing(true);
+    dialogTrigger.current = trigger;
+    setDialog(action);
+  }
+
+  async function mutate(action: WorkshopAction) {
+    if (pendingMutation.current) return;
+    const mutation = Symbol();
+    const isCurrent = () => pendingMutation.current === mutation;
+    const options = { shouldRedirectToLogin: isCurrent };
+    pendingMutation.current = mutation;
+    setPendingAction(action);
     try {
-      const saved = await save(false);
-      if (!saved) return;
-      const result = await api<{ draft: Workshop }>(`admin/workshops/${saved.id}/publish/`, {
-        method: "POST",
-        body: JSON.stringify({ revision_id: saved.revision_id, version: saved.version }),
-      });
-      setData(result.draft);
-      showToast(t.editor.published);
+      if (action === "save" || action === "publish") {
+        const saved = await save(isCurrent, action === "save");
+        if (action === "save" || !saved || !isCurrent()) return;
+        const result = await api<{ draft: Workshop }>(
+          `admin/workshops/${saved.id}/publish/`,
+          {
+            method: "POST",
+            body: JSON.stringify({ revision_id: saved.revision_id, version: saved.version }),
+          },
+          options,
+        );
+        if (!isCurrent()) return;
+        setData(result.draft);
+        showToast(copy.published);
+      } else if (action === "unpublish") {
+        await api(`admin/workshops/${data.id}/unpublish/`, { method: "POST" }, options);
+        if (!isCurrent()) return;
+        update({ has_published_revision: false });
+        showToast(copy.unpublished);
+      } else {
+        await api(`admin/workshops/${data.id}/`, { method: "DELETE" }, options);
+        if (!isCurrent()) return;
+        showToast(action === "archive" ? copy.archived : copy.deleted);
+        router.replace("/workshops");
+      }
     } catch (caught) {
+      if (!isCurrent()) return;
       const message = requestErrorMessage(caught, t);
-      showToast(message === t.common.requestFailed ? t.editor.publishFailed : message, "error");
+      showToast(
+        action === "publish" && message === t.common.requestFailed ? copy.publishFailed : message,
+        "error",
+      );
     } finally {
-      publishingRef.current = false;
-      setPublishing(false);
-    }
-  }
-
-  async function unpublish() {
-    if (!window.confirm(t.editor.confirmUnpublish)) return;
-    try {
-      await api(`admin/workshops/${data.id}/unpublish/`, { method: "POST" });
-      setData({ ...data, has_published_revision: false });
-      showToast(t.editor.unpublished);
-    } catch (caught) {
-      showToast(requestErrorMessage(caught, t), "error");
-    }
-  }
-
-  async function deleteWorkshop() {
-    if (!workshopId || deletingRef.current) return;
-    const archivesPublishedWorkshop = data.has_published_revision;
-    const confirmation = archivesPublishedWorkshop
-      ? t.editor.confirmArchive
-      : t.editor.confirmDelete;
-    if (!window.confirm(confirmation)) return;
-    deletingRef.current = true;
-    setDeleting(true);
-    try {
-      await api(`admin/workshops/${data.id}/`, { method: "DELETE" });
-      showToast(archivesPublishedWorkshop ? t.editor.archived : t.editor.deleted);
-      router.replace("/workshops");
-    } catch (caught) {
-      showToast(requestErrorMessage(caught, t), "error");
-    } finally {
-      deletingRef.current = false;
-      setDeleting(false);
+      if (isCurrent()) {
+        pendingMutation.current = null;
+        setPendingAction(null);
+        setDialog(null);
+      }
     }
   }
 
@@ -278,9 +294,7 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
             keepMounted={false}
           >
             <Tabs.List aria-label={t.editor.contentLanguage}>
-              {(["vi", "en"] as Locale[]).map((locale) => {
-                const item = data.translations.find((entry) => entry.locale === locale);
-                const state = item ? completeness(item) : "empty";
+              {translationStates.map(({ locale, added, state }) => {
                 const stateLabel =
                   state === "ready"
                     ? t.editor.ready
@@ -296,7 +310,7 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
                       <strong>{localeNames[locale]}</strong>
                       <small className={`locale-status ${state}`}>{stateLabel}</small>
                     </span>
-                    {locale === "en" && !item && (
+                    {locale === "en" && !added && (
                       <span className="locale-add" aria-hidden="true">
                         +
                       </span>
@@ -394,46 +408,79 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
             type="button"
             className="destructive-action"
             color="red"
-            disabled={saving || publishing || deleting}
-            onClick={() => void deleteWorkshop()}
+            disabled={busy}
+            onClick={(event) => openDialog(removalAction, event.currentTarget)}
           >
-            {deleting
-              ? data.has_published_revision
-                ? t.editor.archiving
-                : t.editor.deleting
-              : data.has_published_revision
-                ? t.editor.archive
-                : t.editor.delete}
+            {confirmationCopy[removalAction].label}
           </Button>
         )}
         {data.has_published_revision && (
           <Button
             type="button"
             color="red"
-            disabled={saving || publishing || deleting}
-            onClick={() => void unpublish()}
+            disabled={busy}
+            onClick={(event) => openDialog("unpublish", event.currentTarget)}
           >
-            {t.editor.unpublish}
+            {copy.unpublish}
           </Button>
         )}
         <Button
           type="button"
           variant="default"
-          disabled={saving || publishing || deleting}
-          onClick={() => void save()}
+          disabled={busy}
+          ref={saveButton}
+          onClick={() => void mutate("save")}
         >
-          {saving ? t.editor.saving : t.editor.saveDraft}
+          {pendingAction === "save" ? copy.saving : copy.saveDraft}
         </Button>
         {workshopId && (
           <Button
             type="button"
-            disabled={saving || publishing || deleting}
-            onClick={() => void publish()}
+            disabled={busy}
+            onClick={(event) => openDialog("publish", event.currentTarget)}
           >
-            {publishing ? t.editor.publishing : t.editor.publish}
+            {copy.publish}
           </Button>
         )}
       </div>
+      {dialog && (
+        <ConfirmationDialog
+          title={confirmationCopy[dialog].label}
+          busy={busy}
+          busyLabel={confirmationCopy[dialog].busyLabel}
+          cancelLabel={copy.cancel}
+          confirmLabel={confirmationCopy[dialog].label}
+          danger={dialog !== "publish"}
+          fallbackFocusRef={saveButton}
+          returnFocusRef={dialogTrigger}
+          onCancel={() => {
+            if (!pendingMutation.current) setDialog(null);
+          }}
+          onConfirm={() => void mutate(dialog)}
+        >
+          <Text size="sm">{confirmationCopy[dialog].message}</Text>
+          {dialog === "publish" && (
+            <Stack component="dl" gap="xs" m={0}>
+              <div>
+                <Text component="dt" size="sm" fw={600}>
+                  {copy.publishReady}
+                </Text>
+                <Text component="dd" size="sm" m={0}>
+                  {readyLanguages.join(", ")}
+                </Text>
+              </div>
+              <div>
+                <Text component="dt" size="sm" fw={600}>
+                  {copy.publishSkipped}
+                </Text>
+                <Text component="dd" size="sm" m={0}>
+                  {skippedLanguages.join(", ") || copy.noSkippedTranslations}
+                </Text>
+              </div>
+            </Stack>
+          )}
+        </ConfirmationDialog>
+      )}
     </>
   );
 }

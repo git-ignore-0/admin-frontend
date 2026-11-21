@@ -1,6 +1,12 @@
 "use client";
 
-import { ComboboxTarget, createTheme, type CSSVariablesResolver } from "@mantine/core";
+import {
+  ComboboxTarget,
+  createTheme,
+  type CSSVariablesResolver,
+  type MantineTheme,
+  type TableScrollContainerProps,
+} from "@mantine/core";
 
 /** Foundation defaults; domain states choose their semantic color at the call site. */
 export const adminTheme = createTheme({
@@ -93,6 +99,12 @@ export const adminTheme = createTheme({
           fontSize: "var(--mantine-font-size-xs)",
         },
       },
+    },
+    TableScrollContainer: {
+      styles: (_theme: MantineTheme, { type }: TableScrollContainerProps) =>
+        type === "native"
+          ? { scrollContainer: { overflowX: "var(--nfv-table-overflow-x, var(--table-overflow))" } }
+          : {},
     },
     Title: { styles: { root: { color: "var(--nfv-heading-color)" } } },
     AppShell: {

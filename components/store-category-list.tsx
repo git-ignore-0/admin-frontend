@@ -1,5 +1,5 @@
 "use client";
-import { Table } from "@mantine/core";
+import { Paper, Table } from "@mantine/core";
 import { FormField, FormSelect, Status } from "@/components/nfv-controls";
 
 import Link from "next/link";
@@ -100,8 +100,8 @@ export function StoreCategoryList() {
         retryLabel={t.common.retry}
       />
       {rows.length > 0 && (
-        <div className="table-wrap">
-          <Table className="store-category-table">
+        <Paper withBorder radius="md">
+          <Table className="store-category-table" styles={{ td: { overflowWrap: "anywhere" } }}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>{copy.categoryName}</Table.Th>
@@ -138,7 +138,7 @@ export function StoreCategoryList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Paper>
       )}
     </section>
   );

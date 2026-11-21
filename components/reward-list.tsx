@@ -124,17 +124,17 @@ export function RewardList() {
               {reorderError}
             </Alert>
           )}
-          <div className="table-wrap admin-list-wrap">
-            <Table className="admin-list-table reward-list-table">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th aria-label={t.rewards.order} />
-                  <Table.Th>{t.rewards.reward}</Table.Th>
-                  <Table.Th>{t.rewards.pointCost}</Table.Th>
-                  <Table.Th>{t.rewards.statusLabel}</Table.Th>
+          <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+            <Table role="table" className="admin-list-table reward-list-table">
+              <Table.Thead role="rowgroup">
+                <Table.Tr role="row">
+                  <Table.Th role="columnheader" aria-label={t.rewards.order} />
+                  <Table.Th role="columnheader">{t.rewards.reward}</Table.Th>
+                  <Table.Th role="columnheader">{t.rewards.pointCost}</Table.Th>
+                  <Table.Th role="columnheader">{t.rewards.statusLabel}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
-              <Table.Tbody>
+              <Table.Tbody role="rowgroup">
                 {items.map((reward, index) => {
                   const translation =
                     reward.translations.find((item) => item.locale === locale) ??
@@ -142,6 +142,7 @@ export function RewardList() {
                   const name = translation?.name || t.rewards.untitled;
                   return (
                     <Table.Tr
+                      role="row"
                       className={draggedId === reward.id ? "is-dragging" : undefined}
                       key={reward.id}
                       onDragOver={(event) => {
@@ -156,7 +157,7 @@ export function RewardList() {
                         void moveReward(sourceId, reward.id);
                       }}
                     >
-                      <Table.Td data-label={t.rewards.order}>
+                      <Table.Td role="cell" data-label={t.rewards.order}>
                         <div className="reward-order-controls">
                           <Button
                             variant="default"
@@ -192,7 +193,7 @@ export function RewardList() {
                           </div>
                         </div>
                       </Table.Td>
-                      <Table.Td data-label={t.rewards.reward}>
+                      <Table.Td role="cell" data-label={t.rewards.reward}>
                         <div className="reward-cell">
                           <Image
                             alt=""
@@ -216,10 +217,10 @@ export function RewardList() {
                           </div>
                         </div>
                       </Table.Td>
-                      <Table.Td data-label={t.rewards.pointCost}>
+                      <Table.Td role="cell" data-label={t.rewards.pointCost}>
                         <strong>{reward.point_cost}</strong>
                       </Table.Td>
-                      <Table.Td data-label={t.rewards.statusLabel}>
+                      <Table.Td role="cell" data-label={t.rewards.statusLabel}>
                         <Status
                           domain="availability"
                           status={reward.is_active ? "active" : "inactive"}
@@ -231,7 +232,7 @@ export function RewardList() {
                 })}
               </Table.Tbody>
             </Table>
-          </div>
+          </Table.ScrollContainer>
         </>
       )}
       {meta && (

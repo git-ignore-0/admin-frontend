@@ -137,21 +137,21 @@ export function TestimonialList() {
       />
 
       {items && items.length > 0 && (
-        <div className="table-wrap admin-list-wrap">
-          <Table className="admin-list-table testimonial-list-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t.testimonials.testimonial}</Table.Th>
-                <Table.Th>{t.testimonials.typeLabel}</Table.Th>
-                <Table.Th>{t.testimonials.statusLabel}</Table.Th>
-                <Table.Th>{t.testimonials.featured}</Table.Th>
-                <Table.Th>{t.testimonials.updatedAt}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table testimonial-list-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.testimonials.testimonial}</Table.Th>
+                <Table.Th role="columnheader">{t.testimonials.typeLabel}</Table.Th>
+                <Table.Th role="columnheader">{t.testimonials.statusLabel}</Table.Th>
+                <Table.Th role="columnheader">{t.testimonials.featured}</Table.Th>
+                <Table.Th role="columnheader">{t.testimonials.updatedAt}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
-                <Table.Tr key={item.id}>
-                  <Table.Td data-label={t.testimonials.testimonial}>
+                <Table.Tr role="row" key={item.id}>
+                  <Table.Td role="cell" data-label={t.testimonials.testimonial}>
                     <div className="testimonial-list-identity">
                       {item.image ? (
                         <Image
@@ -176,20 +176,20 @@ export function TestimonialList() {
                       </Link>
                     </div>
                   </Table.Td>
-                  <Table.Td data-label={t.testimonials.typeLabel}>
+                  <Table.Td role="cell" data-label={t.testimonials.typeLabel}>
                     {t.testimonials.types[item.type]}
                   </Table.Td>
-                  <Table.Td data-label={t.testimonials.statusLabel}>
+                  <Table.Td role="cell" data-label={t.testimonials.statusLabel}>
                     <Status
                       domain="testimonial"
                       status={item.status}
                       label={t.testimonials.statuses[item.status]}
                     />
                   </Table.Td>
-                  <Table.Td data-label={t.testimonials.featured}>
+                  <Table.Td role="cell" data-label={t.testimonials.featured}>
                     {item.featured ? t.testimonials.featured : t.testimonials.notFeatured}
                   </Table.Td>
-                  <Table.Td data-label={t.testimonials.updatedAt}>
+                  <Table.Td role="cell" data-label={t.testimonials.updatedAt}>
                     {formatAdminDateTime(item.updated_at)}
                     <small className="table-secondary">
                       {item.published_at
@@ -201,7 +201,7 @@ export function TestimonialList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
 
       {meta && (

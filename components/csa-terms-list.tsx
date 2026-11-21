@@ -53,39 +53,39 @@ export function CSATermsList() {
       ) : items.length === 0 ? (
         <DataState kind="empty" title={copy.empty} />
       ) : (
-        <div className="csa-terms-table-wrap">
-          <Table className="csa-terms-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{copy.version}</Table.Th>
-                <Table.Th>{copy.status}</Table.Th>
-                <Table.Th>{copy.updatedAt}</Table.Th>
-                <Table.Th>{copy.action}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="csa-terms-table-wrap">
+          <Table role="table" className="csa-terms-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{copy.version}</Table.Th>
+                <Table.Th role="columnheader">{copy.status}</Table.Th>
+                <Table.Th role="columnheader">{copy.updatedAt}</Table.Th>
+                <Table.Th role="columnheader">{copy.action}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => {
                 const isDraft = item.status === "draft";
                 return (
-                  <Table.Tr key={item.id}>
-                    <Table.Td data-label={copy.version}>
+                  <Table.Tr role="row" key={item.id}>
+                    <Table.Td role="cell" data-label={copy.version}>
                       <strong>{item.version}</strong>
                     </Table.Td>
-                    <Table.Td data-label={copy.status}>
+                    <Table.Td role="cell" data-label={copy.status}>
                       <Status
                         domain="csa-terms"
                         status={item.status}
                         label={copy.statuses[item.status]}
                       />
                     </Table.Td>
-                    <Table.Td data-label={copy.updatedAt}>
+                    <Table.Td role="cell" data-label={copy.updatedAt}>
                       <time dateTime={item.updatedAt}>
                         {new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-GB", {
                           dateStyle: "medium",
                         }).format(new Date(item.updatedAt))}
                       </time>
                     </Table.Td>
-                    <Table.Td data-label={copy.action}>
+                    <Table.Td role="cell" data-label={copy.action}>
                       <ActionLink href={`/csa-terms/${item.id}`} small variant="outline">
                         {isDraft ? <Icon name="edit" /> : null}
                         {isDraft ? copy.edit : copy.view}
@@ -96,7 +96,7 @@ export function CSATermsList() {
               })}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
     </div>
   );

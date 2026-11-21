@@ -36,7 +36,7 @@ export function WorkshopList() {
       </div>
     );
   return (
-    <div className="table-wrap">
+    <Table.ScrollContainer type="native" minWidth={640} className="table-wrap">
       <Table>
         <Table.Thead>
           <Table.Tr>
@@ -95,6 +95,6 @@ export function WorkshopList() {
           })}
         </Table.Tbody>
       </Table>
-    </div>
+    </Table.ScrollContainer>
   );
 }

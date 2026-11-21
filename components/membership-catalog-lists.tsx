@@ -118,21 +118,21 @@ export function MembershipProductList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap csa-list-wrap">
-          <Table className="csa-list-table csa-product-list">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t.membershipCatalog.product}</Table.Th>
-                <Table.Th>{t.membershipCatalog.unitConversion}</Table.Th>
-                <Table.Th>{t.membershipCatalog.status}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap csa-list-wrap">
+          <Table role="table" className="csa-list-table csa-product-list">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.membershipCatalog.product}</Table.Th>
+                <Table.Th role="columnheader">{t.membershipCatalog.unitConversion}</Table.Th>
+                <Table.Th role="columnheader">{t.membershipCatalog.status}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => {
                 const translation = localizedCatalogTranslation(item.translations, locale);
                 return (
-                  <Table.Tr key={item.id}>
-                    <Table.Td data-label={t.membershipCatalog.product}>
+                  <Table.Tr role="row" key={item.id}>
+                    <Table.Td role="cell" data-label={t.membershipCatalog.product}>
                       <Link
                         className="csa-list-primary-link"
                         href={`/membership-catalog/products/${item.id}`}
@@ -148,11 +148,11 @@ export function MembershipProductList() {
                         {translation?.short_description || item.short_description || "—"}
                       </small>
                     </Table.Td>
-                    <Table.Td data-label={t.membershipCatalog.unitConversion}>
+                    <Table.Td role="cell" data-label={t.membershipCatalog.unitConversion}>
                       {formatDecimalInput(item.unit_size)} {item.unit_label_vi} /{" "}
                       {item.unit_label_en}
                     </Table.Td>
-                    <Table.Td data-label={t.membershipCatalog.status}>
+                    <Table.Td role="cell" data-label={t.membershipCatalog.status}>
                       <Status active={item.is_active} />
                     </Table.Td>
                   </Table.Tr>
@@ -160,7 +160,7 @@ export function MembershipProductList() {
               })}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination
@@ -239,21 +239,21 @@ export function MembershipPackageList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap csa-list-wrap">
-          <Table className="csa-list-table csa-package-list">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t.membershipCatalog.package}</Table.Th>
-                <Table.Th>{t.membershipCatalog.priceOptions}</Table.Th>
-                <Table.Th>{t.membershipCatalog.status}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap csa-list-wrap">
+          <Table role="table" className="csa-list-table csa-package-list">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.membershipCatalog.package}</Table.Th>
+                <Table.Th role="columnheader">{t.membershipCatalog.priceOptions}</Table.Th>
+                <Table.Th role="columnheader">{t.membershipCatalog.status}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => {
                 const translation = localizedCatalogTranslation(item.translations, locale);
                 return (
-                  <Table.Tr key={item.id}>
-                    <Table.Td data-label={t.membershipCatalog.package}>
+                  <Table.Tr role="row" key={item.id}>
+                    <Table.Td role="cell" data-label={t.membershipCatalog.package}>
                       <Link
                         className="csa-list-primary-link"
                         href={`/membership-catalog/packages/${item.id}`}
@@ -274,7 +274,7 @@ export function MembershipPackageList() {
                           .join(" · ") || "—"}
                       </small>
                     </Table.Td>
-                    <Table.Td data-label={t.membershipCatalog.priceOptions}>
+                    <Table.Td role="cell" data-label={t.membershipCatalog.priceOptions}>
                       {item.price_options
                         .filter((option) => option.is_active)
                         .map((option) => (
@@ -288,7 +288,7 @@ export function MembershipPackageList() {
                           </small>
                         ))}
                     </Table.Td>
-                    <Table.Td data-label={t.membershipCatalog.status}>
+                    <Table.Td role="cell" data-label={t.membershipCatalog.status}>
                       <Status active={item.is_active} />
                     </Table.Td>
                   </Table.Tr>
@@ -296,7 +296,7 @@ export function MembershipPackageList() {
               })}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

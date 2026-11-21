@@ -129,8 +129,10 @@ describe("CSA customer administration", () => {
     expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
-    expect(view.container.querySelector(".admin-list-wrap")).toBeInTheDocument();
-    expect(view.container.querySelector(".customer-list-table")).toBeInTheDocument();
+    expect(screen.getByRole("table").closest(".admin-list-wrap")).toHaveStyle({
+      "--table-overflow": "auto",
+      "--table-min-width": "0rem",
+    });
   });
 
   it("applies account and package-status filters and only shows reset while active", async () => {

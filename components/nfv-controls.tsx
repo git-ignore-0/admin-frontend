@@ -58,14 +58,18 @@ import { useOptionalAdminI18n } from "@/components/admin-i18n-provider";
 
 import {
   Children,
+  Fragment,
   cloneElement,
   isValidElement,
   createContext,
+  useCallback,
   useContext,
   useId,
   type AnchorHTMLAttributes,
+  type AriaAttributes,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type ReactElement,
   type ReactNode,
   type TextareaHTMLAttributes,
 } from "react";
@@ -122,36 +126,98 @@ export function ActionLink({ variant = "primary", small = false, ...props }: Act
   );
 }
 
-type FieldContextValue = { id: string; error?: string; hint?: string };
+type FieldAria = Pick<AriaAttributes, "aria-describedby" | "aria-invalid">;
+type FieldFeedback = {
+  error?: ReactNode;
+  description?: ReactNode;
+};
+type FieldControl = FieldAria &
+  FieldFeedback & {
+    id?: string;
+    label?: ReactNode;
+    children?: ReactNode;
+    type?: string;
+  };
+type FieldContextValue = {
+  id: string;
+  error?: string;
+  hint?: string;
+  feedbackInWrapper: boolean;
+};
 const FieldContext = createContext<FieldContextValue | null>(null);
-function useFieldProps(props: {
-  id?: string;
-  "aria-describedby"?: string;
-  "aria-invalid"?: boolean | "true" | "false" | "grammar" | "spelling";
-}) {
+
+function describedBy(...sources: (string | undefined)[]) {
+  return (
+    [
+      ...new Set(sources.flatMap((source) => source?.trim().split(/\s+/) ?? []).filter(Boolean)),
+    ].join(" ") || undefined
+  );
+}
+
+function feedbackIds(id: string, error: ReactNode, description: ReactNode) {
+  return describedBy(
+    error && typeof error !== "boolean" ? `${id}-error` : undefined,
+    description ? `${id}-description` : undefined,
+  );
+}
+
+function useFieldProps(props: FieldControl & Pick<SelectProps, "errorProps" | "descriptionProps">) {
   const field = useContext(FieldContext);
+  const generatedId = useId();
+  const id = props.id ?? field?.id ?? generatedId;
+  const invalid = props["aria-invalid"];
+  const contextError = field?.feedbackInWrapper ? Boolean(field.error) : field?.error;
+  const error =
+    props.error !== undefined
+      ? props.error
+      : contextError || (invalid === true || invalid === "true" ? true : undefined);
+  const description =
+    props.description !== undefined
+      ? props.description
+      : field?.feedbackInWrapper
+        ? undefined
+        : field?.hint;
+  const wrapperIds = field?.feedbackInWrapper
+    ? feedbackIds(field.id, field.error, field.hint)
+    : undefined;
   return {
-    id: props.id ?? field?.id,
-    error:
-      field?.error || Boolean(props["aria-invalid"] === true || props["aria-invalid"] === "true"),
-    description: !field?.error ? field?.hint : undefined,
+    id,
+    error,
+    description,
+    aria: {
+      "aria-invalid": invalid ?? (Boolean(error) || undefined),
+      "aria-describedby": describedBy(
+        props["aria-describedby"],
+        wrapperIds,
+        error && typeof error !== "boolean" ? props.errorProps?.id || `${id}-error` : undefined,
+        description ? props.descriptionProps?.id || `${id}-description` : undefined,
+      ),
+    },
   };
 }
 
-export function FormInput({
-  className,
-  size: _size,
-  type,
-  ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
+type FormInputProps = InputHTMLAttributes<HTMLInputElement> & FieldFeedback;
+export function FormInput({ className, size: _size, type, ...props }: FormInputProps) {
   void _size;
-  const field = useFieldProps(props);
+  const { aria, ...field } = useFieldProps(props);
   const i18n = useOptionalAdminI18n();
+  const passwordDescription = aria["aria-describedby"];
+  // Mantine 8.3 PasswordInput sets aria-describedby on its inner input after spreading props.
+  const describePassword = useCallback(
+    (input: HTMLInputElement | null) => {
+      if (!input) return;
+      if (passwordDescription) input.setAttribute("aria-describedby", passwordDescription);
+      else input.removeAttribute("aria-describedby");
+    },
+    [passwordDescription],
+  );
   if (type === "password")
     return (
       <PasswordInput
         {...props}
         {...field}
+        aria-invalid={aria["aria-invalid"]}
+        ref={describePassword}
         classNames={{ innerInput: className }}
         visibilityToggleButtonProps={{
           "aria-label": i18n?.t.common.passwordVisibility ?? "Show/hide password",
@@ -164,79 +230,128 @@ export function FormInput({
       {...field}
       type={type}
       classNames={{ input: className }}
-      attributes={
-        props["aria-describedby"]
-          ? { input: { "aria-describedby": props["aria-describedby"] } }
-          : undefined
-      }
+      attributes={{ input: aria }}
     />
   );
 }
 
 /** Mantine Select uses string values and serializes named fields in its hidden input. */
 export function FormSelect(props: SelectProps) {
-  const field = useFieldProps(props);
+  const inputAttributes = props.attributes?.input;
+  const { aria, ...field } = useFieldProps({
+    ...props,
+    "aria-invalid": props["aria-invalid"] ?? inputAttributes?.["aria-invalid"],
+    "aria-describedby": describedBy(
+      props["aria-describedby"],
+      inputAttributes?.["aria-describedby"],
+    ),
+  });
   return (
     <Select
       role="combobox"
       allowDeselect={false}
       {...props}
       {...field}
-      attributes={{
-        ...props.attributes,
-        input: {
-          ...props.attributes?.input,
-          ...(props["aria-describedby"] ? { "aria-describedby": props["aria-describedby"] } : {}),
-        },
-      }}
+      attributes={{ ...props.attributes, input: { ...inputAttributes, ...aria } }}
     />
   );
 }
 
-export function FormTextarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const field = useFieldProps(props);
+type FormTextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & FieldFeedback;
+export function FormTextarea({ className, ...props }: FormTextareaProps) {
+  const { aria, ...field } = useFieldProps(props);
   return (
     <Textarea
       {...props}
       {...field}
       classNames={{ input: className }}
-      attributes={
-        props["aria-describedby"]
-          ? { input: { "aria-describedby": props["aria-describedby"] } }
-          : undefined
-      }
+      attributes={{ input: aria }}
     />
   );
 }
 
+function hasOwnFeedback(type: ReactElement["type"]) {
+  return type === FormInput || type === FormSelect || type === FormTextarea;
+}
+
+function isNativeControl(type: ReactElement["type"]) {
+  return type === "input" || type === "select" || type === "textarea";
+}
+
+function canInspectChildren(type: ReactElement["type"]) {
+  return type === Fragment || typeof type === "string";
+}
+
+function findFieldControl(children: ReactNode): ReactElement<FieldControl> | undefined {
+  let control: ReactElement<FieldControl> | undefined;
+  Children.forEach(children, (child) => {
+    if (control || !isValidElement<FieldControl>(child)) return;
+    if (child.type === "input" && child.props.type === "hidden") return;
+    if (hasOwnFeedback(child.type) || isNativeControl(child.type) || child.type === FormCheckbox) {
+      control = child;
+    } else if (canInspectChildren(child.type)) {
+      control = findFieldControl(child.props.children);
+    } else if (child.props.id) {
+      // Specialized controls with an explicit ID own their input but can forward standard ARIA.
+      control = child;
+    }
+  });
+  return control;
+}
+
+function describeFieldControl(
+  children: ReactNode,
+  control: ReactElement<FieldControl>,
+  props: FieldControl,
+): ReactNode {
+  return Children.map(children, (child) => {
+    if (!isValidElement<FieldControl>(child)) return child;
+    if (child === control) return cloneElement(child, props);
+    if (!canInspectChildren(child.type) || child.props.children == null) return child;
+    return cloneElement(child, {}, describeFieldControl(child.props.children, control, props));
+  });
+}
+
 type FormFieldProps = {
+  id?: string;
   label: string;
   children: ReactNode;
   error?: string;
   hint?: string;
   className?: string;
 };
-export function FormField({ label, children, error, hint, className }: FormFieldProps) {
+export function FormField({
+  id: providedId,
+  label,
+  children,
+  error,
+  hint,
+  className,
+}: FormFieldProps) {
   const generatedId = useId();
-  const elements = Children.toArray(children);
-  const control = elements.find(
-    (child) =>
-      isValidElement<{ id?: string }>(child) &&
-      [FormInput, FormSelect, FormTextarea, "input", "select", "textarea"].some(
-        (type) => child.type === type,
-      ),
-  );
-  const id = isValidElement<{ id?: string }>(control)
-    ? (control.props.id ?? generatedId)
-    : generatedId;
-  const content = elements.map((child) =>
-    child === control && isValidElement<{ id?: string }>(child) && typeof child.type === "string"
-      ? cloneElement(child, { id })
-      : child,
-  );
+  const control = findFieldControl(children);
+  const id = control?.props.id ?? providedId ?? generatedId;
+  const feedbackInWrapper = !control || !hasOwnFeedback(control.type);
+  const content =
+    control && feedbackInWrapper && control.type !== FormCheckbox
+      ? describeFieldControl(children, control, {
+          id,
+          "aria-invalid": control.props["aria-invalid"] ?? (error ? true : undefined),
+          "aria-describedby": describedBy(
+            control.props["aria-describedby"],
+            feedbackIds(id, error, hint),
+          ),
+        })
+      : children;
   return (
-    <FieldContext.Provider value={{ id, error, hint }}>
-      <Input.Wrapper id={id} label={label} className={className}>
+    <FieldContext.Provider value={{ id, error, hint, feedbackInWrapper }}>
+      <Input.Wrapper
+        id={id}
+        label={control?.props.label ? undefined : label}
+        className={className}
+        error={feedbackInWrapper ? error : undefined}
+        description={feedbackInWrapper ? hint : undefined}
+      >
         {content}
       </Input.Wrapper>
     </FieldContext.Provider>
@@ -250,7 +365,17 @@ export function FormCheckbox({
   ...props
 }: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { label: ReactNode }) {
   void _size;
-  return <Checkbox {...props} label={label} className={className} />;
+  const { aria, id, error } = useFieldProps(props);
+  return (
+    <Checkbox
+      {...props}
+      {...aria}
+      id={id}
+      error={Boolean(error)}
+      label={label}
+      className={className}
+    />
+  );
 }
 
 const icons = {

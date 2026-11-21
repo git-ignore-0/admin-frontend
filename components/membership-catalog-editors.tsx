@@ -1,5 +1,6 @@
 "use client";
 
+import { IconTrash } from "@tabler/icons-react";
 import { ActionIcon, Button, Checkbox, Alert, Group } from "@mantine/core";
 import { FormInput, FormSelect, FormField } from "@/components/nfv-controls";
 
@@ -16,6 +17,7 @@ import {
   emptyBilingualContent,
   type BilingualContentValue,
 } from "@/components/bilingual-content-fields";
+import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -812,15 +814,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                           title={removePriceOptionLabel}
                           type="button"
                         >
-                          <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
-                            <path
-                              d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
-                              stroke="currentColor"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth="1.8"
-                            />
-                          </svg>
+                          <IconTrash aria-hidden="true" size={18} stroke={1.8} />
                         </ActionIcon>
                       </div>
                       {option.durationMonths === "1" ? (
@@ -883,33 +877,17 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
               </Button>
             </Group>
           </Alert>
-        ) : productMeta && productMeta.total > productMeta.page_size ? (
-          <div className="package-product-pagination">
-            <Button
-              variant="default"
-              disabled={busy || productMeta.page <= 1}
-              onClick={() => setProductPage((value) => Math.max(1, value - 1))}
-              type="button"
-            >
-              {t.common.previous}
-            </Button>
-            <span>
-              {t.common.pagination
-                .replace("{page}", String(productMeta.page))
-                .replace(
-                  "{pages}",
-                  String(Math.max(1, Math.ceil(productMeta.total / productMeta.page_size))),
-                )}
-            </span>
-            <Button
-              variant="default"
-              disabled={busy || productMeta.page * productMeta.page_size >= productMeta.total}
-              onClick={() => setProductPage((value) => value + 1)}
-              type="button"
-            >
-              {t.common.next}
-            </Button>
-          </div>
+        ) : productMeta ? (
+          <Pagination
+            page={productMeta.page}
+            total={productMeta.total}
+            pageSize={productMeta.page_size}
+            onPage={setProductPage}
+            disabled={busy}
+            previousLabel={t.common.previous}
+            nextLabel={t.common.next}
+            summary={t.common.pagination}
+          />
         ) : null}
         <div className="package-lines">
           {form.lines.map((line, index) => (

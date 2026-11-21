@@ -143,18 +143,21 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
     setUploading(true);
     try {
       for (const file of files) {
-        const asset = await uploadFarmImage(file);
-        if (!mounted.current) {
-          void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
-          break;
+        try {
+          const asset = await uploadFarmImage(file);
+          if (!mounted.current) {
+            void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
+            break;
+          }
+          temporaryIds.current.add(asset.id);
+          setForm((current) => ({ ...current, photos: [...current.photos, asset] }));
+        } catch (caught) {
+          if (!mounted.current) break;
+          setPhotoError(requestErrorMessage(caught, translationRef.current));
         }
-        temporaryIds.current.add(asset.id);
-        setForm((current) => ({ ...current, photos: [...current.photos, asset] }));
       }
-    } catch (caught) {
-      setPhotoError(requestErrorMessage(caught, t));
     } finally {
-      setUploading(false);
+      if (mounted.current) setUploading(false);
     }
   }
 

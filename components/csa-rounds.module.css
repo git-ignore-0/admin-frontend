@@ -31,17 +31,8 @@
 .dates dd {
   margin: 8px 0 0;
 }
-.tableWrap {
-  max-width: 100%;
-  overflow-x: auto;
-}
-.table {
-  width: 100%;
-  border-collapse: collapse;
-}
 .table th,
 .table td {
-  text-align: left;
   overflow-wrap: anywhere;
 }
 .people {

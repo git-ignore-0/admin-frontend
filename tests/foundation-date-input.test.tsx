@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { AdminDateInput } from "@/components/admin-date-input";
+import { FormField } from "@/components/nfv-controls";
 
 afterEach(cleanup);
 function DateField({ disabled = false }: { disabled?: boolean }) {
@@ -55,6 +56,33 @@ it("does not open or mutate a disabled date field", () => {
   fireEvent.click(screen.getByRole("button", { name: "Choose start date" }));
   expect(screen.queryByRole("button", { name: "30 November 2099" })).toBeNull();
   expect(changed).not.toHaveBeenCalled();
+});
+
+it("leaves the calendar closed after the field is disabled and enabled again", () => {
+  const view = render(<DateField />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose start date" }));
+  expect(screen.getByRole("button", { name: "30 November 2099" })).toBeVisible();
+  view.rerender(<DateField disabled />);
+  expect(screen.queryByRole("button", { name: "30 November 2099" })).toBeNull();
+  view.rerender(<DateField />);
+  expect(screen.queryByRole("button", { name: "30 November 2099" })).toBeNull();
+});
+
+it("associates FormField feedback with a specialized control's explicit ID", () => {
+  render(
+    <FormField label="Start date" error="Choose a valid date" hint="Day/month/year">
+      <AdminDateInput
+        id="start-date"
+        pickerLabel="Choose start date"
+        value="31/02/2099"
+        onValueChange={vi.fn()}
+      />
+    </FormField>,
+  );
+  const input = screen.getByRole("textbox", { name: "Start date" });
+  expect(input).toHaveAttribute("id", "start-date");
+  expect(input).toBeInvalid();
+  expect(input).toHaveAccessibleDescription("Choose a valid date Day/month/year");
 });
 
 it("keeps the consuming workflow's validation message associated with its date input", () => {

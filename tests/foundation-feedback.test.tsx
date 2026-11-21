@@ -121,6 +121,37 @@ describe("foundation feedback contracts", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Fallback" })).toHaveFocus());
   });
 
+  it("falls back when the explicit target is still connected but disabled", async () => {
+    const preferred = createRef<HTMLButtonElement>();
+    const fallback = createRef<HTMLButtonElement>();
+    const view = render(
+      <>
+        <button ref={preferred} disabled>
+          Unavailable
+        </button>
+        <button ref={fallback}>Fallback</button>
+        <ConfirmationDialog
+          {...labels}
+          returnFocusRef={preferred}
+          fallbackFocusRef={fallback}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        >
+          <p>Check details</p>
+        </ConfirmationDialog>
+      </>,
+    );
+    view.rerender(
+      <>
+        <button ref={preferred} disabled>
+          Unavailable
+        </button>
+        <button ref={fallback}>Fallback</button>
+      </>,
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Fallback" })).toHaveFocus());
+  });
+
   it("keeps server paging locked while data refreshes", () => {
     const onPage = vi.fn();
     render(

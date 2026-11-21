@@ -116,19 +116,19 @@ export function CSAPurchaseRequestList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap admin-list-wrap">
-          <Table className="admin-list-table csa-purchase-list-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t.csaPurchases.requestCode}</Table.Th>
-                <Table.Th>{t.csaPurchases.customer}</Table.Th>
-                <Table.Th>{t.csaPurchases.phone}</Table.Th>
-                <Table.Th>{t.csaPurchases.package}</Table.Th>
-                <Table.Th>{t.csaPurchases.status}</Table.Th>
-                <Table.Th>{t.csaPurchases.createdAt}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table csa-purchase-list-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.csaPurchases.requestCode}</Table.Th>
+                <Table.Th role="columnheader">{t.csaPurchases.customer}</Table.Th>
+                <Table.Th role="columnheader">{t.csaPurchases.phone}</Table.Th>
+                <Table.Th role="columnheader">{t.csaPurchases.package}</Table.Th>
+                <Table.Th role="columnheader">{t.csaPurchases.status}</Table.Th>
+                <Table.Th role="columnheader">{t.csaPurchases.createdAt}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
                 <Table.Tr
                   aria-label={`${item.request_code}: ${item.name}`}
@@ -144,16 +144,23 @@ export function CSAPurchaseRequestList() {
                   tabIndex={0}
                 >
                   <Table.Td
+                    role="cell"
                     className="csa-purchase-request-cell"
                     data-label={t.csaPurchases.requestCode}
                   >
                     <strong className="csa-purchase-request-code">{item.request_code}</strong>
                   </Table.Td>
-                  <Table.Td data-label={t.csaPurchases.customer}>{item.name}</Table.Td>
-                  <Table.Td className="csa-purchase-phone-cell" data-label={t.csaPurchases.phone}>
+                  <Table.Td role="cell" data-label={t.csaPurchases.customer}>
+                    {item.name}
+                  </Table.Td>
+                  <Table.Td
+                    role="cell"
+                    className="csa-purchase-phone-cell"
+                    data-label={t.csaPurchases.phone}
+                  >
                     {item.phone}
                   </Table.Td>
-                  <Table.Td data-label={t.csaPurchases.package}>
+                  <Table.Td role="cell" data-label={t.csaPurchases.package}>
                     {item.package_snapshot.name}
                     <small className="table-secondary">{item.price_option_snapshot.name}</small>
                     <small className="table-secondary">
@@ -165,10 +172,15 @@ export function CSAPurchaseRequestList() {
                         : t.csaPurchases.installments.full}
                     </small>
                   </Table.Td>
-                  <Table.Td className="csa-purchase-status-cell" data-label={t.csaPurchases.status}>
+                  <Table.Td
+                    role="cell"
+                    className="csa-purchase-status-cell"
+                    data-label={t.csaPurchases.status}
+                  >
                     <CSAPurchaseStatusBadge status={item.status} />
                   </Table.Td>
                   <Table.Td
+                    role="cell"
                     className="csa-purchase-created-cell"
                     data-label={t.csaPurchases.createdAt}
                   >
@@ -178,7 +190,7 @@ export function CSAPurchaseRequestList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

@@ -183,12 +183,12 @@ export function PointLedger({
         ) : items.length === 0 ? (
           <DataState kind="empty" title={t.points.empty} />
         ) : (
-          <div className="table-wrap">
-            <Table className="point-table">
+          <Table.ScrollContainer type="native" minWidth={700} className="table-wrap">
+            <Table aria-label={t.points.history} tabularNums>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>{t.points.message}</Table.Th>
-                  <Table.Th>{t.points.amount}</Table.Th>
+                  <Table.Th ta="right">{t.points.amount}</Table.Th>
                   <Table.Th>{t.points.actor}</Table.Th>
                   <Table.Th>{t.points.date}</Table.Th>
                 </Table.Tr>
@@ -198,6 +198,7 @@ export function PointLedger({
                   <Table.Tr key={item.id}>
                     <Table.Td>{item.message}</Table.Td>
                     <Table.Td
+                      ta="right"
                       className={item.direction === "credit" ? "credit-value" : "debit-value"}
                     >
                       {item.direction === "credit" ? "+" : "−"}
@@ -209,7 +210,7 @@ export function PointLedger({
                 ))}
               </Table.Tbody>
             </Table>
-          </div>
+          </Table.ScrollContainer>
         )}
         {meta && (
           <Pagination

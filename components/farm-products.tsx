@@ -535,31 +535,16 @@ export function FarmProducts({
           ) : detailLoading ? (
             <DataState kind="loading" title={c.loading} />
           ) : null}
-          {catalogMeta.total > catalogMeta.page_size && (
-            <div className="farm-catalog-pagination">
-              <Button
-                variant="default"
-                disabled={catalogPage <= 1 || catalogLoading}
-                onClick={() => setCatalogPage((n) => n - 1)}
-              >
-                {t.common.previous}
-              </Button>
-              <span>
-                {t.common.pagination
-                  .replace("{page}", String(catalogPage))
-                  .replace("{pages}", String(Math.ceil(catalogMeta.total / catalogMeta.page_size)))}
-              </span>
-              <Button
-                variant="default"
-                disabled={
-                  catalogPage * catalogMeta.page_size >= catalogMeta.total || catalogLoading
-                }
-                onClick={() => setCatalogPage((n) => n + 1)}
-              >
-                {t.common.next}
-              </Button>
-            </div>
-          )}
+          <Pagination
+            page={catalogPage}
+            total={catalogMeta.total}
+            pageSize={catalogMeta.page_size}
+            onPage={setCatalogPage}
+            disabled={catalogLoading || busy}
+            previousLabel={t.common.previous}
+            nextLabel={t.common.next}
+            summary={t.common.pagination}
+          />
         </ConfirmationDialog>
       )}
       {removeTarget && (

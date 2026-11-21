@@ -1104,7 +1104,9 @@ describe("CSA bank settings", () => {
     fireEvent.click(save);
     expect(await screen.findByText("Hãy chọn ngân hàng.")).toBeInTheDocument();
     expect(screen.getByText("Số tài khoản phải gồm 6–19 chữ số.")).toBeInTheDocument();
-    selectOption(screen.getByLabelText(/Ngân hàng/), "970436");
+    const bank = screen.getByRole("combobox", { name: /Ngân hàng/ });
+    expect(bank).toHaveAccessibleDescription("Hãy chọn ngân hàng.");
+    selectOption(bank, "970436");
     fireEvent.change(screen.getByLabelText(/Số tài khoản/), {
       target: { value: "123456789" },
     });

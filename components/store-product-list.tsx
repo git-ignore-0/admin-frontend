@@ -195,27 +195,27 @@ export function StoreProductList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap">
-          <Table className="store-product-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{copy.productName}</Table.Th>
-                <Table.Th>{copy.category}</Table.Th>
-                <Table.Th>{copy.price}</Table.Th>
-                <Table.Th>{copy.saleType}</Table.Th>
-                <Table.Th>{copy.status}</Table.Th>
-                <Table.Th>{copy.updatedAt}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap">
+          <Table role="table" className="store-product-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{copy.productName}</Table.Th>
+                <Table.Th role="columnheader">{copy.category}</Table.Th>
+                <Table.Th role="columnheader">{copy.price}</Table.Th>
+                <Table.Th role="columnheader">{copy.saleType}</Table.Th>
+                <Table.Th role="columnheader">{copy.status}</Table.Th>
+                <Table.Th role="columnheader">{copy.updatedAt}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => {
                 const name =
                   item.translations.find((value) => value.locale === locale)?.name ||
                   item.translations[0]?.name ||
                   item.sku;
                 return (
-                  <Table.Tr key={item.id}>
-                    <Table.Td data-label={copy.productName}>
+                  <Table.Tr role="row" key={item.id}>
+                    <Table.Td role="cell" data-label={copy.productName}>
                       <div className="store-product-identity">
                         {item.primary_image && (
                           <Image
@@ -237,19 +237,19 @@ export function StoreProductList() {
                         </div>
                       </div>
                     </Table.Td>
-                    <Table.Td data-label={copy.category}>
+                    <Table.Td role="cell" data-label={copy.category}>
                       {labels.get(item.category_id) ?? item.category_slug}
                     </Table.Td>
-                    <Table.Td data-label={copy.price}>
+                    <Table.Td role="cell" data-label={copy.price}>
                       {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
                         BigInt(item.retail_price_vnd),
                       )}{" "}
                       ₫
                     </Table.Td>
-                    <Table.Td data-label={copy.saleType}>
+                    <Table.Td role="cell" data-label={copy.saleType}>
                       {item.csa_quota_group_id ? copy.csaEligible : copy.retailOnly}
                     </Table.Td>
-                    <Table.Td data-label={copy.status}>
+                    <Table.Td role="cell" data-label={copy.status}>
                       <Status
                         domain="publication"
                         status={item.is_published ? "published" : "draft"}
@@ -259,7 +259,7 @@ export function StoreProductList() {
                         <Status domain="availability" status={"inactive"} label={copy.inactive} />
                       )}
                     </Table.Td>
-                    <Table.Td data-label={copy.updatedAt}>
+                    <Table.Td role="cell" data-label={copy.updatedAt}>
                       {formatAdminDate(item.updated_at)}
                     </Table.Td>
                   </Table.Tr>
@@ -267,7 +267,7 @@ export function StoreProductList() {
               })}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

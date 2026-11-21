@@ -238,6 +238,35 @@ async function fillBilingualNames() {
 }
 
 describe("CSA package price options", () => {
+  it("retains the selected quota group and draft units when jumping to another catalog page", async () => {
+    const lastGroup = {
+      ...product,
+      id: "f76403bc-1ee2-4b11-bfac-f3a9035a6b02",
+      name: "Fruit basket",
+      translations: [],
+    };
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+      return { data: [page === 1 ? product : lastGroup], meta: { ...meta, page, total: 61 } };
+    });
+    providers(<MembershipPackageEditor />);
+    await fillBilingualNames();
+
+    const group = screen.getByRole("combobox", { name: "CSA quota group 1" });
+    selectOption(group, product.id);
+    const units = screen.getByLabelText("Included units each month 1");
+    fireEvent.change(units, { target: { value: "9" } });
+    const pages = screen.getByRole("navigation", { name: "Page 1/3" });
+    fireEvent.click(within(pages).getByRole("button", { name: "3" }));
+    expect(await screen.findByRole("navigation", { name: "Page 3/3" })).toBeVisible();
+    expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-products?page=3&active=true");
+    expect(group).toHaveValue("Vegetable basket");
+    expect(units).toHaveValue("9");
+    expect(api).not.toHaveBeenCalled();
+    fireEvent.click(group);
+    expect(await screen.findByRole("option", { name: "Fruit basket" })).toBeVisible();
+  });
+
   it("blocks saving a package whose existing quota group is inactive", async () => {
     const inactivePackage = {
       ...packageItem,

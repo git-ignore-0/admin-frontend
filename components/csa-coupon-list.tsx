@@ -109,7 +109,7 @@ export function CSACouponList() {
       ) : null}
       {items && items.length > 0 && (
         <div className={styles.tableWrap}>
-          <Table aria-label={copy.title} className={styles.table} role="table">
+          <Table aria-label={copy.title} className={styles.table} layout="fixed" role="table">
             <Table.Thead role="rowgroup">
               <Table.Tr role="row">
                 <Table.Th scope="col" role="columnheader">

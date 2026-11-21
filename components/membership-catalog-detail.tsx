@@ -1,7 +1,7 @@
 "use client";
 import { Status as UiStatus } from "@/components/nfv-controls";
 
-import { Button, Table, Badge, Alert } from "@mantine/core";
+import { Button, Table, Badge, Alert, Paper } from "@mantine/core";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -342,7 +342,7 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
                 <h4>
                   {active ? t.membershipCatalog.activeOptions : t.membershipCatalog.inactiveOptions}
                 </h4>
-                <div className="table-wrap">
+                <Paper withBorder radius="md">
                   <Table>
                     <Table.Thead>
                       <Table.Tr>
@@ -365,7 +365,7 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
                       ))}
                     </Table.Tbody>
                   </Table>
-                </div>
+                </Paper>
               </div>
             );
           })}
@@ -373,8 +373,8 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
         <BilingualReview translations={item.translations} />
         <div className="catalog-package-products">
           <h3>{t.membershipCatalog.packageProducts}</h3>
-          <div className="table-wrap">
-            <Table>
+          <Paper withBorder radius="md">
+            <Table styles={{ td: { overflowWrap: "anywhere" } }}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>{t.membershipCatalog.product}</Table.Th>
@@ -412,7 +412,7 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
                 })}
               </Table.Tbody>
             </Table>
-          </div>
+          </Paper>
         </div>
       </section>
       {deleteOpen && (

@@ -57,40 +57,40 @@ export function CSARoundList() {
       ) : !items.length ? (
         <DataState kind="empty" title={c.empty} />
       ) : (
-        <div className="table-wrap admin-list-wrap">
-          <Table className="admin-list-table" aria-label={c.title}>
-            <Table.Thead>
-              <Table.Tr>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table" aria-label={c.title}>
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
                 {[c.name, c.state, c.selectionWindow, c.delivery, c.action].map((label) => (
-                  <Table.Th key={label} scope="col">
+                  <Table.Th role="columnheader" key={label} scope="col">
                     {label}
                   </Table.Th>
                 ))}
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
-                <Table.Tr key={item.id}>
-                  <Table.Td data-label={c.name}>
+                <Table.Tr role="row" key={item.id}>
+                  <Table.Td role="cell" data-label={c.name}>
                     <strong>{item.name}</strong>
                   </Table.Td>
-                  <Table.Td data-label={c.state}>
+                  <Table.Td role="cell" data-label={c.state}>
                     <Status
                       domain="csa-round"
                       status={item.status}
                       label={c.statuses[item.status]}
                     />
                   </Table.Td>
-                  <Table.Td data-label={c.selectionWindow}>
+                  <Table.Td role="cell" data-label={c.selectionWindow}>
                     <time dateTime={item.opens_at}>{formatAdminDateTime(item.opens_at)}</time>
                     <small className="table-secondary">
                       → <time dateTime={item.closes_at}>{formatAdminDateTime(item.closes_at)}</time>
                     </small>
                   </Table.Td>
-                  <Table.Td data-label={c.delivery}>
+                  <Table.Td role="cell" data-label={c.delivery}>
                     <time dateTime={item.delivery_date}>{formatAdminDate(item.delivery_date)}</time>
                   </Table.Td>
-                  <Table.Td data-label={c.action}>
+                  <Table.Td role="cell" data-label={c.action}>
                     <ActionLink href={`/csa-rounds/${item.id}`} small variant="outline">
                       {c.view}
                     </ActionLink>
@@ -99,7 +99,7 @@ export function CSARoundList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

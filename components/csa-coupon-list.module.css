@@ -22,13 +22,6 @@
   background: var(--surface);
 }
 
-.table {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-  text-align: left;
-}
-
 .table th,
 .table td {
   overflow-wrap: anywhere;
@@ -63,10 +56,6 @@
 .table th:last-child {
   width: 15%;
   border-start-end-radius: var(--radius);
-}
-
-.table td {
-  border-top: 1px solid var(--border);
 }
 
 .table td:last-child {

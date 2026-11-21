@@ -137,35 +137,38 @@ export function CSACustomerList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap admin-list-wrap">
-          <Table className="admin-list-table customer-list-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t.csaCustomers.customer}</Table.Th>
-                <Table.Th>{t.csaCustomers.phone}</Table.Th>
-                <Table.Th>{t.csaCustomers.websiteAccount}</Table.Th>
-                <Table.Th>{t.csaCustomers.status}</Table.Th>
-                <Table.Th>{t.csaCustomers.actions}</Table.Th>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table customer-list-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.csaCustomers.customer}</Table.Th>
+                <Table.Th role="columnheader">{t.csaCustomers.phone}</Table.Th>
+                <Table.Th role="columnheader">{t.csaCustomers.websiteAccount}</Table.Th>
+                <Table.Th role="columnheader">{t.csaCustomers.status}</Table.Th>
+                <Table.Th role="columnheader">{t.csaCustomers.actions}</Table.Th>
               </Table.Tr>
             </Table.Thead>
-            <Table.Tbody>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
-                <Table.Tr key={item.id}>
-                  <Table.Td data-label={t.csaCustomers.customer}>
+                <Table.Tr role="row" key={item.id}>
+                  <Table.Td role="cell" data-label={t.csaCustomers.customer}>
                     <strong>{item.name}</strong>
                   </Table.Td>
-                  <Table.Td data-label={t.csaCustomers.phone}>{item.phone || "—"}</Table.Td>
-                  <Table.Td data-label={t.csaCustomers.websiteAccount}>
+                  <Table.Td role="cell" data-label={t.csaCustomers.phone}>
+                    {item.phone || "—"}
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={t.csaCustomers.websiteAccount}>
                     <UiStatus
                       domain="account-link"
                       status={item.user ? "linked" : "managed"}
                       label={item.user ? t.csaCustomers.linkedAccount : t.csaCustomers.managed}
                     />
                   </Table.Td>
-                  <Table.Td data-label={t.csaCustomers.status}>
+                  <Table.Td role="cell" data-label={t.csaCustomers.status}>
                     <CustomerStatusBadge status={item.status} />
                   </Table.Td>
                   <Table.Td
+                    role="cell"
                     className="row-actions customer-list-action"
                     data-label={t.csaCustomers.actions}
                   >
@@ -177,7 +180,7 @@ export function CSACustomerList() {
               ))}
             </Table.Tbody>
           </Table>
-        </div>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

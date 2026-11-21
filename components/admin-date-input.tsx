@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { ActionIcon, Popover, TextInput } from "@mantine/core";
 import { DatePicker } from "@mantine/dates";
@@ -40,6 +40,9 @@ export function AdminDateInput({
   const selectedDate = adminDateInputToIso(value);
   const minimumDate = pickerMin || (typeof min === "string" ? min : undefined);
   const maximumDate = typeof max === "string" ? max : undefined;
+  useEffect(() => {
+    if (disabled) setOpened(false);
+  }, [disabled]);
 
   return (
     <TextInput
@@ -49,7 +52,10 @@ export function AdminDateInput({
       id={id}
       classNames={{ input: className }}
       attributes={{
-        input: props["aria-describedby"] ? { "aria-describedby": props["aria-describedby"] } : {},
+        input: {
+          "aria-describedby": props["aria-describedby"],
+          ...(props["aria-invalid"] !== undefined ? { "aria-invalid": props["aria-invalid"] } : {}),
+        },
       }}
       inputMode="numeric"
       maxLength={10}

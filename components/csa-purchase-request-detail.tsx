@@ -462,23 +462,30 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
             </dl>
           )}
           {orderedPayments.length ? (
-            <div className="table-wrap csa-installment-wrap">
-              <Table className="csa-installment-table">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{installmentCopy.installmentNumber.replace("{count}", "#")}</Table.Th>
-                    <Table.Th>{installmentCopy.dueAmount}</Table.Th>
-                    <Table.Th>{installmentCopy.paidAmount}</Table.Th>
-                    <Table.Th>{installmentCopy.cycles}</Table.Th>
-                    <Table.Th>{installmentCopy.dueAt}</Table.Th>
-                    <Table.Th>{installmentCopy.paymentStatus}</Table.Th>
-                    <Table.Th>{t.csaPurchases.actions}</Table.Th>
+            <Table.ScrollContainer
+              type="native"
+              minWidth={0}
+              className="table-wrap csa-installment-wrap"
+            >
+              <Table role="table" className="csa-installment-table">
+                <Table.Thead role="rowgroup">
+                  <Table.Tr role="row">
+                    <Table.Th role="columnheader">
+                      {installmentCopy.installmentNumber.replace("{count}", "#")}
+                    </Table.Th>
+                    <Table.Th role="columnheader">{installmentCopy.dueAmount}</Table.Th>
+                    <Table.Th role="columnheader">{installmentCopy.paidAmount}</Table.Th>
+                    <Table.Th role="columnheader">{installmentCopy.cycles}</Table.Th>
+                    <Table.Th role="columnheader">{installmentCopy.dueAt}</Table.Th>
+                    <Table.Th role="columnheader">{installmentCopy.paymentStatus}</Table.Th>
+                    <Table.Th role="columnheader">{t.csaPurchases.actions}</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
-                <Table.Tbody>
+                <Table.Tbody role="rowgroup">
                   {orderedPayments.map((payment) => (
-                    <Table.Tr key={payment.id}>
+                    <Table.Tr role="row" key={payment.id}>
                       <Table.Th
+                        role="columnheader"
                         data-label={installmentCopy.installmentNumber.replace("{count}", "#")}
                         scope="row"
                       >
@@ -487,19 +494,21 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                           String(payment.installment_sequence),
                         )}
                       </Table.Th>
-                      <Table.Td data-label={installmentCopy.dueAmount}>
+                      <Table.Td role="cell" data-label={installmentCopy.dueAmount}>
                         {formatMembershipMoney(payment.amount_due, locale)}
                       </Table.Td>
-                      <Table.Td data-label={installmentCopy.paidAmount}>
+                      <Table.Td role="cell" data-label={installmentCopy.paidAmount}>
                         {payment.amount_paid
                           ? formatMembershipMoney(payment.amount_paid, locale)
                           : "—"}
                       </Table.Td>
-                      <Table.Td data-label={installmentCopy.cycles}>{payment.cycle_count}</Table.Td>
-                      <Table.Td data-label={installmentCopy.dueAt}>
+                      <Table.Td role="cell" data-label={installmentCopy.cycles}>
+                        {payment.cycle_count}
+                      </Table.Td>
+                      <Table.Td role="cell" data-label={installmentCopy.dueAt}>
                         {formatAdminDateTime(payment.due_at)}
                       </Table.Td>
-                      <Table.Td data-label={installmentCopy.paymentStatus}>
+                      <Table.Td role="cell" data-label={installmentCopy.paymentStatus}>
                         <UiStatus
                           domain="installment"
                           status={payment.status}
@@ -537,7 +546,7 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                           </small>
                         )}
                       </Table.Td>
-                      <Table.Td data-label={t.csaPurchases.actions}>
+                      <Table.Td role="cell" data-label={t.csaPurchases.actions}>
                         {item.status === "approved" && payment.status === "reported" && (
                           <div className="detail-actions csa-installment-actions">
                             <Button
@@ -563,7 +572,7 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                   ))}
                 </Table.Tbody>
               </Table>
-            </div>
+            </Table.ScrollContainer>
           ) : (
             <p>{installmentCopy.noSchedule}</p>
           )}

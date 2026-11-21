@@ -676,7 +676,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           {!cycleRows.length ? (
             <DataState kind="empty" title={t.memberships.noCycles} compact />
           ) : (
-            <div className="table-wrap">
+            <Table.ScrollContainer type="native" minWidth={600} className="table-wrap">
               <Table aria-label={t.memberships.cycles} className="cycle-quota-table">
                 <Table.Thead>
                   <Table.Tr>
@@ -717,7 +717,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                   </Table.Tr>
                 </Table.Tfoot>
               </Table>
-            </div>
+            </Table.ScrollContainer>
           )}
         </section>
       </div>

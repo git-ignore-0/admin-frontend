@@ -1,15 +1,13 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Stack, Alert, Button, Checkbox } from "@mantine/core";
-
-import { FormField, FormInput, FormSelect } from "@/components/nfv-controls";
-
+import { Alert, Button, Checkbox, Stack, TextInput } from "@mantine/core";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataState, FormField, FormInput, FormSelect } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
+import { Pagination } from "@/components/pagination";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   enableFarmTracker,
@@ -37,7 +35,10 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
   const [farm, setFarm] = useState<Farm | null>(null);
   const [profile, setProfile] = useState<TrackerFarm | null>(null);
   const [checking, setChecking] = useState(true);
+  const [listLoading, setListLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [conflictedFarmId, setConflictedFarmId] = useState<string | null>(null);
+  const [showCountErrors, setShowCountErrors] = useState(false);
   const [error, setError] = useState("");
   const [listError, setListError] = useState("");
   const [farmError, setFarmError] = useState("");
@@ -50,6 +51,7 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
   const [count, setCount] = useState("0");
   const [monthCount, setMonthCount] = useState("0");
   const [visible, setVisible] = useState(true);
+  const conflict = conflictedFarmId === selectedId;
   const c =
     locale === "vi"
       ? {
@@ -66,8 +68,10 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
           already: "Farm này đã có Growth Tracker.",
           existing: "Mở profile hiện có",
           loading: "Đang tải Growth Tracker…",
+          required: "Vui lòng nhập số đăng ký.",
           invalid: "Số đăng ký phải là số nguyên từ 0 đến 4.294.967.295.",
           conflict: "Profile đã được sửa ở nơi khác. Hãy tải lại trước khi lưu.",
+          reload: "Tải lại dữ liệu",
           inactive: "Farm đang tắt hoạt động nên sẽ không xuất hiện công khai dù profile được bật.",
         }
       : {
@@ -84,8 +88,10 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
           already: "This farm already has a Growth Tracker profile.",
           existing: "Open existing profile",
           loading: "Loading Growth Tracker…",
+          required: "Enter a signup count.",
           invalid: "Signup counts must be integers from 0 to 4,294,967,295.",
           conflict: "The profile was changed elsewhere. Reload before saving.",
+          reload: "Reload data",
           inactive:
             "This farm is inactive, so it will not appear publicly even when the profile is visible.",
         };
@@ -104,6 +110,7 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
       };
     }
     let live = true;
+    setListLoading(true);
     setListError("");
     listFarms({ page, search })
       .then((result) => {
@@ -111,7 +118,8 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
         setFarms(result.data);
         setMeta(result.meta ?? { page, page_size: 20, total: result.data.length });
       })
-      .catch((caught) => live && setListError(requestErrorMessage(caught, translationRef.current)));
+      .catch((caught) => live && setListError(requestErrorMessage(caught, translationRef.current)))
+      .finally(() => live && setListLoading(false));
     return () => {
       live = false;
     };
@@ -134,6 +142,8 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
         setCount(String(row.signup_count));
         setMonthCount(String(row.one_month_signup_count ?? 0));
         setVisible(row.is_visible);
+        setConflictedFarmId(null);
+        setShowCountErrors(false);
       })
       .catch((caught) => {
         if (!live) return;
@@ -142,6 +152,8 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
           setCount("0");
           setMonthCount("0");
           setVisible(true);
+          setConflictedFarmId(null);
+          setShowCountErrors(false);
         } else setProfileError(requestErrorMessage(caught, translationRef.current));
       })
       .finally(() => live && setChecking(false));
@@ -156,15 +168,21 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
     setSearch(query.trim());
     if (search === query.trim() && page === 1) setListRetry((n) => n + 1);
   }
+
+  function countError(value: string) {
+    if (!showCountErrors || validCount(value)) return undefined;
+    return value ? c.invalid : c.required;
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedId || saving || checking) return;
+    if (!selectedId || saving || checking || conflict) return;
+    setError("");
     if (!validCount(count) || !validCount(monthCount)) {
-      setError(c.invalid);
+      setShowCountErrors(true);
       return;
     }
     setSaving(true);
-    setError("");
     try {
       const values = {
         signup_count: Number(count),
@@ -176,11 +194,8 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
       router.replace("/tracker-farms");
       router.refresh();
     } catch (caught) {
-      setError(
-        (caught as { status?: number }).status === 409
-          ? c.conflict
-          : requestErrorMessage(caught, t),
-      );
+      if ((caught as { status?: number }).status === 409) setConflictedFarmId(selectedId);
+      else setError(requestErrorMessage(caught, t));
     } finally {
       setSaving(false);
     }
@@ -234,29 +249,16 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
                 {c.empty} <Link href="/farms/new">{t.common.farmList}</Link>
               </p>
             )}
-            {meta.total > meta.page_size && (
-              <div className="farm-profile-navigation">
-                <Button
-                  type="button"
-                  variant="default"
-                  disabled={page <= 1}
-                  onClick={() => setPage((n) => n - 1)}
-                >
-                  {t.common.previous}
-                </Button>
-                <span>
-                  {page} / {Math.ceil(meta.total / meta.page_size)}
-                </span>
-                <Button
-                  type="button"
-                  variant="default"
-                  disabled={page * meta.page_size >= meta.total}
-                  onClick={() => setPage((n) => n + 1)}
-                >
-                  {t.common.next}
-                </Button>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              total={meta.total}
+              pageSize={meta.page_size}
+              onPage={setPage}
+              disabled={listLoading}
+              previousLabel={t.common.previous}
+              nextLabel={t.common.next}
+              summary={t.common.pagination}
+            />
           </>
         )}
         {farm && (
@@ -308,31 +310,33 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
               {c.already} <Link href={`/tracker-farms/${selectedId}`}>{c.existing}</Link>
             </p>
           ) : (
-            <form className="form-grid" onSubmit={submit}>
-              <FormField label={c.sixMonths} className="field">
-                <FormInput
-                  inputMode="numeric"
-                  type="number"
-                  min="0"
-                  step="1"
-                  max={MAX_COUNT}
-                  value={count}
-                  onChange={(event) => setCount(event.target.value)}
-                  required
-                />
-              </FormField>
-              <FormField label={c.month} className="field">
-                <FormInput
-                  inputMode="numeric"
-                  type="number"
-                  min="0"
-                  step="1"
-                  max={MAX_COUNT}
-                  value={monthCount}
-                  onChange={(event) => setMonthCount(event.target.value)}
-                  required
-                />
-              </FormField>
+            <form className="form-grid" onSubmit={submit} noValidate>
+              <TextInput
+                label={c.sixMonths}
+                inputMode="numeric"
+                type="number"
+                min="0"
+                step="1"
+                max={MAX_COUNT}
+                value={count}
+                error={countError(count)}
+                onChange={(event) => setCount(event.currentTarget.value)}
+                required
+                withAsterisk={false}
+              />
+              <TextInput
+                label={c.month}
+                inputMode="numeric"
+                type="number"
+                min="0"
+                step="1"
+                max={MAX_COUNT}
+                value={monthCount}
+                error={countError(monthCount)}
+                onChange={(event) => setMonthCount(event.currentTarget.value)}
+                required
+                withAsterisk={false}
+              />
               <Checkbox
                 className="full"
                 label={c.visible}
@@ -344,8 +348,22 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
                   {error}
                 </Alert>
               )}
+              {conflict && (
+                <Alert color="red" className="full" role="alert">
+                  <Stack gap="sm" align="flex-start">
+                    {c.conflict}
+                    <Button
+                      variant="default"
+                      type="button"
+                      onClick={() => setProfileRetry((n) => n + 1)}
+                    >
+                      {c.reload}
+                    </Button>
+                  </Stack>
+                </Alert>
+              )}
               <div className="catalog-editor-actions full">
-                <Button type="submit" disabled={saving}>
+                <Button type="submit" disabled={saving || conflict}>
                   {profile ? c.edit : c.new}
                 </Button>
               </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { IconTrash } from "@tabler/icons-react";
 import { ActionIcon, Button, Radio } from "@mantine/core";
 import { FormInput, Status as UiStatus } from "@/components/nfv-controls";
 
@@ -644,15 +645,7 @@ export function MembershipPaymentPlanManager({
                   title={copy.removePayment.replace("{number}", String(index + 1))}
                   type="button"
                 >
-                  <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
-                    <path
-                      d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="1.8"
-                    />
-                  </svg>
+                  <IconTrash aria-hidden="true" size={18} stroke={1.8} />
                 </ActionIcon>
               ) : null}
             </div>

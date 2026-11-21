@@ -47,13 +47,15 @@ export function ConfirmationDialog({
     // A consumer can deliberately focus a validation field as it closes. Do not
     // replace that decision with a generic return target.
     if (active?.isConnected && active !== document.body) return;
-    const preferred = returnFocusRef?.current;
-    const fallback = fallbackFocusRef?.current;
-    const previous = originalFocus.current;
-    if (preferred?.isConnected) preferred.focus({ preventScroll: true });
-    else if (previous?.isConnected && previous !== document.body)
-      previous.focus({ preventScroll: true });
-    else if (fallback?.isConnected) fallback.focus({ preventScroll: true });
+    for (const target of [
+      returnFocusRef?.current,
+      originalFocus.current,
+      fallbackFocusRef?.current,
+    ]) {
+      if (!target?.isConnected || target === document.body) continue;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
+    }
   }, [fallbackFocusRef, returnFocusRef]);
   useEffect(() => {
     // Existing consumers mount/unmount rather than toggling `opened`. Resolve refs
