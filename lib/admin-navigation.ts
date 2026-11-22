@@ -1,4 +1,4 @@
-import type { IconName } from "@/components/nfv-controls";
+import type { IconName } from "@/components/admin-icon";
 import type { AdminDictionary } from "@/lib/admin-i18n";
 
 export type AdminNavigationSectionKey =

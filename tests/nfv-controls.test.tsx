@@ -2,12 +2,14 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
+import { Icon, type IconName } from "@/components/admin-icon";
 import {
   FormCheckbox,
   FormField,
   FormInput,
   FormSelect,
   FormTextarea,
+  Icon as LegacyIcon,
   Status,
   Tabs,
 } from "@/components/nfv-controls";
@@ -22,6 +24,27 @@ function renderControl(children: React.ReactNode) {
 }
 
 describe("Mantine control compatibility", () => {
+  it("re-exports the shared Icon and preserves its Tabler rendering contract", () => {
+    expect(LegacyIcon).toBe(Icon);
+    const name: IconName = "dashboard";
+    const { container } = renderControl(
+      <>
+        <Icon name={name} />
+        <LegacyIcon name="store" size={16} />
+      </>,
+    );
+    const [dashboard, store] = container.querySelectorAll("svg");
+    expect(dashboard).toHaveClass("tabler-icon-layout-dashboard");
+    expect(dashboard).toHaveAttribute("width", "18");
+    expect(store).toHaveClass("tabler-icon-shopping-bag");
+    expect(store).toHaveAttribute("width", "16");
+    for (const icon of [dashboard, store]) {
+      expect(icon).toHaveAttribute("stroke-width", "1.7");
+      expect(icon).toHaveAttribute("aria-hidden", "true");
+      expect(icon).toHaveStyle({ flexShrink: "0" });
+    }
+  });
+
   it.each([
     ["user", "active", "green"],
     ["membership", "frozen", "orange"],

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { startTransition, Suspense, use, useLayoutEffect, useState } from "react";
+import { startTransition, Suspense, use, useLayoutEffect, useState, type ReactNode } from "react";
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import type { NextRouter } from "next/router";
 
@@ -9,6 +9,7 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminShell } from "@/components/admin-shell";
 import headerClasses from "@/components/admin-shell.module.css";
+import { DetailPageHeading } from "@/components/detail-page-heading";
 import { activeAdminSection, adminNavigation, isActiveAdminRoute } from "@/lib/admin-navigation";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { ADMIN_SESSION_CHANGED_EVENT, api, apiFile } from "@/lib/client-api";
@@ -68,7 +69,7 @@ function renderShell(
   );
 }
 
-function renderNavigableShell(initialPath = "/dashboard") {
+function renderNavigableShell(initialPath = "/dashboard", initialContent?: ReactNode) {
   const requests = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   window.history.replaceState(null, "", initialPath);
   let restoreRoute: (href: string) => void;
@@ -89,6 +90,7 @@ function renderNavigableShell(initialPath = "/dashboard") {
           sessionBinding="test-session"
         >
           <p>Content at {href}</p>
+          {href === initialPath && initialContent}
         </AdminShell>
       </AdminI18nProvider>
     );
@@ -143,6 +145,45 @@ async function clickRoute(link: HTMLElement) {
     fireEvent.click(link);
   });
 }
+
+describe("shared detail back navigation", () => {
+  const href = "/users?page=2#results";
+  const heading = (
+    <DetailPageHeading title="User details" backHref={href} backLabel="Back to users" />
+  );
+
+  it("uses the shell transition once and preserves the query and hash in the parent href", async () => {
+    const { commit } = renderNavigableShell("/users/record-id", heading);
+    const link = screen.getByRole("link", { name: "Back to users" });
+    const header = within(
+      screen.getByRole("navigation", { name: "Breadcrumbs" }).closest("header")!,
+    );
+    expect(link).toHaveAttribute("href", href);
+    clickModified(link, { metaKey: true });
+    expect(navigation.router.push).not.toHaveBeenCalled();
+    expect(header.queryByText("Opening page…")).not.toBeInTheDocument();
+
+    await clickRoute(link);
+    expect(navigation.router.push).toHaveBeenCalledExactlyOnceWith(href, { scroll: undefined });
+    expect(header.getByRole("status")).toHaveTextContent("Opening page…");
+    expect(header.getByText("User details")).toHaveAttribute("aria-current", "page");
+    await commit(href);
+    expect(header.queryByText("Opening page…")).not.toBeInTheDocument();
+    expect(header.getByText("Users")).toHaveAttribute("aria-current", "page");
+    expect(window.location.search).toBe("?page=2");
+    expect(window.location.hash).toBe("#results");
+  });
+
+  it("falls back to native Link navigation outside the shell", () => {
+    render(
+      <RouterContext.Provider value={navigation.router as unknown as NextRouter}>
+        {heading}
+      </RouterContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Back to users" }));
+    expect(navigation.router.push).toHaveBeenCalledExactlyOnceWith(href, { scroll: true });
+  });
+});
 
 describe("admin account identity", () => {
   it("binds JSON and file requests to the rendered session and asks for a reload", async () => {
@@ -628,7 +669,9 @@ describe("admin sidebar navigation", () => {
   });
   it("shows real destinations without section accordion controls", () => {
     renderShell();
-    expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
+    const users = screen.getByRole("link", { name: "Users" });
+    expect(users).toHaveAttribute("href", "/users");
+    expect(users.querySelector("svg")).toHaveClass("tabler-icon-users");
     expect(screen.getByRole("link", { name: "CSA rounds" })).toHaveAttribute("href", "/csa-rounds");
     expect(screen.getByRole("link", { name: "Payment settings" })).toHaveAttribute(
       "href",

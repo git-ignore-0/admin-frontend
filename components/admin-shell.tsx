@@ -36,6 +36,7 @@ import {
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
 import { AdminHeaderContent } from "@/components/admin-header";
+import { Icon } from "@/components/admin-icon";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import {
@@ -43,7 +44,6 @@ import {
   AdminNavigationProvider,
   type AdminNavigate,
 } from "@/components/admin-navigation-link";
-import { Icon } from "@/components/nfv-controls";
 import { clearAdminNotifications } from "@/components/toast-provider";
 import {
   activeAdminSection,
