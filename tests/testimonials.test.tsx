@@ -115,11 +115,19 @@ describe("testimonial list", () => {
     );
     expect(screen.getAllByRole("cell")[0]).toHaveAttribute("data-label", "Testimonial");
 
-    selectOption(screen.getByLabelText("Lọc trạng thái"), "published");
+    const statusFilter = screen.getByLabelText("Lọc trạng thái");
+    await waitFor(() => expect(statusFilter).toBeEnabled());
+    selectOption(statusFilter, "published");
     await waitFor(() => expect(vi.mocked(apiEnvelope)).toHaveBeenCalledTimes(2));
-    selectOption(screen.getByLabelText("Lọc loại"), "farmer");
+
+    const typeFilter = screen.getByLabelText("Lọc loại");
+    await waitFor(() => expect(typeFilter).toBeEnabled());
+    selectOption(typeFilter, "farmer");
     await waitFor(() => expect(vi.mocked(apiEnvelope)).toHaveBeenCalledTimes(3));
-    fireEvent.change(screen.getByLabelText("Tìm testimonial"), {
+
+    const searchInput = screen.getByLabelText("Tìm testimonial");
+    await waitFor(() => expect(searchInput).toBeEnabled());
+    fireEvent.change(searchInput, {
       target: { value: "Đồng Nai" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
@@ -132,7 +140,9 @@ describe("testimonial list", () => {
     expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=published");
     expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("type=farmer");
 
-    fireEvent.click(screen.getByRole("button", { name: "Sau" }));
+    const nextPage = screen.getByRole("button", { name: "Sau" });
+    await waitFor(() => expect(nextPage).toBeEnabled());
+    fireEvent.click(nextPage);
     await waitFor(() => expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("page=2"));
   });
 
