@@ -9,12 +9,13 @@ export default async function UiFoundationPage({
 }: {
   searchParams: Promise<SampleSearchParams>;
 }) {
-  if (process.env.NODE_ENV !== "development") notFound();
-
-  const [{ UiFoundationShowcase }, { readSampleSearchParams }, query] = await Promise.all([
-    import("@/components/ui-foundation-showcase"),
-    import("@/components/ui-foundation-showcase/sample-navigation"),
-    searchParams,
-  ]);
-  return <UiFoundationShowcase navigationContext={readSampleSearchParams(query)} />;
+  if (process.env.NODE_ENV === "development") {
+    const [{ UiFoundationShowcase }, { readSampleSearchParams }, query] = await Promise.all([
+      import("@/components/ui-foundation-showcase"),
+      import("@/components/ui-foundation-showcase/sample-navigation"),
+      searchParams,
+    ]);
+    return <UiFoundationShowcase navigationContext={readSampleSearchParams(query)} />;
+  }
+  notFound();
 }
