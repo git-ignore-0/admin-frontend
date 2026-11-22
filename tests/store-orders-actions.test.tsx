@@ -127,7 +127,7 @@ describe("Store order actions", () => {
     expect(within(dialog).getByRole("button", { name: "Hủy đơn" })).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("Lý do hủy"), { target: { value: "Hết hàng" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Hủy đơn" }));
-    expect(await within(dialog).findByText(/Không kết nối được/)).toBeVisible();
+    expect(await within(dialog).findByText(/Không thể kết nối/)).toBeVisible();
     expect(within(dialog).getByLabelText("Lý do hủy")).toHaveValue("Hết hàng");
     const firstPayload = JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body));
     fireEvent.click(within(dialog).getByRole("button", { name: "Hủy đơn" }));

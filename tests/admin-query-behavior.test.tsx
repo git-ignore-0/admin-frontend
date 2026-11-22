@@ -221,6 +221,7 @@ it.each(["fetch", "JSON body"] as const)(
             signal.addEventListener("abort", () => stream.error(signal.reason), { once: true });
           },
         }),
+        { headers: { "Content-Type": "application/json" } },
       );
       return response;
     });

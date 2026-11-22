@@ -22,7 +22,9 @@ import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { ListState } from "@/components/list-state";
 import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { api } from "@/lib/client-api";
+import { requireResponseList } from "@/lib/api-response";
+import { disableFarmTracker } from "@/lib/farms-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import type { AdminDictionary } from "@/lib/admin-i18n";
@@ -100,7 +102,7 @@ export function TrackerFarmManager() {
     if (showLoading) setLoading(true);
     setLoadError("");
     try {
-      const latest = await api<TrackerFarm[]>("admin/tracker-farms");
+      const latest = requireResponseList(await api<TrackerFarm[]>("admin/tracker-farms"));
       setFarms(latest);
       setSavedFarms(latest);
       return latest;
@@ -158,6 +160,7 @@ export function TrackerFarmManager() {
           })),
         }),
       });
+      requireResponseList(saved);
       setFarms(saved);
       setSavedFarms(saved);
       toast(t.trackerFarms.orderSaved);
@@ -204,7 +207,7 @@ export function TrackerFarmManager() {
     setDeleting(true);
     setDeleteError("");
     try {
-      await apiEnvelope(`admin/farms/${deleteTarget.id}/growth-tracker`, { method: "DELETE" });
+      await disableFarmTracker(deleteTarget.id);
       setFarms((current) => current?.filter((farm) => farm.id !== deleteTarget.id) ?? []);
       setSavedFarms((current) => current.filter((farm) => farm.id !== deleteTarget.id));
       setDeleteTarget(null);

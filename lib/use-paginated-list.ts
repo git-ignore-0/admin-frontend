@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { requirePaginatedList } from "@/lib/api-response";
 import type { ApiEnvelope } from "@/lib/client-api";
 import { isRequestCanceled } from "@/lib/client-error";
 import type { PaginationMeta } from "@/lib/types";
@@ -46,8 +47,9 @@ export function usePaginatedList<T>({
       try {
         const payload = await fetchPage(page, controller.signal);
         if (activeRequest.current !== controller) return;
-        setItems(payload.data);
-        setMeta(payload.meta ?? null);
+        const { data, meta } = requirePaginatedList(payload);
+        setItems(data);
+        setMeta(meta);
       } catch (error) {
         if (activeRequest.current === controller && !isRequestCanceled(error, controller.signal)) {
           setError(getErrorMessage(error));

@@ -91,3 +91,24 @@ it("does not display cancellation and still handles a genuine error from a one-a
   await waitFor(() => expect(result.current.items).toEqual(["ready"]));
   expect(result.current).toMatchObject({ error: "", loading: false, meta: pageData(1, "").meta });
 });
+
+it.each([
+  { data: {}, meta: { page: 1, page_size: 20, total: 0 } },
+  { data: [] },
+  { data: [], meta: { page: 1, page_size: 0, total: 0 } },
+  { data: [], meta: { page: 1, page_size: 20, total: -1 } },
+])("keeps the last valid page when a reload receives %j", async (invalidPage) => {
+  const fetchPage = vi
+    .fn<() => Promise<Page>>()
+    .mockResolvedValueOnce(pageData(1, "loaded"))
+    .mockResolvedValueOnce(invalidPage as Page);
+  const { result } = renderHook(() => usePaginatedList({ fetchPage, getErrorMessage }));
+  await waitFor(() => expect(result.current.items).toEqual(["loaded"]));
+  act(() => result.current.reload());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current).toMatchObject({
+    items: ["loaded"],
+    meta: { page: 1, page_size: 10, total: 25 },
+    error: "invalid_response",
+  });
+});

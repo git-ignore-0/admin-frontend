@@ -1408,7 +1408,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(screen.queryByRole("button", { name: "Record received products" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Undo product collection" })).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The backend encountered an error. Check the Django terminal.",
+      "The service is currently unavailable. Try again later.",
     );
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(revokeRequests).toBe(1);

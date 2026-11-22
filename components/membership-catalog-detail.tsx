@@ -139,7 +139,11 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
     setDeleteError("");
     let navigating = false;
     try {
-      await api(`admin/membership-products/${item.id}`, { method: "DELETE" });
+      await api(
+        `admin/membership-products/${item.id}`,
+        { method: "DELETE" },
+        { response: "no-content" },
+      );
       toast(t.membershipCatalog.deleted);
       navigating = true;
       router.replace("/membership-catalog/products");
@@ -267,7 +271,11 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
     setDeleteError("");
     let navigating = false;
     try {
-      await api(`admin/membership-packages/${item.id}`, { method: "DELETE" });
+      await api(
+        `admin/membership-packages/${item.id}`,
+        { method: "DELETE" },
+        { response: "no-content" },
+      );
       toast(t.membershipCatalog.deleted);
       navigating = true;
       router.replace("/membership-catalog/packages");

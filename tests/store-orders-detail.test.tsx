@@ -87,7 +87,7 @@ describe("Store order detail", () => {
     view();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/Không kết nối được/);
+    expect(alert).toHaveTextContent(/Không thể kết nối/);
     expect(within(alert).getByRole("button", { name: "Thử lại" })).toBeVisible();
   });
 
@@ -302,7 +302,7 @@ describe("Store order detail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/Không kết nối được/);
+    expect(alert).toHaveTextContent(/Không thể kết nối/);
     expect(alert).toHaveTextContent(/chưa được làm mới/i);
     expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue(1);
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();

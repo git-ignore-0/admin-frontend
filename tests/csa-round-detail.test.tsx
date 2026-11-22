@@ -181,7 +181,13 @@ it("pages participants without fetching history or losing full demand labels", a
     reopen_until: null,
   };
   const demand = [
-    { product_id: "not-on-this-page", name: "Full demand tomato", unit_label: "kg", quantity: 8 },
+    {
+      product_id: "not-on-this-page",
+      name: "Full demand tomato",
+      unit_size: "1",
+      unit_label: "kg",
+      quantity: 8,
+    },
   ];
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce({

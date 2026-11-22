@@ -1,3 +1,4 @@
+import { requireResponseList } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
 import type { AdministrativeUnit } from "@/lib/types";
 
@@ -29,7 +30,7 @@ export function getAdministrativeProvinces(locale: "vi" | "en", signal?: AbortSi
   return api<AdministrativeUnit[]>("administrative-units/provinces", {
     headers: { "Accept-Language": locale },
     signal,
-  });
+  }).then(requireResponseList);
 }
 
 export function getAdministrativeWards(
@@ -43,7 +44,7 @@ export function getAdministrativeWards(
       headers: { "Accept-Language": locale },
       signal,
     },
-  );
+  ).then(requireResponseList);
 }
 
 export function administrativeUnitName(units: AdministrativeUnit[], code: string | null) {

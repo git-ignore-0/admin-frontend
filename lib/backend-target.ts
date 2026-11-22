@@ -5,7 +5,11 @@ export function buildBackendTarget(origin: string, path: string[], search: strin
   // to infer the upstream URL shape.
   const trailingSlash =
     path[0] === "admin" && ["testimonials", "workshops"].includes(path[1]) ? "/" : "";
-  const encodedPath = path.map((segment) => encodeURIComponent(segment)).join("/");
+  const encodedPath = path
+    .map((segment) =>
+      encodeURIComponent(UUID_PATH_SEGMENT.test(segment) ? segment.toLowerCase() : segment),
+    )
+    .join("/");
 
   target.pathname = `/api/v1/${encodedPath}${trailingSlash}`;
   target.search = search;
@@ -17,10 +21,15 @@ export function buildBackendTarget(origin: string, path: string[], search: strin
 const READ = new Set(["GET"]);
 const CRUD_COLLECTION = new Set(["GET", "POST"]);
 const CRUD_DETAIL = new Set(["GET", "PATCH", "DELETE"]);
-export const UUID_PATH_SEGMENT =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const BACKEND_SEGMENT = /^[A-Za-z0-9-]+$/u;
+export const PROVINCE_CODE = /^[0-9]{2}$/u;
+// Django's uuid converter requires lowercase hyphenated hex in the upstream URL.
+// The converter and model UUID fields impose no version or variant constraint.
+export const UUID_PATH_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isAllowedBackendRequest(method: string, path: string[]) {
+  // Next passes decoded segments. Every allowed literal and identifier uses this alphabet.
+  if (path.some((segment) => !BACKEND_SEGMENT.test(segment))) return false;
   const normalizedMethod = method.toUpperCase();
   if (path[0] === "administrative-units") {
     return (
@@ -30,7 +39,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (path[0] === "public") {
     return normalizedMethod === "GET" && path.length === 2 && path[1] === "shipping-areas";
   }
-  if (path[0] !== "admin" || path.some((segment) => !segment)) return false;
+  if (path[0] !== "admin") return false;
 
   const [, resource, id, action, extra] = path;
   if (resource === "csa-rounds") {
@@ -92,7 +101,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (resource === "shipping-settings") {
     return (
       path.length === 3 &&
-      /^\d{2}$/u.test(id ?? "") &&
+      PROVINCE_CODE.test(id ?? "") &&
       new Set(["GET", "PUT"]).has(normalizedMethod)
     );
   }
@@ -129,7 +138,9 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     );
   }
   if (resource === "memberships" && UUID_PATH_SEGMENT.test(id ?? "") && action === "contract") {
-    return normalizedMethod === "GET" && (extra === undefined || extra === "pdf");
+    return (
+      normalizedMethod === "GET" && (path.length === 4 || (path.length === 5 && extra === "pdf"))
+    );
   }
   if (resource === "csa-purchase-requests" && action === "payments") {
     return (
@@ -175,11 +186,16 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
       return normalizedMethod === "DELETE" && UUID_PATH_SEGMENT.test(action);
     }
     if (id === "reorder" && action === undefined) return normalizedMethod === "PATCH";
-    return action === undefined && new Set(["PATCH", "DELETE"]).has(normalizedMethod);
+    return (
+      UUID_PATH_SEGMENT.test(id) &&
+      action === undefined &&
+      ["PATCH", "DELETE"].includes(normalizedMethod)
+    );
   }
 
   if (resource === "workshops") {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return CRUD_DETAIL.has(normalizedMethod);
     return ["publish", "unpublish"].includes(action) && normalizedMethod === "POST";
   }
@@ -187,6 +203,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (resource === "testimonials") {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
     if (id === "media" && action === undefined) return normalizedMethod === "POST";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return new Set(["GET", "PATCH"]).has(normalizedMethod);
     return ["publish", "hide", "unpublish"].includes(action) && normalizedMethod === "POST";
   }
@@ -206,21 +223,28 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
     if (["reorder", "media"].includes(id) && action === undefined)
       return normalizedMethod === "POST";
-    return action === undefined && new Set(["GET", "PATCH"]).has(normalizedMethod);
+    return (
+      UUID_PATH_SEGMENT.test(id) &&
+      action === undefined &&
+      ["GET", "PATCH"].includes(normalizedMethod)
+    );
   }
 
   if (resource === "redemptions") {
-    if (id === undefined || action === undefined) return READ.has(normalizedMethod);
+    if (id === undefined) return READ.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined) return READ.has(normalizedMethod);
     return ["mark-contacted", "complete", "reject"].includes(action) && normalizedMethod === "POST";
   }
 
   if (["membership-products", "membership-packages"].includes(resource)) {
     if (id === undefined) return CRUD_COLLECTION.has(normalizedMethod);
-    return action === undefined && CRUD_DETAIL.has(normalizedMethod);
+    return UUID_PATH_SEGMENT.test(id) && action === undefined && CRUD_DETAIL.has(normalizedMethod);
   }
 
   if (resource === "memberships") {
     if (id === undefined) return normalizedMethod === "POST";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return READ.has(normalizedMethod);
     if (action === "history") return normalizedMethod === "GET";
     return action === "revoke" && normalizedMethod === "POST";
@@ -242,6 +266,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
 
   if (resource === "membership-usage") {
     if (id === undefined) return normalizedMethod === "POST";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return normalizedMethod === "GET";
     return action === "undo" && normalizedMethod === "POST";
   }

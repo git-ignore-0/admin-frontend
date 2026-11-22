@@ -122,9 +122,10 @@ describe("workshop confirmation flows", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: "Lưu trữ workshop" }),
     );
     await waitFor(() => expect(deleteRequests()).toHaveLength(1));
-    expect(deleteRequests()[0].slice(0, 2)).toEqual([
+    expect(deleteRequests()[0]).toEqual([
       "admin/workshops/workshop-id/",
       { method: "DELETE" },
+      { response: "no-content", shouldRedirectToLogin: expect.any(Function) },
     ]);
     expect(screen.getByRole("status")).toHaveTextContent("được gỡ khỏi website và lưu trữ");
     expect(replace).toHaveBeenCalledWith("/workshops");
@@ -159,7 +160,7 @@ describe("workshop confirmation flows", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa workshop" }),
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Không kết nối được tới backend");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể kết nối");
     expect(replace).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Xóa workshop" })).toBeEnabled();
@@ -338,6 +339,17 @@ describe("workshop confirmation flows", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toHaveFocus());
   });
 
+  it("leaves the workshop published when unpublish has no confirmation flag", async () => {
+    loadedWorkshop = { ...readyWorkshop, has_published_revision: true };
+    vi.mocked(api).mockResolvedValueOnce(loadedWorkshop).mockResolvedValueOnce({});
+    renderEditor("en");
+    const unpublish = await screen.findByRole("button", { name: "Unpublish" });
+    fireEvent.click(unpublish);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Unpublish" }));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(unpublish).toBeEnabled();
+  });
+
   it("leaves the workshop published and allows retry after an unpublish error", async () => {
     loadedWorkshop = { ...readyWorkshop, has_published_revision: true };
     vi.mocked(api)
@@ -349,7 +361,7 @@ describe("workshop confirmation flows", () => {
     fireEvent.click(unpublish);
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Unpublish" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect to the backend");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect.");
     expect(screen.getByText("Currently public")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(unpublish).toBeEnabled();

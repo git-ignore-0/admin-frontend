@@ -1,3 +1,4 @@
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type { MediaAsset, PaginationMeta, StoreCategory, StoreProduct } from "@/lib/types";
 
@@ -29,7 +30,9 @@ export function listStoreCategories(query?: { search?: string; is_active?: boole
   const params = new URLSearchParams();
   if (query?.search) params.set("search", query.search);
   if (query?.is_active !== undefined) params.set("is_active", String(query.is_active));
-  return api<StoreCategory[]>(`admin/store-categories${params.size ? `?${params}` : ""}`);
+  return api<StoreCategory[]>(`admin/store-categories${params.size ? `?${params}` : ""}`).then(
+    requireResponseList,
+  );
 }
 
 export function getStoreCategory(id: string) {
@@ -40,11 +43,11 @@ export function saveStoreCategory(payload: CategoryInput, id?: string) {
   return api<StoreCategory>(id ? `admin/store-categories/${id}` : "admin/store-categories", {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(payload),
-  });
+  }).then(requireResponseEntity);
 }
 
 export function deleteStoreCategory(id: string) {
-  return api<void>(`admin/store-categories/${id}`, { method: "DELETE" });
+  return api(`admin/store-categories/${id}`, { method: "DELETE" }, { response: "no-content" });
 }
 
 export type ProductFilters = {
@@ -74,11 +77,11 @@ export function saveStoreProduct(payload: ProductInput, id?: string) {
   return api<StoreProduct>(id ? `admin/store-products/${id}` : "admin/store-products", {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(payload),
-  });
+  }).then(requireResponseEntity);
 }
 
 export function deleteStoreProduct(id: string) {
-  return api<void>(`admin/store-products/${id}`, { method: "DELETE" });
+  return api(`admin/store-products/${id}`, { method: "DELETE" }, { response: "no-content" });
 }
 
 export function uploadStoreProductImage(file: File) {
@@ -88,8 +91,9 @@ export function uploadStoreProductImage(file: File) {
 }
 
 export function deleteStoreProductImage(id: string, options?: { keepalive?: boolean }) {
-  return api<void>(`admin/store-products/media/${id}`, {
-    method: "DELETE",
-    keepalive: options?.keepalive,
-  });
+  return api(
+    `admin/store-products/media/${id}`,
+    { method: "DELETE", keepalive: options?.keepalive },
+    { response: "no-content" },
+  );
 }

@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET as callback } from "@/app/api/auth/callback/route";
+import { GET as login } from "@/app/api/auth/login/route";
 import { POST as logout } from "@/app/api/auth/logout/route";
 import { GET, POST } from "@/app/api/backend/[...path]/route";
 import {
@@ -158,6 +160,26 @@ describe("admin requests scoped to the rendered session", () => {
     });
   });
 
+  it("keeps the active session when the OAuth refresh rejects an upstream redirect", async () => {
+    const browser: Jar = new Map();
+    const binding = await signIn(browser, "A", true);
+    const cookiesBefore = new Map(browser);
+    const upstream = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await request(browser, () => GET(page(binding), context));
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "upstream_unavailable" });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("location")).toBeNull();
+    expect(browser).toEqual(cookiesBefore);
+    expect(upstream).toHaveBeenCalledExactlyOnceWith(
+      "https://auth.example.test/oauth/token",
+      expect.objectContaining({ redirect: "error" }),
+    );
+  });
+
   it("rejects an outdated page before sending any admin POST upstream", async () => {
     const browser: Jar = new Map();
     const a = await signIn(browser, "A");
@@ -255,6 +277,49 @@ describe("admin requests scoped to the rendered session", () => {
       cookiesBefore.get(`nfv_admin_oauth_flow_${nextState}`),
     );
     expect(browser.has(`nfv_admin_oauth_flow_${nextState}`)).toBe(true);
+  });
+
+  it("redirects browser navigation to Core authorization and back to the requested admin page", async () => {
+    const browser: Jar = new Map();
+    const user = session("A").user;
+    const upstream = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          access_token: "issued-access",
+          refresh_token: "issued-refresh",
+          expires_in: 120,
+          token_type: "Bearer",
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: user }));
+    vi.stubGlobal("fetch", upstream);
+
+    const authorize = await request(browser, () =>
+      login(new NextRequest(`${base}/api/auth/login?returnTo=%2Fusers`)),
+    );
+    expect(authorize.status).toBe(307);
+    const destination = new URL(authorize.headers.get("location")!);
+    const state = destination.searchParams.get("state");
+    expect(destination.origin + destination.pathname).toBe(
+      "https://auth.example.test/oauth/authorize",
+    );
+    expect(destination.searchParams.get("response_type")).toBe("code");
+    expect(destination.searchParams.get("redirect_uri")).toBe(`${base}/api/auth/callback`);
+    expect(destination.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(state).toBeTruthy();
+    expect(upstream).not.toHaveBeenCalled();
+
+    const signedIn = await request(browser, () =>
+      callback(new NextRequest(`${base}/api/auth/callback?state=${state}&code=code`)),
+    );
+    const tokenForm = upstream.mock.calls[0][1].body as URLSearchParams;
+    expect(destination.searchParams.get("code_challenge")).toBe(
+      createHash("sha256").update(tokenForm.get("code_verifier")!).digest("base64url"),
+    );
+    expect(signedIn.status).toBe(307);
+    expect(signedIn.headers.get("location")).toBe(`${base}/users`);
+    expect((await request(browser, readSession))?.accessToken).toBe("issued-access");
   });
 
   it("requires the login that rendered the sign-out form", async () => {

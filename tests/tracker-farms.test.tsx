@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { TrackerFarmManager } from "@/components/tracker-farm-manager";
 import { ToastProvider } from "@/components/toast-provider";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { api } from "@/lib/client-api";
 import type { MediaAsset, TrackerFarm } from "@/lib/types";
 
 const push = vi.fn();
@@ -281,10 +281,10 @@ it("guards Add and Edit navigation while reorder changes are unsaved", async () 
 });
 
 it("disables only the Growth Tracker profile after confirmation and preserves the item on failure", async () => {
-  vi.mocked(api).mockResolvedValueOnce([farm, secondFarm]);
-  vi.mocked(apiEnvelope)
+  vi.mocked(api)
+    .mockResolvedValueOnce([farm, secondFarm])
     .mockRejectedValueOnce(new Error("network_error"))
-    .mockResolvedValueOnce({ data: undefined });
+    .mockResolvedValueOnce(undefined);
   renderWithProviders(<TrackerFarmManager />);
 
   fireEvent.click(
@@ -292,15 +292,17 @@ it("disables only the Growth Tracker profile after confirmation and preserves th
   );
   const dialog = screen.getByRole("dialog", { name: "Disable Growth Tracker" });
   expect(within(dialog).getByText(/farm and its products will remain/)).toBeVisible();
-  expect(apiEnvelope).not.toHaveBeenCalled();
+  expect(api).toHaveBeenCalledTimes(1);
   fireEvent.click(within(dialog).getByRole("button", { name: "Disable Growth Tracker" }));
   expect(await within(dialog).findByRole("alert")).toBeVisible();
   expect(screen.getByText("Green Valley")).toBeVisible();
 
   fireEvent.click(within(dialog).getByRole("button", { name: "Disable Growth Tracker" }));
   await waitFor(() => expect(screen.queryByText("Green Valley")).toBeNull());
-  expect(apiEnvelope).toHaveBeenCalledWith("admin/farms/farm-1/growth-tracker", {
-    method: "DELETE",
-  });
+  expect(api).toHaveBeenCalledWith(
+    "admin/farms/farm-1/growth-tracker",
+    { method: "DELETE" },
+    { response: "no-content" },
+  );
   expect(screen.getByText("River Farm")).toBeVisible();
 });

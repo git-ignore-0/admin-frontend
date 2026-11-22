@@ -29,6 +29,24 @@ function view() {
 }
 
 describe("Store order list", () => {
+  it.each([
+    { data: [] },
+    { data: {}, meta: { page: 1, page_size: 20, total: 0 } },
+    { data: [null], meta: { page: 1, page_size: 20, total: 1 } },
+  ])("does not cache a malformed server page %j", async (payload) => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce(payload as never)
+      .mockResolvedValueOnce({
+        data: [storeOrderFixture()],
+        meta: { page: 1, page_size: 20, total: 1 },
+      });
+    view();
+    const alert = await screen.findByRole("alert");
+    fireEvent.click(within(alert).getByRole("button"));
+    expect(await screen.findByText("NFV-STORE-001")).toBeVisible();
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps payment pending visible as a filter and as the order badge", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [storeOrderFixture({ status: "payment_pending" })],
@@ -384,7 +402,7 @@ describe("Store order list", () => {
       .mockResolvedValueOnce({ data: [], meta: { page: 1, page_size: 20, total: 0 } });
     view();
     const alert = await screen.findByRole("alert");
-    expect(within(alert).getByText(/Không kết nối được/)).toBeVisible();
+    expect(within(alert).getByText(/Không thể kết nối/)).toBeVisible();
     fireEvent.click(within(alert).getByRole("button", { name: "Thử lại" }));
     expect(await screen.findByText("Không có đơn hàng phù hợp.")).toBeVisible();
     expect(screen.queryByText("NFV-STORE-001")).not.toBeInTheDocument();

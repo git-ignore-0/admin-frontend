@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { requireResponseList } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDateTimeInZone } from "@/lib/admin-date";
@@ -20,6 +21,7 @@ export function WorkshopList() {
   const [error, setError] = useState("");
   useEffect(() => {
     api<Workshop[]>("admin/workshops/")
+      .then(requireResponseList)
       .then(setItems)
       .catch((caught) => setError(requestErrorMessage(caught, t)));
   }, [t]);

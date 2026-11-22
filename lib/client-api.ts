@@ -1,4 +1,9 @@
-import { isRequestCanceled } from "@/lib/client-error";
+import {
+  invalidApiResponse,
+  isApiObject,
+  isNativeRequestTimeout,
+  isRequestCanceled,
+} from "@/lib/client-error";
 import { ADMIN_PAGE_SESSION_HEADER } from "@/lib/csrf";
 
 export const ADMIN_SESSION_CHANGED_EVENT = "nfv-admin-session-changed";
@@ -24,25 +29,31 @@ function applySessionHeader(headers: Headers, binding: string | undefined) {
   else headers.delete(ADMIN_PAGE_SESSION_HEADER);
 }
 
-async function fetchBackend(path: string, init: RequestInit) {
-  init.signal?.throwIfAborted();
-  try {
-    return await fetch(`/api/backend/${path.replace(/^\//, "")}`, init);
-  } catch (error) {
-    if (isRequestCanceled(error, init.signal)) throw error;
-    throw new Error("network_error");
-  }
+function transportError(error: unknown, signal?: AbortSignal | null) {
+  if (isRequestCanceled(error, signal)) return error;
+  return new Error(isNativeRequestTimeout(error) ? "request_timeout" : "network_error");
 }
 
-async function readJsonPayload(response: Response, signal?: AbortSignal | null) {
+async function fetchBackend(
+  path: string,
+  init: RequestInit,
+  binding: string | undefined,
+  options?: ApiOptions,
+) {
+  let response: Response;
   try {
-    return await response.json();
+    init.signal?.throwIfAborted();
+    response = await fetch(`/api/backend/${path.replace(/^\//, "")}`, init);
   } catch (error) {
-    if (isRequestCanceled(error, signal)) throw error;
-    // Keep the empty/invalid JSON fallback and the status fallback for HTTP errors.
-    if (error instanceof SyntaxError || !response.ok) return {};
-    throw error;
+    throw transportError(error, init.signal);
   }
+  enforceSession(response, binding, options);
+  if (!response.ok) throw await readHttpError(response, binding, init.signal);
+  return response;
+}
+
+function mediaType(response: Response) {
+  return response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
 }
 
 function enforceSession(response: Response, binding: string | undefined, options?: ApiOptions) {
@@ -54,8 +65,19 @@ function enforceSession(response: Response, binding: string | undefined, options
   if (shouldRedirect) {
     window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
   }
-  throw new Error("session_expired");
+  throw Object.assign(new Error("session_expired"), { status: response.status });
 }
+
+const nonValidationKeys = new Set([
+  "detail",
+  "error",
+  "errors",
+  "non_field_errors",
+  "meta",
+  "context",
+  "status_code",
+]);
+const errorMetadataKeys = new Set(["code", "status", "type", "title", "message", "instance"]);
 
 export function firstValidationField(value: unknown): string | undefined {
   if (Array.isArray(value)) {
@@ -65,23 +87,69 @@ export function firstValidationField(value: unknown): string | undefined {
     }
     return undefined;
   }
-  if (!value || typeof value !== "object") return undefined;
+  if (!isApiObject(value)) return undefined;
   for (const [key, item] of Object.entries(value)) {
-    if (["detail", "error", "errors"].includes(key)) continue;
+    if (nonValidationKeys.has(key)) continue;
+    if (
+      typeof item === "string" ||
+      (Array.isArray(item) && item.some((v) => typeof v === "string"))
+    ) {
+      return key;
+    }
     const nested = firstValidationField(item);
-    return nested || key;
+    if (nested) return nested;
   }
   return undefined;
 }
 
+function fallbackErrorCode(status: number) {
+  if (status === 400) return "validation_error";
+  if (status === 403) return "forbidden";
+  if (status === 504) return "upstream_timeout";
+  return status >= 500 ? "server_error" : "request_failed";
+}
+
+async function readHttpError(
+  response: Response,
+  binding: string | undefined,
+  signal?: AbortSignal | null,
+) {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    if (isRequestCanceled(error, signal)) throw error;
+    if (isNativeRequestTimeout(error)) {
+      throw Object.assign(new Error("request_timeout"), { status: response.status });
+    }
+    // An unreadable HTTP error still has a meaningful status.
+  }
+  const body = isApiObject(payload) ? payload : {};
+  const firstError = Array.isArray(body.errors) ? body.errors[0] : undefined;
+  const entry = isApiObject(firstError) ? firstError : {};
+  const code =
+    [entry.code, body.error].find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    ) ?? fallbackErrorCode(response.status);
+
+  let field: string | undefined;
+  if (code === "validation_error") {
+    field =
+      firstValidationField(entry.fields) ??
+      firstValidationField(
+        Object.fromEntries(Object.entries(body).filter(([key]) => !errorMetadataKeys.has(key))),
+      );
+  }
+  if (code === "session_changed") notifySessionChanged(binding);
+  return Object.assign(new Error(code), { status: response.status, payload: body, field });
+}
+
 export type ApiEnvelope<T, M = Record<string, unknown>> = { data: T; meta?: M };
 type ApiOptions = { shouldRedirectToLogin?: () => boolean };
+type JsonApiOptions = ApiOptions & { response?: never };
+type NoContentApiOptions = ApiOptions & { response: "no-content" };
 
-export async function apiEnvelope<T, M = Record<string, unknown>>(
-  path: string,
-  init?: RequestInit,
-  options?: ApiOptions,
-): Promise<ApiEnvelope<T, M>> {
+async function fetchApiResponse(path: string, init?: RequestInit, options?: ApiOptions) {
   const method = (init?.method || "GET").toUpperCase();
   const mutatesData = !["GET", "HEAD", "OPTIONS"].includes(method);
   const binding = pageSessionBinding();
@@ -91,27 +159,52 @@ export async function apiEnvelope<T, M = Record<string, unknown>>(
   }
   if (mutatesData) headers.set("x-nfv-admin-request", "1");
   applySessionHeader(headers, binding);
-  const response = await fetchBackend(path, { ...init, headers });
-  enforceSession(response, binding, options);
-  const payload = await readJsonPayload(response, init?.signal);
-  if (!response.ok) {
-    const field = firstValidationField(payload);
-    const code =
-      payload?.errors?.[0]?.code ||
-      payload?.error ||
-      (response.status === 400 ? "validation_error" : undefined) ||
-      (response.status === 403 ? "forbidden" : undefined) ||
-      (response.status >= 500 ? "server_error" : undefined) ||
-      "request_failed";
-    if (code === "session_changed") notifySessionChanged(binding);
-    const error = new Error(code);
-    Object.assign(error, { status: response.status, payload, field });
-    throw error;
+  return fetchBackend(path, { ...init, headers }, binding, options);
+}
+
+export async function apiEnvelope<T, M = Record<string, unknown>>(
+  path: string,
+  init?: RequestInit,
+  options?: JsonApiOptions,
+): Promise<ApiEnvelope<T, M>> {
+  const response = await fetchApiResponse(path, init, options);
+  if (response.status === 204 || mediaType(response) !== "application/json") {
+    throw invalidApiResponse(response.status);
   }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    if (error instanceof SyntaxError && !isRequestCanceled(error, init?.signal)) {
+      throw invalidApiResponse(response.status);
+    }
+    throw transportError(error, init?.signal);
+  }
+  if (!isApiObject(payload) || !Object.hasOwn(payload, "data") || payload.data == null) {
+    throw invalidApiResponse(response.status);
+  }
+  // Domain callers validate the specific data and metadata they depend on.
   return payload as ApiEnvelope<T, M>;
 }
 
-export async function api<T>(path: string, init?: RequestInit, options?: ApiOptions): Promise<T> {
+export function api(
+  path: string,
+  init: RequestInit | undefined,
+  options: NoContentApiOptions,
+): Promise<void>;
+export function api<T>(path: string, init?: RequestInit, options?: JsonApiOptions): Promise<T>;
+export async function api<T>(
+  path: string,
+  init?: RequestInit,
+  options?: JsonApiOptions | NoContentApiOptions,
+): Promise<T | void> {
+  if (options?.response === "no-content") {
+    const response = await fetchApiResponse(path, init, options);
+    if (response.status !== 204 || response.body !== null) {
+      throw invalidApiResponse(response.status);
+    }
+    return;
+  }
   return (await apiEnvelope<T>(path, init, options)).data;
 }
 
@@ -119,21 +212,18 @@ export async function apiFile(path: string, { signal }: Pick<RequestInit, "signa
   const binding = pageSessionBinding();
   const headers = new Headers();
   applySessionHeader(headers, binding);
-  const response = await fetchBackend(path, { cache: "no-store", headers, signal });
-  enforceSession(response, binding);
-  if (!response.ok) {
-    const payload = await readJsonPayload(response, signal);
-    const code = payload?.errors?.[0]?.code || payload?.error || "request_failed";
-    if (code === "session_changed") notifySessionChanged(binding);
-    const error = new Error(code);
-    Object.assign(error, { status: response.status, payload });
-    throw error;
-  }
-  if (!response.headers.get("content-type")?.startsWith("application/pdf")) {
+  const response = await fetchBackend(path, { cache: "no-store", headers, signal }, binding);
+  if (response.body === null || mediaType(response) !== "application/pdf") {
     throw Object.assign(new Error("csa_contract_pdf_unavailable"), { status: 502 });
   }
+  let blob: Blob;
+  try {
+    blob = await response.blob();
+  } catch (error) {
+    throw transportError(error, signal);
+  }
   return {
-    blob: await response.blob(),
+    blob,
     filename:
       response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/i)?.[1] ??
       "csa-contract.pdf",

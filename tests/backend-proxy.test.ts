@@ -774,6 +774,92 @@ describe("admin backend proxy", () => {
     expect(new Headers(upstream.mock.calls[0][1].headers).get("accept-language")).toBe("vi");
   });
 
+  it("forwards the province code intact and leaves province existence validation to Django", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const response = await GET(
+      pageRequest("https://admin.example.test/api/backend/administrative-units/wards?province=01", {
+        headers: { "accept-language": "en" },
+      }),
+      { params: Promise.resolve({ path: ["administrative-units", "wards"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      "https://auth.example.test/api/v1/administrative-units/wards?province=01",
+    );
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("accept-language")).toBe("en");
+  });
+
+  it.each([
+    { path: ["administrative-units", "wards"], search: "" },
+    { path: ["administrative-units", "wards"], search: "?province=1" },
+    { path: ["administrative-units", "wards"], search: "?province=ab" },
+    { path: ["administrative-units", "wards"], search: "?province=01&province=01" },
+    { path: ["administrative-units", "wards"], search: "?province=01&province=79" },
+    { path: ["admin", "users", membershipId], search: "?invited_page=1&invited_page=2" },
+    { path: ["admin", "csa-rounds"], search: "?page_size=20&page_size=20" },
+    { path: ["admin", "csa-rounds", membershipId, "selections"], search: "?locale=fr" },
+    { path: ["admin", "memberships", membershipId, "history"], search: "?page=1&page=2" },
+    { path: ["admin", "membership-usage", membershipId], search: "?locale=en&locale=vi" },
+    {
+      path: ["admin", "store-products"],
+      search: `?category_id=${membershipId}&category_id=${versionId}`,
+    },
+    { path: ["admin", "testimonials"], search: "?type=farmer&type=customer" },
+  ])("rejects an ambiguous or malformed query at $path with $search", async ({ path, search }) => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const response = await GET(
+      pageRequest(`https://admin.example.test/api/backend/${path.join("/")}${search}`),
+      { params: Promise.resolve({ path }) },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "backend_route_not_allowed" });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("preserves recognized pagination and legacy passthrough keys on User details", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const suffix = `admin/users/${membershipId}?invited_page=2&legacy=one&legacy=two`;
+    const response = await GET(pageRequest(`https://admin.example.test/api/backend/${suffix}`), {
+      params: Promise.resolve({ path: ["admin", "users", membershipId] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(`https://auth.example.test/api/v1/${suffix}`);
+  });
+
+  it("preserves the locale on a Membership revoke and rejects ambiguous locale values", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "memberships", membershipId, "revoke"];
+    const suffix = path.join("/");
+    const init = {
+      method: "POST",
+      headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      body: JSON.stringify({ reason: "test" }),
+    };
+    const context = { params: Promise.resolve({ path }) };
+    const valid = await POST(
+      pageRequest(`https://admin.example.test/api/backend/${suffix}?locale=en`, init),
+      context,
+    );
+    const invalid = await POST(
+      pageRequest(`https://admin.example.test/api/backend/${suffix}?locale=en&locale=en`, init),
+      context,
+    );
+
+    expect(valid.status).toBe(200);
+    expect(invalid.status).toBe(404);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/${suffix}?locale=en`,
+    );
+  });
+
   it("proxies the public supported shipping areas used by guest CSA", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
     vi.stubGlobal("fetch", upstream);
@@ -815,9 +901,9 @@ describe("admin backend proxy", () => {
 
     const response = await GET(
       pageRequest(
-        "https://admin.example.test/api/backend/admin/memberships/membership-id?locale=en",
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}?locale=en`,
       ),
-      { params: Promise.resolve({ path: ["admin", "memberships", "membership-id"] }) },
+      { params: Promise.resolve({ path: ["admin", "memberships", membershipId] }) },
     );
 
     expect(response.status).toBe(200);
@@ -829,7 +915,7 @@ describe("admin backend proxy", () => {
   });
 
   it("allows manual assignment and keeps bank settings credentials server-side", async () => {
-    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: "membership-id" } }));
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: membershipId } }));
     vi.stubGlobal("fetch", upstream);
 
     const allowed = await POST(
@@ -872,49 +958,79 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it.each(
+    [
+      ["admin", "workshops", "invalid-id"],
+      ["admin", "testimonials", ""],
+      ["admin", "memberships", membershipId, "contract", "pdf", "extra"],
+    ].map((path) => ({ path })),
+  )("rejects the invalid route $path before refresh or dispatch", async ({ path }) => {
+    const session = await readSession();
+    if (!session) throw new Error("Test session missing");
+    vi.mocked(readSession).mockResolvedValueOnce({ ...session, expiresAt: 0 });
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const response = await GET(
+      pageRequest(`https://admin.example.test/api/backend/${path.join("/")}?locale=vi`),
+      { params: Promise.resolve({ path }) },
+    );
+
+    expect(response.status).toBe(404);
+    expect(refreshAccessToken).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("only proxies POST for the Membership revoke action", async () => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "revoked" } }));
     vi.stubGlobal("fetch", upstream);
-    const path = ["admin", "memberships", "membership-id", "revoke"];
+    const path = ["admin", "memberships", membershipId, "revoke"];
     const mutationHeaders = {
       origin: "https://admin.example.test",
       "x-nfv-admin-request": "1",
     };
 
     const allowed = await POST(
-      pageRequest("https://admin.example.test/api/backend/admin/memberships/membership-id/revoke", {
-        method: "POST",
-        headers: mutationHeaders,
-        body: JSON.stringify({ reason: "test" }),
-      }),
+      pageRequest(
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/revoke`,
+        {
+          method: "POST",
+          headers: mutationHeaders,
+          body: JSON.stringify({ reason: "test" }),
+        },
+      ),
       { params: Promise.resolve({ path }) },
     );
     expect(allowed.status).toBe(200);
     expect(upstream).toHaveBeenCalledTimes(1);
     expect(String(upstream.mock.calls[0][0])).toBe(
-      "https://auth.example.test/api/v1/admin/memberships/membership-id/revoke",
+      `https://auth.example.test/api/v1/admin/memberships/${membershipId}/revoke`,
     );
 
     upstream.mockClear();
     const blockedGet = await GET(
-      pageRequest("https://admin.example.test/api/backend/admin/memberships/membership-id/revoke"),
+      pageRequest(
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/revoke`,
+      ),
       { params: Promise.resolve({ path }) },
     );
     const blockedDelete = await DELETE(
-      pageRequest("https://admin.example.test/api/backend/admin/memberships/membership-id/revoke", {
-        method: "DELETE",
-        headers: mutationHeaders,
-      }),
+      pageRequest(
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/revoke`,
+        {
+          method: "DELETE",
+          headers: mutationHeaders,
+        },
+      ),
       { params: Promise.resolve({ path }) },
     );
     const blockedAction = await POST(
       pageRequest(
-        "https://admin.example.test/api/backend/admin/memberships/membership-id/unknown",
+        `https://admin.example.test/api/backend/admin/memberships/${membershipId}/unknown`,
         { method: "POST", headers: mutationHeaders },
       ),
       {
         params: Promise.resolve({
-          path: ["admin", "memberships", "membership-id", "unknown"],
+          path: ["admin", "memberships", membershipId, "unknown"],
         }),
       },
     );
@@ -926,6 +1042,7 @@ describe("admin backend proxy", () => {
   });
 
   it("forwards exact tracker farm collection, reorder, and permanent-delete routes", async () => {
+    const trackerId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const mediaId = "11111111-1111-4111-8111-111111111111";
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
     vi.stubGlobal("fetch", upstream);
@@ -947,11 +1064,11 @@ describe("admin backend proxy", () => {
       { params: Promise.resolve({ path: ["admin", "tracker-farms", "reorder"] }) },
     );
     const removed = await DELETE(
-      pageRequest("https://admin.example.test/api/backend/admin/tracker-farms/farm-id", {
+      pageRequest(`https://admin.example.test/api/backend/admin/tracker-farms/${trackerId}`, {
         method: "DELETE",
         headers: mutationHeaders,
       }),
-      { params: Promise.resolve({ path: ["admin", "tracker-farms", "farm-id"] }) },
+      { params: Promise.resolve({ path: ["admin", "tracker-farms", trackerId] }) },
     );
     const temporaryMedia = await DELETE(
       pageRequest(`https://admin.example.test/api/backend/admin/tracker-farms/media/${mediaId}`, {
@@ -971,7 +1088,7 @@ describe("admin backend proxy", () => {
     expect(upstream.mock.calls.map(([target]) => String(target))).toEqual([
       "https://auth.example.test/api/v1/admin/tracker-farms",
       "https://auth.example.test/api/v1/admin/tracker-farms/reorder",
-      "https://auth.example.test/api/v1/admin/tracker-farms/farm-id",
+      `https://auth.example.test/api/v1/admin/tracker-farms/${trackerId}`,
       `https://auth.example.test/api/v1/admin/tracker-farms/media/${mediaId}`,
     ]);
     expect((upstream.mock.calls[1][1] as RequestInit).method).toBe("PATCH");
@@ -1031,6 +1148,220 @@ describe("admin backend proxy", () => {
     } finally {
       timeout.mockRestore();
     }
+  });
+
+  it("skips refresh and upstream fetch for an already cancelled read", async () => {
+    const session = await readSession();
+    if (!session) throw new Error("Test session missing");
+    vi.mocked(readSession).mockResolvedValueOnce({ ...session, expiresAt: 0 });
+    const client = new AbortController();
+    client.abort(new Error("obsolete read"));
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions", {
+        signal: client.signal,
+      }),
+      { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+    );
+
+    expect(response.status).toBe(499);
+    expect(response.body).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(refreshAccessToken).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("finishes shared refresh before dropping an obsolete read", async () => {
+    const session = await readSession();
+    if (!session) throw new Error("Test session missing");
+    vi.mocked(readSession).mockResolvedValueOnce({ ...session, expiresAt: 0 });
+    const client = new AbortController();
+    vi.mocked(refreshAccessToken).mockImplementationOnce(async () => {
+      client.abort();
+      return session;
+    });
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+
+    const response = await GET(
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions", {
+        signal: client.signal,
+      }),
+      { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+    );
+
+    expect(response.status).toBe(499);
+    expect(writeSession).toHaveBeenCalledExactlyOnceWith(session);
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("reports an incoming mutation body failure before starting the upstream deadline", async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const request = pageRequest("https://admin.example.test/api/backend/admin/users", {
+      method: "POST",
+      headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      body: "{}",
+    });
+    vi.spyOn(request, "arrayBuffer").mockRejectedValueOnce(
+      new DOMException("body read failed", "AbortError"),
+    );
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+
+    try {
+      const response = await POST(request, {
+        params: Promise.resolve({ path: ["admin", "users"] }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(await response.json()).toEqual({ error: "invalid_request_body" });
+      expect(timeout).not.toHaveBeenCalled();
+      expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it.each(["rejected", "buffered"])(
+    "does not dispatch an aborted mutation with a %s body read",
+    async (outcome) => {
+      const client = new AbortController();
+      const upstream = vi.fn();
+      vi.stubGlobal("fetch", upstream);
+      const request = pageRequest("https://admin.example.test/api/backend/admin/users", {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        body: "{}",
+        signal: client.signal,
+      });
+      vi.spyOn(request, "arrayBuffer").mockImplementationOnce(async () => {
+        client.abort(new Error("client stopped sending body"));
+        if (outcome === "rejected") throw request.signal.reason;
+        return new ArrayBuffer(0);
+      });
+      const response = await POST(request, {
+        params: Promise.resolve({ path: ["admin", "users"] }),
+      });
+
+      expect(response.status).toBe(499);
+      expect(response.body).toBeNull();
+      expect(upstream).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves an unrelated upstream failure when the deadline aborts concurrently", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementationOnce(async () => {
+        deadline.abort(new DOMException("timed out", "TimeoutError"));
+        throw new DOMException("upstream aborted independently", "AbortError");
+      }),
+    );
+
+    try {
+      const response = await GET(
+        pageRequest("https://admin.example.test/api/backend/admin/redemptions"),
+        { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+      );
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: "upstream_unavailable" });
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it.each(["GET", "POST"])("uses fail-closed upstream redirects for %s", async (method) => {
+    const upstream = vi.fn().mockRejectedValue(new TypeError("upstream redirect rejected"));
+    vi.stubGlobal("fetch", upstream);
+    const response = await (method === "GET" ? GET : POST)(
+      pageRequest("https://admin.example.test/api/backend/admin/users", {
+        method,
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        body: method === "POST" ? "{}" : undefined,
+      }),
+      { params: Promise.resolve({ path: ["admin", "users"] }) },
+    );
+
+    expect(upstream).toHaveBeenCalledExactlyOnceWith(
+      new URL("https://auth.example.test/api/v1/admin/users"),
+      expect.objectContaining({ method, redirect: "error" }),
+    );
+    expect(response.status).toBe(502);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("location")).toBeNull();
+    expect(await response.json()).toEqual({ error: "upstream_unavailable" });
+    expect(clearSession).not.toHaveBeenCalled();
+  });
+
+  it("forwards a no-content Workshop delete without creating a response body", async () => {
+    const upstream = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "workshops", membershipId];
+    const response = await DELETE(
+      pageRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
+        method: "DELETE",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      }),
+      { params: Promise.resolve({ path }) },
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.body).toBeNull();
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/${path.join("/")}/`,
+    );
+  });
+
+  it("does not label an upstream response with no declared media type as JSON", async () => {
+    const body = new TextEncoder().encode('{"data":[]}');
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
+    const response = await GET(
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions"),
+      { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+    );
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(await response.json()).toEqual({ data: [] });
+  });
+
+  it("keeps the stream and status when the upstream body fails after headers", async () => {
+    const streamError = new Error("synthetic stream interruption");
+    const stream = new TransformStream<Uint8Array>();
+    const writer = stream.writable.getWriter();
+    const upstream = vi.fn().mockResolvedValue(
+      new Response(stream.readable, {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          location: "https://auth.example.test/",
+          "set-cookie": "synthetic=blocked",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", upstream);
+    const response = await GET(
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions"),
+      { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("location")).toBeNull();
+    const content = response.json();
+    const rejected = expect(content).rejects.toBe(streamError);
+    await writer.write(new TextEncoder().encode('{"data":'));
+    await writer.abort(streamError);
+    await rejected;
+    expect(upstream).toHaveBeenCalledOnce();
   });
 
   it("propagates an incoming read cancellation without returning an upstream timeout", async () => {
@@ -1101,16 +1432,17 @@ describe("admin backend proxy", () => {
   });
 
   it("forwards exact Testimonial routes and blocks hard delete", async () => {
-    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: "testimonial-id" } }));
+    const testimonialId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { id: testimonialId } }));
     vi.stubGlobal("fetch", upstream);
     const mutationHeaders = {
       origin: "https://admin.example.test",
       "x-nfv-admin-request": "1",
     };
-    const detailPath = ["admin", "testimonials", "testimonial-id"];
+    const detailPath = ["admin", "testimonials", testimonialId];
 
     const patched = await PATCH(
-      pageRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
+      pageRequest(`https://admin.example.test/api/backend/admin/testimonials/${testimonialId}`, {
         method: "PATCH",
         headers: mutationHeaders,
         body: JSON.stringify({ featured: true }),
@@ -1119,12 +1451,12 @@ describe("admin backend proxy", () => {
     );
     expect(patched.status).toBe(200);
     expect(String(upstream.mock.calls[0][0])).toBe(
-      "https://auth.example.test/api/v1/admin/testimonials/testimonial-id/",
+      `https://auth.example.test/api/v1/admin/testimonials/${testimonialId}/`,
     );
 
     upstream.mockClear();
     const removed = await DELETE(
-      pageRequest("https://admin.example.test/api/backend/admin/testimonials/testimonial-id", {
+      pageRequest(`https://admin.example.test/api/backend/admin/testimonials/${testimonialId}`, {
         method: "DELETE",
         headers: mutationHeaders,
       }),

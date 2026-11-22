@@ -235,7 +235,7 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
     if (!document) return;
     setBusy(true);
     try {
-      await api(`admin/csa-terms/${document.id}`, { method: "DELETE" });
+      await api(`admin/csa-terms/${document.id}`, { method: "DELETE" }, { response: "no-content" });
       router.push("/csa-terms");
     } catch (caught) {
       setError(errorMessage(caught));

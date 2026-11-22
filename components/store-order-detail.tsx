@@ -372,7 +372,10 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       if (!mounted.current) return;
       discardPendingReads();
       const status = (caught as { status?: number }).status;
-      const unknownResult = status === undefined || status >= 500;
+      const unknownResult =
+        status === undefined ||
+        status >= 500 ||
+        (caught instanceof Error && caught.message === "invalid_response");
       setUnresolved(unknownResult);
       if (!unknownResult) pendingIntent.current = null;
       if (status === 409) {

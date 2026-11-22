@@ -165,7 +165,7 @@ it.each(["vi", "en"] as const)(
       expect(couponErrorMessage(new Error(code), t)).toBe(message);
     }
     expect(couponErrorMessage(new Error("forbidden"), t)).toBe(t.common.forbidden);
-    expect(couponErrorMessage(new Error("upstream_timeout"), t)).toBe(t.common.networkError);
+    expect(couponErrorMessage(new Error("upstream_timeout"), t)).toBe(t.common.requestTimeout);
     expect(couponErrorMessage(new Error("__proto__"), t)).toBe(t.common.requestFailed);
     expect(couponErrorMessage(new Error("Unknown stack trace or secret"), t)).toBe(
       t.common.requestFailed,

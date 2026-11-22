@@ -1,6 +1,8 @@
 import { isoDateToAdminInput, membershipLastReceiptDate } from "@/lib/admin-date";
+import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
 import type { PaginationMeta } from "@/lib/types";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import { formatMembershipUnits } from "@/lib/membership-format";
 import type { AdminLocale } from "@/lib/admin-i18n";
 import { couponDateTimeInput, couponDateTimeToApi } from "@/lib/csa-coupons";
@@ -93,33 +95,69 @@ export function validateReopenDeadline(deadline: string, deliveryDate: string, s
   return Number.isFinite(end) && serverNow < end && end < csaDeliveryStartMs(deliveryDate);
 }
 export async function getRounds(page = 1, pageSize = 20) {
-  return (await apiEnvelope<CSARound[], PaginationMeta>(
+  const payload = await apiEnvelope<CSARound[], PaginationMeta>(
     `admin/csa-rounds?page=${page}&page_size=${pageSize}`,
-  )) as RoundPage<CSARound>;
+  );
+  return requirePaginatedList(payload);
 }
 export function getRound(id: string) {
   return api<AdminCSARound>(`admin/csa-rounds/${id}`);
 }
+
+function isCsaProductQuantity(value: unknown): value is RoundParticipants["demand"][number] {
+  return (
+    isApiObject(value) &&
+    typeof value.product_id === "string" &&
+    Number.isSafeInteger(value.quantity) &&
+    typeof value.name === "string" &&
+    typeof value.unit_size === "string" &&
+    typeof value.unit_label === "string"
+  );
+}
+
+function hasRoundDemand(payload: object): payload is Pick<RoundParticipants, "demand"> {
+  return (
+    "demand" in payload &&
+    Array.isArray(payload.demand) &&
+    payload.demand.every(isCsaProductQuantity)
+  );
+}
+
 export async function getRoundParticipants(
   id: string,
   page = 1,
   pageSize = 20,
   locale = "vi",
 ): Promise<RoundParticipants> {
-  return (await apiEnvelope<CSASelection[], PaginationMeta>(
+  const payload = await apiEnvelope<CSASelection[], PaginationMeta>(
     `admin/csa-rounds/${id}/selections?page=${page}&page_size=${pageSize}&locale=${locale}`,
-  )) as RoundParticipants;
+  );
+  const pageResult = requirePaginatedList(payload);
+  if (
+    !hasRoundDemand(pageResult) ||
+    !pageResult.data.every(
+      (row) =>
+        isApiObject(row) &&
+        typeof row.id === "string" &&
+        Array.isArray(row.lines) &&
+        row.lines.every(isCsaProductQuantity),
+    )
+  ) {
+    throw invalidApiResponse();
+  }
+  return pageResult;
 }
 export async function getSelectionEvents(id: string, page = 1) {
-  return (await apiEnvelope<CSASelectionEvent[], PaginationMeta>(
+  const payload = await apiEnvelope<CSASelectionEvent[], PaginationMeta>(
     `admin/csa-selections/${id}/events?page=${page}&page_size=20`,
-  )) as RoundPage<CSASelectionEvent>;
+  );
+  return requirePaginatedList(payload);
 }
 export function saveRound(body: RoundDates & { name: string }, id?: string) {
   return api<CSARound>(id ? `admin/csa-rounds/${id}` : "admin/csa-rounds", {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(body),
-  });
+  }).then(requireResponseEntity);
 }
 
 /** Quantity counts selling units; the base-unit label belongs to each unit's size. */

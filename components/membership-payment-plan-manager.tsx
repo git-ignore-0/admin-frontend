@@ -268,7 +268,11 @@ export function MembershipPaymentPlanManager({
     setError("");
     setFieldErrors({});
     try {
-      await api(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+      if (method === "DELETE") {
+        await api(path, { method }, { response: "no-content" });
+      } else {
+        await api(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+      }
       try {
         await onReload();
       } catch {

@@ -8,7 +8,7 @@ import { csaSelectionReason } from "@/lib/csa-rounds-copy";
 import { CSAReopenDialog } from "@/components/csa-reopen-dialog";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { isAllowedBackendRequest } from "@/lib/backend-target";
-import { validateRoundDates, validateReopenDeadline } from "@/lib/csa-rounds";
+import { getRoundParticipants, validateRoundDates, validateReopenDeadline } from "@/lib/csa-rounds";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 const push = vi.hoisted(() => vi.fn());
@@ -294,6 +294,27 @@ it("pages the round list using server totals", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(await screen.findByText("Week 2")).toBeVisible();
   expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=2&page_size=20");
+});
+
+it.each([
+  { data: [], meta: { page: 1, page_size: 20, total: 0 } },
+  { data: [], meta: { page: 1, page_size: 20, total: 0 }, demand: {} },
+  { data: [], meta: { page: 1, page_size: 20, total: 0 }, demand: [null] },
+  { data: {}, meta: { page: 1, page_size: 20, total: 0 }, demand: [] },
+  { data: [], demand: [] },
+])("rejects malformed CSA participant pages %j", async (payload) => {
+  vi.mocked(apiEnvelope).mockResolvedValueOnce(payload as never);
+  await expect(getRoundParticipants(id)).rejects.toThrow("invalid_response");
+});
+
+it("preserves full demand and zero totals when a CSA participant page is empty", async () => {
+  const payload = {
+    data: [],
+    meta: { page: 1, page_size: 20, total: 0 },
+    demand: [{ product_id: id, quantity: 2, name: "Tomato", unit_size: "1", unit_label: "kg" }],
+  };
+  vi.mocked(apiEnvelope).mockResolvedValueOnce(payload);
+  await expect(getRoundParticipants(id)).resolves.toBe(payload);
 });
 
 it("shows the authoritative overlap error when saving a published round", async () => {

@@ -9,8 +9,9 @@ import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
 import { DataState, FormInput, FormTextarea, Status } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
+import { requireResponseEntity } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import {
   emptyTranslation,
@@ -23,6 +24,18 @@ import { formatZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/zoned-d
 const workshopLocales = ["vi", "en"] as const;
 type ConfirmationAction = "publish" | "unpublish" | "delete" | "archive";
 type WorkshopAction = ConfirmationAction | "save";
+
+function requireWorkshopResponse(data: Workshop) {
+  requireResponseEntity(data);
+  if (
+    typeof data.revision_id !== "string" ||
+    !Number.isSafeInteger(data.version) ||
+    !Array.isArray(data.translations)
+  ) {
+    throw invalidApiResponse();
+  }
+  return data;
+}
 
 function initialWorkshop(): Workshop {
   const eventTimezone = "Asia/Ho_Chi_Minh";
@@ -184,6 +197,7 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
         { shouldRedirectToLogin: isCurrent },
       );
       if (!isCurrent()) return null;
+      requireWorkshopResponse(saved);
       setData(saved);
       if (notify) showToast(t.editor.draftSaved);
       if (!workshopId) router.replace(`/workshops/${saved.id}`);
@@ -239,15 +253,25 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           options,
         );
         if (!isCurrent()) return;
-        setData(result.draft);
+        if (!isApiObject(result)) throw invalidApiResponse();
+        setData(requireWorkshopResponse(result.draft));
         showToast(copy.published);
       } else if (action === "unpublish") {
-        await api(`admin/workshops/${data.id}/unpublish/`, { method: "POST" }, options);
+        const result = await api<{ unpublished: boolean }>(
+          `admin/workshops/${data.id}/unpublish/`,
+          { method: "POST" },
+          options,
+        );
         if (!isCurrent()) return;
+        if (!isApiObject(result) || result.unpublished !== true) throw invalidApiResponse();
         update({ has_published_revision: false });
         showToast(copy.unpublished);
       } else {
-        await api(`admin/workshops/${data.id}/`, { method: "DELETE" }, options);
+        await api(
+          `admin/workshops/${data.id}/`,
+          { method: "DELETE" },
+          { ...options, response: "no-content" },
+        );
         if (!isCurrent()) return;
         showToast(action === "archive" ? copy.archived : copy.deleted);
         router.replace("/workshops");

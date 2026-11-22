@@ -296,7 +296,11 @@ describe("CSA terms administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
     fireEvent.click(screen.getByRole("dialog").querySelector("button:last-child")!);
     await waitFor(() =>
-      expect(api).toHaveBeenLastCalledWith(`admin/csa-terms/${rawTerms.id}`, { method: "DELETE" }),
+      expect(api).toHaveBeenLastCalledWith(
+        `admin/csa-terms/${rawTerms.id}`,
+        { method: "DELETE" },
+        { response: "no-content" },
+      ),
     );
     expect(navigation.push).toHaveBeenCalledWith("/csa-terms");
   });

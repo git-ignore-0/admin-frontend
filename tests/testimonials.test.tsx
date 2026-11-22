@@ -147,7 +147,7 @@ describe("testimonial list", () => {
       </Providers>,
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Không kết nối được");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể kết nối");
     fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
     expect(await screen.findByText("Không tìm thấy testimonial.")).toBeInTheDocument();
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
@@ -428,7 +428,7 @@ describe("testimonial editor", () => {
     const dialog = screen.getByRole("dialog", { name: "Xác nhận xuất bản" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Backend gặp lỗi");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Dịch vụ đang gặp sự cố");
     expect(window.location.pathname).toBe("/testimonials/created-id/edit");
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -458,7 +458,7 @@ describe("testimonial editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Xuất bản" }));
     const dialog = screen.getByRole("dialog", { name: "Xác nhận xuất bản" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Backend gặp lỗi");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Dịch vụ đang gặp sự cố");
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 

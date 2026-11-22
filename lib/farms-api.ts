@@ -1,3 +1,4 @@
+import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type {
   Farm,
@@ -26,7 +27,7 @@ export function listFarms(query: { search?: string; is_active?: boolean; page?: 
   const params = new URLSearchParams({ page: String(query.page ?? 1) });
   if (query.search) params.set("search", query.search);
   if (query.is_active !== undefined) params.set("is_active", String(query.is_active));
-  return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`);
+  return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`).then(requirePaginatedList);
 }
 
 export function getFarm(id: string) {
@@ -37,11 +38,11 @@ export function saveFarm(id: string | undefined, payload: Partial<FarmInput>) {
   return api<Farm>(id ? `admin/farms/${id}` : "admin/farms", {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(payload),
-  });
+  }).then(requireResponseEntity);
 }
 
 export function deleteFarm(id: string) {
-  return api<void>(`admin/farms/${id}`, { method: "DELETE" });
+  return api(`admin/farms/${id}`, { method: "DELETE" }, { response: "no-content" });
 }
 
 export function uploadFarmImage(file: File) {
@@ -51,16 +52,19 @@ export function uploadFarmImage(file: File) {
 }
 
 export function deleteFarmImage(id: string, options?: { keepalive?: boolean }) {
-  return api<void>(`admin/farms/media/${id}`, {
-    method: "DELETE",
-    keepalive: options?.keepalive,
-  });
+  return api(
+    `admin/farms/media/${id}`,
+    { method: "DELETE", keepalive: options?.keepalive },
+    { response: "no-content" },
+  );
 }
 
 export function listFarmProducts(farmId: string, query: { page?: number; search?: string } = {}) {
   const params = new URLSearchParams({ page: String(query.page ?? 1) });
   if (query.search) params.set("search", query.search);
-  return apiEnvelope<FarmProduct[], PaginationMeta>(`admin/farms/${farmId}/products?${params}`);
+  return apiEnvelope<FarmProduct[], PaginationMeta>(
+    `admin/farms/${farmId}/products?${params}`,
+  ).then(requirePaginatedList);
 }
 
 export function listAvailableFarmProducts(
@@ -71,7 +75,7 @@ export function listAvailableFarmProducts(
   if (query.search) params.set("search", query.search);
   return apiEnvelope<AvailableFarmProduct[], PaginationMeta>(
     `admin/farms/${farmId}/available-products?${params}`,
-  );
+  ).then(requirePaginatedList);
 }
 
 export function addFarmProduct(farmId: string, productId: string, batch: StockBatchInput) {
@@ -85,11 +89,15 @@ export function setFarmProductActive(farmId: string, productId: string, isActive
   return api<FarmProduct>(`admin/farms/${farmId}/products/${productId}`, {
     method: "PATCH",
     body: JSON.stringify({ is_active: isActive }),
-  });
+  }).then(requireResponseEntity);
 }
 
 export function removeFarmProduct(farmId: string, productId: string) {
-  return api<void>(`admin/farms/${farmId}/products/${productId}`, { method: "DELETE" });
+  return api(
+    `admin/farms/${farmId}/products/${productId}`,
+    { method: "DELETE" },
+    { response: "no-content" },
+  );
 }
 
 export function listFarmStockBatches(
@@ -101,7 +109,7 @@ export function listFarmStockBatches(
   if (query.status) params.set("status", query.status);
   return apiEnvelope<FarmStockBatch[], PaginationMeta>(
     `admin/farms/${farmId}/products/${productId}/batches?${params}`,
-  );
+  ).then(requirePaginatedList);
 }
 
 export function createFarmStockBatch(farmId: string, productId: string, batch: StockBatchInput) {
@@ -165,5 +173,9 @@ export function updateFarmTracker(
 }
 
 export function disableFarmTracker(farmId: string) {
-  return api<void>(`admin/farms/${farmId}/growth-tracker`, { method: "DELETE" });
+  return api(
+    `admin/farms/${farmId}/growth-tracker`,
+    { method: "DELETE" },
+    { response: "no-content" },
+  );
 }
