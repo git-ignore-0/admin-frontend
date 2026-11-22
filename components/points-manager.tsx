@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { Anchor, Paper, Stack, Table, Text } from "@mantine/core";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -11,23 +11,38 @@ import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { userEmailStatus } from "@/lib/admin-users";
-import { fetchAdminUsers } from "@/lib/admin-users-query";
+import { useAdminUsersList } from "@/lib/admin-users-query";
 import { requestErrorMessage } from "@/lib/client-error";
-import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function PointsManager() {
   const { t } = useAdminI18n();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
-  const fetchPage = useCallback(
-    (page: number, signal: AbortSignal) => fetchAdminUsers({ page, search }, signal),
-    [search],
-  );
-  const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
-  const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
-    fetchPage,
-    getErrorMessage,
-  });
+  const [page, setPage] = useState(1);
+  const list = useAdminUsersList({ page, search, status: "" });
+  const [previous, setPrevious] = useState<{
+    data: NonNullable<typeof list.data>;
+    revision: number;
+  }>();
+  const retained = previous?.revision === list.accessRevision ? previous.data : undefined;
+  // Pending requests and recoverable errors may keep the last authorized page.
+  const visible = list.accessDenied ? undefined : (list.data ?? retained);
+  if (visible !== previous?.data || (visible && previous?.revision !== list.accessRevision)) {
+    setPrevious(visible ? { data: visible, revision: list.accessRevision } : undefined);
+  }
+  const items = visible?.data;
+  const meta = visible?.meta;
+  const loading = list.isFetching;
+  const error = list.accessDenied
+    ? t.common.forbidden
+    : list.error
+      ? requestErrorMessage(list.error, t)
+      : list.waitingForConnection
+        ? t.common.networkError
+        : "";
+  const reload = () => {
+    void list.refetch({ cancelRefetch: false });
+  };
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -74,7 +89,7 @@ export function PointsManager() {
       <ListState
         empty={t.users.empty}
         error={error}
-        hasData={items !== null}
+        hasData={items !== undefined}
         isEmpty={items?.length === 0}
         loading={loading}
         loadingLabel={t.users.loading}

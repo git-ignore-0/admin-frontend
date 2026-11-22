@@ -11,6 +11,7 @@ import {
   Skeleton,
   Stack,
   Table,
+  Tooltip,
   VisuallyHidden,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
@@ -25,6 +26,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { UserAccountDialog } from "@/components/user-account-dialog";
 import { UserEmail } from "@/components/user-email";
 import { formatAdminDate } from "@/lib/admin-date";
@@ -34,6 +36,7 @@ import {
   adminUserStatuses,
   readAdminUsersListContext,
   useAdminUsersList,
+  useAdminUsersMutationAccess,
   useRefreshAdminUsers,
 } from "@/lib/admin-users-query";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -103,10 +106,21 @@ function UserRow({
         </Stack>
       </Table.Td>
       <Table.Td ta="center">
-        <VisuallyHidden>
-          {user.has_csa_customer ? t.users.csaPresent : t.users.csaAbsent}
-        </VisuallyHidden>
-        {user.has_csa_customer && <IconCheck size={16} color="var(--success)" aria-hidden />}
+        {user.has_csa_customer ? (
+          <Tooltip label={t.users.csaPresent} events={{ hover: true, focus: true, touch: false }}>
+            <Box
+              component="span"
+              display="inline-flex"
+              role="img"
+              aria-label={t.users.csaPresent}
+              tabIndex={0}
+            >
+              <IconCheck size={16} color="var(--success)" aria-hidden />
+            </Box>
+          </Tooltip>
+        ) : (
+          <VisuallyHidden>{t.users.csaAbsent}</VisuallyHidden>
+        )}
       </Table.Td>
       <Table.Td>{formatAdminDate(user.date_joined)}</Table.Td>
       <Table.Td>
@@ -133,10 +147,11 @@ export function UserDirectory() {
   const context = readAdminUsersListContext(searchParams ?? new URLSearchParams());
   const { search, status, page } = context;
   const list = useAdminUsersList(context);
+  const { canMutate, captureMutationAccess } = useAdminUsersMutationAccess();
   const refreshUsers = useRefreshAdminUsers();
   const [draftSearch, setDraftSearch] = useState(search);
   const [draftStatus, setDraftStatus] = useState(status);
-  const [creating, setCreating] = useState(false);
+  const [createRevision, setCreateRevision] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const createButton = useRef<HTMLButtonElement>(null);
   const opener = useRef<{ element: HTMLElement | null; x: number; y: number } | null>(null);
@@ -145,14 +160,14 @@ export function UserDirectory() {
   const items = list.data?.data;
   const meta = list.data?.meta;
   const loading = list.isFetching;
+  const canCreate = canMutate && !list.accessDenied && !list.waitingForConnection;
+  const createDialogOpen =
+    canMutate && !list.accessDenied && createRevision === list.accessRevision;
   const refetch = async () => {
     await list.refetch({ cancelRefetch: false });
   };
 
   useEffect(() => setDraftSearch(search), [search]);
-  useEffect(() => {
-    if (list.accessDenied) setCreating(false);
-  }, [list.accessDenied]);
   useEffect(() => {
     const returning = !selectedId && previousSelection.current;
     previousSelection.current = selectedId;
@@ -269,7 +284,7 @@ export function UserDirectory() {
         gap="md"
         miw={0}
         hidden={Boolean(mobile && selectedId)}
-        inert={Boolean(selectedId || creating) || undefined}
+        inert={Boolean(selectedId || createDialogOpen) || undefined}
         style={mobile && selectedId ? { display: "none" } : undefined}
       >
         <PageHeading title={t.common.users} visuallyHiddenTitle bottomSpacing={0} />
@@ -325,13 +340,15 @@ export function UserDirectory() {
               />
             ),
           }}
-          refresh={{ label: t.users.refresh, onRefresh: refetch }}
+          refresh={{ label: t.users.refresh, disabled: !items, onRefresh: refetch }}
           primaryAction={
             <Button
               ref={createButton}
-              disabled={list.accessDenied}
+              disabled={!canCreate}
               leftSection={<IconPlus size={16} aria-hidden />}
-              onClick={() => setCreating(true)}
+              onClick={() => {
+                if (canCreate && captureMutationAccess()) setCreateRevision(list.accessRevision);
+              }}
             >
               {t.users.accountActions.create}
             </Button>
@@ -339,9 +356,12 @@ export function UserDirectory() {
         />
         <Paper component="section" w="100%" miw={0} style={{ overflow: "hidden" }}>
           {list.accessDenied ? (
-            <Alert color="danger" role="alert">
-              {t.common.forbidden}
-            </Alert>
+            <RecoveryAlert
+              message={t.common.forbidden}
+              retryLabel={t.common.retry}
+              onRetry={() => void refetch()}
+              loading={loading}
+            />
           ) : (
             <>
               {list.waitingForConnection && (
@@ -350,17 +370,19 @@ export function UserDirectory() {
                 </Alert>
               )}
               {Boolean(items?.length) && table}
-              <Box p={list.error || (loading && items) ? "md" : undefined}>
+              {items && loading && (
+                <VisuallyHidden role="status">{t.users.refreshing}</VisuallyHidden>
+              )}
+              <Box p={list.error ? "md" : undefined}>
                 <ListState
                   embedded
                   hasData={items !== undefined}
                   isEmpty={items?.length === 0}
                   empty={t.users.empty}
                   noResults={noResults ? t.users.noMatches : undefined}
-                  loading={loading}
+                  loading={initialLoading}
                   loadingLabel={t.users.loading}
                   loadingPlaceholder={table}
-                  refreshingLabel={t.users.refreshing}
                   error={list.error ? requestErrorMessage(list.error, t) : ""}
                   onRetry={() => void refetch()}
                   retryLabel={t.common.retry}
@@ -389,15 +411,16 @@ export function UserDirectory() {
           )}
         </Paper>
       </Stack>
-      {creating && !list.accessDenied && (
+      {createDialogOpen && (
         <UserAccountDialog
           action="create"
+          confirmDisabled={!canCreate}
           returnFocusRef={createButton}
           fallbackFocusRef={root}
-          onCancel={() => setCreating(false)}
+          onCancel={() => setCreateRevision(null)}
           onSuccess={(id) => {
             rememberOpener(createButton.current);
-            setCreating(false);
+            setCreateRevision(null);
             void refreshUsers(id);
             router.push(adminUserHref(id, context), { scroll: false });
           }}

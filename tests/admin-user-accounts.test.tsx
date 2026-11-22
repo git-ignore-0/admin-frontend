@@ -1,4 +1,4 @@
-import { focusManager } from "@tanstack/react-query";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import type { NextRouter } from "next/router";
@@ -50,6 +50,7 @@ const user = {
   ],
 };
 const otherUser = { ...user, id: otherUserId, name: "Orchard Member" };
+const referralUser = { ...user, email: "member@example.com", address: "12 Private Lane" };
 const password = "  Strong-Harvest-42!  ";
 const originalMatchMedia = window.matchMedia;
 
@@ -75,6 +76,25 @@ function deferredResponse() {
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+function referralPage(page: 1 | 2) {
+  const invited = {
+    ...user.invited_users[0],
+    id: page === 2 ? "invitee-two" : "invitee",
+    name: page === 2 ? "Second Invited Member" : "Invited Member",
+  };
+  return Response.json({
+    data: { ...referralUser, invited_count: 31, invited_users: [invited] },
+    meta: { invited: { page, page_size: 30, total: 31 } },
+  });
+}
+
+async function openCreateAccount(label = "Create account") {
+  const button = screen.getByRole("button", { name: label });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  return screen.getByRole("dialog", { name: label });
 }
 
 function passwords(dialog: HTMLElement, first = password, second = password, locale = "en") {
@@ -104,6 +124,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   focusManager.setFocused(undefined);
+  onlineManager.setOnline(true);
   delete document.documentElement.dataset.adminPageSession;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -123,8 +144,7 @@ describe("CMS account administration", () => {
       );
       vi.stubGlobal("fetch", fetcher);
       show(<UserDirectory />);
-      fireEvent.click(screen.getByRole("button", { name: "Create account" }));
-      const dialog = screen.getByRole("dialog", { name: "Create account" });
+      const dialog = await openCreateAccount();
       fireEvent.change(within(dialog).getByLabelText(/^Full name/i), {
         target: { value: user.name },
       });
@@ -244,14 +264,13 @@ describe("CMS account administration", () => {
     ],
   ] as const)(
     "describes the password policy below the create password field in %s",
-    (locale, label, field, policy) => {
+    async (locale, label, field, policy) => {
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => Response.json({ data: [], meta: listMeta })),
       );
       show(<UserDirectory />, locale);
-      fireEvent.click(screen.getByRole("button", { name: label }));
-      const dialog = within(screen.getByRole("dialog", { name: label }));
+      const dialog = within(await openCreateAccount(label));
       const input = dialog.getByLabelText(field);
       const description = dialog.getByText(policy);
       expect(input).toHaveAccessibleDescription(policy);
@@ -278,8 +297,7 @@ describe("CMS account administration", () => {
     vi.stubGlobal("fetch", fetcher);
     window.history.replaceState(null, "", "/users?page=2&search=garden&status=pending_activation");
     show(<UserDirectory />);
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
-    const dialog = screen.getByRole("dialog", { name: "Create account" });
+    const dialog = await openCreateAccount();
     fireEvent.change(within(dialog).getByLabelText(/^Full name/i), {
       target: { value: user.name },
     });
@@ -328,8 +346,7 @@ describe("CMS account administration", () => {
     );
     vi.stubGlobal("fetch", fetcher);
     const view = show(<UserDirectory />);
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
-    const dialog = screen.getByRole("dialog", { name: "Create account" });
+    const dialog = await openCreateAccount();
     fireEvent.change(within(dialog).getByLabelText("Full name"), { target: { value: user.name } });
     fireEvent.change(within(dialog).getByLabelText("Login phone"), {
       target: { value: "0912345678" },
@@ -381,8 +398,7 @@ describe("CMS account administration", () => {
       ),
     );
     show(<UserDirectory />, copy.locale);
-    fireEvent.click(screen.getByRole("button", { name: copy.create }));
-    const dialog = screen.getByRole("dialog", { name: copy.create });
+    const dialog = await openCreateAccount(copy.create);
     fireEvent.change(within(dialog).getByLabelText(copy.name), {
       target: { value: user.name },
     });
@@ -611,30 +627,216 @@ describe("CMS account administration", () => {
     expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
   });
 
-  it("paginates referrals without redirecting to a different account", async () => {
-    const fetcher = vi.fn(async (path: string) => {
-      const page = path.endsWith("invited_page=2") ? 2 : 1;
-      const invited = {
-        ...user.invited_users[0],
-        id: page === 2 ? "invitee-two" : "invitee",
-        name: page === 2 ? "Second Invited Member" : "Invited Member",
-      };
-      return Response.json({
-        data: { ...user, invited_count: 31, invited_users: [invited] },
-        meta: { invited: { page, page_size: 30, total: 31 } },
-      });
-    });
+  it.each(["desktop", "mobile"] as const)(
+    "keeps the %s account projection stable while only the requested referral page loads",
+    async (viewport) => {
+      if (viewport === "mobile") setMobileViewport();
+      const nextPage = deferredResponse();
+      const fetcher = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(
+        async (path) => (path.endsWith("invited_page=2") ? nextPage.promise : referralPage(1)),
+      );
+      vi.stubGlobal("fetch", fetcher);
+      show(<UserDetail userId={userId} intercepted />);
+      expect(await screen.findByText("Invited Member")).toBeVisible();
+      const heading = screen.getByRole("heading", { name: user.name });
+      const activate = screen.getByRole("button", { name: "Activate" });
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+      const referrals = await screen.findByRole("region", { name: "People invited (31)" });
+      expect(within(referrals).getByRole("status")).toHaveTextContent("Loading invited users");
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(screen.queryByText("Loading users…")).toBeNull();
+      expect(screen.queryByText("Invited Member")).toBeNull();
+      expect(heading).toBeVisible();
+      expect(screen.getByText(referralUser.email)).toBeVisible();
+      expect(screen.getByText(referralUser.address)).toBeVisible();
+      expect(screen.getByText(user.login_phone_number)).toBeVisible();
+      expect(screen.getByText("50")).toBeVisible();
+      expect(screen.getByText("NFV1234567")).toBeVisible();
+      expect(screen.getByRole("navigation", { name: "Page 2/2" })).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      expect(activate).toBeDisabled();
+      fireEvent.click(activate);
+      expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+
+      await act(async () => nextPage.resolve(referralPage(2)));
+      expect(await within(referrals).findByText("Second Invited Member")).toBeVisible();
+      expect(within(referrals).queryByRole("status")).toBeNull();
+      expect(screen.queryByText("Invited Member")).toBeNull();
+      expect(heading).toBeVisible();
+      expect(activate).toBeEnabled();
+      expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+        `/api/backend/admin/users/${userId}?invited_page=1`,
+        `/api/backend/admin/users/${userId}?invited_page=2`,
+      ]);
+    },
+  );
+
+  it("retries a failed referral page without losing the account projection", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(referralPage(1))
+      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+      .mockResolvedValueOnce(referralPage(2));
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} intercepted />);
+    expect(await screen.findByText("Invited Member")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const referrals = await screen.findByRole("region", { name: "People invited (31)" });
+    expect(await within(referrals).findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.serverError,
+    );
+    expect(screen.queryByText("Invited Member")).toBeNull();
+    expect(screen.getByRole("heading", { name: user.name })).toBeVisible();
+    expect(screen.getByText(referralUser.address)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+    fireEvent.click(within(referrals).getByRole("button", { name: "Try again" }));
+    expect(await within(referrals).findByText("Second Invited Member")).toBeVisible();
+    expect(within(referrals).queryByRole("alert")).toBeNull();
+    expect(fetcher).toHaveBeenLastCalledWith(
+      `/api/backend/admin/users/${userId}?invited_page=2`,
+      expect.anything(),
+    );
+  });
+
+  it("removes all retained detail and referral metadata after a referral-page denial", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(referralPage(1))
+      .mockResolvedValueOnce(Response.json({}, { status: 403 }));
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} intercepted />);
+    expect(await screen.findByText("Invited Member")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.forbidden,
+    );
+    expect(screen.queryByRole("heading", { name: user.name })).toBeNull();
+    expect(screen.queryByText(referralUser.email)).toBeNull();
+    expect(screen.queryByText(referralUser.address)).toBeNull();
+    expect(screen.queryByText("50")).toBeNull();
+    expect(screen.queryByText("NFV1234567")).toBeNull();
+    expect(screen.queryByRole("region", { name: "People invited (31)" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: /Page/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Activate" })).toBeNull();
+  });
+
+  it("keeps the account visible and the pending referral page local while offline", async () => {
+    const fetcher = vi.fn(async (path: string) =>
+      referralPage(path.endsWith("invited_page=2") ? 2 : 1),
+    );
     vi.stubGlobal("fetch", fetcher);
     show(<UserDetail userId={userId} />);
     expect(await screen.findByText("Invited Member")).toBeVisible();
+    act(() => onlineManager.setOnline(false));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Second Invited Member")).toBeVisible();
-    expect(screen.queryByText("Invited Member")).toBeNull();
+
+    const referrals = screen.getByRole("region", { name: "People invited (31)" });
+    expect(await within(referrals).findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.users.offline,
+    );
+    expect(within(referrals).queryByRole("status")).toBeNull();
     expect(screen.getByRole("heading", { name: user.name })).toBeVisible();
-    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
-      `/api/backend/admin/users/${userId}?invited_page=1`,
-      `/api/backend/admin/users/${userId}?invited_page=2`,
-    ]);
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+    expect(screen.queryByText("Invited Member")).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    act(() => onlineManager.setOnline(true));
+    expect(await within(referrals).findByText("Second Invited Member")).toBeVisible();
+    expect(within(referrals).queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled();
+  });
+
+  it("discards the previous user's detail and late invitees when changing users mid-page", async () => {
+    const nextPage = deferredResponse();
+    const nextAccount = deferredResponse();
+    const fetcher = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(async (path) => {
+      if (path.includes(otherUserId)) return nextAccount.promise;
+      if (path.endsWith("invited_page=2")) return nextPage.promise;
+      return referralPage(1);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = show(<UserDetail userId={userId} />);
+    expect(await screen.findByText("Invited Member")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+
+    view.rerender(scene(<UserDetail userId={otherUserId} />));
+    expect(screen.queryByText(user.name)).toBeNull();
+    expect(screen.queryByText(referralUser.address)).toBeNull();
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading users…");
+    expect(fetcher.mock.calls[1][1]?.signal?.aborted).toBe(true);
+    await act(async () => nextPage.resolve(referralPage(2)));
+    expect(screen.queryByText("Second Invited Member")).toBeNull();
+    await act(async () => nextAccount.resolve(Response.json({ data: otherUser })));
+    expect(await screen.findByRole("heading", { name: otherUser.name })).toBeVisible();
+    expect(screen.queryByText(user.name)).toBeNull();
+    expect(screen.queryByText("Second Invited Member")).toBeNull();
+  });
+
+  it("cancels a pending referral page and removes the account summary when the session retires", async () => {
+    const nextPage = deferredResponse();
+    const fetcher = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(async (path) =>
+      path.endsWith("invited_page=2") ? nextPage.promise : referralPage(1),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const sessionBinding = "referral-test-users-session";
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <AdminShell sessionBinding={sessionBinding} user={{ ...user, name: "Administrator" }}>
+            <UserDetail userId={userId} intercepted />
+          </AdminShell>
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    expect(await screen.findByText("Invited Member")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Loading invited users…")).toBeVisible();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(ADMIN_SESSION_CHANGED_EVENT, { detail: sessionBinding }),
+      );
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("The admin session changed");
+    expect(fetcher.mock.calls[1][1]?.signal?.aborted).toBe(true);
+    expect(screen.queryByText(referralUser.address)).toBeNull();
+    expect(screen.queryByRole("navigation", { name: /Page/ })).toBeNull();
+    await act(async () => nextPage.resolve(referralPage(2)));
+    expect(screen.queryByText(user.name)).toBeNull();
+    expect(screen.queryByText("Second Invited Member")).toBeNull();
+  });
+
+  it("uses one initial detail loading state and keeps the drawer populated during revalidation", async () => {
+    const initial = deferredResponse();
+    const refresh = deferredResponse();
+    const fetcher = vi
+      .fn()
+      .mockReturnValueOnce(initial.promise)
+      .mockReturnValueOnce(refresh.promise);
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} intercepted />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading users…");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    await act(async () => initial.resolve(referralPage(1)));
+    const drawer = await screen.findByRole("dialog", { name: user.name });
+
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(within(drawer).queryByRole("status")).toBeNull();
+    expect(within(drawer).getByText(referralUser.address)).toBeVisible();
+    expect(within(drawer).getByText("Invited Member")).toBeVisible();
+    expect(within(drawer).getByRole("navigation", { name: "Page 1/2" })).toBeVisible();
+    await act(async () => refresh.resolve(referralPage(1)));
+    expect(drawer).toBeVisible();
   });
 
   it("uses the desktop drawer preset and restores the reset action after nested Escape", async () => {

@@ -44,15 +44,22 @@ import { accountFailure, requireAccountActionResult, userEmailStatus } from "@/l
 import {
   adminUsersListHref,
   useAdminUserDetail,
+  useAdminUsersMutationAccess,
   useRefreshAdminUsers,
 } from "@/lib/admin-users-query";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
-import type { AdminAccountSummary, AdminUserDetail, PaginationMeta } from "@/lib/types";
+import type {
+  AdminAccountSummary,
+  AdminUserDetail,
+  InvitedAdminUser,
+  PaginationMeta,
+} from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
 const drawerZIndex = getDefaultZIndex("modal") - 1;
 const longText = { overflowWrap: "anywhere" } as const;
+type UserDetailSummary = Omit<AdminUserDetail, "invited_users">;
 
 function statusActionFor(status: string) {
   switch (status) {
@@ -80,6 +87,7 @@ export function UserDetail({
 function UserDetailView({ userId, intercepted }: { userId: string; intercepted: boolean }) {
   const { locale, t } = useAdminI18n();
   const isScopeCurrent = useIsAdminQueryScopeCurrent();
+  const { canMutate, captureMutationAccess } = useAdminUsersMutationAccess();
   const refreshUsers = useRefreshAdminUsers();
   const router = useRouter();
   const params = useSearchParams();
@@ -100,19 +108,26 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   const [invitedPage, setInvitedPage] = useState(1);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [dialog, setDialog] = useState<UserAccountDialogAction | null>(null);
+  const [dialog, setDialog] = useState<{
+    action: UserAccountDialogAction;
+    accessRevision: number;
+  } | null>(null);
   const [focusAction, setFocusAction] = useState<UserAccountDialogAction | null>(null);
   const query = useAdminUserDetail(userId, invitedPage);
-  const user = query.data?.data;
+  const user = query.summary?.data;
+  const exactPage = query.data;
+  const referralPageMissing = Boolean(user && !exactPage);
   const statusAction = user ? statusActionFor(user.status) : null;
   const canReset = Boolean(user && statusAction && !user.email_verified);
   const activeDialog =
-    (dialog === "suspend" && statusAction === "suspend") ||
-    (dialog === "reset-password" && canReset)
-      ? dialog
+    canMutate &&
+    dialog?.accessRevision === query.accessRevision &&
+    ((dialog.action === "suspend" && statusAction === "suspend") ||
+      (dialog.action === "reset-password" && canReset))
+      ? dialog.action
       : null;
   const readPending = query.isFetching || query.waitingForConnection;
-  const readUnavailable = readPending || Boolean(query.error);
+  const readUnavailable = !exactPage || readPending || Boolean(query.error);
   const navigationBlocked = busy || activeDialog !== null;
 
   useLayoutEffect(() => {
@@ -150,13 +165,14 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       pendingSubmission.current ||
       navigationBlocked ||
       readUnavailable ||
-      action !== statusAction ||
-      !isScopeCurrent()
+      action !== statusActionFor(exactPage?.data.status ?? "")
     ) {
       return;
     }
+    const isAccessCurrent = captureMutationAccess();
+    if (!isAccessCurrent) return;
     const submission = Symbol();
-    const isCurrent = () => pendingSubmission.current === submission && isScopeCurrent();
+    const isCurrent = () => pendingSubmission.current === submission && isAccessCurrent();
     pendingSubmission.current = submission;
     setBusy(true);
     setActionError("");
@@ -177,7 +193,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       else setActionError(failure.message || copy.invalid);
       if (failure.recheckAccess) await refreshUsers(userId);
     } finally {
-      if (isCurrent()) {
+      if (pendingSubmission.current === submission && isScopeCurrent()) {
         pendingSubmission.current = null;
         setBusy(false);
       }
@@ -185,13 +201,23 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   }
 
   function openDialog(action: UserAccountDialogAction, event: MouseEvent<HTMLButtonElement>) {
-    if (readUnavailable || navigationBlocked || pendingSubmission.current || !isScopeCurrent()) {
+    const target = exactPage?.data;
+    if (
+      !target ||
+      readUnavailable ||
+      navigationBlocked ||
+      pendingSubmission.current ||
+      (action === "suspend"
+        ? target.status !== "active"
+        : !statusActionFor(target.status) || target.email_verified) ||
+      !captureMutationAccess()
+    ) {
       return;
     }
     dialogTrigger.current = event.currentTarget;
     setActionError("");
     setFocusAction(action);
-    setDialog(action);
+    setDialog({ action, accessRevision: query.accessRevision });
   }
 
   const loadError = query.accessDenied
@@ -201,18 +227,22 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       : query.waitingForConnection
         ? t.users.offline
         : "";
+  function retryRead() {
+    void query.refetch({ cancelRefetch: false });
+  }
+
   const title = user?.name || t.users.detailTitle;
   const content = (
-    <Stack gap="md" aria-busy={query.isFetching || undefined}>
-      {loadError && (
+    <Stack gap="md" aria-busy={(query.isFetching && !referralPageMissing) || undefined}>
+      {loadError && !referralPageMissing && (
         <RecoveryAlert
           message={loadError}
           retryLabel={t.common.retry}
-          loading={query.isFetching}
-          onRetry={() => void query.refetch()}
+          loading={query.isFetching && !user}
+          onRetry={retryRead}
         />
       )}
-      {!user && query.isPending && !query.waitingForConnection && (
+      {!user && query.isPending && !loadError && (
         <DataState kind="loading" title={t.users.loading} />
       )}
       {user && (
@@ -222,18 +252,24 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
               {actionError}
             </Alert>
           )}
-          <UserDetails
-            user={user}
-            invitedMeta={query.data?.meta?.invited}
-            navigationBlocked={navigationBlocked}
-            paginationDisabled={navigationBlocked || readUnavailable}
-            onInvitedPage={setInvitedPage}
-          />
+          <UserDetails user={user} navigationBlocked={navigationBlocked}>
+            <UserReferrals
+              count={user.invited_count}
+              invitees={exactPage?.data.invited_users}
+              meta={exactPage ? exactPage.meta?.invited : query.summary?.meta?.invited}
+              page={exactPage?.meta?.invited?.page ?? invitedPage}
+              loading={referralPageMissing && query.isFetching}
+              error={referralPageMissing ? loadError : ""}
+              paginationDisabled={navigationBlocked || readPending}
+              onRetry={retryRead}
+              onPage={setInvitedPage}
+            />
+          </UserDetails>
         </>
       )}
     </Stack>
   );
-  const buttonsDisabled = readUnavailable || navigationBlocked;
+  const buttonsDisabled = !canMutate || readUnavailable || navigationBlocked;
   // Mantine restarts the Drawer focus trap when the nested dialog closes.
   const focusSuspend = !buttonsDisabled && focusAction === "suspend" && statusAction === "suspend";
   const focusReset = !buttonsDisabled && focusAction === "reset-password" && canReset;
@@ -359,7 +395,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
         <UserAccountDialog
           action={activeDialog}
           userId={userId}
-          confirmDisabled={readUnavailable}
+          confirmDisabled={!canMutate || readUnavailable}
           returnFocusRef={dialogTrigger}
           fallbackFocusRef={drawer ? drawerClose : pageHeading}
           onCancel={() => setDialog(null)}
@@ -382,7 +418,7 @@ function UserStatus({ status }: { status: string }) {
   return <Status domain="user" status={status} label={label} />;
 }
 
-function UserDetailIdentity({ title, user }: { title: ReactNode; user?: AdminUserDetail }) {
+function UserDetailIdentity({ title, user }: { title: ReactNode; user?: UserDetailSummary }) {
   return (
     <Stack {...recordDetailDrawer.identity}>
       <Group align="baseline" gap="xs">
@@ -433,7 +469,7 @@ function UserDetailSection({
   );
 }
 
-function UserContactDetails({ user }: { user: AdminUserDetail }) {
+function UserContactDetails({ user }: { user: UserDetailSummary }) {
   const { locale, t } = useAdminI18n();
   const { provinceName, wardName } = useAdministrativeUnitNames(
     user.province_code || null,
@@ -453,16 +489,12 @@ function UserContactDetails({ user }: { user: AdminUserDetail }) {
 
 function UserDetails({
   user,
-  invitedMeta,
   navigationBlocked,
-  paginationDisabled,
-  onInvitedPage,
+  children,
 }: {
-  user: AdminUserDetail;
-  invitedMeta?: PaginationMeta;
+  user: UserDetailSummary;
   navigationBlocked: boolean;
-  paginationDisabled: boolean;
-  onInvitedPage: (page: number) => void;
+  children: ReactNode;
 }) {
   const { locale, t } = useAdminI18n();
   function guardPointsNavigation(event: MouseEvent<HTMLAnchorElement>) {
@@ -514,14 +546,50 @@ function UserDetails({
         ]}
       >
         <Divider />
-        <Title order={3} size="sm" fw={600}>
-          {t.users.invited.replace("{count}", String(user.invited_count))}
-        </Title>
-        {user.invited_users.length === 0 ? (
+        {children}
+      </UserDetailSection>
+    </>
+  );
+}
+
+function UserReferrals({
+  count,
+  invitees,
+  meta,
+  page,
+  loading,
+  error,
+  paginationDisabled,
+  onRetry,
+  onPage,
+}: {
+  count: number;
+  invitees?: InvitedAdminUser[];
+  meta?: PaginationMeta;
+  page: number;
+  loading: boolean;
+  error: string;
+  paginationDisabled: boolean;
+  onRetry: () => void;
+  onPage: (page: number) => void;
+}) {
+  const { t } = useAdminI18n();
+  const headingId = useId();
+  return (
+    <Stack component="section" gap="sm" aria-labelledby={headingId}>
+      <Title order={3} size="sm" fw={600} id={headingId}>
+        {t.users.invited.replace("{count}", String(count))}
+      </Title>
+      {loading && <DataState kind="loading" title={t.users.invitedLoading} compact />}
+      {!loading && error && (
+        <RecoveryAlert message={error} retryLabel={t.common.retry} onRetry={onRetry} />
+      )}
+      {invitees &&
+        (invitees.length === 0 ? (
           <DataState kind="empty" title={t.users.invitedEmpty} compact />
         ) : (
           <Stack component="ul" p={0} m={0} gap="xs" style={{ listStyle: "none" }}>
-            {user.invited_users.map((invitee) => (
+            {invitees.map((invitee) => (
               <Group
                 key={invitee.id}
                 component="li"
@@ -546,20 +614,19 @@ function UserDetails({
               </Group>
             ))}
           </Stack>
-        )}
-        {invitedMeta && (
-          <Pagination
-            disabled={paginationDisabled}
-            page={invitedMeta.page}
-            total={invitedMeta.total}
-            pageSize={invitedMeta.page_size}
-            onPage={onInvitedPage}
-            previousLabel={t.common.previous}
-            nextLabel={t.common.next}
-            summary={t.common.pagination}
-          />
-        )}
-      </UserDetailSection>
-    </>
+        ))}
+      {meta && (
+        <Pagination
+          disabled={paginationDisabled}
+          page={page}
+          total={meta.total}
+          pageSize={meta.page_size}
+          onPage={onPage}
+          previousLabel={t.common.previous}
+          nextLabel={t.common.next}
+          summary={t.common.pagination}
+        />
+      )}
+    </Stack>
   );
 }

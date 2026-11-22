@@ -4,7 +4,6 @@ import { Stack, Text } from "@mantine/core";
 import { type FormEvent, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FormField, FormInput } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
@@ -14,7 +13,7 @@ import {
   type AccountField,
   requireAccountActionResult,
 } from "@/lib/admin-users";
-import { useRefreshAdminUsers } from "@/lib/admin-users-query";
+import { useAdminUsersMutationAccess, useRefreshAdminUsers } from "@/lib/admin-users-query";
 import { api } from "@/lib/client-api";
 import type { AdminAccountSummary } from "@/lib/types";
 
@@ -49,7 +48,8 @@ function UserAccountDialogForm({
   returnFocusRef,
 }: Props) {
   const { locale, t } = useAdminI18n();
-  const isScopeCurrent = useIsAdminQueryScopeCurrent();
+  const { canMutate, captureMutationAccess } = useAdminUsersMutationAccess();
+  const [isDialogCurrent] = useState(() => captureMutationAccess());
   const refreshUsers = useRefreshAdminUsers();
   const copy = t.users.accountActions;
   const toast = useToast();
@@ -75,7 +75,7 @@ function UserAccountDialogForm({
   }, []);
 
   async function submit(form?: HTMLFormElement) {
-    if (confirmDisabled || pendingSubmission.current || !isScopeCurrent()) return;
+    if (confirmDisabled || pendingSubmission.current || !isDialogCurrent?.()) return;
     const payload: Partial<Record<AccountField, FormDataEntryValue>> = {};
     if (form) {
       const values = new FormData(form);
@@ -87,7 +87,7 @@ function UserAccountDialogForm({
       }
     }
     const submission = Symbol();
-    const isCurrent = () => pendingSubmission.current === submission && isScopeCurrent();
+    const isCurrent = () => pendingSubmission.current === submission && isDialogCurrent();
     pendingSubmission.current = submission;
     setBusy(true);
     setFailure({ message: "", fields: {} });
@@ -113,7 +113,7 @@ function UserAccountDialogForm({
       else setFailure(failure);
       if (failure.recheckAccess) await refreshUsers(userId);
     } finally {
-      if (isCurrent()) {
+      if (pendingSubmission.current === submission) {
         pendingSubmission.current = null;
         setBusy(false);
       }
@@ -159,7 +159,7 @@ function UserAccountDialogForm({
       busy={busy}
       busyLabel={copy.saving}
       cancelLabel={t.membershipCatalog.cancel}
-      confirmDisabled={confirmDisabled}
+      confirmDisabled={confirmDisabled || !canMutate || !isDialogCurrent?.()}
       confirmLabel={copy[action]}
       danger={action === "suspend"}
       error={failure.message}

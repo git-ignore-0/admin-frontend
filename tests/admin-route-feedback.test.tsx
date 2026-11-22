@@ -22,19 +22,26 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("reuses the shared route skeleton in the Users segment without requesting data", () => {
+it("keeps the shared route skeleton outside Users without requesting data in either fallback", () => {
   const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);
-  expect(AdminUsersLoading).toBe(AdminRouteLoading);
   render(
     <AdminI18nProvider initialLocale="vi">
-      <main>
+      <div aria-label="Default admin fallback" role="region">
+        <AdminRouteLoading />
+      </div>
+      <main aria-label="Users fallback">
         <AdminUsersLoading />
       </main>
     </AdminI18nProvider>,
   );
   expect(screen.getByRole("status")).toHaveTextContent("Đang tải trang…");
-  expect(screen.getByRole("main").querySelector(".mantine-Skeleton-root")).toBeInTheDocument();
+  expect(
+    screen
+      .getByRole("region", { name: "Default admin fallback" })
+      .querySelector(".mantine-Skeleton-root"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("main", { name: "Users fallback" })).toBeEmptyDOMElement();
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
   expect(fetcher).not.toHaveBeenCalled();
 });

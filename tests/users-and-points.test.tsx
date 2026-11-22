@@ -1,5 +1,7 @@
 import { selectOption } from "./select-option";
+import UsersRouteLoading from "@/app/(admin)/users/loading";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import { usePathname } from "next/navigation";
 import type { NextRouter } from "next/router";
@@ -66,6 +68,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
+  onlineManager.setOnline(true);
   vi.restoreAllMocks();
   vi.mocked(api).mockReset();
   vi.mocked(apiEnvelope).mockReset();
@@ -201,6 +205,10 @@ describe("users and points", () => {
     expect(pending.getByRole("cell", { name: "No CSA customer profile" })).toBeInTheDocument();
     expect(active.getAllByRole("cell")[1].querySelector("svg")).toBeInTheDocument();
     expect(pending.getAllByRole("cell")[1].querySelector("svg")).toBeNull();
+    const indicator = active.getByRole("img", { name: "Has a CSA customer profile" });
+    expect(indicator).toHaveAttribute("tabindex", "0");
+    fireEvent.focus(indicator);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Has a CSA customer profile");
     expect(active.queryByText(user.login_phone_number)).toBeNull();
     expect(active.queryByText(user.phone)).toBeNull();
     expect(active.queryByText("50")).toBeNull();
@@ -321,7 +329,12 @@ describe("users and points", () => {
       "true",
     );
     expect(detailLink.closest('[aria-busy="true"]')).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/loading|refreshing/i);
+    expect(screen.getByRole("status")).toHaveClass("mantine-VisuallyHidden-root");
+    expect(screen.getByRole("button", { name: "Refresh users" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(document.querySelectorAll(".mantine-Loader-root")).toHaveLength(1);
     expect(screen.getByText("31 results")).toBeVisible();
 
     await act(async () =>
@@ -332,6 +345,35 @@ describe("users and points", () => {
     );
     expect(await screen.findByRole("link", { name: "View details: Matched Member" })).toBeVisible();
     expect(screen.getByText("1 result")).toBeVisible();
+  });
+
+  it("retains the Users table during background revalidation without a visible loader", async () => {
+    let resolveRefresh!: (value: { data: AdminUserListItem[]; meta: PaginationMeta }) => void;
+    const meta = { page: 1, page_size: 30, total: 1 };
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [user], meta })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+    providers(<UserDirectory />);
+    const row = await screen.findByRole("link", { name: /Green Member/ });
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(resolveRefresh).toBeTypeOf("function"));
+    expect(row).toBeVisible();
+    expect(screen.getByText("1 result")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveClass("mantine-VisuallyHidden-root");
+    expect(screen.getByRole("button", { name: "Refresh users" })).not.toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(document.querySelector(".mantine-Loader-root")).toBeNull();
+    await act(async () => resolveRefresh({ data: [user], meta }));
   });
 
   it("keeps the canonical detail link and delegates row clicks while preserving native modified clicks", async () => {
@@ -565,6 +607,112 @@ describe("users and points", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/not allowed/i);
     expect(screen.queryByText(user.email)).toBeNull();
     expect(screen.queryByText("31 results")).toBeNull();
+  });
+
+  it("keeps account creation blocked across a denied search key, repeated denial, and retry", async () => {
+    let denySearch!: (error: unknown) => void;
+    const forbidden = Object.assign(new Error("forbidden"), { status: 403 });
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [user], meta: { page: 1, page_size: 30, total: 31 } })
+      .mockRejectedValueOnce(forbidden)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            denySearch = reject;
+          }),
+      )
+      .mockResolvedValueOnce({ data: [user], meta: { page: 2, page_size: 30, total: 31 } });
+    providers(<UserDirectory />);
+    const create = screen.getByRole("button", { name: "Create account" });
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
+
+    act(() => window.history.replaceState(null, "", "/users?search=new&page=2"));
+    await waitFor(() => expect(denySearch).toBeTypeOf("function"));
+    expect(create).toBeDisabled();
+    fireEvent.click(create);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("31 results")).toBeNull();
+    expect(api).not.toHaveBeenCalled();
+
+    await act(async () => denySearch(forbidden));
+    expect(create).toBeDisabled();
+    const retry = screen.getByRole("button", { name: "Try again" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    expect(screen.getByRole("dialog", { name: "Create account" })).toBeVisible();
+  });
+
+  it("keeps create unavailable on an offline first read until a valid response arrives", async () => {
+    onlineManager.setOnline(false);
+    vi.mocked(apiEnvelope).mockResolvedValueOnce({
+      data: [user],
+      meta: { page: 1, page_size: 30, total: 1 },
+    });
+    providers(<UserDirectory />);
+    const create = screen.getByRole("button", { name: "Create account" });
+    expect(await screen.findByRole("status")).toHaveTextContent(/connection/i);
+    expect(create).toBeDisabled();
+    expect(apiEnvelope).not.toHaveBeenCalled();
+    fireEvent.click(create);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    act(() => onlineManager.setOnline(true));
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+    expect(create).toBeEnabled();
+  });
+
+  it("closes a pending create on denial and ignores its late result after access recovers", async () => {
+    let finishCreate!: (value: unknown) => void;
+    const payload = { data: [user], meta: { page: 1, page_size: 30, total: 1 } };
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce(payload)
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }))
+      .mockResolvedValueOnce(payload);
+    vi.mocked(api).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    providers(<UserDirectory />);
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    const dialog = screen.getByRole("dialog", { name: "Create account" });
+    fireEvent.submit(dialog.querySelector("form")!);
+    await waitFor(() => expect(api).toHaveBeenCalledOnce());
+
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
+    expect(dialog).not.toBeInTheDocument();
+    fireEvent.submit(dialog.querySelector("form")!);
+    expect(api).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+    await act(async () => finishCreate({ id: user.id, status: "pending_activation" }));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.queryByText("Account created and pending activation.")).toBeNull();
+    expect(api).toHaveBeenCalledOnce();
+  });
+
+  it("uses only the data-list skeleton during an uncached Users route transition", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(() => new Promise(() => {}));
+    const { container, rerender } = providers(<UsersRouteLoading />);
+    expect(container.querySelector(".mantine-Skeleton-root")).toBeNull();
+    rerender(scene(<UserDirectory />));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/loading users/i));
+    expect(
+      screen.getByRole("table", { hidden: true }).querySelector(".mantine-Skeleton-root"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".mantine-Loader-root")).toBeNull();
+    expect(screen.queryByText("No users found.")).toBeNull();
   });
 
   it("does not let an older paginated response overwrite newer user data or metadata", async () => {
