@@ -1,13 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Avatar, Box, Button, Center, Group, Select, Stack, Text, Title } from "@mantine/core";
 import { IconMenu2 } from "@tabler/icons-react";
 import { useState } from "react";
 import { AdminHeaderContent } from "@/components/admin-header";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { sampleNavigationBreadcrumbs, sampleNavigationHref } from "./sample-navigation";
+import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
+import {
+  readSampleListContext,
+  sampleNavigationBreadcrumbs,
+  sampleNavigationHref,
+  sampleParentHref,
+  type SampleNavigationContext,
+} from "./sample-navigation";
 import { initialRecords } from "./sample-records";
 
 export function HeaderNavigationExamples({
@@ -22,21 +30,34 @@ export function HeaderNavigationExamples({
   onReviewToolbar: () => void;
 }) {
   const { t, locale } = useAdminI18n();
-  const [width, setWidth] = useState("360");
+  const search = useSearchParams();
+  const context: SampleNavigationContext = {
+    ...readSampleListContext((key) => search?.get(key)),
+    tab: "navigation",
+  };
+  const [width, setWidth] = useState("640");
   const [example, setExample] = useState("root");
   const standard = initialRecords[0];
   const long = initialRecords[3];
+  const csaPath = "/csa-purchase-requests";
+  const csaItem = adminNavigation(t)
+    .flatMap(({ items }) => items)
+    .find(({ href }) => href === csaPath);
   const items =
-    example === "root"
-      ? [{ label: t.breadcrumb.uiFoundation }]
-      : sampleNavigationBreadcrumbs(long, locale, { edit: example === "deep" });
+    example === "root" || example === "csa"
+      ? resolveAdminBreadcrumbs(
+          example === "root" ? csaPath : `${csaPath}/example`,
+          csaItem,
+          t,
+        ).map((item) => (item.href ? { ...item, href: sampleParentHref(context) } : item))
+      : sampleNavigationBreadcrumbs(long, locale, { edit: example === "deep", context });
 
   return (
     <Stack gap="lg">
       <Stack gap="sm">
         <Title order={2}>Header and navigation</Title>
         <Text size="sm" c="dimmed">
-          Use the admin Header above to compare the root, overlay and child-page contexts.
+          Compare the temporary detail with child pages that use fixed sample records.
         </Text>
         <Group gap="xs">
           <Button
@@ -49,13 +70,17 @@ export function HeaderNavigationExamples({
           <Button variant="default" onClick={(event) => onOpenModal(event.currentTarget)}>
             Open sample modal
           </Button>
-          <Button component={Link} variant="default" href={sampleNavigationHref(standard.id)}>
+          <Button
+            component={Link}
+            variant="default"
+            href={sampleNavigationHref(standard.id, { context })}
+          >
             Open sample child page
           </Button>
           <Button
             component={Link}
             variant="default"
-            href={sampleNavigationHref(long.id, { edit: true })}
+            href={sampleNavigationHref(long.id, { edit: true, context })}
           >
             Open long example with deeper navigation
           </Button>
@@ -85,7 +110,7 @@ export function HeaderNavigationExamples({
             label="Header preview width"
             value={width}
             onChange={(value) => value && setWidth(value)}
-            data={["320", "360", "390"].map((value) => ({ value, label: `${value} px` }))}
+            data={["320", "360", "390", "640"].map((value) => ({ value, label: `${value} px` }))}
           />
           <Select
             label="Header preview context"
@@ -93,18 +118,21 @@ export function HeaderNavigationExamples({
             onChange={(value) => value && setExample(value)}
             data={[
               { value: "root", label: "Root" },
+              { value: "csa", label: "CSA purchase request details" },
               { value: "child", label: "Child page with a long name" },
               { value: "deep", label: "Deep navigation" },
             ]}
           />
         </Group>
         <Text size="sm" c="dimmed">
-          This preview changes the component width. The sidebar and avatar positions are shown for
-          layout review. Resize the browser to try the real mobile navigation.
+          On desktop, use 640 px to compare the 16 px root title with the 13 px breadcrumb labels.
+          Use 320, 360 or 390 px to review long labels and overflow. Switch to VI to see the
+          Vietnamese labels.
         </Text>
         <Box component="section" aria-label="Header width preview" maw={Number(width)} w="100%">
           <AdminHeaderContent
             items={items}
+            navigationKey={example}
             navigationControl={
               <Center w={36} h={36} c="dimmed" aria-hidden>
                 <IconMenu2 size={20} />

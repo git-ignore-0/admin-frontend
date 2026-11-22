@@ -78,7 +78,10 @@
   --input-bd: var(--border);
 }
 
-.choice:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]),
+.choice:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]) {
+  border-color: var(--mantine-color-gray-6);
+}
+
 .paginationControl:not([data-active], :disabled, [data-disabled]) {
   border-color: var(--control-border);
 }
@@ -90,10 +93,13 @@
   opacity: 1;
 }
 
-.switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack:not([data-error]) {
-  --switch-bg: var(--surface);
+.switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack {
   --switch-text-color: var(--text-muted);
   --switch-thumb-bg: var(--text-muted);
+}
+
+.switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack:not([data-error]) {
+  --switch-bg: var(--surface);
   box-shadow: inset 0 0 0 1px var(--switch-border, var(--control-border));
 }
 
@@ -110,7 +116,10 @@
     --input-bd: var(--control-border-hover);
   }
 
-  .choice:hover:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]),
+  .choice:hover:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]) {
+    border-color: var(--mantine-color-gray-7);
+  }
+
   .paginationControl:hover:not([data-active], :disabled, [data-disabled]) {
     border-color: var(--control-border-hover);
   }

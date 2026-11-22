@@ -7,22 +7,24 @@ import {
   type SampleRecord,
 } from "./sample-records";
 
-const showcasePath = "/dev/ui-foundation";
+export const showcasePath = "/dev/ui-foundation";
+const reviewTabs = ["color", "components", "toolbar", "list", "details", "navigation"] as const;
+export type ShowcaseTab = (typeof reviewTabs)[number];
 
 export type SampleFilters = { category: string | null; status: string | null };
 export type SampleRecordSet = "standard" | "single" | "many";
-export type SampleNavigationContext = {
-  tab: "navigation" | "list";
+export type SampleListContext = {
   query: string;
   filters: SampleFilters;
   page: number;
   recordSet: SampleRecordSet;
 };
+export type SampleNavigationContext = SampleListContext & { tab: ShowcaseTab };
 export type SampleSearchParams = Record<string, string | string[] | undefined>;
+type GetSearchParam = (key: string) => string | null | undefined;
 
 export const sampleEmptyFilters: SampleFilters = { category: null, status: null };
-const defaultContext: SampleNavigationContext = {
-  tab: "navigation",
+export const defaultSampleListContext: SampleListContext = {
   query: "",
   filters: sampleEmptyFilters,
   page: 1,
@@ -40,19 +42,16 @@ export function isSampleRecordSet(value: string | null | undefined): value is Sa
   return value === "standard" || value === "single" || value === "many";
 }
 
-export function readSampleNavigationContext(
-  get: (key: string) => string | null | undefined,
-): SampleNavigationContext | undefined {
-  const tab = get("review");
-  if (tab !== "list" && tab !== "navigation") return undefined;
-  if (tab === "navigation") return defaultContext;
+export function readShowcaseTab(value: string | null | undefined): ShowcaseTab | undefined {
+  return reviewTabs.find((tab) => tab === value);
+}
 
+export function readSampleListContext(get: GetSearchParam): SampleListContext {
   const category = get("category") ?? "";
   const status = get("status") ?? "";
   const page = Number(get("page"));
   const recordSet = get("records");
   return {
-    tab,
     query: get("q")?.trim() ?? "",
     filters: {
       category: recordCategories.includes(category) ? category : null,
@@ -63,26 +62,42 @@ export function readSampleNavigationContext(
   };
 }
 
+export function readSampleNavigationContext(
+  get: GetSearchParam,
+): SampleNavigationContext | undefined {
+  const tab = readShowcaseTab(get("review"));
+  return tab ? { ...readSampleListContext(get), tab } : undefined;
+}
+
 export function readSampleSearchParams(params?: SampleSearchParams) {
   return readSampleNavigationContext((key) => {
     const value = params?.[key];
-    return typeof value === "string" ? value : undefined;
+    return Array.isArray(value) ? value[0] : value;
   });
 }
 
-function sampleNavigationQuery(context: SampleNavigationContext) {
-  const params = new URLSearchParams({ review: context.tab });
-  if (context.tab === "list") {
-    if (context.query) params.set("q", context.query);
-    if (context.filters.category) params.set("category", context.filters.category);
-    if (context.filters.status) params.set("status", context.filters.status);
-    if (context.page > 1) params.set("page", String(context.page));
-    if (context.recordSet !== "standard") params.set("records", context.recordSet);
+export function setSampleListSearchParams(params: URLSearchParams, context: SampleListContext) {
+  const values = {
+    q: context.query,
+    category: context.filters.category,
+    status: context.filters.status,
+    page: context.page > 1 ? String(context.page) : null,
+    records: context.recordSet !== "standard" ? context.recordSet : null,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    if (value) params.set(key, value);
+    else params.delete(key);
   }
-  return `?${params.toString()}`;
+  return params;
 }
 
-export function sampleParentHref(context = defaultContext) {
+function sampleNavigationQuery(context: SampleNavigationContext) {
+  return `?${setSampleListSearchParams(new URLSearchParams({ review: context.tab }), context)}`;
+}
+
+export function sampleParentHref(
+  context: SampleNavigationContext = { ...defaultSampleListContext, tab: "navigation" },
+) {
   return showcasePath + sampleNavigationQuery(context);
 }
 

@@ -7,6 +7,7 @@ import { ToastProvider, useToast } from "@/components/toast-provider";
 import { ADMIN_SESSION_CHANGED_EVENT } from "@/lib/client-api";
 vi.mock("next/navigation", () => ({
   usePathname: () => "/users/a",
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 afterEach(() => {

@@ -314,6 +314,99 @@ describe("admin color foundation", () => {
     expect(disabledContrast).toBeCloseTo(4.16, 2);
   });
 
+  it("uses contrasting choice boundaries for enabled unchecked controls, including on hover", () => {
+    renderWithInputStyles(
+      <>
+        <Checkbox label="Unchecked checkbox" />
+        <Checkbox label="Checked checkbox" defaultChecked />
+        <Checkbox label="Mixed checkbox" indeterminate />
+        <Checkbox label="Disabled checkbox" disabled />
+        <Checkbox label="Invalid checkbox" error="Confirm this choice" />
+        <Radio label="Unchecked radio" />
+        <Radio label="Checked radio" defaultChecked />
+        <Radio label="Disabled radio" disabled />
+        <Radio label="Invalid radio" error="Choose an option" />
+      </>,
+    );
+    const style = document.querySelector<HTMLStyleElement>("style[data-foundation-test]")!;
+    const rules = Array.from(style.sheet!.cssRules);
+    const hoverRules = rules
+      .filter(
+        (rule): rule is CSSMediaRule =>
+          "conditionText" in rule && rule.conditionText === "(hover: hover)",
+      )
+      .flatMap((rule) => Array.from(rule.cssRules));
+    const choiceRule = (rules: CSSRule[], field: Element) =>
+      rules.find(
+        (rule): rule is CSSStyleRule =>
+          "selectorText" in rule &&
+          typeof rule.selectorText === "string" &&
+          rule.selectorText.includes(`.${classes.choice}`) &&
+          field.matches(rule.selectorText.replace(":hover", "")),
+      );
+    for (const [stateRules, token] of [
+      [rules, "--mantine-color-gray-6"],
+      [hoverRules, "--mantine-color-gray-7"],
+    ] as const) {
+      for (const control of ["Unchecked checkbox", "Unchecked radio"]) {
+        const field = screen.getByLabelText(control);
+        expect(choiceRule(stateRules, field)?.style.getPropertyValue("border-color")).toBe(
+          `var(${token})`,
+        );
+      }
+      for (const surface of [
+        "--surface",
+        "--background",
+        "--surface-subtle",
+        "--surface-selected",
+      ]) {
+        expect(contrast(readColor(token), readColor(surface))).toBeGreaterThanOrEqual(3);
+      }
+      for (const control of [
+        "Checked checkbox",
+        "Mixed checkbox",
+        "Disabled checkbox",
+        "Invalid checkbox",
+        "Checked radio",
+        "Disabled radio",
+        "Invalid radio",
+      ]) {
+        expect(choiceRule(stateRules, screen.getByLabelText(control)), control).toBeUndefined();
+      }
+    }
+  });
+
+  it("keeps the unchecked switch thumb distinct when the track has an error", () => {
+    renderWithInputStyles(
+      <>
+        <Switch label="Reminder" />
+        <Switch label="Invalid reminder" error="Enable reminders" />
+        <Switch label="Disabled reminder" disabled />
+      </>,
+    );
+    const invalidTrack = screen.getByRole("switch", {
+      name: /Invalid reminder/,
+    }).nextElementSibling!;
+    const reminder = screen.getByRole("switch", { name: "Reminder" });
+    const normalTrack = reminder.nextElementSibling!;
+    const disabled = screen.getByRole("switch", { name: "Disabled reminder" });
+    const thumb = (track: Element) =>
+      getComputedStyle(track).getPropertyValue("--switch-thumb-bg").trim();
+    expect(thumb(invalidTrack)).toBe("var(--text-muted)");
+    expect(getComputedStyle(invalidTrack).boxShadow).toBe("inset 0 0 0 1px var(--danger)");
+    expect(
+      contrast(readColor("--text-muted"), readColor("--mantine-color-gray-3")),
+    ).toBeGreaterThanOrEqual(3);
+    expect(thumb(normalTrack)).toBe("var(--text-muted)");
+    expect(contrast(readColor("--text-muted"), readColor("--surface"))).toBeGreaterThanOrEqual(3);
+    fireEvent.click(reminder);
+    expect(reminder).toBeChecked();
+    expect(thumb(normalTrack)).toBe("");
+    expect(contrast(readColor("--surface"), readColor("--primary"))).toBeGreaterThanOrEqual(3);
+    expect(disabled).toBeDisabled();
+    expect(thumb(disabled.nextElementSibling!)).toBe("");
+  });
+
   it("uses one input styling contract across native fields and date triggers", () => {
     renderTheme(
       <>

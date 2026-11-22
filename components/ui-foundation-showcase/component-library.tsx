@@ -34,7 +34,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from "@mantine/core";
-import { DateInput, DatePickerInput, DateTimePicker, TimeInput } from "@mantine/dates";
+import { DatePickerInput, DateTimePicker, TimeInput } from "@mantine/dates";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -48,6 +48,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useRef, useState } from "react";
+import { AdminDateInput } from "@/components/admin-date-input";
 import { adminPalettes, adminSemanticColors, adminTokens } from "@/lib/admin-theme";
 
 const categories = ["Cải tạo đất", "Đa dạng sinh học", "Theo dõi sau mưa"];
@@ -292,6 +293,7 @@ function ActionExamples() {
 function FormExamples() {
   const focusExample = useRef<HTMLInputElement>(null);
   const [comparisonValue, setComparisonValue] = useState("");
+  const [observationDate, setObservationDate] = useState("22/11/2026");
 
   return (
     <Stack component="section" gap="md" aria-labelledby="form-examples">
@@ -382,11 +384,34 @@ function FormExamples() {
         <Paper p="md" miw={0}>
           <Stack gap="md">
             <Title order={3}>Date and time</Title>
-            <DateInput
-              label="Observation date"
-              placeholder="Select or enter a date"
-              valueFormat="DD/MM/YYYY"
-            />
+            <Input.Wrapper id="observation-date" label="Observation date">
+              <AdminDateInput
+                id="observation-date"
+                pickerLabel="Choose observation date"
+                value={observationDate}
+                onValueChange={setObservationDate}
+              />
+            </Input.Wrapper>
+            <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm">
+              <Input.Wrapper id="readonly-observation-date" label="Read-only date">
+                <AdminDateInput
+                  id="readonly-observation-date"
+                  pickerLabel="Choose read-only date"
+                  value={observationDate}
+                  onValueChange={setObservationDate}
+                  readOnly
+                />
+              </Input.Wrapper>
+              <Input.Wrapper id="disabled-observation-date" label="Disabled date">
+                <AdminDateInput
+                  id="disabled-observation-date"
+                  pickerLabel="Choose disabled date"
+                  value={observationDate}
+                  onValueChange={setObservationDate}
+                  disabled
+                />
+              </Input.Wrapper>
+            </SimpleGrid>
             <DatePickerInput
               type="range"
               label="Monitoring period"
@@ -413,15 +438,30 @@ function SelectionExamples() {
       <Paper p="md">
         <Stack gap="md">
           <Group gap="md">
+            <Checkbox label="Include field notes" />
             <Checkbox label="Flag for follow-up" defaultChecked />
-            <Switch label="Send reminders" />
+            <Checkbox label="Some records selected" indeterminate />
+            <Checkbox label="Archived record" disabled />
+            <Checkbox label="Confirm review" error="Review confirmation is required." />
           </Group>
           <Radio.Group label="Visibility" defaultValue="internal">
             <Group gap="md" mt="xs">
               <Radio label="Internal" value="internal" />
+              <Radio label="Team" value="team" />
               <Radio label="Published" value="published" disabled />
+              <Radio
+                label="External"
+                value="external"
+                error="External visibility needs approval."
+              />
             </Group>
           </Radio.Group>
+          <Group gap="md" align="flex-start">
+            <Switch label="Send reminders" />
+            <Switch label="Enable follow-up" defaultChecked />
+            <Switch label="Archive reminders" disabled />
+            <Switch label="Notify reviewers" error="Reviewer notifications are required." />
+          </Group>
         </Stack>
       </Paper>
     </Stack>

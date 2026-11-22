@@ -125,6 +125,55 @@ describe("shared list toolbar", () => {
     expect(within(filter).getByRole("button", { name: "Xóa bộ lọc" })).toBeDisabled();
   });
 
+  it("starts a fresh deferred draft after toggle dismissal and conditional unmount", () => {
+    function DeferredFilters({ visible }: { visible: boolean }) {
+      const [applied, setApplied] = useState(false);
+      const [draft, setDraft] = useState(false);
+      return (
+        <>
+          <p>{applied ? "Filter applied" : "Unfiltered"}</p>
+          {visible && (
+            <ListToolbar
+              filterPopover={{
+                label: "Filters",
+                onOpen: () => setDraft(applied),
+                onDismiss: () => setDraft(applied),
+                apply: { label: "Apply", onApply: () => setApplied(draft) },
+                children: (
+                  <Checkbox
+                    label="Active records"
+                    checked={draft}
+                    onChange={(event) => setDraft(event.currentTarget.checked)}
+                  />
+                ),
+              }}
+            />
+          )}
+        </>
+      );
+    }
+
+    const view = render(<DeferredFilters visible />);
+    const toggle = () => fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    const checkbox = () => screen.getByRole("checkbox", { name: "Active records" });
+    toggle();
+    fireEvent.click(checkbox());
+    toggle();
+    toggle();
+    expect(checkbox()).not.toBeChecked();
+    fireEvent.click(checkbox());
+    view.rerender(<DeferredFilters visible={false} />);
+    view.rerender(<DeferredFilters visible />);
+    toggle();
+    expect(checkbox()).not.toBeChecked();
+    expect(screen.getByText("Unfiltered")).toBeVisible();
+    fireEvent.click(checkbox());
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(screen.getByText("Filter applied")).toBeVisible();
+    toggle();
+    expect(checkbox()).toBeChecked();
+  });
+
   it("locks repeated refreshes until the caller's promise settles", async () => {
     let finish!: () => void;
     const pending = new Promise<void>((resolve) => {
@@ -202,6 +251,48 @@ describe("shared list footer", () => {
     render(<Pagination {...props} total={30} />);
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.queryByText("Trang 1/1")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [0, 30],
+    [3, 30],
+    [1.5, 30],
+    [Number.NaN, 30],
+    [1, 0],
+    [1, -1],
+    [1, 2.5],
+    [1, Number.POSITIVE_INFINITY],
+  ])(
+    "keeps an accurate count while suppressing navigation for page %s and size %s",
+    (page, pageSize) => {
+      const onPage = vi.fn();
+      render(
+        <Pagination
+          {...props}
+          page={page}
+          pageSize={pageSize}
+          total={60}
+          onPage={onPage}
+          resultCountLabel="{count} records"
+        />,
+      );
+      expect(screen.getByText("60 records")).toBeVisible();
+      expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+      expect(onPage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("waits for the caller to reconcile both the page and its records after a shrink", () => {
+    const onPage = vi.fn();
+    const view = render(<Pagination {...props} total={61} page={3} onPage={onPage} />);
+    expect(screen.getByRole("navigation", { name: "Trang 3/3" })).toBeVisible();
+    view.rerender(<Pagination {...props} total={60} page={3} onPage={onPage} />);
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(onPage).not.toHaveBeenCalled();
+    view.rerender(<Pagination {...props} total={60} page={2} onPage={onPage} disabled />);
+    const navigation = screen.getByRole("navigation", { name: "Trang 2/2" });
+    expect(navigation).toHaveAttribute("aria-busy", "true");
+    expect(within(navigation).getByRole("button", { name: "Trước" })).toBeDisabled();
   });
 
   it("shares the native page controls between numbered and compact presentations", () => {

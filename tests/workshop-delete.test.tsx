@@ -12,6 +12,7 @@ const replace = vi.fn();
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/workshops/workshop-id",
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ replace }),
 }));
 vi.mock("@/lib/client-api", async (importOriginal) => ({

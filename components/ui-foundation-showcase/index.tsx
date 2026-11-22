@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Box,
   Button,
   Checkbox,
   Drawer,
@@ -20,10 +19,16 @@ import { useEffect, useRef, useState } from "react";
 import { useOptionalAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import layout from "@/components/overlay-layout.module.css";
+import { recordDetailDrawer } from "@/components/record-detail-drawer";
 import { ShowcaseColor, ShowcaseComponents } from "./component-library";
 import { HeaderNavigationExamples } from "./navigation-examples";
 import { SampleRecordList } from "./record-list";
-import { readSampleNavigationContext, type SampleNavigationContext } from "./sample-navigation";
+import {
+  readShowcaseTab,
+  showcasePath,
+  type SampleNavigationContext,
+  type ShowcaseTab,
+} from "./sample-navigation";
 import {
   SampleRecordActions,
   SampleRecordDetails,
@@ -46,8 +51,7 @@ const showcaseTabs = [
   ["list", "2.4. Data List"],
   ["details", "2.5. Detail & Dialog"],
   ["navigation", "2.6. Header & Navigation"],
-] as const;
-type ShowcaseTab = (typeof showcaseTabs)[number][0];
+] as const satisfies ReadonlyArray<readonly [ShowcaseTab, string]>;
 type OpenDetail = { id: string; readOnly: boolean };
 
 function activeRecordId() {
@@ -92,14 +96,13 @@ export function UiFoundationShowcase({
 
   useEffect(() => {
     const readLocation = () => {
+      if (window.location.pathname !== showcasePath) return;
       const id = activeRecordId();
-      const storedTab = window.history.state?.nfvShowcaseTab;
       const storedDetail = window.history.state?.nfvShowcaseDetail;
       const isExampleEntry = storedDetail?.id === id && id !== null;
-      const historyTab = showcaseTabs.find(([value]) => value === storedTab)?.[0];
       const search = new URLSearchParams(window.location.search);
-      const parentTab = readSampleNavigationContext((key) => search.get(key))?.tab;
-      setTab(id && !isExampleEntry ? "list" : (historyTab ?? parentTab ?? initialTab));
+      const reviewTab = readShowcaseTab(search.get("review"));
+      setTab(reviewTab ?? (id ? "list" : "color"));
       setDetail(id ? { id, readOnly: isExampleEntry && storedDetail.readOnly === true } : null);
       setFocusAction(null);
       setDialog(null);
@@ -133,9 +136,11 @@ export function UiFoundationShowcase({
   }, [displayedRecordId, mobile]);
 
   function changeTab(value: string | null) {
-    const nextTab = showcaseTabs.find(([id]) => id === value)?.[0];
+    const nextTab = readShowcaseTab(value);
     if (!nextTab || nextTab === tab) return;
-    window.history.replaceState({ nfvShowcaseTab: nextTab }, "");
+    const url = new URL(window.location.href);
+    url.searchParams.set("review", nextTab);
+    window.history.replaceState(null, "", url);
     setTab(nextTab);
   }
 
@@ -148,11 +153,7 @@ export function UiFoundationShowcase({
     const nextDetail = { id, readOnly };
     detailTrigger.current = trigger;
     setFocusAction(null);
-    window.history.pushState(
-      { nfvShowcaseTab: tab, nfvShowcaseDetail: nextDetail },
-      "",
-      recordHref(id),
-    );
+    window.history.pushState({ nfvShowcaseDetail: nextDetail }, "", recordHref(id));
     setDetail(nextDetail);
   }
 
@@ -160,8 +161,10 @@ export function UiFoundationShowcase({
     if (window.history.state?.nfvShowcaseDetail?.id === detail?.id) {
       window.history.back();
     } else {
-      const { pathname, search } = window.location;
-      window.history.replaceState({ nfvShowcaseTab: tab }, "", pathname + search);
+      const url = new URL(window.location.href);
+      url.hash = "";
+      url.searchParams.set("review", tab);
+      window.history.replaceState(null, "", url);
       setDetail(null);
     }
   }
@@ -392,9 +395,13 @@ export function UiFoundationShowcase({
             leftSection={<IconArrowLeft size={16} aria-hidden />}
             onClick={closeDetail}
           >
-            {tab === "details" ? "Back to Detail & Dialog" : "Back to sample records"}
+            {tab === "details"
+              ? "Back to Detail & Dialog"
+              : tab === "navigation"
+                ? "Back to Header & Navigation"
+                : "Back to sample records"}
           </Button>
-          <Stack gap={4}>
+          <Stack {...recordDetailDrawer.identity}>
             <Title
               order={1}
               id="mobile-record-title"
@@ -404,9 +411,7 @@ export function UiFoundationShowcase({
             >
               {selected.name}
             </Title>
-            <Text size="sm" c="dimmed">
-              {selected.id}
-            </Text>
+            <Text {...recordDetailDrawer.metadata}>{selected.id}</Text>
           </Stack>
           {details}
           {detailActions}
@@ -415,39 +420,28 @@ export function UiFoundationShowcase({
 
       {!mobile && (
         <Drawer.Root
+          {...recordDetailDrawer.root}
           opened={drawerOpen}
           onClose={closeDetail}
-          position="right"
-          size={640}
-          padding="md"
-          radius={0}
           zIndex={getDefaultZIndex("modal") - 1}
           returnFocus={false}
           trapFocus={!dialog}
           closeOnEscape={!dialog}
           closeOnClickOutside={!dialog}
-          classNames={{ content: layout.content, body: layout.body }}
-          styles={{ title: { fontSize: "var(--mantine-font-size-lg)", fontWeight: 600 } }}
         >
           <Drawer.Overlay />
           <Drawer.Content
-            className={layout.recordDetailContent}
             inert={Boolean(dialog) || undefined}
             aria-hidden={dialog ? true : undefined}
           >
             <Drawer.Header>
-              <Stack gap={4} miw={0}>
+              <Stack {...recordDetailDrawer.identity}>
                 <Drawer.Title>{selected?.name}</Drawer.Title>
-                <Text size="sm" c="dimmed">
-                  {selected?.id}
-                </Text>
+                <Text {...recordDetailDrawer.metadata}>{selected?.id}</Text>
               </Stack>
               <Drawer.CloseButton
+                {...recordDetailDrawer.closeButton}
                 aria-label="Close sample detail"
-                size={32}
-                iconSize={18}
-                c="dimmed"
-                style={{ alignSelf: "flex-start", flexShrink: 0 }}
                 ref={drawerClose}
                 data-autofocus={focusAction === null || undefined}
               />
@@ -521,20 +515,9 @@ export function UiFoundationShowcase({
           </Modal.Content>
         </Modal.Root>
       )}
-      <Box
-        aria-label="Sample mutation result"
-        aria-live="polite"
-        component="output"
-        style={{
-          position: "absolute",
-          width: 1,
-          height: 1,
-          overflow: "hidden",
-          clipPath: "inset(50%)",
-        }}
-      >
+      <VisuallyHidden aria-label="Sample mutation result" aria-live="polite" component="output">
         {message}
-      </Box>
+      </VisuallyHidden>
     </>
   );
 }

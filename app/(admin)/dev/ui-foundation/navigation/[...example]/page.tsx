@@ -32,6 +32,14 @@ export default async function SampleNavigationPage({
 
   const [locale, query] = await Promise.all([getAdminLocale(), searchParams]);
   const context = readSampleSearchParams(query);
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, item);
+    } else if (value !== undefined) {
+      search.set(key, value);
+    }
+  }
   const items = sampleNavigationBreadcrumbs(record, locale, { edit, context });
   const title = items[items.length - 1].label;
   const vi = locale === "vi";
@@ -40,7 +48,11 @@ export default async function SampleNavigationPage({
 
   return (
     <>
-      <AdminBreadcrumbForRoute pathname={sampleNavigationPath(id, edit)} items={items} />
+      <AdminBreadcrumbForRoute
+        pathname={sampleNavigationPath(id, edit)}
+        search={search.toString()}
+        items={items}
+      />
       <PageHeading title={title} visuallyHiddenTitle bottomSpacing={0} />
       <Stack gap="md" align="stretch">
         {edit ? (

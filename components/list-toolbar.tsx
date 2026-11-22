@@ -41,8 +41,12 @@ type FilterOptions = {
   clearLabel?: string;
   clearDisabled?: boolean;
   onClear?: () => void;
+  /** Initialize caller-owned drafts on every opening, including after remounting. */
+  onOpen?: () => void;
+  /** Discard uncommitted changes after interactive dismissal. */
   onDismiss?: () => void;
   apply?: { label: string; onApply: () => void; disabled?: boolean };
+  /** Compound or custom controls must also respect the caller's busy state. */
   children: ReactNode;
 };
 
@@ -199,6 +203,7 @@ function ToolbarFilter({ filter, busy }: { filter: FilterOptions; busy: boolean 
     clearLabel,
     clearDisabled,
     onClear,
+    onOpen,
     onDismiss,
     apply,
     children,
@@ -210,8 +215,10 @@ function ToolbarFilter({ filter, busy }: { filter: FilterOptions; busy: boolean 
   const clear = clearLabel && onClear;
 
   function changeOpened(next: boolean) {
+    if (next === opened || (next && busy)) return;
+    if (next) onOpen?.();
+    else onDismiss?.();
     setOpened(next);
-    if (!next) onDismiss?.();
   }
 
   function dismissOnEscape(event: KeyboardEvent<HTMLElement>) {

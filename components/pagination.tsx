@@ -3,7 +3,7 @@
 import { Box, Group, Pagination as MantinePagination, Text } from "@mantine/core";
 import classes from "./pagination.module.css";
 
-/** Existing callers pass record totals, while Mantine expects a page count. */
+/** The caller reconciles the selected page and loads or slices its records. */
 export function Pagination({
   page,
   total,
@@ -29,10 +29,13 @@ export function Pagination({
   /** Retained while business modules migrate; both variants now use Mantine. */
   controls?: "default" | "nfv";
 }) {
-  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const validTotal = Number.isSafeInteger(total) && total >= 0;
+  const validSize = Number.isSafeInteger(pageSize) && pageSize > 0;
+  const pages = validTotal && validSize ? Math.ceil(total / pageSize) : 0;
+  const canNavigate = pages > 1 && Number.isSafeInteger(page) && page >= 1 && page <= pages;
   const label = summary.replace("{page}", String(page)).replace("{pages}", String(pages));
   const spacing = "var(--admin-pagination-gap, var(--mantine-spacing-md))";
-  const navigation = total > pageSize && (
+  const navigation = canNavigate && (
     <Group
       component="nav"
       aria-busy={disabled}
@@ -73,7 +76,7 @@ export function Pagination({
     </Group>
   );
 
-  if (resultCountLabel === undefined) return navigation || null;
+  if (resultCountLabel === undefined || !validTotal) return navigation || null;
   return (
     <Group justify="space-between" gap="sm" className={classes.footer}>
       <ListResultSummary

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
@@ -104,6 +104,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
 
 export function AdminShell({ user, sessionBinding, children }: Props) {
   const pathname = usePathname();
+  const search = useSearchParams()?.toString() ?? "";
   const { t } = useAdminI18n();
   const sections = adminNavigation(t);
   const activeSection = activeAdminSection(pathname, sections);
@@ -268,11 +269,16 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
       transitionDuration={150}
       classNames={{ main: classes.main }}
     >
-      <AdminBreadcrumbProvider key={sessionBinding} pathname={stale ? "" : pathname}>
+      <AdminBreadcrumbProvider
+        key={sessionBinding}
+        pathname={stale ? "" : pathname}
+        search={search}
+      >
         <AppShell.Header withBorder={stale}>
           {!stale && (
             <AdminShellHeaderContent
               items={resolveAdminBreadcrumbs(pathname, activeItem, t)}
+              navigationKey={`${pathname}?${search}`}
               navigationControl={
                 <>
                   <Burger

@@ -30,6 +30,7 @@ export function AdminDateInput({
   onValueChange,
   pickerLabel,
   pickerMin,
+  readOnly,
   value,
   className,
   min,
@@ -37,17 +38,20 @@ export function AdminDateInput({
   ...props
 }: Props) {
   const [opened, setOpened] = useState(false);
+  const isLocked = disabled || readOnly;
+  const calendarOpened = opened && !isLocked;
   const selectedDate = adminDateInputToIso(value);
   const minimumDate = pickerMin || (typeof min === "string" ? min : undefined);
   const maximumDate = typeof max === "string" ? max : undefined;
   useEffect(() => {
-    if (disabled) setOpened(false);
-  }, [disabled]);
+    if (isLocked) setOpened(false);
+  }, [isLocked]);
 
   return (
     <TextInput
       {...props}
       disabled={disabled}
+      readOnly={readOnly}
       error={props["aria-invalid"] === true || props["aria-invalid"] === "true"}
       id={id}
       classNames={{ input: className }}
@@ -59,14 +63,18 @@ export function AdminDateInput({
       }}
       inputMode="numeric"
       maxLength={10}
-      onChange={(event) => onValueChange(formatAdminDateInputValue(event.currentTarget.value))}
+      onChange={(event) => {
+        if (!isLocked) onValueChange(formatAdminDateInputValue(event.currentTarget.value));
+      }}
       placeholder="dd/mm/yyyy"
       type="text"
       value={value}
       rightSectionPointerEvents="all"
       rightSection={
         <Popover
-          opened={opened && !disabled}
+          disabled={isLocked}
+          id={`${id}-calendar`}
+          opened={calendarOpened}
           onChange={setOpened}
           position="bottom-end"
           withArrow
@@ -75,10 +83,8 @@ export function AdminDateInput({
         >
           <Popover.Target>
             <ActionIcon
-              aria-controls={`${id}-calendar`}
-              aria-expanded={opened && !disabled}
               aria-label={pickerLabel}
-              disabled={disabled}
+              disabled={isLocked}
               onClick={() => setOpened((current) => !current)}
               title={pickerLabel}
               type="button"
@@ -88,13 +94,14 @@ export function AdminDateInput({
               <IconCalendar size={17} stroke={1.7} />
             </ActionIcon>
           </Popover.Target>
-          <Popover.Dropdown id={`${id}-calendar`} p="xs">
+          <Popover.Dropdown p="xs">
             <DatePicker
               value={selectedDate}
               defaultDate={selectedDate || minimumDate}
               minDate={minimumDate}
               maxDate={maximumDate}
               onChange={(date) => {
+                if (isLocked) return;
                 onValueChange(isoDateToAdminInput(date));
                 setOpened(false);
               }}

@@ -79,6 +79,42 @@ it("cleans up an unmounted registration without clearing a newer owner of the ro
   expect(screen.getByText("Chi tiết người dùng")).toBeVisible();
 });
 
+it("keeps the registration in sync with the active query on the same pathname", () => {
+  const pathname = "/users/a";
+  function page(search: string, ready: boolean) {
+    return (
+      <AdminBreadcrumbProvider pathname={pathname} search={search}>
+        <CurrentScreen />
+        <AdminBreadcrumbForRoute
+          key="first"
+          pathname={pathname}
+          search="q=a&page=1"
+          items={first}
+        />
+        {ready && (
+          <AdminBreadcrumbForRoute
+            key="second"
+            pathname={pathname}
+            search="q=b&page=2"
+            items={second}
+          />
+        )}
+      </AdminBreadcrumbProvider>
+    );
+  }
+
+  const { rerender } = render(page("?page=1&q=a", false));
+  expect(screen.getByText("Nguyễn Văn An")).toBeVisible();
+  rerender(page("?page=2&q=b", false));
+  expect(screen.getByText("Chi tiết người dùng")).toBeVisible();
+  rerender(page("?page=2&q=b", true));
+  expect(screen.getByText("Trần Thị Bích")).toBeVisible();
+  rerender(page("?page=1&q=a", true));
+  expect(screen.getByText("Nguyễn Văn An")).toBeVisible();
+  rerender(page("?page=2&q=b", true));
+  expect(screen.getByText("Trần Thị Bích")).toBeVisible();
+});
+
 it("resets registration immediately when the shell changes sessions at the same URL", () => {
   const seen: string[] = [];
   const { rerender } = render(

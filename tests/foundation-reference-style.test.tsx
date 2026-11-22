@@ -5,6 +5,7 @@ import { AdminUiProvider } from "@/components/admin-ui-provider";
 import { AdminShell } from "@/components/admin-shell";
 vi.mock("next/navigation", () => ({
   usePathname: () => "/users",
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 afterEach(() => {

@@ -18,6 +18,7 @@ import {
 } from "@mantine/core";
 import { type FormEvent, type MouseEvent, type RefObject, useId, useRef, useState } from "react";
 import layout from "@/components/overlay-layout.module.css";
+import { recordDetailDrawer } from "@/components/record-detail-drawer";
 import {
   newRecordFields,
   recordCategories,
@@ -107,14 +108,7 @@ export function SampleRecordActions({
     onAction(type, event.currentTarget);
 
   return (
-    <Group
-      component="footer"
-      className={layout.footer}
-      gap="xs"
-      justify="space-between"
-      px="md"
-      py="sm"
-    >
+    <Group component="footer" {...recordDetailDrawer.footer}>
       <Button
         color="danger"
         variant="subtle"

@@ -48,11 +48,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.45;
+  font-size: var(--mantine-font-size-md);
 }
 .breadcrumbs .breadcrumbLink {
   max-inline-size: 38%;
   color: var(--primary-hover);
-  font-size: var(--mantine-font-size-md);
   font-weight: 500;
 }
 .breadcrumbs .breadcrumbLink:hover {
@@ -61,7 +61,6 @@
 .breadcrumbs .breadcrumbCurrent {
   min-inline-size: min(100%, 3rem);
   color: var(--heading);
-  font-size: var(--mantine-font-size-md);
   font-weight: 600;
 }
 .breadcrumbOverflow,
@@ -73,6 +72,7 @@
 }
 .breadcrumbMenu {
   max-inline-size: min(16rem, calc(100vw - 2 * var(--mantine-spacing-xs)));
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 
@@ -82,8 +82,8 @@
   .breadcrumbIntermediate + .breadcrumbSeparator {
     display: none;
   }
-  .breadcrumbOverflow,
-  .breadcrumbOverflow + .breadcrumbSeparator {
+  .breadcrumbOverflow[data-deep],
+  .breadcrumbOverflow[data-deep] + .breadcrumbSeparator {
     display: flex;
   }
 }
@@ -91,6 +91,13 @@
   .breadcrumbFirst,
   .breadcrumbFirst + .breadcrumbSeparator {
     display: none;
+  }
+  .breadcrumbOverflow,
+  .breadcrumbOverflow + .breadcrumbSeparator {
+    display: flex;
+  }
+  .breadcrumbs .breadcrumbCurrent {
+    min-inline-size: 0;
   }
 }
 
@@ -100,7 +107,7 @@
     .headerRow {
       min-height: 67px;
     }
-    .breadcrumbs .breadcrumbCurrent {
+    .breadcrumbs .breadcrumbRoot {
       font-size: var(--mantine-font-size-lg);
     }
   }

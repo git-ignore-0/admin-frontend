@@ -1,17 +1,21 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminShell } from "@/components/admin-shell";
+import headerClasses from "@/components/admin-shell.module.css";
 import { activeAdminSection, adminNavigation, isActiveAdminRoute } from "@/lib/admin-navigation";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { ADMIN_SESSION_CHANGED_EVENT, api, apiFile } from "@/lib/client-api";
 
-const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
+const navigation = vi.hoisted(() => ({ pathname: "/dashboard", search: "" }));
+const originalResizeObserver = window.ResizeObserver;
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
+  useSearchParams: () => new URLSearchParams(navigation.search),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
@@ -19,6 +23,8 @@ afterEach(() => {
   cleanup();
   delete document.documentElement.dataset.adminPageSession;
   navigation.pathname = "/dashboard";
+  navigation.search = "";
+  window.ResizeObserver = originalResizeObserver;
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -161,6 +167,19 @@ describe("admin account identity", () => {
 });
 
 describe("admin header breadcrumbs", () => {
+  it("uses the shared 13px rule for child labels and limits the desktop 16px rule to root titles", () => {
+    const css = readFileSync("components/admin-shell.module.css", "utf8");
+    expect(css).toMatch(
+      /:is\(\.breadcrumbLink, \.breadcrumbCurrent\)\s*\{[^}]*font-size: var\(--mantine-font-size-md\)/,
+    );
+    expect(css).toMatch(
+      /\.breadcrumbs \.breadcrumbRoot\s*\{[^}]*font-size: var\(--mantine-font-size-lg\)/,
+    );
+    expect(css).not.toMatch(
+      /\.breadcrumbs \.breadcrumbCurrent\s*\{[^}]*font-size: var\(--mantine-font-size-lg\)/,
+    );
+  });
+
   it.each([
     ["/users", "vi", "Người dùng", "Đường dẫn điều hướng"],
     ["/store-catalog", "en", "Products", "Breadcrumbs"],
@@ -170,7 +189,9 @@ describe("admin header breadcrumbs", () => {
     const header = screen.getByRole("banner");
     const trail = within(header).getByRole("navigation", { name: landmark });
     expect(trail).toHaveTextContent(label);
-    expect(within(trail).getByText(label)).toHaveAttribute("aria-current", "page");
+    const title = within(trail).getByText(label);
+    expect(title).toHaveAttribute("aria-current", "page");
+    expect(title).toHaveClass(headerClasses.breadcrumbRoot);
     expect(within(trail).queryByRole("link")).not.toBeInTheDocument();
     expect(header).not.toHaveTextContent("NFV Admin");
     expect(screen.getByRole("link", { name: "NFV Admin" })).toHaveAttribute("href", "/dashboard");
@@ -183,11 +204,24 @@ describe("admin header breadcrumbs", () => {
       "href",
       "/users",
     );
-    expect(within(trail).getByText("Chi tiết người dùng")).toHaveAttribute("aria-current", "page");
+    const current = within(trail).getByText("Chi tiết người dùng");
+    expect(current).toHaveAttribute("aria-current", "page");
+    expect(current).not.toHaveClass(headerClasses.breadcrumbRoot);
     expect(
       within(trail).queryByRole("link", { name: "Chi tiết người dùng" }),
     ).not.toBeInTheDocument();
     expect(trail).not.toHaveTextContent("record-id");
+  });
+
+  it("provides an overflow destination even when there is just one ancestor", async () => {
+    renderShell("/csa-purchase-requests/record-id", "vi");
+    const trail = within(screen.getByRole("navigation", { name: "Đường dẫn điều hướng" }));
+    const trigger = trail.getByRole("button", { name: "Hiện các trang cấp trên" });
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("menuitem", { name: "Yêu cầu mua CSA" })).toHaveAttribute(
+      "href",
+      "/csa-purchase-requests",
+    );
   });
 
   it("offers deep ancestors in a keyboard-accessible overflow menu", async () => {
@@ -232,6 +266,79 @@ describe("admin header breadcrumbs", () => {
       "Người dùng",
     );
     expect(header.queryByText("Users")).not.toBeInTheDocument();
+  });
+
+  it("closes a breadcrumb menu when the query or pathname changes without carrying it back", async () => {
+    const path = "/store-catalog/products/record-id/edit";
+    const shell = () => (
+      <AdminI18nProvider initialLocale="en">
+        <AdminShell
+          user={{ name: "Admin", email: null, login_phone_number: null }}
+          sessionBinding="test-session"
+        >
+          <div>Page content</div>
+        </AdminShell>
+      </AdminI18nProvider>
+    );
+    navigation.pathname = path;
+    const { rerender } = render(shell());
+    const open = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Show ancestor screens" }));
+    open();
+    expect(await screen.findByRole("menu")).toBeVisible();
+
+    navigation.search = "page=2";
+    rerender(shell());
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    open();
+    expect(await screen.findByRole("menu")).toBeVisible();
+
+    navigation.pathname = "/store-catalog/products/another-id/edit";
+    rerender(shell());
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    navigation.pathname = path;
+    navigation.search = "";
+    rerender(shell());
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("closes overflow and restores focus to the visible ancestor when the trigger is hidden", async () => {
+    const observers: TestResizeObserver[] = [];
+    class TestResizeObserver implements ResizeObserver {
+      targets = new Set<Element>();
+      constructor(private callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+      observe(element: Element) {
+        this.targets.add(element);
+      }
+      unobserve(element: Element) {
+        this.targets.delete(element);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
+      resize() {
+        this.callback([], this);
+      }
+    }
+    window.ResizeObserver = TestResizeObserver;
+    renderShell("/store-catalog/products/record-id/edit", "vi");
+    const trail = within(screen.getByRole("navigation", { name: "Đường dẫn điều hướng" }));
+    const first = trail.getByRole("link", { name: "Sản phẩm" });
+    const trigger = trail.getByRole("button", { name: "Hiện các trang cấp trên" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const item = await screen.findByRole("menuitem", { name: "Sản phẩm" });
+    item.focus();
+
+    // Model the browser removing the trigger's box when its CSS container query changes.
+    const watchingTrigger = observers.filter((observer) => observer.targets.has(trigger));
+    expect(watchingTrigger.length).toBeGreaterThan(0);
+    act(() => watchingTrigger.forEach((observer) => observer.resize()));
+
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(first).toHaveFocus();
   });
 
   it("hides a registered record label after the route changes or the session invalidates", () => {

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminShell } from "@/components/admin-shell";
+import { recordDetailDrawer } from "@/components/record-detail-drawer";
 import { UiFoundationShowcase } from "@/components/ui-foundation-showcase";
 import { SampleRecordList } from "@/components/ui-foundation-showcase/record-list";
 import {
@@ -24,6 +25,7 @@ const tabLabels = {
 
 vi.mock("next/navigation", () => ({
   usePathname: () => window.location.pathname,
+  useSearchParams: () => new URLSearchParams(window.location.search),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
@@ -139,19 +141,33 @@ it("reviews the real AppShell Header without changing it for tabs or nested over
   selectOption("Header preview context", "Deep navigation");
   expect(preview.getByText("Edit")).toHaveAttribute("aria-current", "page");
   expect(header.getByText(rootLabel)).toBe(current);
+  selectOption("Header preview width", "640 px");
+  selectOption("Header preview context", "CSA purchase request details");
+  expect(
+    preview.getByRole("link", { name: adminDictionaries.en.common.csaPurchaseRequests }),
+  ).toHaveAttribute("href", "/dev/ui-foundation?review=navigation");
+  expect(preview.getByText(adminDictionaries.en.csaPurchases.detailTitle)).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(header.getByText(rootLabel)).toBe(current);
 });
 
-it("opens a direct record hash in the data list context and closes to that tab", async () => {
-  window.history.replaceState(null, "", "/dev/ui-foundation#record-NFV-004");
+it.each([
+  ["", "list"],
+  ["?review=details", "details"],
+] as const)("opens a direct record hash with %s and returns to %s", async (search, tab) => {
+  window.history.replaceState(null, "", `/dev/ui-foundation${search}#record-NFV-004`);
   render(<UiFoundationShowcase />);
   const drawer = await screen.findByRole("dialog", { name: initialRecords[3].name });
   expect(drawer).toBeVisible();
   fireEvent.click(within(drawer).getByRole("button", { name: "Close sample detail" }));
   await waitFor(() => expect(drawer).not.toBeInTheDocument());
-  const list = screen.getByRole("tab", { name: tabLabels.list });
-  expect(list).toHaveAttribute("aria-selected", "true");
-  expect(list).toHaveFocus();
+  const review = screen.getByRole("tab", { name: tabLabels[tab] });
+  expect(review).toHaveAttribute("aria-selected", "true");
+  expect(review).toHaveFocus();
   expect(location.hash).toBe("");
+  expect(new URLSearchParams(location.search).get("review")).toBe(tab);
 });
 
 it("preserves the originating tab and read-only mode across browser Back and Forward", async () => {
@@ -173,11 +189,51 @@ it("preserves the originating tab and read-only mode across browser Back and For
   expect(screen.getByRole("tabpanel", { name: tabLabels.details })).toBeVisible();
 });
 
+it("uses the URL for the review tab and returns an overlay to its opening tab", async () => {
+  window.history.replaceState(
+    { nfvShowcaseTab: "navigation" },
+    "",
+    "/dev/ui-foundation?review=list&q=NFV-001",
+  );
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminShell
+        user={{ name: "Local admin", email: null, login_phone_number: null }}
+        sessionBinding="showcase-mobile"
+      >
+        <UiFoundationShowcase />
+      </AdminShell>
+    </AdminI18nProvider>,
+  );
+  expect(screen.getByRole("tabpanel", { name: tabLabels.list })).toBeVisible();
+  showTab("navigation");
+  const reviewParams = new URLSearchParams(location.search);
+  expect(reviewParams.get("review")).toBe("navigation");
+  expect(reviewParams.get("q")).toBe("NFV-001");
+  expect(screen.getByRole("link", { name: "Open sample child page" })).toHaveAttribute(
+    "href",
+    "/dev/ui-foundation/navigation/NFV-001?review=navigation&q=NFV-001",
+  );
+
+  const trigger = screen.getByRole("button", { name: "Open sample detail" });
+  fireEvent.click(trigger);
+  // The hash still identifies a temporary detail on this route.
+  expect(location.pathname).toBe("/dev/ui-foundation");
+  expect(location.hash).toBe("#record-NFV-001");
+  const drawer = await screen.findByRole("dialog", { name: firstRecord });
+  fireEvent.click(within(drawer).getByRole("button", { name: "Close sample detail" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.getByRole("tabpanel", { name: tabLabels.navigation })).toBeVisible();
+});
+
 it("keeps the desktop detail Drawer on the right at 640px", async () => {
   render(<UiFoundationShowcase />);
   showTab("details");
   fireEvent.click(screen.getByRole("button", { name: "Open standard detail" }));
   const dialog = await screen.findByRole("dialog", { name: firstRecord });
+  expect(dialog).toHaveClass(...recordDetailDrawer.root.classNames.content.split(" "));
+  const body = document.getElementById(dialog.getAttribute("aria-describedby")!);
+  expect(body).toHaveClass(recordDetailDrawer.root.classNames.body);
   expect(dialog.closest(".mantine-Drawer-root")).toHaveStyle({
     "--drawer-justify": "flex-end",
     "--drawer-size": "calc(40rem * var(--mantine-scale))",
@@ -493,6 +549,39 @@ it("shows the same record fields on the mobile detail page and restores the list
   fireEvent.click(screen.getByRole("button", { name: "Back to sample records" }));
   await waitFor(() => expect(link).toHaveFocus());
   expect(link).toBeVisible();
+});
+
+it("keeps the actual Header at its root when a temporary detail fills the mobile content area", async () => {
+  vi.spyOn(window, "matchMedia").mockImplementation((query) =>
+    query === "(max-width: 47.99em)"
+      ? { ...originalMatchMedia(query), matches: true }
+      : originalMatchMedia(query),
+  );
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminShell
+        user={{ name: "Local admin", email: null, login_phone_number: null }}
+        sessionBinding="showcase-mobile"
+      >
+        <UiFoundationShowcase />
+      </AdminShell>
+    </AdminI18nProvider>,
+  );
+  showTab("navigation");
+  const trigger = screen.getByRole("button", { name: "Open sample detail" });
+  fireEvent.click(trigger);
+  const detail = screen.getByRole("article", { name: firstRecord });
+  expect(within(detail).getByText("Khu thử nghiệm ven sông")).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  const header = within(screen.getByRole("banner"));
+  const rootLabel = adminDictionaries.en.breadcrumb.uiFoundation;
+  expect(header.getByText(rootLabel)).toHaveAttribute("aria-current", "page");
+  expect(header.queryByText(firstRecord)).not.toBeInTheDocument();
+
+  fireEvent.click(within(detail).getByRole("button", { name: "Back to Header & Navigation" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.queryByRole("article", { name: firstRecord })).not.toBeInTheDocument();
+  expect(header.getByText(rootLabel)).toHaveAttribute("aria-current", "page");
 });
 
 it("shows create validation and locks a pending submission before adding one mock record", async () => {
@@ -922,6 +1011,29 @@ it("lets reviewers compare native default controls and operate the password togg
   expect(password).toHaveAttribute("type", "text");
   fireEvent.mouseDown(toggle);
   expect(password).toHaveAttribute("type", "password");
+});
+
+it("shows live protected dates and the native choice-control states in Components", () => {
+  render(<UiFoundationShowcase />);
+  showTab("components");
+  const editable = screen.getByRole("textbox", { name: "Observation date" });
+  const readOnly = screen.getByRole("textbox", { name: "Read-only date" });
+  const disabled = screen.getByRole("textbox", { name: "Disabled date" });
+  fireEvent.change(editable, { target: { value: "09/03/2026" } });
+  expect(readOnly).toHaveValue("09/03/2026");
+  expect(readOnly).toHaveAttribute("readonly");
+  expect(disabled).toHaveValue("09/03/2026");
+  expect(disabled).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Choose read-only date" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Choose disabled date" })).toBeDisabled();
+
+  const choices = within(screen.getByRole("region", { name: "Selection controls" }));
+  expect(choices.getByRole("checkbox", { name: "Include field notes" })).not.toBeChecked();
+  expect(choices.getByRole("checkbox", { name: "Flag for follow-up" })).toBeChecked();
+  expect(choices.getByRole("checkbox", { name: "Some records selected" })).toBePartiallyChecked();
+  expect(choices.getByRole("radio", { name: "Internal" })).toBeChecked();
+  expect(choices.getByRole("radio", { name: "Team" })).not.toBeChecked();
+  expect(choices.getByRole("switch", { name: "Send reminders" })).toBeEnabled();
 });
 
 it("restores the corresponding mobile action after resizing with a nested confirmation open", async () => {
