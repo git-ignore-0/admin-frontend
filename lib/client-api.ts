@@ -3,10 +3,8 @@ import { ADMIN_PAGE_SESSION_HEADER } from "@/lib/csrf";
 
 export const ADMIN_SESSION_CHANGED_EVENT = "nfv-admin-session-changed";
 
-function notifySessionChanged(code: string, sessionBinding: string | undefined) {
-  if (code === "session_changed") {
-    window.dispatchEvent(new CustomEvent(ADMIN_SESSION_CHANGED_EVENT, { detail: sessionBinding }));
-  }
+function notifySessionChanged(sessionBinding: string | undefined) {
+  window.dispatchEvent(new CustomEvent(ADMIN_SESSION_CHANGED_EVENT, { detail: sessionBinding }));
 }
 
 function renderedSessionBinding() {
@@ -49,7 +47,11 @@ async function readJsonPayload(response: Response, signal?: AbortSignal | null) 
 
 function enforceSession(response: Response, binding: string | undefined, options?: ApiOptions) {
   if (response.status !== 401) return;
-  if (renderedSessionBinding() === binding && (options?.shouldRedirectToLogin?.() ?? true)) {
+  const shouldRedirect =
+    renderedSessionBinding() === binding && (options?.shouldRedirectToLogin?.() ?? true);
+  // Retire protected caches even when an obsolete operation opts out of redirecting.
+  if (binding) notifySessionChanged(binding);
+  if (shouldRedirect) {
     window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
   }
   throw new Error("session_expired");
@@ -101,7 +103,7 @@ export async function apiEnvelope<T, M = Record<string, unknown>>(
       (response.status === 403 ? "forbidden" : undefined) ||
       (response.status >= 500 ? "server_error" : undefined) ||
       "request_failed";
-    notifySessionChanged(code, binding);
+    if (code === "session_changed") notifySessionChanged(binding);
     const error = new Error(code);
     Object.assign(error, { status: response.status, payload, field });
     throw error;
@@ -122,7 +124,7 @@ export async function apiFile(path: string, { signal }: Pick<RequestInit, "signa
   if (!response.ok) {
     const payload = await readJsonPayload(response, signal);
     const code = payload?.errors?.[0]?.code || payload?.error || "request_failed";
-    notifySessionChanged(code, binding);
+    if (code === "session_changed") notifySessionChanged(binding);
     const error = new Error(code);
     Object.assign(error, { status: response.status, payload });
     throw error;

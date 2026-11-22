@@ -220,11 +220,15 @@ it("enforces observed 401 and session_changed responses even if the UI canceled 
       api("admin/users", { signal: expired.signal }, { shouldRedirectToLogin }),
     ).rejects.toThrow("session_expired");
     expect(shouldRedirectToLogin).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ detail: "rendered-session" }),
+    );
     await expect(apiFile(pdfPath, { signal: switched.signal })).rejects.toMatchObject({
       status: 409,
       message: "session_changed",
     });
-    expect(listener).toHaveBeenCalledExactlyOnceWith(
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenLastCalledWith(
       expect.objectContaining({ detail: "rendered-session" }),
     );
   } finally {

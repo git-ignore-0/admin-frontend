@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { flushSync } from "react-dom";
 import {
   ActionIcon,
   Alert,
@@ -44,6 +45,7 @@ import {
   AdminNavigationProvider,
   type AdminNavigate,
 } from "@/components/admin-navigation-link";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { clearAdminNotifications } from "@/components/toast-provider";
 import {
   activeAdminSection,
@@ -153,6 +155,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
   const [sessionChanged, setSessionChanged] = useState(false);
   const mobile = useMediaQuery("(max-width: 47.99em)");
   const mobileTrigger = useRef<HTMLButtonElement>(null);
+  const retireQueryScope = useRef<(() => void) | null>(null);
   // Do not mount protected children during a partial navigation from another login.
   const stale =
     sessionChanged ||
@@ -163,19 +166,44 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
       ));
 
   useEffect(() => {
-    if (pageSessionBinding(sessionBinding) !== sessionBinding) {
+    const discardProtectedContent = () => {
       clearAdminNotifications();
+      setMobileOpen(false);
       setSessionChanged(true);
+    };
+    if (pageSessionBinding(sessionBinding) !== sessionBinding) {
+      retireQueryScope.current?.();
+      discardProtectedContent();
     }
+
+    const discardProtectedScope = () => {
+      const retire = retireQueryScope.current;
+      // Detach observers before clearing the cache so they cannot recreate entries.
+      flushSync(discardProtectedContent);
+      retire?.();
+    };
+
     const onSessionChanged = (event: Event) => {
       if (event instanceof CustomEvent && event.detail === sessionBinding) {
-        clearAdminNotifications();
-        setMobileOpen(false);
-        setSessionChanged(true);
+        discardProtectedScope();
       }
     };
+    const onPageHide = (event: PageTransitionEvent) => {
+      // Drop the protected DOM before the browser freezes a history snapshot.
+      if (event.persisted) discardProtectedScope();
+      else retireQueryScope.current?.();
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) window.location.reload();
+    };
     window.addEventListener(ADMIN_SESSION_CHANGED_EVENT, onSessionChanged);
-    return () => window.removeEventListener(ADMIN_SESSION_CHANGED_EVENT, onSessionChanged);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.removeEventListener(ADMIN_SESSION_CHANGED_EVENT, onSessionChanged);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, [sessionBinding]);
   useEffect(() => {
     try {
@@ -464,7 +492,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
               </Group>
             </Alert>
           ) : (
-            children
+            <AdminQueryProvider ref={retireQueryScope}>{children}</AdminQueryProvider>
           )}
         </AppShell.Main>
       </AdminShellScope>
