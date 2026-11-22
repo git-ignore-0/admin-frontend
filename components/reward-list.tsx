@@ -9,14 +9,34 @@ import Link from "next/link";
 import { DragEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import {
+  requirePaginatedList,
+  requireResponseEntity,
+  requireResponseList,
+} from "@/lib/api-response";
 import { ListState } from "@/components/list-state";
 import { ListResultSummary } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import type { PaginationMeta, Reward } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
+
+function validateRewardRecord(reward: Reward) {
+  requireResponseEntity(reward);
+  if (!isApiObject(reward.image) || typeof reward.image.url !== "string") {
+    throw invalidApiResponse();
+  }
+  requireResponseList(reward.image.variants, (variant) => {
+    if (!isApiObject(variant)) throw invalidApiResponse();
+  });
+  requireResponseList(reward.translations, (translation) => {
+    if (!isApiObject(translation) || typeof translation.name !== "string") {
+      throw invalidApiResponse();
+    }
+  });
+}
 
 export function RewardList() {
   const { locale, t } = useAdminI18n();
@@ -30,6 +50,7 @@ export function RewardList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, replaceData, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validateRewardRecord,
     getErrorMessage,
   });
   const busy = loading || reordering;
@@ -52,7 +73,8 @@ export function RewardList() {
         method: "POST",
         body: JSON.stringify({ page, reward_ids: ordered.map((item) => item.id) }),
       });
-      replaceData(payload.data, payload.meta ?? null);
+      const { data, meta } = requirePaginatedList(payload);
+      replaceData(data, meta);
     } catch (caught) {
       replaceData(previous);
       setReorderError(

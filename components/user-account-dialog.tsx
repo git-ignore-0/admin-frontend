@@ -6,7 +6,12 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FormField, FormInput } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
-import { accountFailure, accountFields, type AccountField } from "@/lib/admin-users";
+import {
+  accountFailure,
+  accountFields,
+  type AccountField,
+  requireAccountActionResult,
+} from "@/lib/admin-users";
 import { api } from "@/lib/client-api";
 import type { AdminAccountSummary } from "@/lib/types";
 
@@ -70,7 +75,7 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
     setBusy(true);
     setFailure({ message: "", fields: {} });
     try {
-      const result = await api<AdminAccountSummary | Pick<AdminAccountSummary, "id" | "status">>(
+      const result = await api<Pick<AdminAccountSummary, "id" | "status">>(
         create ? "admin/users" : `admin/users/${userId}/${action}`,
         {
           method: "POST",
@@ -80,9 +85,10 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
         { shouldRedirectToLogin: isCurrent },
       );
       if (!isCurrent()) return;
+      const accountId = requireAccountActionResult(result, action, userId);
       form.reset();
       toast(create ? copy.created : reset ? copy.resetSuccess : copy.success);
-      onSuccess(result.id);
+      onSuccess(accountId);
     } catch (caught) {
       if (!isCurrent()) return;
       const failure = accountFailure(caught, t, locale);

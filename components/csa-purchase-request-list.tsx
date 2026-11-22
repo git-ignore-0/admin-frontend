@@ -10,15 +10,23 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity } from "@/lib/api-response";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import type { CSAPurchaseRequest, CSAPurchaseRequestStatus, PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function CSAPurchaseStatusBadge({ status }: { status: CSAPurchaseRequestStatus }) {
   const { t } = useAdminI18n();
   return <UiStatus domain="csa-purchase" status={status} label={t.csaPurchases.statuses[status]} />;
+}
+
+function validatePurchaseRequestRecord(item: CSAPurchaseRequest) {
+  requireResponseEntity(item);
+  if (!isApiObject(item.package_snapshot) || !isApiObject(item.price_option_snapshot)) {
+    throw invalidApiResponse();
+  }
 }
 
 export function CSAPurchaseRequestList() {
@@ -41,6 +49,7 @@ export function CSAPurchaseRequestList() {
   const getErrorMessage = useCallback((error: unknown) => requestErrorMessage(error, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validatePurchaseRequestRecord,
     getErrorMessage,
   });
 

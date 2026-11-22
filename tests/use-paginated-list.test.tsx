@@ -1,5 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { requirePaginatedList, requireResponseList } from "@/lib/api-response";
 import type { ApiEnvelope } from "@/lib/client-api";
 import type { PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
@@ -29,6 +30,16 @@ function pendingTransport() {
 }
 
 afterEach(cleanup);
+
+it("preserves primitive arrays and extended envelopes when no record validator is supplied", () => {
+  const payload = {
+    data: [null, 0, "item"],
+    meta: { page: 1, page_size: 10, total: 3, balance: 0 },
+    extra: [],
+  };
+  expect(requireResponseList(payload.data)).toBe(payload.data);
+  expect(requirePaginatedList(payload)).toBe(payload);
+});
 
 it("aborts superseded reads and ignores their late data, failures, and loading updates", async () => {
   const { requests, fetchPage } = pendingTransport();

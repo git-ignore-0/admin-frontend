@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { requirePaginatedList } from "@/lib/api-response";
+import { requirePaginatedList, requireResponseList } from "@/lib/api-response";
 import type { ApiEnvelope } from "@/lib/client-api";
 import { isRequestCanceled } from "@/lib/client-error";
 import type { PaginationMeta } from "@/lib/types";
@@ -10,6 +10,7 @@ import type { PaginationMeta } from "@/lib/types";
 type PaginatedListOptions<T> = {
   fetchPage: (page: number, signal: AbortSignal) => Promise<ApiEnvelope<T[], PaginationMeta>>;
   getErrorMessage: (error: unknown) => string;
+  validateRecord?: (record: T) => void;
   initialPage?: number;
   controlledPage?: number;
   onPage?: (page: number) => void;
@@ -18,6 +19,7 @@ type PaginatedListOptions<T> = {
 export function usePaginatedList<T>({
   fetchPage,
   getErrorMessage,
+  validateRecord,
   initialPage = 1,
   controlledPage,
   onPage,
@@ -47,7 +49,7 @@ export function usePaginatedList<T>({
       try {
         const payload = await fetchPage(page, controller.signal);
         if (activeRequest.current !== controller) return;
-        const { data, meta } = requirePaginatedList(payload);
+        const { data, meta } = requirePaginatedList(payload, validateRecord);
         setItems(data);
         setMeta(meta);
       } catch (error) {
@@ -66,7 +68,7 @@ export function usePaginatedList<T>({
     return () => {
       if (activeRequest.current === controller) cancelActiveRequest();
     };
-  }, [cancelActiveRequest, fetchPage, getErrorMessage, page, reloadVersion]);
+  }, [cancelActiveRequest, fetchPage, getErrorMessage, page, reloadVersion, validateRecord]);
 
   const reload = useCallback(() => {
     cancelActiveRequest();
@@ -74,13 +76,14 @@ export function usePaginatedList<T>({
   }, [cancelActiveRequest]);
   const replaceData = useCallback(
     (nextItems: T[], nextMeta?: PaginationMeta | null) => {
+      requireResponseList(nextItems, validateRecord);
       cancelActiveRequest();
       setItems(nextItems);
       if (nextMeta !== undefined) setMeta(nextMeta);
       setError("");
       setLoading(false);
     },
-    [cancelActiveRequest],
+    [cancelActiveRequest, validateRecord],
   );
 
   return { error, items, loading, meta, page, reload, replaceData, setPage };

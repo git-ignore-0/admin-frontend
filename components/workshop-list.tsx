@@ -9,11 +9,20 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { requireResponseList } from "@/lib/api-response";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDateTimeInZone } from "@/lib/admin-date";
 import type { Workshop } from "@/lib/types";
+
+function validateWorkshopRecord(workshop: Workshop) {
+  requireResponseEntity(workshop);
+  requireResponseList(workshop.translations, (translation) => {
+    if (!isApiObject(translation) || typeof translation.locale !== "string") {
+      throw invalidApiResponse();
+    }
+  });
+}
 
 export function WorkshopList() {
   const { t } = useAdminI18n();
@@ -21,7 +30,7 @@ export function WorkshopList() {
   const [error, setError] = useState("");
   useEffect(() => {
     api<Workshop[]>("admin/workshops/")
-      .then(requireResponseList)
+      .then((data) => requireResponseList(data, validateWorkshopRecord))
       .then(setItems)
       .catch((caught) => setError(requestErrorMessage(caught, t)));
   }, [t]);

@@ -27,7 +27,9 @@ export function listFarms(query: { search?: string; is_active?: boolean; page?: 
   const params = new URLSearchParams({ page: String(query.page ?? 1) });
   if (query.search) params.set("search", query.search);
   if (query.is_active !== undefined) params.set("is_active", String(query.is_active));
-  return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`).then(requirePaginatedList);
+  return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`).then((payload) =>
+    requirePaginatedList(payload, requireResponseEntity),
+  );
 }
 
 export function getFarm(id: string) {
@@ -64,7 +66,7 @@ export function listFarmProducts(farmId: string, query: { page?: number; search?
   if (query.search) params.set("search", query.search);
   return apiEnvelope<FarmProduct[], PaginationMeta>(
     `admin/farms/${farmId}/products?${params}`,
-  ).then(requirePaginatedList);
+  ).then((payload) => requirePaginatedList(payload, requireResponseEntity));
 }
 
 export function listAvailableFarmProducts(
@@ -75,7 +77,7 @@ export function listAvailableFarmProducts(
   if (query.search) params.set("search", query.search);
   return apiEnvelope<AvailableFarmProduct[], PaginationMeta>(
     `admin/farms/${farmId}/available-products?${params}`,
-  ).then(requirePaginatedList);
+  ).then((payload) => requirePaginatedList(payload, requireResponseEntity));
 }
 
 export function addFarmProduct(farmId: string, productId: string, batch: StockBatchInput) {
@@ -109,7 +111,7 @@ export function listFarmStockBatches(
   if (query.status) params.set("status", query.status);
   return apiEnvelope<FarmStockBatch[], PaginationMeta>(
     `admin/farms/${farmId}/products/${productId}/batches?${params}`,
-  ).then(requirePaginatedList);
+  ).then((payload) => requirePaginatedList(payload, requireResponseEntity));
 }
 
 export function createFarmStockBatch(farmId: string, productId: string, batch: StockBatchInput) {

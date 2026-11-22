@@ -1,5 +1,6 @@
 import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import type { MediaAsset, PaginationMeta, StoreCategory, StoreProduct } from "@/lib/types";
 
 export type CategoryInput = {
@@ -31,7 +32,15 @@ export function listStoreCategories(query?: { search?: string; is_active?: boole
   if (query?.search) params.set("search", query.search);
   if (query?.is_active !== undefined) params.set("is_active", String(query.is_active));
   return api<StoreCategory[]>(`admin/store-categories${params.size ? `?${params}` : ""}`).then(
-    requireResponseList,
+    (data) =>
+      requireResponseList(data, (category) => {
+        requireResponseEntity(category);
+        requireResponseList(category.translations, (translation) => {
+          if (!isApiObject(translation) || typeof translation.name !== "string") {
+            throw invalidApiResponse();
+          }
+        });
+      }),
   );
 }
 

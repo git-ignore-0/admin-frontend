@@ -8,6 +8,8 @@ import { FormEvent, RefObject, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { requireAccountSearchRecord } from "@/lib/admin-users";
+import { requireResponseList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserListItem, CSACustomer, PaginationMeta } from "@/lib/types";
@@ -46,7 +48,9 @@ export function LinkCustomerUserDialog({
       const result = await apiEnvelope<AdminUserListItem[], PaginationMeta>(
         `admin/users?page=1&search=${encodeURIComponent(query.trim())}`,
       );
-      if (request === pendingSearch.current) setUsers(result.data);
+      if (request === pendingSearch.current) {
+        setUsers(requireResponseList(result.data, requireAccountSearchRecord));
+      }
     } catch (caught) {
       if (request === pendingSearch.current) setError(requestErrorMessage(caught, t));
     } finally {

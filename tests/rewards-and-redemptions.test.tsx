@@ -435,21 +435,31 @@ describe("rewards", () => {
     expect(screen.queryByText("Saving order…")).toBeNull();
   });
 
-  it("rolls back the exact previous order when reorder fails", async () => {
-    vi.mocked(apiEnvelope)
-      .mockResolvedValueOnce({
+  it.each(["network", "invalid record"] as const)(
+    "rolls back the exact previous order after a %s reorder failure",
+    async (failure) => {
+      const fetchPage = vi.mocked(apiEnvelope).mockResolvedValueOnce({
         data: [reward, secondReward],
         meta: { page: 1, page_size: 30, total: 2 },
-      })
-      .mockRejectedValueOnce(new Error("network_error"));
-    providers(<RewardList />);
+      });
+      if (failure === "network") fetchPage.mockRejectedValueOnce(new Error("network_error"));
+      else
+        fetchPage.mockResolvedValueOnce({
+          data: [{ ...reward, translations: null }],
+          meta: { page: 1, page_size: 30, total: 2 },
+        });
+      providers(<RewardList />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
-    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect");
-    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seasonal vegetables");
-    expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
-  });
+      fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
+      expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        failure === "network" ? "Could not connect" : "unreadable response",
+      );
+      expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seasonal vegetables");
+      expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
+      expect(fetchPage).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("rolls back and shows the dedicated conflict message", async () => {
     vi.mocked(apiEnvelope)

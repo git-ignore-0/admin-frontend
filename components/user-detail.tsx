@@ -12,7 +12,14 @@ import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { UserAccountDialog, type UserAccountDialogAction } from "@/components/user-account-dialog";
 import { formatAdminDateTime } from "@/lib/admin-date";
-import { accountFailure, userEmailStatus, userIdentityLabel } from "@/lib/admin-users";
+import {
+  accountFailure,
+  requireAccountActionResult,
+  requireAdminUserRecord,
+  userEmailStatus,
+  userIdentityLabel,
+} from "@/lib/admin-users";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminAccountSummary, AdminUserDetail, PaginationMeta } from "@/lib/types";
@@ -51,6 +58,8 @@ function UserDetailView({ userId }: { userId: string }) {
     )
       .then((payload) => {
         if (ignore) return;
+        requireAdminUserRecord(payload.data);
+        requireResponseList(payload.data.invited_users, requireResponseEntity);
         setUser(payload.data);
         setInvitedMeta(payload.meta?.invited ?? null);
       })
@@ -84,12 +93,13 @@ function UserDetailView({ userId }: { userId: string }) {
     setBusy(true);
     setActionError("");
     try {
-      await api<AdminAccountSummary>(
+      const result = await api<Pick<AdminAccountSummary, "id" | "status">>(
         `admin/users/${userId}/${action}`,
         { method: "POST", headers: { "Accept-Language": locale }, body: "{}" },
         { shouldRedirectToLogin: isCurrent },
       );
       if (!isCurrent()) return;
+      requireAccountActionResult(result, action, userId);
       toast(copy.success);
       reload();
     } catch (caught) {

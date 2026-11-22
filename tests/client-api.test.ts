@@ -375,6 +375,28 @@ it("uses DRF validation fields without interpreting non-field errors or metadata
   expect(error).not.toHaveProperty("field", expect.anything());
 });
 
+it.each([
+  { email: [{ code: "unique", message: "Already in use" }] },
+  {
+    non_field_errors: [{ code: "invalid", message: "General" }],
+    contact: [{ metadata: null, email: [{ code: "unique", message: "Already in use" }] }],
+  },
+])("keeps the field name for structured validation issues", async (fields) => {
+  const context = { source: "account" };
+  mockFetch().mockResolvedValue(
+    Response.json(
+      {
+        errors: [{ code: "validation_error", fields, context }],
+      },
+      { status: 400 },
+    ),
+  );
+  const error = await api("admin/users").catch((caught) => caught);
+  expect(error).toMatchObject({ status: 400, message: "validation_error", field: "email" });
+  expect(apiErrorFields(error)).toEqual(fields);
+  expect(apiErrorContext(error)).toEqual(context);
+});
+
 it("preserves a business conflict and ignores malformed fields", async () => {
   const context = { conflict: true };
   mockFetch().mockResolvedValue(

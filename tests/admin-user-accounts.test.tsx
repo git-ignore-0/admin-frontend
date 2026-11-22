@@ -6,6 +6,7 @@ import { LinkCustomerUserDialog } from "@/components/link-customer-user-dialog";
 import { ToastProvider } from "@/components/toast-provider";
 import { UserDetail } from "@/components/user-detail";
 import { UserDirectory } from "@/components/user-directory";
+import { adminDictionaries } from "@/lib/admin-i18n";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -77,6 +78,102 @@ afterEach(() => {
 });
 
 describe("CMS account administration", () => {
+  const invalidResponseMessage = adminDictionaries.en.common.invalidResponse;
+
+  it.each([{}, { id: "invalid-id", status: "pending_activation" }])(
+    "keeps an invalid create response in the dialog without navigating (%j)",
+    async (data) => {
+      const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
+        init?.method === "POST"
+          ? Response.json({ data }, { status: 201 })
+          : Response.json({ data: [], meta: { ...listMeta, total: 0 } }),
+      );
+      vi.stubGlobal("fetch", fetcher);
+      show(<UserDirectory />);
+      fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+      const dialog = screen.getByRole("dialog", { name: "Create account" });
+      fireEvent.change(within(dialog).getByLabelText(/^Full name/i), {
+        target: { value: user.name },
+      });
+      fireEvent.change(within(dialog).getByLabelText(/^Login phone/i), {
+        target: { value: "0912345678" },
+      });
+      const { password1, password2 } = passwords(dialog);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create account" }));
+      expect(await within(dialog).findByText(invalidResponseMessage)).toBeVisible();
+      expect(password1).toHaveValue(password);
+      expect(password2).toHaveValue(password);
+      expect(screen.queryByText(adminDictionaries.en.users.accountActions.created)).toBeNull();
+      expect(push).not.toHaveBeenCalled();
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["Suspend", "active", { id: userId, status: "active" }],
+    ["Reset password", "active", { id: otherUserId, status: "active" }],
+    ["Activate", "pending_activation", {}],
+    ["Reactivate", "suspended", { id: userId }],
+  ])("keeps the loaded account state on a malformed %s response", async (action, status, data) => {
+    const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
+      Response.json({ data: init?.method === "POST" ? data : { ...user, status } }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    fireEvent.click(await screen.findByRole("button", { name: action }));
+    const dialog = screen.queryByRole("dialog");
+    const inputs = dialog && action === "Reset password" ? passwords(dialog) : null;
+    if (dialog) fireEvent.click(within(dialog).getByRole("button", { name: action }));
+    expect(await screen.findByText(invalidResponseMessage)).toBeVisible();
+    if (dialog) expect(dialog).toBeVisible();
+    if (inputs) expect(inputs.password1).toHaveValue(password);
+    const copy = adminDictionaries.en.users.accountActions;
+    expect(screen.queryByText(copy.success)).toBeNull();
+    expect(screen.queryByText(copy.resetSuccess)).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "POST"]);
+  });
+
+  it.each([null, {}, { ...user, name: {} }])(
+    "rejects a malformed Users page before replacing the last valid rows (%j)",
+    async (row) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(Response.json({ data: [user], meta: listMeta }))
+          .mockResolvedValueOnce(Response.json({ data: [row], meta: { ...listMeta, total: 42 } })),
+      );
+      show(<UserDirectory />);
+      expect(await screen.findByRole("link", { name: /Garden Member/ })).toBeVisible();
+      fireEvent.change(screen.getByRole("searchbox"), { target: { value: "bad row" } });
+      fireEvent.submit(screen.getByRole("searchbox").closest("form")!);
+      expect(await screen.findByText(invalidResponseMessage)).toBeVisible();
+      expect(screen.getByRole("link", { name: /Garden Member/ })).toBeVisible();
+      expect(screen.queryByText("42 results")).toBeNull();
+    },
+  );
+
+  it("rejects a malformed Users result before offering it for CSA linking", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ data: [{}], meta: listMeta })),
+    );
+    show(
+      <LinkCustomerUserDialog
+        customerId="customer"
+        fallbackFocusRef={{ current: null }}
+        onCancel={vi.fn()}
+        onLinked={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "account" } });
+    fireEvent.submit(screen.getByRole("form", { name: /find account/i }));
+    expect(await screen.findByText(invalidResponseMessage)).toBeVisible();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.getByRole("button", { name: "Confirm link" })).toBeDisabled();
+  });
+
   it("shows Chờ kích hoạt and the login phone independently of historical contact data", async () => {
     vi.stubGlobal(
       "fetch",

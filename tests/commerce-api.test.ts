@@ -26,6 +26,11 @@ describe("Commerce API and compatibility adapter", () => {
     await expect(listStoreCategories()).rejects.toThrow("invalid_response");
   });
 
+  it("rejects a malformed category record in an unpaginated response", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [null] }));
+    await expect(listStoreCategories()).rejects.toThrow("invalid_response");
+  });
+
   it("rejects a product save without an identifier", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ data: {} }, { status: 201 }));
     const payload = {

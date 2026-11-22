@@ -13,6 +13,7 @@ import {
   Status,
 } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity } from "@/lib/api-response";
 import { formatAdminDate } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
 import {
@@ -47,6 +48,7 @@ export function CSACouponList() {
   const getErrorMessage = useCallback((error: unknown) => couponErrorMessage(error, t), [t]);
   const { error, items, loading, meta, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: requireResponseEntity,
     getErrorMessage,
   });
 

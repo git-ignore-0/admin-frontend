@@ -23,7 +23,7 @@ import { ListState } from "@/components/list-state";
 import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
-import { requireResponseList } from "@/lib/api-response";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { disableFarmTracker } from "@/lib/farms-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
@@ -102,7 +102,10 @@ export function TrackerFarmManager() {
     if (showLoading) setLoading(true);
     setLoadError("");
     try {
-      const latest = requireResponseList(await api<TrackerFarm[]>("admin/tracker-farms"));
+      const latest = requireResponseList(
+        await api<TrackerFarm[]>("admin/tracker-farms"),
+        requireResponseEntity,
+      );
       setFarms(latest);
       setSavedFarms(latest);
       return latest;
@@ -160,7 +163,7 @@ export function TrackerFarmManager() {
           })),
         }),
       });
-      requireResponseList(saved);
+      requireResponseList(saved, requireResponseEntity);
       setFarms(saved);
       setSavedFarms(saved);
       toast(t.trackerFarms.orderSaved);

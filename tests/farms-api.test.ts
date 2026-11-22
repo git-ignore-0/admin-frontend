@@ -45,6 +45,16 @@ it("rejects missing pagination metadata from the Farm collection", async () => {
   await expect(listFarms()).rejects.toThrow("invalid_response");
 });
 
+it("rejects a Farm page with an invalid record despite valid metadata", async () => {
+  fetchMock.mockResolvedValue(
+    Response.json({
+      data: [{}],
+      meta: { page: 1, page_size: 20, total: 1 },
+    }),
+  );
+  await expect(listFarms()).rejects.toThrow("invalid_response");
+});
+
 it("queries linked Farm products through the BFF with server-side search and pagination", async () => {
   fetchMock.mockResolvedValue(
     Response.json({ data: [], meta: { page: 2, page_size: 20, total: 40 } }),

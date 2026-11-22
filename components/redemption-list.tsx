@@ -11,11 +11,17 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity } from "@/lib/api-response";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import type { PaginationMeta, RedemptionListItem, RedemptionStatus } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
+
+function validateRedemptionRecord(item: RedemptionListItem) {
+  requireResponseEntity(item);
+  if (!isApiObject(item.user) || typeof item.user.name !== "string") throw invalidApiResponse();
+}
 
 export function RedemptionList() {
   const { locale, t } = useAdminI18n();
@@ -32,6 +38,7 @@ export function RedemptionList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validateRedemptionRecord,
     getErrorMessage,
   });
 

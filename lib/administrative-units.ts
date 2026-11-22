@@ -1,5 +1,6 @@
 import { requireResponseList } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
+import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import type { AdministrativeUnit } from "@/lib/types";
 
 export function administrativeWardSortName(name: string) {
@@ -26,11 +27,17 @@ export function administrativeWardTypeRank(name: string) {
   return 4;
 }
 
+function validateAdministrativeUnit(unit: AdministrativeUnit) {
+  if (!isApiObject(unit) || typeof unit.code !== "string" || typeof unit.name !== "string") {
+    throw invalidApiResponse();
+  }
+}
+
 export function getAdministrativeProvinces(locale: "vi" | "en", signal?: AbortSignal) {
   return api<AdministrativeUnit[]>("administrative-units/provinces", {
     headers: { "Accept-Language": locale },
     signal,
-  }).then(requireResponseList);
+  }).then((data) => requireResponseList(data, validateAdministrativeUnit));
 }
 
 export function getAdministrativeWards(
@@ -44,7 +51,7 @@ export function getAdministrativeWards(
       headers: { "Accept-Language": locale },
       signal,
     },
-  ).then(requireResponseList);
+  ).then((data) => requireResponseList(data, validateAdministrativeUnit));
 }
 
 export function administrativeUnitName(units: AdministrativeUnit[], code: string | null) {

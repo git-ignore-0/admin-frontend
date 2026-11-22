@@ -79,6 +79,10 @@ const nonValidationKeys = new Set([
 ]);
 const errorMetadataKeys = new Set(["code", "status", "type", "title", "message", "instance"]);
 
+function isValidationIssue(value: unknown) {
+  return isApiObject(value) && typeof value.code === "string" && typeof value.message === "string";
+}
+
 export function firstValidationField(value: unknown): string | undefined {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -87,12 +91,13 @@ export function firstValidationField(value: unknown): string | undefined {
     }
     return undefined;
   }
-  if (!isApiObject(value)) return undefined;
+  if (!isApiObject(value) || isValidationIssue(value)) return undefined;
   for (const [key, item] of Object.entries(value)) {
     if (nonValidationKeys.has(key)) continue;
     if (
       typeof item === "string" ||
-      (Array.isArray(item) && item.some((v) => typeof v === "string"))
+      isValidationIssue(item) ||
+      (Array.isArray(item) && item.some((v) => typeof v === "string" || isValidationIssue(v)))
     ) {
       return key;
     }

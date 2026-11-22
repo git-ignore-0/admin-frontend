@@ -98,7 +98,7 @@ export async function getRounds(page = 1, pageSize = 20) {
   const payload = await apiEnvelope<CSARound[], PaginationMeta>(
     `admin/csa-rounds?page=${page}&page_size=${pageSize}`,
   );
-  return requirePaginatedList(payload);
+  return requirePaginatedList(payload, requireResponseEntity);
 }
 export function getRound(id: string) {
   return api<AdminCSARound>(`admin/csa-rounds/${id}`);
@@ -151,7 +151,11 @@ export async function getSelectionEvents(id: string, page = 1) {
   const payload = await apiEnvelope<CSASelectionEvent[], PaginationMeta>(
     `admin/csa-selections/${id}/events?page=${page}&page_size=20`,
   );
-  return requirePaginatedList(payload);
+  return requirePaginatedList(payload, (event) => {
+    if (!isApiObject(event) || typeof event.action !== "string" || !isApiObject(event.context)) {
+      throw invalidApiResponse();
+    }
+  });
 }
 export function saveRound(body: RoundDates & { name: string }, id?: string) {
   return api<CSARound>(id ? `admin/csa-rounds/${id}` : "admin/csa-rounds", {

@@ -13,6 +13,7 @@ import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   numericInputErrorMessage,
@@ -54,8 +55,9 @@ export function PointLedger({
     setItems(null);
     apiEnvelope<PointTransaction[], PointHistoryMeta>(`admin/users/${userId}/points?page=${page}`)
       .then((payload) => {
-        setItems(payload.data);
-        setMeta(payload.meta ?? null);
+        const { data, meta } = requirePaginatedList(payload, requireResponseEntity);
+        setItems(data);
+        setMeta(meta);
       })
       .catch((caught) => setError(requestErrorMessage(caught, t)));
   }, [page, t, userId]);

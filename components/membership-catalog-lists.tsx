@@ -10,8 +10,9 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import { legacyPackageItemView } from "@/lib/membership-catalog-adapter";
 import { formatDecimalInput } from "@/lib/numeric-input";
@@ -23,6 +24,30 @@ import type { MembershipPackage, MembershipProduct, PaginationMeta } from "@/lib
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
 type ActiveFilter = "" | "true" | "false";
+
+function validateNamedTranslation(translation: unknown) {
+  if (!isApiObject(translation) || typeof translation.name !== "string") {
+    throw invalidApiResponse();
+  }
+}
+
+function validateMembershipProduct(item: MembershipProduct) {
+  requireResponseEntity(item);
+  requireResponseList(item.translations, validateNamedTranslation);
+  if (typeof item.unit_size !== "string") throw invalidApiResponse();
+}
+
+function validateMembershipPackage(item: MembershipPackage) {
+  requireResponseEntity(item);
+  requireResponseList(item.translations, validateNamedTranslation);
+  requireResponseList(item.items, (line) => {
+    if (!isApiObject(line) || typeof line.product_id !== "string") throw invalidApiResponse();
+    if (line.product_translations != null) {
+      requireResponseList(line.product_translations, validateNamedTranslation);
+    }
+  });
+  requireResponseList(item.price_options, requireResponseEntity);
+}
 
 function Status({ active }: { active: boolean }) {
   const { t } = useAdminI18n();
@@ -54,6 +79,7 @@ export function MembershipProductList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validateMembershipProduct,
     getErrorMessage,
   });
 
@@ -195,6 +221,7 @@ export function MembershipPackageList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validateMembershipPackage,
     getErrorMessage,
   });
 

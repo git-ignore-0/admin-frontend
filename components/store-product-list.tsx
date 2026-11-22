@@ -12,9 +12,10 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { formatAdminDate } from "@/lib/admin-date";
 import { listStoreCategories, listStoreProducts } from "@/lib/commerce-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { categoryPath } from "@/lib/store-categories";
 import type { StoreCategory, StoreProduct } from "@/lib/types";
@@ -22,6 +23,18 @@ import { usePaginatedList } from "@/lib/use-paginated-list";
 
 function booleanFilter(value: string) {
   return value === "true" ? true : value === "false" ? false : undefined;
+}
+
+function validateProductRecord(product: StoreProduct) {
+  requireResponseEntity(product);
+  requireResponseList(product.translations, (translation) => {
+    if (!isApiObject(translation) || typeof translation.name !== "string") {
+      throw invalidApiResponse();
+    }
+  });
+  if (typeof product.retail_price_vnd !== "string" || !/^\d+$/u.test(product.retail_price_vnd)) {
+    throw invalidApiResponse();
+  }
 }
 
 export function StoreProductList() {
@@ -84,6 +97,7 @@ export function StoreProductList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { items, meta, loading, error, reload, setPage } = usePaginatedList<StoreProduct>({
     fetchPage,
+    validateRecord: validateProductRecord,
     getErrorMessage,
     controlledPage: page,
     onPage: (next) => navigate({ page: next > 1 ? String(next) : "" }),

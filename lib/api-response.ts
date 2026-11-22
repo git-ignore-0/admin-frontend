@@ -2,13 +2,14 @@ import type { ApiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import type { PaginationMeta } from "@/lib/types";
 
-export function requireResponseList<T>(data: T[]): T[] {
+export function requireResponseList<T>(data: T[], validateRecord?: (record: T) => void): T[] {
   if (!Array.isArray(data)) throw invalidApiResponse();
+  if (validateRecord) for (const record of data) validateRecord(record);
   return data;
 }
 
 export function requireResponseEntity<T extends { id: string }>(data: T): T {
-  if (!isApiObject(data) || typeof data.id !== "string" || !data.id) {
+  if (!isApiObject(data) || typeof data.id !== "string" || !data.id.trim()) {
     throw invalidApiResponse();
   }
   return data;
@@ -20,9 +21,10 @@ function isPageNumber(value: unknown, minimum: number): value is number {
 
 export function requirePaginatedList<T, M extends PaginationMeta>(
   payload: ApiEnvelope<T[], M>,
+  validateRecord?: (record: T) => void,
 ): ApiEnvelope<T[], M> & { meta: M } {
   if (!isApiObject(payload)) throw invalidApiResponse();
-  requireResponseList(payload.data);
+  requireResponseList(payload.data, validateRecord);
   const { meta } = payload;
   if (
     !isApiObject(meta) ||

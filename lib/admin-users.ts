@@ -1,6 +1,68 @@
 import type { AdminDictionary, AdminLocale } from "@/lib/admin-i18n";
-import { apiErrorFields, type ClientApiError, requestErrorMessage } from "@/lib/client-error";
-import type { AdminUserListItem } from "@/lib/types";
+import { requireResponseEntity } from "@/lib/api-response";
+import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
+import {
+  apiErrorFields,
+  type ClientApiError,
+  invalidApiResponse,
+  requestErrorMessage,
+} from "@/lib/client-error";
+import type { AdminAccountSummary, AdminUserListItem } from "@/lib/types";
+
+const statusAfterAction = {
+  create: "pending_activation",
+  activate: "active",
+  suspend: "suspended",
+  reactivate: "active",
+} as const;
+
+type AccountAction = keyof typeof statusAfterAction | "reset-password";
+
+export function requireAccountActionResult(
+  data: Pick<AdminAccountSummary, "id" | "status">,
+  action: AccountAction,
+  userId?: string,
+) {
+  const { id, status } = requireResponseEntity(data);
+  const expected =
+    action === "reset-password"
+      ? ["pending_activation", "active", "suspended"].includes(status)
+      : status === statusAfterAction[action];
+  if (!UUID_PATH_SEGMENT.test(id) || (userId !== undefined && id !== userId) || !expected) {
+    throw invalidApiResponse();
+  }
+  return id;
+}
+
+function requireAccountIdentity(user: AdminUserListItem) {
+  requireResponseEntity(user);
+  if (
+    typeof user.name !== "string" ||
+    (user.email !== null && typeof user.email !== "string") ||
+    (user.login_phone_number !== null && typeof user.login_phone_number !== "string")
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+export function requireAdminUserRecord(user: AdminUserListItem) {
+  requireAccountIdentity(user);
+  if (
+    typeof user.status !== "string" ||
+    typeof user.date_joined !== "string" ||
+    typeof user.email_verified !== "boolean" ||
+    !Number.isFinite(user.points_balance)
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+export function requireAccountSearchRecord(user: AdminUserListItem) {
+  requireAccountIdentity(user);
+  if (typeof user.has_csa_customer !== "boolean" || typeof user.phone !== "string") {
+    throw invalidApiResponse();
+  }
+}
 
 export const accountFields = [
   "name",

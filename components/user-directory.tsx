@@ -12,7 +12,7 @@ import { Button, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { UserAccountDialog } from "@/components/user-account-dialog";
 import { formatAdminDateTime } from "@/lib/admin-date";
-import { userEmailStatus } from "@/lib/admin-users";
+import { requireAdminUserRecord, userEmailStatus } from "@/lib/admin-users";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserListItem, PaginationMeta } from "@/lib/types";
@@ -41,6 +41,7 @@ export function UserDirectory({
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
     getErrorMessage,
+    validateRecord: requireAdminUserRecord,
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {

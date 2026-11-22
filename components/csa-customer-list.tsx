@@ -10,6 +10,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { CSACustomer, PaginationMeta } from "@/lib/types";
@@ -44,6 +45,7 @@ export function CSACustomerList() {
   const getErrorMessage = useCallback((error: unknown) => requestErrorMessage(error, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: requireResponseEntity,
     getErrorMessage,
   });
   const hasFilters = Boolean(query || search || linked !== "all" || status);
