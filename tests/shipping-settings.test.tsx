@@ -152,7 +152,9 @@ describe("shipping area tree", () => {
 
     const group = await screen.findByRole("group", { name: "Đắk Lắk" });
     expect(getAdministrativeWards).toHaveBeenCalledWith("66", "vi", expect.any(AbortSignal));
-    expect(screen.getByRole("checkbox", { name: "Áp dụng mặc định toàn tỉnh" })).toBeVisible();
+    expect(
+      await screen.findByRole("checkbox", { name: "Áp dụng mặc định toàn tỉnh" }),
+    ).toBeVisible();
     expect(
       within(group)
         .getAllByRole("checkbox")
@@ -197,7 +199,7 @@ describe("shipping area tree", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Mở Đắk Lắk" }));
 
     const group = await screen.findByRole("group", { name: "Đắk Lắk" });
-    const defaultToggle = screen.getByRole("checkbox", {
+    const defaultToggle = await screen.findByRole("checkbox", {
       name: "Áp dụng mặc định toàn tỉnh",
     });
     const defaultFee = screen.getByRole("textbox", { name: "Giá mặc định" });
