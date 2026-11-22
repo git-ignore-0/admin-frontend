@@ -1,15 +1,20 @@
 "use client";
 
-import { ActionIcon, Button, Flex, Group, Popover, Stack, TextInput, Tooltip } from "@mantine/core";
 import {
-  IconArrowRight,
-  IconRefresh,
-  IconSearch,
-  IconAdjustments,
-  IconX,
-} from "@tabler/icons-react";
+  ActionIcon,
+  Button,
+  Fieldset,
+  Flex,
+  Group,
+  Popover,
+  Stack,
+  Text,
+  TextInput,
+  Tooltip,
+} from "@mantine/core";
+import { IconAdjustments, IconRefresh, IconSearch, IconX } from "@tabler/icons-react";
 import { useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { ListResultSummary } from "./pagination";
 import styles from "./list-toolbar.module.css";
 
@@ -24,13 +29,20 @@ type SearchOptions = {
   submitLabel?: string;
   clearLabel?: string;
   onClear?: () => void;
-};
+} & (
+  | { appliedValue?: undefined; formatAppliedValue?: never }
+  | { appliedValue: string; formatAppliedValue: (value: string) => string }
+);
 
 type FilterOptions = {
   label: string;
+  title?: string;
   activeCount?: number;
   clearLabel?: string;
+  clearDisabled?: boolean;
   onClear?: () => void;
+  onDismiss?: () => void;
+  apply?: { label: string; onApply: () => void; disabled?: boolean };
   children: ReactNode;
 };
 
@@ -48,7 +60,6 @@ type ToolbarProps = {
   filterPopover?: FilterOptions;
   refresh?: RefreshOptions;
   primaryAction?: ReactNode;
-  actions?: ReactNode;
 };
 
 type LegacyToolbarProps = {
@@ -70,27 +81,24 @@ type LegacyToolbarProps = {
   actions?: ReactNode;
 };
 
-const tooltipEvents = { hover: true, focus: true, touch: false };
-
 export function ListToolbar(props: ToolbarProps | LegacyToolbarProps) {
   if ("query" in props) return <LegacyToolbar {...props} />;
 
-  const { busy = false, search, filterPopover, refresh, actions, primaryAction } = props;
-  if (!search && !filterPopover && !refresh && !actions && !primaryAction) return null;
+  const { busy = false, search, filterPopover, refresh, primaryAction } = props;
+  if (!search && !filterPopover && !refresh && !primaryAction) return null;
 
   return (
     <div className={styles.container}>
-      <Flex gap="sm" align="center" wrap="wrap">
+      <Flex gap="xs" align="flex-start" wrap="wrap">
         {search && <ToolbarSearch search={search} busy={busy} />}
-        {(filterPopover || refresh || actions || primaryAction) && (
-          <Group gap="sm" wrap={actions ? "wrap" : "nowrap"} className={styles.actions}>
+        {(filterPopover || refresh || primaryAction) && (
+          <Group gap="sm" className={styles.actions}>
             {(filterPopover || refresh) && (
-              <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+              <Group gap="xs" miw={0}>
                 {filterPopover && <ToolbarFilter filter={filterPopover} busy={busy} />}
                 {refresh && <ToolbarRefresh refresh={refresh} busy={busy} />}
               </Group>
             )}
-            {actions}
             {primaryAction && <div className={styles.primaryAction}>{primaryAction}</div>}
           </Group>
         )}
@@ -109,9 +117,14 @@ function ToolbarSearch({ search, busy }: { search: SearchOptions; busy: boolean 
     submitLabel = label,
     clearLabel,
     onClear,
+    appliedValue,
+    formatAppliedValue,
   } = search;
   const input = useRef<HTMLInputElement>(null);
-  const clear = clearLabel && onClear;
+  const canClear = clearLabel && onClear;
+  const showClear = canClear && (value || appliedValue);
+  const appliedDescription =
+    appliedValue && appliedValue !== value ? formatAppliedValue(appliedValue) : undefined;
   return (
     <form
       className={styles.search}
@@ -126,24 +139,29 @@ function ToolbarSearch({ search, busy }: { search: SearchOptions; busy: boolean 
       <TextInput
         aria-label={label}
         ref={input}
-        classNames={clear ? { input: styles.searchWithClear } : undefined}
+        classNames={{
+          input: canClear ? styles.searchWithClear : undefined,
+          description: styles.searchDescription,
+        }}
+        description={appliedDescription}
+        inputWrapperOrder={["input", "description", "error"]}
         disabled={busy}
         onChange={(event) => onChange(event.currentTarget.value)}
         placeholder={placeholder}
         type="search"
         value={value}
-        leftSection={<IconSearch size={17} aria-hidden />}
         rightSectionPointerEvents="all"
-        rightSectionWidth={clear && value ? 64 : 36}
+        rightSectionWidth={showClear ? 64 : 36}
         rightSection={
           <Group gap={0} wrap="nowrap">
-            {clear && value && (
-              <Tooltip label={clearLabel} events={tooltipEvents}>
+            {showClear && (
+              <Tooltip label={clearLabel}>
                 <ActionIcon
                   aria-label={clearLabel}
+                  color="gray"
                   disabled={busy}
                   onClick={() => {
-                    clear();
+                    onClear();
                     input.current?.focus();
                   }}
                   size={28}
@@ -154,15 +172,16 @@ function ToolbarSearch({ search, busy }: { search: SearchOptions; busy: boolean 
                 </ActionIcon>
               </Tooltip>
             )}
-            <Tooltip label={submitLabel} events={tooltipEvents}>
+            <Tooltip label={submitLabel}>
               <ActionIcon
                 aria-label={submitLabel}
+                color="gray"
                 disabled={busy}
                 size={28}
                 type="submit"
                 variant="subtle"
               >
-                <IconArrowRight size={16} aria-hidden />
+                <IconSearch size={17} aria-hidden />
               </ActionIcon>
             </Tooltip>
           </Group>
@@ -173,18 +192,62 @@ function ToolbarSearch({ search, busy }: { search: SearchOptions; busy: boolean 
 }
 
 function ToolbarFilter({ filter, busy }: { filter: FilterOptions; busy: boolean }) {
-  const { label, activeCount, clearLabel, onClear, children } = filter;
+  const {
+    label,
+    title,
+    activeCount,
+    clearLabel,
+    clearDisabled,
+    onClear,
+    onDismiss,
+    apply,
+    children,
+  } = filter;
+  const [opened, setOpened] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const hasActiveFilters = (activeCount ?? 0) > 0;
   const triggerLabel = hasActiveFilters ? `${label} (${activeCount})` : label;
+  const clear = clearLabel && onClear;
+
+  function changeOpened(next: boolean) {
+    setOpened(next);
+    if (!next) onDismiss?.();
+  }
+
+  function dismissOnEscape(event: KeyboardEvent<HTMLElement>) {
+    if (!opened || event.key !== "Escape" || event.nativeEvent.isComposing) return;
+    // Mantine marks an open Combobox target so the nested listbox owns the first Escape.
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-mantine-stop-propagation="true"]')
+    ) {
+      return;
+    }
+    event.stopPropagation();
+    changeOpened(false);
+    trigger.current?.focus();
+  }
 
   return (
-    <Popover position="bottom-start" returnFocus trapFocus width={320}>
-      <Tooltip label={triggerLabel} events={tooltipEvents}>
+    <Popover
+      opened={opened}
+      onChange={changeOpened}
+      closeOnEscape={false}
+      position="bottom-start"
+      trapFocus
+      width={320}
+      shadow="sm"
+      middlewares={{ size: { padding: 8 } }}
+    >
+      <Tooltip label={triggerLabel}>
         <Popover.Target>
           <Button
             aria-label={triggerLabel}
             className={styles.filterTrigger}
             disabled={busy}
+            onClick={() => changeOpened(!opened)}
+            onKeyDown={dismissOnEscape}
+            ref={trigger}
             type="button"
             variant={hasActiveFilters ? "light" : "default"}
           >
@@ -194,20 +257,40 @@ function ToolbarFilter({ filter, busy }: { filter: FilterOptions; busy: boolean 
           </Button>
         </Popover.Target>
       </Tooltip>
-      <Popover.Dropdown className={styles.filterPanel}>
-        <Stack gap="sm">
-          {children}
-          {clearLabel && onClear && (
-            <Button
-              disabled={busy || (activeCount !== undefined && !hasActiveFilters)}
-              onClick={onClear}
-              type="button"
-              variant="default"
-            >
-              {clearLabel}
-            </Button>
-          )}
-        </Stack>
+      <Popover.Dropdown className={styles.filterPanel} onKeyDownCapture={dismissOnEscape}>
+        {title && <Text fw={600}>{title}</Text>}
+        <Fieldset unstyled disabled={busy} className={styles.filterFields}>
+          <Stack gap="sm">{children}</Stack>
+        </Fieldset>
+        {(clear || apply) && (
+          <Group gap="xs" justify="flex-end">
+            {clear && (
+              <Button
+                disabled={
+                  busy || (clearDisabled ?? (activeCount !== undefined && !hasActiveFilters))
+                }
+                onClick={onClear}
+                type="button"
+                variant="default"
+              >
+                {clearLabel}
+              </Button>
+            )}
+            {apply && (
+              <Button
+                disabled={busy || apply.disabled}
+                onClick={() => {
+                  apply.onApply();
+                  setOpened(false);
+                  trigger.current?.focus();
+                }}
+                type="button"
+              >
+                {apply.label}
+              </Button>
+            )}
+          </Group>
+        )}
       </Popover.Dropdown>
     </Popover>
   );
@@ -234,14 +317,13 @@ function ToolbarRefresh({ refresh, busy }: { refresh: RefreshOptions; busy: bool
   }
 
   return (
-    <Tooltip label={refresh.label} events={tooltipEvents}>
+    <Tooltip label={refresh.label}>
       <ActionIcon
         aria-label={refresh.label}
         aria-busy={loading}
         disabled={disabled}
         loading={loading}
         onClick={handleRefresh}
-        size={36}
         type="button"
         variant="default"
       >

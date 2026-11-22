@@ -10,6 +10,7 @@ import {
   Button,
   Checkbox,
   Group,
+  Input,
   Loader,
   Menu,
   MultiSelect,
@@ -33,7 +34,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
-import { DateInput, DatePickerInput } from "@mantine/dates";
+import { DateInput, DatePickerInput, DateTimePicker, TimeInput } from "@mantine/dates";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -239,6 +240,7 @@ function ActionExamples() {
 
 function FormExamples() {
   const focusExample = useRef<HTMLInputElement>(null);
+  const [comparisonValue, setComparisonValue] = useState("");
   return (
     <Stack component="section" gap="md" aria-labelledby="form-examples">
       <Title id="form-examples" order={2}>
@@ -253,6 +255,10 @@ function FormExamples() {
               label="Sample password"
               description="Use the visibility toggle to inspect the icon action."
               defaultValue="sample-secret"
+              visibilityToggleButtonProps={{
+                "aria-label": "Toggle sample password visibility",
+                tabIndex: 0,
+              }}
             />
             <NumberInput
               label="Number of plots"
@@ -276,6 +282,10 @@ function FormExamples() {
               placeholder="Select a date range"
               valueFormat="DD/MM/YYYY"
             />
+            <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm">
+              <DateTimePicker label="Review schedule" placeholder="Select a date and time" />
+              <TimeInput label="Irrigation time" />
+            </SimpleGrid>
           </Stack>
         </Paper>
         <Paper p="md" miw={0}>
@@ -298,14 +308,32 @@ function FormExamples() {
                 <Radio label="Published" value="published" disabled />
               </Group>
             </Radio.Group>
-            <TextInput
-              ref={focusExample}
-              label="Focus example"
-              placeholder="Inspect the focus ring"
-            />
-            <Button variant="default" w="fit-content" onClick={() => focusExample.current?.focus()}>
-              Focus sample field
-            </Button>
+            <Group align="flex-end" gap="xs">
+              <Input.Wrapper id="control-comparison" label="Control comparison" flex="1 1 9rem">
+                <Input
+                  id="control-comparison"
+                  ref={focusExample}
+                  value={comparisonValue}
+                  placeholder="Inspect the focus ring"
+                  onChange={(event) => setComparisonValue(event.currentTarget.value)}
+                />
+              </Input.Wrapper>
+              <Button variant="default" onClick={() => focusExample.current?.focus()}>
+                Focus field
+              </Button>
+              <Tooltip label="Clear comparison input">
+                <ActionIcon
+                  variant="default"
+                  aria-label="Clear comparison input"
+                  onClick={() => {
+                    setComparisonValue("");
+                    focusExample.current?.focus();
+                  }}
+                >
+                  <IconX size={16} aria-hidden />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
             <TextInput label="Read-only code" value="NFV-001" readOnly />
             <TextInput label="Disabled field" defaultValue="Unavailable" disabled />
             <TextInput

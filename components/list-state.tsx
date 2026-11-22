@@ -1,8 +1,22 @@
 "use client";
 
-import { Alert, Button, Group, Loader, Paper, Stack, Text } from "@mantine/core";
+import {
+  Alert,
+  Box,
+  Button,
+  Group,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  VisuallyHidden,
+} from "@mantine/core";
+import { IconInbox, IconSearch } from "@tabler/icons-react";
+import type { ReactNode } from "react";
 
 export function ListState({
+  action,
+  description,
   empty,
   embedded = false,
   error,
@@ -10,11 +24,15 @@ export function ListState({
   isEmpty,
   loading,
   loadingLabel,
+  loadingPlaceholder,
   noResults,
   onRetry,
   refreshingLabel = loadingLabel,
   retryLabel,
 }: {
+  /** Recovery or next action supplied by the caller for the current empty state. */
+  action?: ReactNode;
+  description?: string;
   empty: string;
   /** Use inside an existing bordered list container. */
   embedded?: boolean;
@@ -23,21 +41,29 @@ export function ListState({
   isEmpty: boolean;
   loading: boolean;
   loadingLabel: string;
+  loadingPlaceholder?: ReactNode;
   /** Supply when the empty result follows an applied query or filter. */
   noResults?: string;
   onRetry: () => void;
   refreshingLabel?: string;
   retryLabel: string;
 }) {
-  if (!hasData && loading)
-    return (
-      <Paper p="md" withBorder={!embedded}>
-        <Group role="status" gap="sm">
-          <Loader size="sm" />
-          <Text size="sm">{loadingLabel}</Text>
-        </Group>
-      </Paper>
+  if (!hasData && loading) {
+    if (loadingPlaceholder)
+      return (
+        <>
+          <VisuallyHidden role="status">{loadingLabel}</VisuallyHidden>
+          {loadingPlaceholder}
+        </>
+      );
+    const indicator = (
+      <Group role="status" gap="sm">
+        <Loader size="sm" />
+        <Text size="sm">{loadingLabel}</Text>
+      </Group>
     );
+    return embedded ? <Box p="md">{indicator}</Box> : <Paper p="md">{indicator}</Paper>;
+  }
   if (error)
     return (
       <Alert color="red" variant={hasData ? "outline" : "light"} role="alert">
@@ -58,13 +84,25 @@ export function ListState({
         </Text>
       </Group>
     );
-  if (isEmpty)
-    return (
-      <Paper p="lg" withBorder={!embedded}>
-        <Text size="sm" c="dimmed" ta="center">
+  if (isEmpty) {
+    const Icon = noResults ? IconSearch : IconInbox;
+    const content = (
+      <Stack gap="xs" align="center" ta="center">
+        <Box c="dimmed">
+          <Icon aria-hidden size={20} />
+        </Box>
+        <Text size="sm" fw={600}>
           {noResults ?? empty}
         </Text>
-      </Paper>
+        {description && (
+          <Text size="sm" c="dimmed">
+            {description}
+          </Text>
+        )}
+        {action}
+      </Stack>
     );
+    return embedded ? <Box p="lg">{content}</Box> : <Paper p="lg">{content}</Paper>;
+  }
   return null;
 }

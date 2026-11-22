@@ -42,6 +42,8 @@ const white = "#ffffff";
 const subtleText = "#687483";
 const subtleSurface = "#f4f6f8";
 const softPrimary = "#eaf6ef";
+const lightBorder = "#ced4da";
+const primary = adminPalettes.forest[7];
 
 export const adminTokens = {
   background: adminPalettes.gray[0],
@@ -53,16 +55,17 @@ export const adminTokens = {
   "text-subtle": subtleText,
   "text-inverse": white,
   border: "#e2e6eb",
-  "border-strong": "#ced4da",
-  "control-border": adminPalettes.gray[6],
-  primary: adminPalettes.forest[7],
+  "border-strong": lightBorder,
+  "control-border": lightBorder,
+  "control-border-hover": adminPalettes.gray[4],
+  primary,
   "primary-hover": adminPalettes.forest[8],
   "primary-soft": softPrimary,
   "surface-hover": subtleSurface,
   "surface-selected": softPrimary,
   "surface-disabled": adminPalettes.gray[1],
   "text-disabled": subtleText,
-  focus: "#1a73e8",
+  focus: primary,
   overlay: "rgba(32, 41, 56, 0.25)",
 } as const;
 
@@ -128,11 +131,26 @@ const floatingSurface = {
 };
 const optionsClassNames = { option: classes.comboboxOption };
 const optionsStyles = { dropdown: floatingSurface };
+const readOnlyInputClassNames = (_theme: MantineTheme, { readOnly }: { readOnly?: boolean }) =>
+  readOnly ? { input: classes.readOnlyInput } : {};
 const dateControl = { defaultProps: sizeSm, classNames: { day: classes.calendarDay } };
+const overlayPadding = "var(--mb-padding, var(--mantine-spacing-md))";
 const overlayStyles = {
-  header: { backgroundColor: "var(--surface)", borderBottom: "1px solid var(--border)" },
-  title: { color: "var(--heading)", fontSize: "var(--mantine-h2-font-size)", fontWeight: 700 },
-  body: { paddingBlockStart: "var(--mantine-spacing-md)" },
+  header: {
+    backgroundColor: "var(--surface)",
+    borderBottom: "1px solid var(--border)",
+    padding: overlayPadding,
+    gap: "var(--mantine-spacing-xs)",
+  },
+  title: {
+    color: "var(--heading)",
+    fontSize: "var(--mantine-h2-font-size)",
+    fontWeight: 700,
+    lineHeight: 1.25,
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
+  body: { paddingBlockStart: overlayPadding },
 };
 const modalDefaults = { centered: true, radius: "lg" } as const;
 const defaultControlClassNames = (_theme: MantineTheme, { variant }: { variant?: string }) =>
@@ -172,17 +190,28 @@ export const adminTheme = createTheme({
       classNames: defaultControlClassNames,
     },
     Input: { classNames: { wrapper: classes.inputWrapper, input: classes.input } },
+    InputPlaceholder: { classNames: { placeholder: classes.inputPlaceholder } },
     TextInput: { defaultProps: sizeSm },
     PasswordInput: { defaultProps: sizeSm },
     NumberInput: { defaultProps: sizeSm },
     Select: {
-      defaultProps: { ...sizeSm, allowDeselect: false, checkIconPosition: "right" },
+      defaultProps: {
+        ...sizeSm,
+        allowDeselect: false,
+        checkIconPosition: "right",
+        // Select also sets the native readonly attribute on editable non-searchable triggers.
+        // Resolve the marker against the public props before Select configures its InputBase.
+        classNames: readOnlyInputClassNames,
+      },
       classNames: optionsClassNames,
       styles: optionsStyles,
     },
     MultiSelect: {
       defaultProps: { ...sizeSm, checkIconPosition: "right" },
-      classNames: optionsClassNames,
+      classNames: (theme: MantineTheme, props: { readOnly?: boolean }) => ({
+        ...optionsClassNames,
+        ...readOnlyInputClassNames(theme, props),
+      }),
       styles: optionsStyles,
     },
     Combobox: { classNames: optionsClassNames, styles: optionsStyles },
@@ -207,9 +236,15 @@ export const adminTheme = createTheme({
     Tabs: { defaultProps: { keepMounted: true } },
     SegmentedControl: {
       defaultProps: sizeSm,
-      classNames: { input: classes.segmentInput, label: classes.segmentLabel },
       styles: (_theme: MantineTheme, { color }: { color?: string }) =>
-        color ? {} : { root: { "--sc-color": "var(--surface-selected)" } },
+        color
+          ? {}
+          : {
+              root: {
+                "--sc-color": "var(--surface-selected)",
+                "--sc-label-color": "var(--primary-hover)",
+              },
+            },
     },
     Paper: {
       defaultProps: { withBorder: true, radius: "lg", shadow: "none" },
@@ -281,10 +316,16 @@ export const adminTheme = createTheme({
       },
       classNames: { tr: classes.tableRow },
       styles: {
+        table: {
+          backgroundColor: "var(--surface)",
+          fontSize: "var(--mantine-font-size-md)",
+          fontWeight: 400,
+        },
         th: {
-          background: "var(--background)",
+          backgroundColor: "var(--background)",
           color: "var(--neutral)",
-          fontSize: "var(--mantine-font-size-xs)",
+          fontSize: "var(--mantine-font-size-sm)",
+          fontWeight: 600,
         },
       },
     },
@@ -315,7 +356,7 @@ export const adminTheme = createTheme({
   },
 });
 
-/** V5.1 is the visual baseline; both Mantine and retained module CSS share these tokens. */
+/** Mantine and retained module CSS share the Foundation tokens. */
 export const adminCssVariablesResolver: CSSVariablesResolver = () => ({
   variables: foundationVariables,
   light: {

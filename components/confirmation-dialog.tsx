@@ -1,7 +1,8 @@
 "use client";
 
-import { Alert, Button, Group, Modal, Stack } from "@mantine/core";
+import { Alert, Button, Group, Modal, Stack, type ModalProps } from "@mantine/core";
 import { ReactNode, RefObject, useCallback, useEffect, useRef } from "react";
+import layout from "./overlay-layout.module.css";
 
 type Props = {
   title: string;
@@ -10,6 +11,7 @@ type Props = {
   confirmLabel: string;
   busyLabel: string;
   busy: boolean;
+  size?: ModalProps["size"];
   danger?: boolean;
   confirmDisabled?: boolean;
   alternateLabel?: string;
@@ -28,6 +30,7 @@ export function ConfirmationDialog({
   confirmLabel,
   busyLabel,
   busy,
+  size = "lg",
   danger = false,
   confirmDisabled = false,
   alternateLabel,
@@ -52,7 +55,7 @@ export function ConfirmationDialog({
       originalFocus.current,
       fallbackFocusRef?.current,
     ]) {
-      if (!target?.isConnected || target === document.body) continue;
+      if (!target?.isConnected || target === document.body || target.closest("[inert]")) continue;
       target.focus({ preventScroll: true });
       if (document.activeElement === target) return;
     }
@@ -64,29 +67,41 @@ export function ConfirmationDialog({
   }, [restoreFocus]);
 
   return (
-    <Modal
+    <Modal.Root
       opened
       onClose={() => {
         if (!busy) onCancel();
       }}
-      title={title}
       centered
-      withCloseButton={false}
       closeOnEscape={!busy}
       closeOnClickOutside={!busy}
       returnFocus={false}
-      aria-busy={busy}
-      size="lg"
+      size={size}
+      classNames={{ content: layout.content, body: layout.body }}
     >
-      <Stack gap="md">
-        {children}
-        {error && (
-          <Alert color="red" role="alert">
-            {error}
-          </Alert>
-        )}
-        <Group justify="flex-end" gap="sm">
-          <Button variant="default" disabled={busy} onClick={onCancel} type="button">
+      <Modal.Overlay />
+      <Modal.Content aria-busy={busy}>
+        <Modal.Header>
+          <Modal.Title>{title}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Stack gap="md">
+            {children}
+            {error && (
+              <Alert color="danger" role="alert">
+                {error}
+              </Alert>
+            )}
+          </Stack>
+        </Modal.Body>
+        <Group component="footer" className={layout.footer} justify="flex-end" gap="xs" p="md">
+          <Button
+            data-autofocus={(danger && !formId && !busy) || undefined}
+            variant="default"
+            disabled={busy}
+            onClick={onCancel}
+            type="button"
+          >
             {cancelLabel}
           </Button>
           {alternateLabel && onAlternate && (
@@ -105,7 +120,7 @@ export function ConfirmationDialog({
             {busy ? busyLabel : confirmLabel}
           </Button>
         </Group>
-      </Stack>
-    </Modal>
+      </Modal.Content>
+    </Modal.Root>
   );
 }

@@ -1,0 +1,36 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content > header {
+  flex-shrink: 0;
+}
+
+.body {
+  flex: auto;
+  min-block-size: 0;
+  overflow-y: auto;
+}
+
+.footer {
+  flex-shrink: 0;
+  max-block-size: 50%;
+  overflow-y: auto;
+  border-block-start: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.footer > :global(.mantine-Button-root) {
+  max-inline-size: 100%;
+  min-block-size: var(--button-height);
+  block-size: auto;
+}
+
+.footer :global(.mantine-Button-label) {
+  block-size: auto;
+  line-height: var(--mantine-line-height-sm);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

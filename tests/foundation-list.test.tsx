@@ -56,6 +56,40 @@ describe("shared list toolbar", () => {
     expect(submit).toHaveBeenCalledOnce();
   });
 
+  it("keeps an applied search visible and clearable when the draft is emptied", () => {
+    function SearchExample() {
+      const [draft, setDraft] = useState("NFV-006");
+      const [applied, setApplied] = useState("NFV-006");
+      return (
+        <ListToolbar
+          search={{
+            label: "Record search",
+            value: draft,
+            appliedValue: applied,
+            formatAppliedValue: (query) => `Applied search: ${query}`,
+            onChange: setDraft,
+            onSubmit: setApplied,
+            clearLabel: "Clear search",
+            onClear: () => {
+              setDraft("");
+              setApplied("");
+            },
+          }}
+        />
+      );
+    }
+
+    render(<SearchExample />);
+    const input = screen.getByRole("searchbox", { name: "Record search" });
+    expect(screen.queryByText("Applied search: NFV-006")).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input).toHaveAccessibleDescription("Applied search: NFV-006");
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.queryByText("Applied search: NFV-006")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+  });
+
   it("exposes the active filter count and resets caller-owned controls", () => {
     function FilterExample() {
       const [active, setActive] = useState(true);
@@ -113,6 +147,29 @@ describe("shared list toolbar", () => {
     fireEvent.click(refresh);
     expect(onRefresh).toHaveBeenCalledOnce();
   });
+
+  it("locks controls that change the list while busy and leaves the primary action available", () => {
+    const submit = vi.fn();
+    const add = vi.fn();
+    render(
+      <ListToolbar
+        busy
+        search={{ label: "Record search", value: "draft", onChange: vi.fn(), onSubmit: submit }}
+        filterPopover={{ label: "Filters", children: "Filter fields" }}
+        refresh={{ label: "Refresh records", onRefresh: vi.fn() }}
+        primaryAction={<Button onClick={add}>Create record</Button>}
+      />,
+    );
+    const input = screen.getByRole("searchbox", { name: "Record search" });
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Record search" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Filters" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refresh records" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("search"));
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create record" }));
+    expect(add).toHaveBeenCalledOnce();
+  });
 });
 
 describe("shared list footer", () => {
@@ -146,9 +203,59 @@ describe("shared list footer", () => {
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.queryByText("Trang 1/1")).not.toBeInTheDocument();
   });
+
+  it("shares the native page controls between numbered and compact presentations", () => {
+    const onPage = vi.fn();
+    render(
+      <Pagination
+        {...props}
+        page={4}
+        total={180}
+        resultCountLabel="{count} kết quả"
+        onPage={onPage}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Trang 4/6" });
+    expect(within(nav).getByText("4 / 6")).toHaveAttribute("aria-hidden", "true");
+    expect(within(nav).queryByText("Trang 4/6")).not.toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "4" })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(within(nav).getByRole("button", { name: "Trước" }));
+    fireEvent.click(within(nav).getByRole("button", { name: "Sau" }));
+    expect(onPage.mock.calls).toEqual([[3], [5]]);
+  });
 });
 
 describe("shared list states", () => {
+  it("uses a caller-provided loading skeleton and allows a recovery action for no results", () => {
+    const onClear = vi.fn();
+    const props = {
+      empty: "No records",
+      error: "",
+      hasData: false,
+      isEmpty: true,
+      loadingLabel: "Loading records",
+      noResults: "Nothing matches",
+      onRetry: vi.fn(),
+      retryLabel: "Retry",
+    };
+    const { rerender } = render(
+      <ListState {...props} loading loadingPlaceholder={<div data-testid="skeleton" />} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading records");
+    expect(screen.getByTestId("skeleton")).toBeVisible();
+    rerender(
+      <ListState
+        {...props}
+        loading={false}
+        description="Change the query to see more records."
+        action={<Button onClick={onClear}>Clear query</Button>}
+      />,
+    );
+    expect(screen.getByText("Change the query to see more records.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Clear query" }));
+    expect(onClear).toHaveBeenCalledOnce();
+  });
+
   it("distinguishes loading, refreshing, empty, no results, and errors with retry", () => {
     const retry = vi.fn();
     const props = {

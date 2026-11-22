@@ -4,6 +4,7 @@ import {
   Anchor,
   Box,
   Button,
+  Checkbox,
   Drawer,
   getDefaultZIndex,
   Group,
@@ -16,10 +17,22 @@ import { useMediaQuery } from "@mantine/hooks";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import layout from "@/components/overlay-layout.module.css";
 import { ShowcaseComponents } from "./component-library";
 import { SampleRecordList } from "./record-list";
-import { SampleRecordDetails, SampleRecordEditor, type RecordAction } from "./record-overlays";
-import { initialRecords, recordHref, recordId, type RecordFields } from "./sample-records";
+import {
+  SampleRecordActions,
+  SampleRecordDetails,
+  SampleRecordEditor,
+  type RecordAction,
+} from "./record-overlays";
+import {
+  extendedRecords,
+  initialRecords,
+  recordHref,
+  recordId,
+  type RecordFields,
+} from "./sample-records";
 
 type Dialog = RecordAction | "create" | "info";
 
@@ -30,13 +43,16 @@ function activeRecordId() {
 
 export function UiFoundationShowcase() {
   const mobile = useMediaQuery("(max-width: 47.99em)");
-  const [records, setRecords] = useState(initialRecords);
+  const [records, setRecords] = useState(() => [...initialRecords, ...extendedRecords]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialogError, setDialogError] = useState("");
+  const [failNextRequest, setFailNextRequest] = useState(false);
+  const [readOnlyDetail, setReadOnlyDetail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [focusAction, setFocusAction] = useState<RecordAction | null>(null);
   const [message, setMessage] = useState("");
-  const nextRecordNumber = useRef(initialRecords.length + 1);
+  const nextRecordNumber = useRef(initialRecords.length + extendedRecords.length + 1);
   const detailTrigger = useRef<HTMLAnchorElement | null>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const detailActionTrigger = useRef<HTMLButtonElement>(null);
@@ -113,6 +129,7 @@ export function UiFoundationShowcase() {
     if (selected && (action === "edit" || action === "confirm" || action === "remove")) {
       setFocusAction(action);
     }
+    setDialogError("");
     setDialog(action);
   }
 
@@ -131,10 +148,16 @@ export function UiFoundationShowcase() {
 
   function simulateUpdate(update: () => void) {
     if (submission.current !== null) return;
+    setDialogError("");
     setBusy(true);
     submission.current = window.setTimeout(() => {
       submission.current = null;
       setBusy(false);
+      if (failNextRequest) {
+        setFailNextRequest(false);
+        setDialogError("Sample request failed. Try again.");
+        return;
+      }
       update();
       closeDialog();
     }, 650);
@@ -144,9 +167,7 @@ export function UiFoundationShowcase() {
     simulateUpdate(() => {
       if (dialog === "edit" && selected) {
         setRecords((current) =>
-          current.map((record) =>
-            record.id === selected.id ? { ...fields, id: record.id } : record,
-          ),
+          current.map((record) => (record.id === selected.id ? { ...record, ...fields } : record)),
         );
         setMessage("Sample record updated.");
       } else {
@@ -157,27 +178,29 @@ export function UiFoundationShowcase() {
     });
   }
 
-  function confirmAction() {
+  function confirmAction(keepAsDraft = false) {
     if (!dialogRecord) return;
     simulateUpdate(() => {
-      if (dialog === "remove") {
+      if (dialog === "remove" && !keepAsDraft) {
         setRecords((current) => current.filter((record) => record.id !== dialogRecord.id));
         if (selected) closeDetail();
         setMessage("Sample record removed.");
       } else {
         setRecords((current) =>
           current.map((record) =>
-            record.id === dialogRecord.id ? { ...record, status: "success" } : record,
+            record.id === dialogRecord.id
+              ? { ...record, status: keepAsDraft ? "neutral" : "success" }
+              : record,
           ),
         );
-        setMessage("Sample review confirmed.");
+        setMessage(keepAsDraft ? "Sample record kept as a draft." : "Sample review confirmed.");
       }
     });
   }
 
-  const details = selected && (
-    <SampleRecordDetails
-      record={selected}
+  const details = selected && <SampleRecordDetails record={selected} />;
+  const detailActions = selected && !readOnlyDetail && (
+    <SampleRecordActions
       focusAction={focusAction}
       focusActionRef={detailActionTrigger}
       onAction={openDialog}
@@ -192,9 +215,14 @@ export function UiFoundationShowcase() {
             <Title order={1}>UI Foundation</Title>
             <Text c="dimmed">Interactive Mantine examples and sample records for NFV Admin.</Text>
             <Group component="nav" aria-label="Showcase sections" gap="md">
-              <Anchor href="#sample-records">Sample records</Anchor>
-              <Anchor href="#detail-and-dialogs">Details and dialogs</Anchor>
-              <Anchor href="#colors-and-tokens">Component library</Anchor>
+              <Anchor href="#list-toolbar">ListToolbar</Anchor>
+              <Anchor href="#data-list">Data List</Anchor>
+              <Anchor href="#detail-examples">Detail and Drawer</Anchor>
+              <Anchor href="#modal-examples">Modal and ConfirmationDialog</Anchor>
+              <Anchor href="#colors-and-tokens">Color and typography</Anchor>
+              <Anchor href="#form-examples">Form controls</Anchor>
+              <Anchor href="#action-examples">Buttons and navigation</Anchor>
+              <Anchor href="#feedback-examples">Semantic feedback</Anchor>
             </Group>
           </Stack>
 
@@ -210,40 +238,63 @@ export function UiFoundationShowcase() {
             />
           </Stack>
 
-          <Stack component="section" gap="sm" aria-labelledby="detail-and-dialogs">
+          <Stack component="section" gap="md" aria-labelledby="detail-and-dialogs">
             <Title id="detail-and-dialogs" order={2}>
               Details and dialogs
             </Title>
-            <Text c="dimmed">
-              Open a sample record to try the detail view, editing and a confirmation inside the
-              Drawer.
-            </Text>
-            <Group gap="xs">
-              <Button
-                variant="default"
-                onClick={(event) => openDialog("create", event.currentTarget)}
-              >
-                Create modal
-              </Button>
-              <Button
-                variant="default"
-                disabled={!records.length}
-                onClick={(event) => openDialog("confirm", event.currentTarget)}
-              >
-                Confirmation
-              </Button>
-              <Button
-                color="danger"
-                variant="light"
-                disabled={!records.length}
-                onClick={(event) => openDialog("remove", event.currentTarget)}
-              >
-                Destructive confirmation
-              </Button>
-              <Button variant="subtle" onClick={(event) => openDialog("info", event.currentTarget)}>
-                Information
-              </Button>
-            </Group>
+            <Stack component="section" gap="xs" aria-labelledby="detail-examples">
+              <Title id="detail-examples" order={3}>
+                Detail and Drawer
+              </Title>
+              <Text c="dimmed">
+                Open a record to try editing and confirmation inside the Drawer. NFV-004 has long
+                field notes.
+              </Text>
+              <Checkbox
+                label="Read-only detail"
+                checked={readOnlyDetail}
+                onChange={(event) => setReadOnlyDetail(event.currentTarget.checked)}
+              />
+            </Stack>
+            <Stack component="section" gap="xs" aria-labelledby="modal-examples">
+              <Title id="modal-examples" order={3}>
+                Modal and ConfirmationDialog
+              </Title>
+              <Checkbox
+                label="Fail next sample request"
+                checked={failNextRequest}
+                onChange={(event) => setFailNextRequest(event.currentTarget.checked)}
+              />
+              <Group gap="xs">
+                <Button
+                  variant="default"
+                  onClick={(event) => openDialog("create", event.currentTarget)}
+                >
+                  Create modal
+                </Button>
+                <Button
+                  variant="default"
+                  disabled={!records.length}
+                  onClick={(event) => openDialog("confirm", event.currentTarget)}
+                >
+                  Confirmation
+                </Button>
+                <Button
+                  color="danger"
+                  variant="light"
+                  disabled={!records.length}
+                  onClick={(event) => openDialog("remove", event.currentTarget)}
+                >
+                  Destructive confirmation
+                </Button>
+                <Button
+                  variant="subtle"
+                  onClick={(event) => openDialog("info", event.currentTarget)}
+                >
+                  Information
+                </Button>
+              </Group>
+            </Stack>
           </Stack>
 
           <ShowcaseComponents />
@@ -266,10 +317,22 @@ export function UiFoundationShowcase() {
           >
             Back to sample records
           </Button>
-          <Title order={1} id="mobile-record-title" ref={mobileHeading} tabIndex={-1}>
-            {selected.name}
-          </Title>
+          <Stack gap={4}>
+            <Title
+              order={1}
+              id="mobile-record-title"
+              ref={mobileHeading}
+              tabIndex={-1}
+              style={{ overflowWrap: "anywhere" }}
+            >
+              {selected.name}
+            </Title>
+            <Text size="sm" c="dimmed">
+              {selected.id}
+            </Text>
+          </Stack>
           {details}
+          {detailActions}
         </Stack>
       )}
 
@@ -284,6 +347,7 @@ export function UiFoundationShowcase() {
           trapFocus={!dialog}
           closeOnEscape={!dialog}
           closeOnClickOutside={!dialog}
+          classNames={{ content: layout.content, body: layout.body }}
         >
           <Drawer.Overlay />
           <Drawer.Content
@@ -291,7 +355,12 @@ export function UiFoundationShowcase() {
             aria-hidden={dialog ? true : undefined}
           >
             <Drawer.Header>
-              <Drawer.Title>{selected?.name}</Drawer.Title>
+              <Stack gap={4} miw={0}>
+                <Drawer.Title>{selected?.name}</Drawer.Title>
+                <Text size="sm" c="dimmed">
+                  {selected?.id}
+                </Text>
+              </Stack>
               <Drawer.CloseButton
                 aria-label="Close sample detail"
                 ref={drawerClose}
@@ -299,6 +368,7 @@ export function UiFoundationShowcase() {
               />
             </Drawer.Header>
             <Drawer.Body>{details}</Drawer.Body>
+            {detailActions}
           </Drawer.Content>
         </Drawer.Root>
       )}
@@ -307,6 +377,7 @@ export function UiFoundationShowcase() {
         <SampleRecordEditor
           record={dialog === "edit" ? selected : undefined}
           busy={busy}
+          error={dialogError}
           onClose={closeDialog}
           onSave={saveRecord}
         />
@@ -319,8 +390,12 @@ export function UiFoundationShowcase() {
           busyLabel={dialog === "remove" ? "Removing…" : "Confirming…"}
           danger={dialog === "remove"}
           busy={busy}
+          size={400}
+          error={dialogError}
           onCancel={closeDialog}
-          onConfirm={confirmAction}
+          onConfirm={() => confirmAction()}
+          alternateLabel={dialog === "remove" ? "Keep as draft" : undefined}
+          onAlternate={dialog === "remove" ? () => confirmAction(true) : undefined}
           returnFocusRef={dialogReturnFocus}
           fallbackFocusRef={dialogFallback}
         >
@@ -334,27 +409,35 @@ export function UiFoundationShowcase() {
         </ConfirmationDialog>
       )}
       {dialog === "info" && (
-        <Modal
+        <Modal.Root
           opened
-          title="About sample records"
           onClose={closeDialog}
+          size={400}
           returnFocus={false}
-          closeButtonProps={{ "aria-label": "Close information" }}
+          classNames={{ content: layout.content, body: layout.body }}
         >
-          <Stack gap="md">
-            <Text>
-              Changes here apply to the sample data in this browser session. Reload the page to
-              restore the original examples.
-            </Text>
-            <Group justify="flex-end">
+          <Modal.Overlay />
+          <Modal.Content>
+            <Modal.Header>
+              <Modal.Title>About sample records</Modal.Title>
+              <Modal.CloseButton aria-label="Close information" />
+            </Modal.Header>
+            <Modal.Body>
+              <Text>
+                Changes here apply to the sample data in this browser session. Reload the page to
+                restore the original examples.
+              </Text>
+            </Modal.Body>
+            <Group component="footer" className={layout.footer} justify="flex-end" gap="xs" p="md">
               <Button variant="default" onClick={closeDialog}>
                 Done
               </Button>
             </Group>
-          </Stack>
-        </Modal>
+          </Modal.Content>
+        </Modal.Root>
       )}
       <Box
+        aria-label="Sample mutation result"
         aria-live="polite"
         component="output"
         style={{

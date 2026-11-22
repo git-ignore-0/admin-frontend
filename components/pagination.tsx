@@ -1,6 +1,7 @@
 "use client";
 
-import { Group, Pagination as MantinePagination, Text } from "@mantine/core";
+import { Box, Group, Pagination as MantinePagination, Text } from "@mantine/core";
+import classes from "./pagination.module.css";
 
 /** Existing callers pass record totals, while Mantine expects a page count. */
 export function Pagination({
@@ -42,29 +43,39 @@ export function Pagination({
       ms={resultCountLabel === undefined ? undefined : "auto"}
       mt={resultCountLabel === undefined ? spacing : undefined}
     >
-      <Text size="sm" c="dimmed">
-        {label}
-      </Text>
-      <MantinePagination
+      {resultCountLabel === undefined && (
+        <Text size="sm" c="dimmed">
+          {label}
+        </Text>
+      )}
+      <MantinePagination.Root
         total={pages}
         value={page}
         onChange={onPage}
         disabled={disabled}
         size="sm"
-        gap="xs"
-        siblings={0}
+        siblings={resultCountLabel === undefined ? 0 : 1}
         boundaries={1}
-        getControlProps={(control) => ({
-          "aria-label":
-            control === "previous" ? previousLabel : control === "next" ? nextLabel : control,
-        })}
-      />
+      >
+        <Group gap="xs" wrap={resultCountLabel === undefined ? "wrap" : "nowrap"}>
+          <MantinePagination.Previous aria-label={previousLabel} />
+          <Box className={classes.numbered}>
+            <MantinePagination.Items />
+          </Box>
+          {resultCountLabel !== undefined && (
+            <Text size="sm" c="dimmed" aria-hidden className={classes.compact}>
+              {page} / {pages}
+            </Text>
+          )}
+          <MantinePagination.Next aria-label={nextLabel} />
+        </Group>
+      </MantinePagination.Root>
     </Group>
   );
 
   if (resultCountLabel === undefined) return navigation || null;
   return (
-    <Group justify="space-between" gap="sm" mt={spacing}>
+    <Group justify="space-between" gap="sm" className={classes.footer}>
       <ListResultSummary
         count={total}
         label={resultCountLabel}

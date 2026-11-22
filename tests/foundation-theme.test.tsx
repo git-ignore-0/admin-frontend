@@ -3,13 +3,25 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Drawer,
+  Input,
   MantineProvider,
   Modal,
+  MultiSelect,
   Notification,
+  NumberInput,
+  Pagination,
+  PasswordInput,
+  Radio,
+  Select,
+  Switch,
+  Table,
   TextInput,
+  Textarea,
 } from "@mantine/core";
-import { cleanup, render, screen } from "@testing-library/react";
+import { DateInput, DatePicker, DatePickerInput, DateTimePicker, TimeInput } from "@mantine/dates";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { adminCssVariablesResolver, adminTheme, adminTokens } from "@/lib/admin-theme";
 import classes from "@/lib/admin-theme.module.css";
@@ -110,7 +122,8 @@ describe("admin color foundation", () => {
       "text-inverse": "#ffffff",
       border: "#e2e6eb",
       "border-strong": "#ced4da",
-      "control-border": "#6d7b8b",
+      "control-border": "#ced4da",
+      "control-border-hover": "#b9c3cc",
       primary: "#1f7c4d",
       "primary-hover": "#17633d",
       "primary-soft": "#eaf6ef",
@@ -118,7 +131,7 @@ describe("admin color foundation", () => {
       "surface-selected": "#eaf6ef",
       "surface-disabled": "#edf0f2",
       "text-disabled": "#687483",
-      focus: "#1a73e8",
+      focus: "#1f7c4d",
       overlay: "rgba(32, 41, 56, 0.25)",
     });
     for (const [name, value] of Object.entries(adminTokens)) {
@@ -168,7 +181,9 @@ describe("admin color foundation", () => {
       const semanticText = { color: `var(--${role})` };
       expect(screen.getByText("Notification")).toHaveStyle(semanticText);
       expect(screen.getByText("Notice")).toHaveStyle(semanticText);
-      expect(screen.getByRole("button", { name: "Dismiss notification" })).toHaveStyle(semanticText);
+      expect(screen.getByRole("button", { name: "Dismiss notification" })).toHaveStyle(
+        semanticText,
+      );
       expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(readColor("--text-inverse"), foreground)).toBeGreaterThanOrEqual(4.5);
     },
@@ -194,10 +209,12 @@ describe("admin color foundation", () => {
         expect(button).toHaveClass(classes.defaultControl);
         expect(icon).toHaveClass(classes.defaultControl);
         expect(button).toHaveStyle({
-          "--button-bd": "calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border)",
+          "--button-bd":
+            "calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border)",
         });
         expect(icon).toHaveStyle({
-          "--ai-bd": "calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border)",
+          "--ai-bd":
+            "calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border)",
         });
         continue;
       }
@@ -242,17 +259,17 @@ describe("admin color foundation", () => {
     }
   });
 
-  it("meets non-text contrast at control and focus boundaries and records the inactive exception", () => {
+  it("keeps Forest focus visible and records the contrast limits of the approved light borders", () => {
     renderTheme(<TextInput label="Disabled" disabled />);
+    const surface = readColor("--surface");
+    expect(contrast(readColor("--control-border"), surface)).toBeCloseTo(1.49, 2);
+    expect(contrast(readColor("--control-border-hover"), surface)).toBeCloseTo(1.79, 2);
     for (const background of [
       "--surface",
       "--background",
       "--surface-hover",
       "--surface-selected",
     ]) {
-      expect(contrast(readColor("--control-border"), readColor(background))).toBeGreaterThanOrEqual(
-        3,
-      );
       expect(contrast(readColor("--focus"), readColor(background))).toBeGreaterThanOrEqual(3);
     }
     const disabledContrast = contrast(
@@ -260,6 +277,156 @@ describe("admin color foundation", () => {
       readColor("--surface-disabled"),
     );
     expect(disabledContrast).toBeCloseTo(4.16, 2);
+  });
+
+  it("uses one input styling contract across native fields and date triggers", () => {
+    renderTheme(
+      <>
+        <Input.Wrapper label="Base field" id="base-field">
+          <Input id="base-field" />
+        </Input.Wrapper>
+        <TextInput label="Text" defaultValue="Entered" />
+        <Textarea label="Notes" />
+        <NumberInput label="Amount" />
+        <DateInput label="Date" />
+        <DatePickerInput label="Date trigger" placeholder="Choose a date" />
+        <DateTimePicker label="Date and time" placeholder="Choose a date and time" />
+        <TimeInput label="Time" />
+        <PasswordInput label="Password" />
+        <MultiSelect label="Multiple" data={["Kale"]} searchable />
+      </>,
+    );
+    for (const label of [
+      "Base field",
+      "Text",
+      "Notes",
+      "Amount",
+      "Date",
+      "Date trigger",
+      "Date and time",
+      "Time",
+    ]) {
+      expect(screen.getByLabelText(label)).toHaveClass(classes.input);
+      expect(screen.getByLabelText(label).closest(`.${classes.inputWrapper}`)).toHaveAttribute(
+        "data-variant",
+        "default",
+      );
+    }
+    for (const label of ["Password", "Multiple"]) {
+      expect(
+        screen.getByLabelText(label, { selector: "input" }).closest(`.${classes.input}`),
+      ).toBeInTheDocument();
+    }
+    expect(screen.getByLabelText("Text")).toHaveValue("Entered");
+  });
+
+  it("preserves native read-only, disabled and error behavior with the theme slots", () => {
+    renderTheme(
+      <>
+        <TextInput label="Failure" error="Required value" />
+        <PasswordInput label="Disabled password" disabled />
+        <TextInput label="Read-only text" readOnly value="NFV-001" />
+        <Select label="Read-only selection" readOnly data={["Kale"]} value="Kale" />
+        <Select label="Editable selection" data={["Kale"]} />
+        <MultiSelect label="Read-only choices" readOnly data={["Kale"]} value={["Kale"]} />
+        <Checkbox label="Checkbox" disabled />
+        <Radio label="Radio" error="Pick a valid option" />
+        <Switch label="Switch" defaultChecked />
+      </>,
+    );
+    const error = screen.getByRole("textbox", { name: "Failure" });
+    expect(error).toHaveAttribute("aria-invalid", "true");
+    expect(error).toHaveAccessibleDescription("Required value");
+    expect(error.closest(`.${classes.inputWrapper}`)).toHaveAttribute("data-error");
+    const password = screen.getByLabelText("Disabled password");
+    expect(password).toBeDisabled();
+    expect(password.closest(`.${classes.input}`)).toHaveAttribute("data-disabled");
+    expect(screen.getByLabelText("Read-only text")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Read-only selection", { selector: "input" })).toHaveClass(
+      classes.readOnlyInput,
+    );
+    expect(screen.getByLabelText("Editable selection", { selector: "input" })).not.toHaveClass(
+      classes.readOnlyInput,
+    );
+    expect(
+      screen
+        .getByLabelText("Read-only choices", { selector: "input" })
+        .closest(`.${classes.input}`),
+    ).toHaveClass(classes.readOnlyInput);
+    expect(screen.getByRole("checkbox", { name: "Checkbox" })).toHaveClass(classes.choice);
+    expect(screen.getByRole("checkbox", { name: "Checkbox" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Radio" })).toHaveClass(classes.choice);
+    const toggle = screen.getByRole("switch", { name: "Switch" });
+    expect(toggle).toBeChecked();
+    expect(toggle.nextElementSibling).toHaveClass(classes.switchTrack);
+  });
+
+  it("styles selected and keyboard-current options inside the portalled dropdown", () => {
+    const { container } = renderTheme(
+      <Select label="Crop" data={["Kale", "Yam"]} defaultValue="Kale" withScrollArea={false} />,
+    );
+    const target = screen.getByLabelText("Crop", { selector: "input" });
+    expect(target).toHaveAttribute("aria-expanded", "false");
+    fireEvent.keyDown(target, { key: "ArrowDown", code: "ArrowDown" });
+    expect(target).toHaveAttribute("data-expanded");
+    const kale = screen.getByRole("option", { name: "Kale" });
+    expect(container).not.toContainElement(kale);
+    expect(kale).toHaveAttribute("data-checked");
+    expect(kale).toHaveClass(classes.comboboxOption);
+    fireEvent.keyDown(target, { key: "ArrowDown", code: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Yam" })).toHaveAttribute("data-combobox-selected");
+  });
+
+  it("uses native focus and selection for calendar and pagination controls", () => {
+    renderTheme(
+      <>
+        <DatePicker defaultValue="2026-11-22" defaultDate="2026-11-22" />
+        <Pagination total={3} />
+      </>,
+    );
+    const day = screen.getByRole("button", { name: /22 November 2026/ });
+    expect(day).toHaveAttribute("data-selected");
+    expect(day).toHaveClass(classes.calendarDay, classes.focusRing);
+    expect(screen.getByRole("button", { name: "1" })).toHaveAttribute("data-active");
+    expect(screen.getByRole("button", { name: "2" })).toHaveClass(
+      classes.paginationControl,
+      classes.focusRing,
+    );
+  });
+
+  it("applies the shared typography, spacing and row states through native Table slots", () => {
+    renderTheme(
+      <Table aria-label="Records">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Record</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          <Table.Tr data-selected="true">
+            <Table.Td>Selected</Table.Td>
+          </Table.Tr>
+          <Table.Tr>
+            <Table.Td>Ordinary</Table.Td>
+          </Table.Tr>
+        </Table.Tbody>
+      </Table>,
+    );
+    expect(screen.getByRole("table", { name: "Records" })).toHaveStyle({
+      fontSize: "var(--mantine-font-size-md)",
+      "--table-horizontal-spacing": "var(--mantine-spacing-md)",
+      "--table-vertical-spacing": "var(--mantine-spacing-sm)",
+      "--table-border-color": "var(--border)",
+      "--table-highlight-on-hover-color": "var(--surface-hover)",
+    });
+    expect(screen.getByRole("columnheader", { name: "Record" })).toHaveStyle({
+      backgroundColor: "var(--background)",
+      color: "var(--neutral)",
+      fontSize: "var(--mantine-font-size-sm)",
+      fontWeight: "600",
+    });
+    expect(screen.getByRole("row", { name: "Selected" })).toHaveClass(classes.tableRow);
+    expect(screen.getByRole("row", { name: "Ordinary" })).toHaveAttribute("data-hover");
   });
 
   it("uses the foundation surfaces and overlay for portalled dialogs and compound drawers", () => {
@@ -288,7 +455,10 @@ describe("admin color foundation", () => {
     const drawer = screen.getByRole("dialog", { name: "Details" });
     expect(container).not.toContainElement(drawer);
     expect(drawer).toHaveStyle({ backgroundColor: "var(--background)", color: "var(--text)" });
-    expect(screen.getByTestId("drawer-header")).toHaveStyle({ backgroundColor: "var(--surface)" });
+    expect(screen.getByTestId("drawer-header")).toHaveStyle({
+      backgroundColor: "var(--surface)",
+      padding: "var(--mb-padding, var(--mantine-spacing-md))",
+    });
     expect(screen.getByTestId("drawer-overlay").className).toContain("dialogOverlay");
     unmount();
 

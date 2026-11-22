@@ -1,10 +1,19 @@
-.focusRing:focus-visible {
+.focusRing:focus-visible:not(:disabled, [data-disabled]) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
 .defaultControl {
   --mantine-color-default-border: var(--control-border);
+  --mantine-color-default-hover: var(--surface);
+}
+
+.defaultControl:focus:not([data-loading], :disabled, [data-disabled]) {
+  --mantine-color-default-border: var(--focus);
+}
+
+.defaultControl:is(:disabled, [data-disabled]):not([data-loading]) {
+  border-color: var(--border);
 }
 
 [data-mantine-color-scheme="light"] .inputWrapper[data-variant="default"]:not([data-error]) {
@@ -15,11 +24,34 @@
   --input-placeholder-color: var(--text-muted);
 }
 
-.inputWrapper:is([data-variant="default"], [data-variant="filled"]) .input {
-  --input-bd-focus: var(--focus);
+.inputWrapper[data-error] .input {
+  --input-color: var(--text);
+  --input-placeholder-color: var(--text-subtle);
 }
 
-.inputWrapper .input:is(:focus-visible, :has(input:focus-visible)) {
+.inputWrapper[data-error] .inputPlaceholder {
+  --input-placeholder-color: var(--text-subtle);
+}
+
+/* A composite input can mark its visible shell directly, or expose a native inner field. */
+[data-mantine-color-scheme="light"]
+  .inputWrapper[data-variant="default"]:not([data-error]):has(
+    > .input:is(.readOnlyInput, [data-read-only], [readonly]:not([aria-haspopup])),
+    > .input input[readonly]:not([data-pointer])
+  ) {
+  --input-bg: var(--surface-subtle);
+  --input-bd: var(--border);
+}
+
+.inputWrapper:is([data-variant="default"], [data-variant="filled"]):not(
+    [data-error],
+    [data-disabled]
+  )
+  .input[data-expanded] {
+  --input-bd: var(--focus);
+}
+
+.inputWrapper .input:is(:focus-visible, :has(input:focus-visible)):not(:disabled, [data-disabled]) {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
@@ -28,32 +60,64 @@
   opacity: 1;
 }
 
-[data-mantine-color-scheme="light"]
-  .choice:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]) {
-  border-color: var(--control-border);
+.inputWrapper[data-variant="default"] .input:is(:disabled, [data-disabled], :has(input:disabled)) {
+  --input-bd: var(--border);
 }
 
-.switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack {
-  --switch-bg: var(--surface);
-  --switch-text-color: var(--text-muted);
-  --switch-thumb-bg: var(--control-border);
-  box-shadow: inset 0 0 0 1px var(--control-border);
-}
-
-.switchInput:focus-visible + .switchTrack {
-  outline-color: var(--focus);
-}
-
-.segmentInput[data-focus-ring="auto"]:focus-visible + .segmentLabel {
-  --segmented-control-outline: 2px solid var(--focus);
-}
-
+.choice:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]),
 .paginationControl:not([data-active], :disabled, [data-disabled]) {
   border-color: var(--control-border);
 }
 
+.paginationControl:is(:disabled, [data-disabled]):not([data-active]) {
+  background-color: var(--surface-disabled);
+  border-color: var(--border);
+  color: var(--text-disabled);
+  opacity: 1;
+}
+
+.switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack:not([data-error]) {
+  --switch-bg: var(--surface);
+  --switch-text-color: var(--text-muted);
+  --switch-thumb-bg: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--switch-border, var(--control-border));
+}
+
+.switchInput:not(:disabled, [data-disabled]) + .switchTrack[data-error] {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+@media (hover: hover) {
+  .defaultControl:hover:not(:focus, [data-loading], :disabled, [data-disabled]) {
+    --mantine-color-default-border: var(--control-border-hover);
+  }
+
+  .inputWrapper[data-variant="default"]:not([data-error], [data-disabled]):hover {
+    --input-bd: var(--control-border-hover);
+  }
+
+  .choice:hover:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]),
+  .paginationControl:hover:not([data-active], :disabled, [data-disabled]) {
+    border-color: var(--control-border-hover);
+  }
+
+  .switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack:hover {
+    --switch-border: var(--control-border-hover);
+  }
+
+  .comboboxOption:hover:not(
+      [data-combobox-selected],
+      [data-combobox-disabled],
+      [data-checked],
+      [data-combobox-active]
+    ) {
+    background-color: var(--surface-hover);
+  }
+}
+
 .tableRow[data-selected="true"] {
   background-color: var(--surface-selected);
+  --table-highlight-on-hover-color: var(--surface-selected);
 }
 
 .dialogOverlay {
@@ -64,14 +128,12 @@
   --menu-item-hover: var(--surface-hover);
 }
 
-.comboboxOption[data-checked] {
+.comboboxOption:is([data-checked], [data-combobox-active], [data-combobox-selected]) {
   background-color: var(--surface-selected);
-  color: var(--text);
+  color: var(--primary-hover);
 }
 
 .comboboxOption[data-combobox-selected] {
-  background-color: var(--surface-selected);
-  color: var(--text);
   box-shadow: inset 0 0 0 2px var(--focus);
 }
 
