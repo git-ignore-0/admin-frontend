@@ -1,12 +1,15 @@
 import { MantineProvider, Tabs } from "@mantine/core";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminShell } from "@/components/admin-shell";
 import { UiFoundationShowcase } from "@/components/ui-foundation-showcase";
 import { SampleRecordList } from "@/components/ui-foundation-showcase/record-list";
 import {
   initialRecords,
   recordCategories,
 } from "@/components/ui-foundation-showcase/sample-records";
+import { adminDictionaries } from "@/lib/admin-i18n";
 
 const firstRecord = "Khảo sát độ ẩm lớp phủ";
 const originalMatchMedia = window.matchMedia;
@@ -16,12 +19,19 @@ const tabLabels = {
   toolbar: "2.3. List Toolbar",
   list: "2.4. Data List",
   details: "2.5. Detail & Dialog",
+  navigation: "2.6. Header & Navigation",
 };
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 beforeEach(() => window.history.replaceState(null, "", "/dev/ui-foundation"));
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  delete document.documentElement.dataset.adminPageSession;
   window.history.replaceState(null, "", "/");
 });
 
@@ -56,7 +66,7 @@ function showTab(tab: keyof typeof tabLabels) {
   fireEvent.click(screen.getByRole("tab", { name: tabLabels[tab] }));
 }
 
-it("uses native keyboard navigation between five independent review panels", () => {
+it("uses native keyboard navigation between six independent review panels", () => {
   render(<UiFoundationShowcase />);
   expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(
     Object.values(tabLabels),
@@ -74,6 +84,61 @@ it("uses native keyboard navigation between five independent review panels", () 
   showTab("list");
   expect(screen.getByRole("table", { name: "Sample records" })).toBeVisible();
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+});
+
+it("reviews the real AppShell Header without changing it for tabs or nested overlays", async () => {
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminShell
+        user={{ name: "Local admin", email: null, login_phone_number: null }}
+        sessionBinding="showcase-shell"
+      >
+        <UiFoundationShowcase />
+      </AdminShell>
+    </AdminI18nProvider>,
+  );
+  const header = within(screen.getByRole("banner"));
+  const rootLabel = adminDictionaries.en.breadcrumb.uiFoundation;
+  const current = header.getByText(rootLabel);
+  expect(current).toHaveAttribute("aria-current", "page");
+  expect(header.queryByText("NFV Admin")).not.toBeInTheDocument();
+  for (const tab of Object.keys(tabLabels) as (keyof typeof tabLabels)[]) {
+    showTab(tab);
+    expect(header.getByText(rootLabel)).toBe(current);
+  }
+
+  const openDetail = screen.getByRole("button", { name: "Open sample detail" });
+  fireEvent.click(openDetail);
+  const drawer = await screen.findByRole("dialog", { name: firstRecord });
+  expect(header.getByText(rootLabel)).toBe(current);
+  expect(header.queryByText(firstRecord)).not.toBeInTheDocument();
+  const openConfirmation = within(drawer).getByRole("button", { name: "Confirm review" });
+  fireEvent.click(openConfirmation);
+  const confirmation = await screen.findByRole("dialog", { name: "Confirm sample review" });
+  expect(header.getByText(rootLabel)).toBe(current);
+  fireEvent.keyDown(confirmation, { key: "Escape" });
+  await waitFor(() => expect(openConfirmation).toHaveFocus());
+  fireEvent.click(within(drawer).getByRole("button", { name: "Close sample detail" }));
+  await waitFor(() => expect(openDetail).toHaveFocus());
+  expect(header.getByText(rootLabel)).toBe(current);
+
+  const openModal = screen.getByRole("button", { name: "Open sample modal" });
+  fireEvent.click(openModal);
+  const modal = await screen.findByRole("dialog", { name: "About sample records" });
+  expect(header.getByText(rootLabel)).toBe(current);
+  fireEvent.click(within(modal).getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(openModal).toHaveFocus());
+  expect(header.getByText(rootLabel)).toBe(current);
+  expect(window.location.pathname).toBe("/dev/ui-foundation");
+
+  selectOption("Header preview width", "320 px");
+  selectOption("Header preview context", "Child page with a long name");
+  const preview = within(screen.getByRole("region", { name: "Header width preview" }));
+  expect(preview.getByText(initialRecords[3].name)).toHaveAttribute("aria-current", "page");
+  expect(header.getByText(rootLabel)).toBe(current);
+  selectOption("Header preview context", "Deep navigation");
+  expect(preview.getByText("Edit")).toHaveAttribute("aria-current", "page");
+  expect(header.getByText(rootLabel)).toBe(current);
 });
 
 it("opens a direct record hash in the data list context and closes to that tab", async () => {

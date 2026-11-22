@@ -12,14 +12,18 @@ import {
   Tabs,
   Text,
   Title,
+  VisuallyHidden,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
+import { useOptionalAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import layout from "@/components/overlay-layout.module.css";
 import { ShowcaseColor, ShowcaseComponents } from "./component-library";
+import { HeaderNavigationExamples } from "./navigation-examples";
 import { SampleRecordList } from "./record-list";
+import { readSampleNavigationContext, type SampleNavigationContext } from "./sample-navigation";
 import {
   SampleRecordActions,
   SampleRecordDetails,
@@ -41,6 +45,7 @@ const showcaseTabs = [
   ["toolbar", "2.3. List Toolbar"],
   ["list", "2.4. Data List"],
   ["details", "2.5. Detail & Dialog"],
+  ["navigation", "2.6. Header & Navigation"],
 ] as const;
 type ShowcaseTab = (typeof showcaseTabs)[number][0];
 type OpenDetail = { id: string; readOnly: boolean };
@@ -50,10 +55,14 @@ function activeRecordId() {
   return hash.startsWith("#record-") ? hash.slice("#record-".length) : null;
 }
 
-export function UiFoundationShowcase() {
+export function UiFoundationShowcase({
+  navigationContext,
+}: { navigationContext?: SampleNavigationContext } = {}) {
   const mobile = useMediaQuery("(max-width: 47.99em)");
+  const i18n = useOptionalAdminI18n();
+  const initialTab = navigationContext?.tab ?? "color";
   const [records, setRecords] = useState(() => [...initialRecords, ...extendedRecords]);
-  const [tab, setTab] = useState<ShowcaseTab>("color");
+  const [tab, setTab] = useState<ShowcaseTab>(initialTab);
   const [detail, setDetail] = useState<OpenDetail | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [dialogError, setDialogError] = useState("");
@@ -88,7 +97,9 @@ export function UiFoundationShowcase() {
       const storedDetail = window.history.state?.nfvShowcaseDetail;
       const isExampleEntry = storedDetail?.id === id && id !== null;
       const historyTab = showcaseTabs.find(([value]) => value === storedTab)?.[0];
-      setTab(id && !isExampleEntry ? "list" : (historyTab ?? "color"));
+      const search = new URLSearchParams(window.location.search);
+      const parentTab = readSampleNavigationContext((key) => search.get(key))?.tab;
+      setTab(id && !isExampleEntry ? "list" : (historyTab ?? parentTab ?? initialTab));
       setDetail(id ? { id, readOnly: isExampleEntry && storedDetail.readOnly === true } : null);
       setFocusAction(null);
       setDialog(null);
@@ -104,7 +115,7 @@ export function UiFoundationShowcase() {
       window.removeEventListener("hashchange", readLocation);
       if (submission.current !== null) window.clearTimeout(submission.current);
     };
-  }, []);
+  }, [initialTab]);
 
   const displayedRecordId = selected?.id ?? null;
   useEffect(() => {
@@ -126,6 +137,11 @@ export function UiFoundationShowcase() {
     if (!nextTab || nextTab === tab) return;
     window.history.replaceState({ nfvShowcaseTab: nextTab }, "");
     setTab(nextTab);
+  }
+
+  function reviewTab(value: ShowcaseTab) {
+    tabList.current?.querySelector<HTMLButtonElement>(`[data-review-tab="${value}"]`)?.focus();
+    changeTab(value);
   }
 
   function openDetail(id: string, trigger: HTMLElement, readOnly = false) {
@@ -239,7 +255,9 @@ export function UiFoundationShowcase() {
     <>
       <div hidden={mobileDetailOpen} inert={Boolean(dialog) || drawerOpen || undefined}>
         <Stack gap="xl" miw={0}>
-          <Title order={1}>UI Foundation</Title>
+          <VisuallyHidden component="h1">
+            {i18n?.t.breadcrumb.uiFoundation ?? "UI Foundation"}
+          </VisuallyHidden>
           <Tabs value={tab} onChange={changeTab} keepMounted={false}>
             <Tabs.List aria-label="Foundation sections" ref={tabList}>
               {showcaseTabs.map(([value, label]) => (
@@ -257,17 +275,11 @@ export function UiFoundationShowcase() {
               <ShowcaseColor />
             </Tabs.Panel>
             <Tabs.Panel value="components" pt="lg">
-              <ShowcaseComponents
-                onNavigate={(value) => {
-                  tabList.current
-                    ?.querySelector<HTMLButtonElement>(`[data-review-tab="${value}"]`)
-                    ?.focus();
-                  changeTab(value);
-                }}
-              />
+              <ShowcaseComponents onNavigate={reviewTab} />
             </Tabs.Panel>
             <SampleRecordList
               records={records}
+              navigationContext={navigationContext}
               selectedId={displayedRecordId}
               onOpen={openDetail}
               onCreate={(trigger) => openDialog("create", trigger)}
@@ -351,6 +363,16 @@ export function UiFoundationShowcase() {
                   </Group>
                 </Stack>
               </Stack>
+            </Tabs.Panel>
+            <Tabs.Panel value="navigation" pt="lg">
+              <HeaderNavigationExamples
+                onOpenDrawer={
+                  standardRecord ? (trigger) => openDetail(standardRecord.id, trigger) : undefined
+                }
+                onOpenModal={(trigger) => openDialog("info", trigger)}
+                onReviewToolbar={() => reviewTab("toolbar")}
+                onReviewList={() => reviewTab("list")}
+              />
             </Tabs.Panel>
           </Tabs>
         </Stack>

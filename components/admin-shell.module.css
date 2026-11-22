@@ -6,19 +6,104 @@
 .navbar {
   background: var(--mantine-color-white);
 }
+.headerFrame {
+  container: admin-header / inline-size;
+  height: 100%;
+  background: var(--surface);
+}
+.headerRow {
+  height: 100%;
+  min-height: 59px;
+  border-bottom: 1px solid var(--border);
+}
+.headerControls,
+.headerActions {
+  flex: none;
+}
+.headerActions {
+  margin-inline-start: auto;
+}
 .account {
-  max-width: 240px;
   border-radius: var(--mantine-radius-md);
 }
 .account:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
-.breadcrumbs {
+.breadcrumbColumn {
+  container: admin-breadcrumb / inline-size;
+  flex: 1;
   min-width: 0;
 }
-.breadcrumbs > :last-child {
+.breadcrumbColumn .breadcrumbs {
+  flex-wrap: nowrap;
+}
+.breadcrumbSeparator {
+  flex: none;
+  color: var(--text-muted);
+}
+.breadcrumbs :is(.breadcrumbLink, .breadcrumbCurrent) {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+.breadcrumbs .breadcrumbLink {
+  max-inline-size: 38%;
+  color: var(--primary-hover);
+  font-size: var(--mantine-font-size-md);
+  font-weight: 500;
+}
+.breadcrumbs .breadcrumbLink:hover {
+  color: var(--primary);
+}
+.breadcrumbs .breadcrumbCurrent {
+  min-inline-size: min(100%, 3rem);
+  color: var(--heading);
+  font-size: var(--mantine-font-size-md);
+  font-weight: 600;
+}
+.breadcrumbOverflow,
+.breadcrumbOverflow + .breadcrumbSeparator {
+  display: none;
+}
+.breadcrumbOverflow {
+  flex: none;
+}
+.breadcrumbMenu {
+  max-inline-size: min(16rem, calc(100vw - 2 * var(--mantine-spacing-xs)));
+  overflow-wrap: anywhere;
+}
+
+/* Use the breadcrumb column after the sidebar and Header controls take their space. */
+@container admin-breadcrumb (width <= 20rem) {
+  .breadcrumbIntermediate,
+  .breadcrumbIntermediate + .breadcrumbSeparator {
+    display: none;
+  }
+  .breadcrumbOverflow,
+  .breadcrumbOverflow + .breadcrumbSeparator {
+    display: flex;
+  }
+}
+@container admin-breadcrumb (width <= 12rem) {
+  .breadcrumbFirst,
+  .breadcrumbFirst + .breadcrumbSeparator {
+    display: none;
+  }
+}
+
+/* At the desktop breakpoint, the expanded sidebar leaves at least 524px for the Header. */
+@media (min-width: 48em) {
+  @container admin-header (width >= 26rem) {
+    .headerRow {
+      min-height: 67px;
+    }
+    .breadcrumbs .breadcrumbCurrent {
+      font-size: var(--mantine-font-size-lg);
+    }
+  }
 }
 
 .brandSection {

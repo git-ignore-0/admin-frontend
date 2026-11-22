@@ -1,11 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminShell } from "@/components/admin-shell";
 import { activeAdminSection, adminNavigation, isActiveAdminRoute } from "@/lib/admin-navigation";
 import { adminDictionaries } from "@/lib/admin-i18n";
-import { api, apiFile } from "@/lib/client-api";
+import { ADMIN_SESSION_CHANGED_EVENT, api, apiFile } from "@/lib/client-api";
 
 const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
 
@@ -159,6 +160,119 @@ describe("admin account identity", () => {
   });
 });
 
+describe("admin header breadcrumbs", () => {
+  it.each([
+    ["/users", "vi", "Người dùng", "Đường dẫn điều hướng"],
+    ["/store-catalog", "en", "Products", "Breadcrumbs"],
+    ["/membership-catalog", "en", "CSA packages", "Breadcrumbs"],
+  ] as const)("shows the localized root context for %s", (pathname, locale, label, landmark) => {
+    renderShell(pathname, locale);
+    const header = screen.getByRole("banner");
+    const trail = within(header).getByRole("navigation", { name: landmark });
+    expect(trail).toHaveTextContent(label);
+    expect(within(trail).getByText(label)).toHaveAttribute("aria-current", "page");
+    expect(within(trail).queryByRole("link")).not.toBeInTheDocument();
+    expect(header).not.toHaveTextContent("NFV Admin");
+    expect(screen.getByRole("link", { name: "NFV Admin" })).toHaveAttribute("href", "/dashboard");
+  });
+
+  it("provides a real parent link and localized context on direct child entry", () => {
+    renderShell("/users/record-id", "vi");
+    const trail = screen.getByRole("navigation", { name: "Đường dẫn điều hướng" });
+    expect(within(trail).getByRole("link", { name: "Người dùng" })).toHaveAttribute(
+      "href",
+      "/users",
+    );
+    expect(within(trail).getByText("Chi tiết người dùng")).toHaveAttribute("aria-current", "page");
+    expect(
+      within(trail).queryByRole("link", { name: "Chi tiết người dùng" }),
+    ).not.toBeInTheDocument();
+    expect(trail).not.toHaveTextContent("record-id");
+  });
+
+  it("offers deep ancestors in a keyboard-accessible overflow menu", async () => {
+    renderShell("/store-catalog/products/record-id/edit", "vi");
+    const header = within(screen.getByRole("banner"));
+    const trail = within(header.getByRole("navigation", { name: "Đường dẫn điều hướng" }));
+    expect(trail.getByRole("link", { name: "Sản phẩm" })).toHaveAttribute(
+      "href",
+      "/store-catalog/products",
+    );
+    expect(trail.getByRole("link", { name: "Chi tiết sản phẩm" })).toHaveAttribute(
+      "href",
+      "/store-catalog/products/record-id",
+    );
+    expect(trail.getByText("Chỉnh sửa")).toHaveAttribute("aria-current", "page");
+    expect(trail.queryByRole("link", { name: "Chỉnh sửa" })).not.toBeInTheDocument();
+    expect(header.getByRole("radiogroup", { name: "Ngôn ngữ" })).toBeInTheDocument();
+    expect(header.getByRole("button", { name: "Tài khoản quản trị" })).toBeInTheDocument();
+    const trigger = trail.getByRole("button", { name: "Hiện các trang cấp trên" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const menu = await screen.findByRole("menu");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const parent = within(menu).getByRole("menuitem", { name: "Chi tiết sản phẩm" });
+    const root = within(menu).getByRole("menuitem", { name: "Sản phẩm" });
+    expect(root).toHaveAttribute("href", "/store-catalog/products");
+    expect(parent).toHaveAttribute("href", "/store-catalog/products/record-id");
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(root).toHaveFocus();
+    fireEvent.keyDown(root, { key: "ArrowDown" });
+    expect(parent).toHaveFocus();
+    fireEvent.keyDown(parent, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("updates the localized navigation context when the language changes", () => {
+    renderShell("/users");
+    const header = within(screen.getByRole("banner"));
+    fireEvent.click(header.getByRole("radio", { name: "VI" }));
+    expect(header.getByRole("navigation", { name: "Đường dẫn điều hướng" })).toHaveTextContent(
+      "Người dùng",
+    );
+    expect(header.queryByText("Users")).not.toBeInTheDocument();
+  });
+
+  it("hides a registered record label after the route changes or the session invalidates", () => {
+    const user = { name: "Admin", email: null, login_phone_number: null };
+    const recordLabel = "Nguyễn Thị An ở tổ hợp tác sản xuất nông nghiệp hữu cơ";
+    const shell = (pathname: string) => (
+      <AdminI18nProvider initialLocale="vi">
+        <AdminShell user={user} sessionBinding="test-session">
+          <AdminBreadcrumbForRoute
+            pathname={pathname}
+            items={[{ label: "Người dùng", href: "/users?page=3" }, { label: recordLabel }]}
+          />
+        </AdminShell>
+      </AdminI18nProvider>
+    );
+    navigation.pathname = "/users/first";
+    const { rerender } = render(shell("/users/first"));
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByText(recordLabel)).toHaveAttribute("title", recordLabel);
+    expect(header.getByRole("link", { name: "Người dùng" })).toHaveAttribute(
+      "href",
+      "/users?page=3",
+    );
+
+    navigation.pathname = "/users/second";
+    rerender(shell("/users/first"));
+    expect(header.getByText("Chi tiết người dùng")).toHaveAttribute("aria-current", "page");
+    expect(header.queryByText(recordLabel)).not.toBeInTheDocument();
+
+    rerender(shell("/users/second"));
+    expect(header.getByText(recordLabel)).toBeInTheDocument();
+    act(() =>
+      window.dispatchEvent(
+        new CustomEvent(ADMIN_SESSION_CHANGED_EVENT, { detail: "test-session" }),
+      ),
+    );
+    expect(header.queryByText(recordLabel)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+});
+
 describe("admin sidebar navigation", () => {
   function mobileViewport() {
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
@@ -250,9 +364,10 @@ describe("admin sidebar navigation", () => {
     ["/memberships/a", "CSA customers"],
   ])("highlights exactly one item for %s", (pathname, label) => {
     renderShell(pathname);
-    expect(screen.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
+    const sidebar = within(screen.getByRole("navigation", { name: "Administration" }));
+    expect(sidebar.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
     expect(
-      screen.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page"),
+      sidebar.getAllByRole("link").filter((link) => link.getAttribute("aria-current") === "page"),
     ).toHaveLength(1);
   });
   it("persists desktop collapse and restores a saved preference", async () => {

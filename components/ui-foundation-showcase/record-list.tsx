@@ -19,10 +19,21 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { IconFlag, IconPlus } from "@tabler/icons-react";
+import Link from "next/link";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListState } from "@/components/list-state";
 import { Pagination } from "@/components/pagination";
+import {
+  findSampleNavigationRecord,
+  isSampleRecordSet,
+  readSampleNavigationContext,
+  sampleEmptyFilters,
+  sampleNavigationHref,
+  sampleParentHref,
+  type SampleFilters,
+  type SampleNavigationContext,
+} from "./sample-navigation";
 import { type SampleRecord, recordCategories, recordHref, recordStatuses } from "./sample-records";
 
 const pageSize = 5;
@@ -60,8 +71,6 @@ const refreshingLabel = "Refreshing sample records…";
 
 const statusOptions = Object.entries(recordStatuses).map(([value, label]) => ({ value, label }));
 const nestedFilterSelect = { withinPortal: false, floatingStrategy: "fixed" } as const;
-type SampleFilters = { category: string | null; status: string | null };
-const emptyFilters: SampleFilters = { category: null, status: null };
 
 function searchable(value: string) {
   return value
@@ -160,28 +169,48 @@ export function SampleRecordList({
   selectedId,
   onOpen,
   onCreate,
+  navigationContext,
 }: {
   records: SampleRecord[];
   selectedId: string | null;
   onOpen: (id: string, link: HTMLAnchorElement) => void;
   onCreate: (trigger: HTMLButtonElement) => void;
+  navigationContext?: SampleNavigationContext;
 }) {
   const [mode, setMode] = useState("ready");
-  const [recordSet, setRecordSet] = useState("standard");
+  const [recordSet, setRecordSet] = useState(navigationContext?.recordSet ?? "standard");
   const [toolbar, setToolbar] = useState("all");
   const [toolbarBusy, setToolbarBusy] = useState(false);
   const [toolbarRefreshPreview, setToolbarRefreshPreview] = useState(false);
   const [filterBehavior, setFilterBehavior] = useState("deferred");
   const [toolbarWidth, setToolbarWidth] = useState("available");
   const [listWidth, setListWidth] = useState("available");
-  const [draftQuery, setDraftQuery] = useState("");
-  const [query, setQuery] = useState("");
-  const [appliedFilters, setAppliedFilters] = useState(emptyFilters);
-  const [draftFilters, setDraftFilters] = useState(emptyFilters);
-  const [page, setPage] = useState(1);
+  const [draftQuery, setDraftQuery] = useState(navigationContext?.query ?? "");
+  const [query, setQuery] = useState(navigationContext?.query ?? "");
+  const [appliedFilters, setAppliedFilters] = useState(
+    navigationContext?.filters ?? sampleEmptyFilters,
+  );
+  const [draftFilters, setDraftFilters] = useState(
+    navigationContext?.filters ?? sampleEmptyFilters,
+  );
+  const [page, setPage] = useState(navigationContext?.page ?? 1);
   const [flagged, setFlagged] = useState<string[]>([]);
   const [refreshState, setRefreshState] = useState<"idle" | "pending" | "complete">("idle");
   const refreshTimeout = useRef<number | null>(null);
+
+  useEffect(() => {
+    // Browser Back may restore the original RSC payload alongside the updated history URL.
+    const params = new URLSearchParams(window.location.search);
+    const context = readSampleNavigationContext((key) => params.get(key));
+    if (context?.tab !== "list") return;
+
+    setRecordSet(context.recordSet);
+    setDraftQuery(context.query);
+    setQuery(context.query);
+    setAppliedFilters(context.filters);
+    setDraftFilters(context.filters);
+    setPage(context.page);
+  }, []);
 
   useEffect(
     () => () => {
@@ -224,6 +253,15 @@ export function SampleRecordList({
   const visible = listRecords.slice((visiblePage - 1) * pageSize, visiblePage * pageSize);
   const showData = mode === "ready" || showRefreshExample;
   const hasRows = showData && total > 0;
+  const linkedRecord =
+    mode === "ready" ? visible.find(({ id }) => findSampleNavigationRecord(id)) : undefined;
+  const listContext: SampleNavigationContext = {
+    tab: "list",
+    query,
+    filters: appliedFilters,
+    page: visiblePage,
+    recordSet,
+  };
   const refreshPending = refreshState === "pending";
   const refreshing = refreshPending || mode === "refreshing";
   const initialLoading = mode === "loading" || (refreshPending && !showData);
@@ -263,7 +301,7 @@ export function SampleRecordList({
 
   function clearListQuery() {
     clearSearch();
-    applyFilters(emptyFilters);
+    applyFilters(sampleEmptyFilters);
   }
 
   function changeToolbar(value: string | null) {
@@ -272,7 +310,7 @@ export function SampleRecordList({
     if (value === "all" || value === "vietnamese") return;
 
     if (value === "actions") clearListQuery();
-    else applyFilters(emptyFilters);
+    else applyFilters(sampleEmptyFilters);
   }
 
   const refreshConfirmation = refreshState === "complete" && (
@@ -373,8 +411,8 @@ export function SampleRecordList({
               onChange={(event) =>
                 applyFilters(
                   event.currentTarget.checked
-                    ? { ...emptyFilters, status: "pending" }
-                    : emptyFilters,
+                    ? { ...sampleEmptyFilters, status: "pending" }
+                    : sampleEmptyFilters,
                 )
               }
             />
@@ -433,7 +471,7 @@ export function SampleRecordList({
                       activeCount: filterCount,
                       clearLabel: vietnamese ? "Xóa bộ lọc" : "Clear filters",
                       clearDisabled: !filterCount && !filtersChanged,
-                      onClear: () => applyFilters(emptyFilters),
+                      onClear: () => applyFilters(sampleEmptyFilters),
                       onDismiss: () => setDraftFilters(appliedFilters),
                       apply: deferred
                         ? {
@@ -522,7 +560,7 @@ export function SampleRecordList({
               ]}
               value={recordSet}
               onChange={(value) => {
-                if (!value) return;
+                if (!isSampleRecordSet(value)) return;
                 setRecordSet(value);
                 setPage(1);
               }}
@@ -539,6 +577,23 @@ export function SampleRecordList({
           <Text size="sm" c="dimmed">
             {previewDescription}
           </Text>
+          {linkedRecord && (
+            <Anchor
+              component={Link}
+              href={sampleNavigationHref(linkedRecord.id, { context: listContext })}
+              onNavigate={() => {
+                window.history.replaceState(
+                  { nfvShowcaseTab: "list" },
+                  "",
+                  sampleParentHref(listContext) + window.location.hash,
+                );
+              }}
+              size="sm"
+              style={{ alignSelf: "flex-start", overflowWrap: "anywhere" }}
+            >
+              Open as page: {linkedRecord.name}
+            </Anchor>
+          )}
           <Paper
             component="section"
             aria-label="Data list"

@@ -9,7 +9,6 @@ import {
   AppShell,
   Avatar,
   Box,
-  Breadcrumbs,
   Burger,
   Button,
   Drawer,
@@ -25,12 +24,16 @@ import {
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import {
-  IconChevronRight,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconLogout,
   IconPlant2,
 } from "@tabler/icons-react";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
+import { AdminHeaderContent } from "@/components/admin-header";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Icon } from "@/components/nfv-controls";
@@ -41,6 +44,7 @@ import {
   type AdminNavigationItem,
   type AdminNavigationSection,
   isActiveAdminRoute,
+  resolveAdminBreadcrumbs,
 } from "@/lib/admin-navigation";
 import { ADMIN_SESSION_CHANGED_EVENT, pageSessionBinding } from "@/lib/client-api";
 import type { AdminSessionUser } from "@/lib/session";
@@ -52,6 +56,14 @@ type Props = {
   children: React.ReactNode;
 };
 const SIDEBAR_PREFERENCE_KEY = "nfv-admin-sidebar-collapsed";
+
+function AdminShellHeaderContent({
+  items,
+  ...controls
+}: React.ComponentProps<typeof AdminHeaderContent>) {
+  const breadcrumbs = useAdminBreadcrumbs(items);
+  return <AdminHeaderContent items={breadcrumbs} {...controls} />;
+}
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
@@ -154,12 +166,14 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
   const identifier = user.email?.trim() || user.login_phone_number?.trim();
   const userLabel = userName || identifier || "NFV Admin";
   const initial = (userName || identifier || "A").charAt(0).toUpperCase();
+  const sidebarToggleLabel = collapsed ? t.common.expandSidebar : t.common.collapseSidebar;
   const closeMobile = () => {
     setMobileOpen(false);
     mobileTrigger.current?.focus();
   };
 
   function itemLink(item: AdminNavigationItem, onNavigate?: () => void) {
+    const active = item === activeItem;
     return (
       <NavLink
         key={item.href}
@@ -167,12 +181,12 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
         href={item.href}
         label={item.label}
         aria-label={item.label}
-        active={isActiveAdminRoute(pathname, item.href)}
-        aria-current={isActiveAdminRoute(pathname, item.href) ? "page" : undefined}
+        active={active}
+        aria-current={active ? "page" : undefined}
         leftSection={item.icon ? <Icon name={item.icon} size={16} /> : undefined}
         onClick={onNavigate}
-        c={isActiveAdminRoute(pathname, item.href) ? "forest.8" : "dimmed"}
-        fw={isActiveAdminRoute(pathname, item.href) ? 690 : 520}
+        c={active ? "forest.8" : "dimmed"}
+        fw={active ? 690 : 520}
       />
     );
   }
@@ -208,8 +222,8 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
                     key={item.href}
                     component={Link}
                     href={item.href}
-                    aria-current={isActiveAdminRoute(pathname, item.href) ? "page" : undefined}
-                    color={isActiveAdminRoute(pathname, item.href) ? "forest" : undefined}
+                    aria-current={item === activeItem ? "page" : undefined}
+                    color={item === activeItem ? "forest" : undefined}
                     leftSection={item.icon ? <Icon name={item.icon} size={16} /> : undefined}
                   >
                     {item.label}
@@ -254,144 +268,140 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
       transitionDuration={150}
       classNames={{ main: classes.main }}
     >
-      <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between" wrap="nowrap" gap="xs">
-          <Group gap="xs" wrap="nowrap" miw={0}>
-            {!stale && (
-              <>
-                <Burger
-                  ref={mobileTrigger}
-                  hiddenFrom="sm"
-                  opened={mobileOpen}
-                  onClick={() => setMobileOpen((value) => !value)}
-                  aria-label={t.common.openNavigation}
-                  aria-expanded={mobileOpen}
-                  aria-controls="admin-mobile-navigation"
-                  size="sm"
-                />
-                <Tooltip label={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}>
-                  <ActionIcon
-                    visibleFrom="sm"
-                    aria-label={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}
-                    onClick={() => setCollapsed((value) => !value)}
-                    color="gray"
-                  >
-                    {collapsed ? (
-                      <IconLayoutSidebarLeftExpand size={20} />
-                    ) : (
-                      <IconLayoutSidebarLeftCollapse size={20} />
-                    )}
-                  </ActionIcon>
-                </Tooltip>
-              </>
-            )}
-            <Breadcrumbs separator={<IconChevronRight size={13} />} className={classes.breadcrumbs}>
-              <Text size="sm" c="dimmed" visibleFrom="sm">
-                NFV Admin
-              </Text>
-              {!stale && activeItem && (
-                <Text size="sm" fw={600} truncate>
-                  {activeItem.label}
-                </Text>
-              )}
-            </Breadcrumbs>
-          </Group>
+      <AdminBreadcrumbProvider key={sessionBinding} pathname={stale ? "" : pathname}>
+        <AppShell.Header withBorder={stale}>
           {!stale && (
-            <Group gap="sm" wrap="nowrap">
-              <LanguageSwitcher />
-              <Menu position="bottom-end" shadow="sm" withinPortal>
-                <Menu.Target>
-                  <UnstyledButton
-                    aria-label={t.common.accountMenu}
-                    title={userLabel}
-                    className={classes.account}
-                  >
-                    <Group gap="xs" wrap="nowrap">
-                      <Avatar color="forest" radius="xl" size={30}>
-                        {initial}
-                      </Avatar>
-                    </Group>
-                  </UnstyledButton>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Label>
-                    {userLabel}
-                    {identifier && identifier !== userLabel && (
-                      <Text size="xs" c="dimmed">
-                        {identifier}
-                      </Text>
-                    )}
-                  </Menu.Label>
-                  <form action="/api/auth/logout" method="post">
-                    <input type="hidden" name="sessionBinding" value={sessionBinding} />
-                    <Menu.Item
-                      component="button"
-                      type="submit"
-                      color="red"
-                      leftSection={<IconLogout size={16} />}
+            <AdminShellHeaderContent
+              items={resolveAdminBreadcrumbs(pathname, activeItem, t)}
+              navigationControl={
+                <>
+                  <Burger
+                    ref={mobileTrigger}
+                    hiddenFrom="sm"
+                    opened={mobileOpen}
+                    onClick={() => setMobileOpen((value) => !value)}
+                    aria-label={t.common.openNavigation}
+                    aria-expanded={mobileOpen}
+                    aria-controls="admin-mobile-navigation"
+                    size="sm"
+                    w={36}
+                    h={36}
+                    color="var(--text-muted)"
+                  />
+                  <Tooltip label={sidebarToggleLabel}>
+                    <ActionIcon
+                      visibleFrom="sm"
+                      aria-label={sidebarToggleLabel}
+                      onClick={() => setCollapsed((value) => !value)}
+                      size={36}
+                      color="gray"
+                      c="var(--text-muted)"
                     >
-                      {t.common.logout}
-                    </Menu.Item>
-                  </form>
-                </Menu.Dropdown>
-              </Menu>
-            </Group>
+                      {collapsed ? (
+                        <IconLayoutSidebarLeftExpand size={20} />
+                      ) : (
+                        <IconLayoutSidebarLeftCollapse size={20} />
+                      )}
+                    </ActionIcon>
+                  </Tooltip>
+                </>
+              }
+              actions={
+                <>
+                  <LanguageSwitcher />
+                  <Menu position="bottom-end" shadow="sm" withinPortal>
+                    <Menu.Target>
+                      <UnstyledButton
+                        aria-label={t.common.accountMenu}
+                        title={userLabel}
+                        className={classes.account}
+                      >
+                        <Avatar color="forest" radius="xl" size={30}>
+                          {initial}
+                        </Avatar>
+                      </UnstyledButton>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Label>
+                        {userLabel}
+                        {identifier && identifier !== userLabel && (
+                          <Text size="xs" c="dimmed">
+                            {identifier}
+                          </Text>
+                        )}
+                      </Menu.Label>
+                      <form action="/api/auth/logout" method="post">
+                        <input type="hidden" name="sessionBinding" value={sessionBinding} />
+                        <Menu.Item
+                          component="button"
+                          type="submit"
+                          color="red"
+                          leftSection={<IconLogout size={16} />}
+                        >
+                          {t.common.logout}
+                        </Menu.Item>
+                      </form>
+                    </Menu.Dropdown>
+                  </Menu>
+                </>
+              }
+            />
           )}
-        </Group>
-      </AppShell.Header>
-      {!stale && (
-        <>
-          <AppShell.Navbar
-            aria-hidden={mobile || undefined}
-            inert={mobile || undefined}
-            className={classes.navbar}
-          >
-            <AppShell.Section h={67} px={collapsed ? 15 : 17} className={classes.brandSection}>
-              <Brand compact={collapsed} />
-            </AppShell.Section>
-            <AppShell.Section component={ScrollArea} grow scrollbarSize={4}>
-              {navigation(collapsed)}
-            </AppShell.Section>
-          </AppShell.Navbar>
-          <Drawer
-            opened={mobileOpen && Boolean(mobile)}
-            onClose={closeMobile}
-            title={<Brand />}
-            closeButtonProps={{ "aria-label": t.common.closeNavigation }}
-            position="left"
-            size={280}
-            returnFocus
-            trapFocus
-            id="admin-mobile-navigation"
-            styles={{
-              body: {
-                padding: 0,
-                display: "flex",
-                flexDirection: "column",
-                height: "calc(100% - 76px)",
-              },
-            }}
-          >
-            <ScrollArea flex={1} scrollbarSize={4}>
-              {navigation(false, closeMobile)}
-            </ScrollArea>
-          </Drawer>
-        </>
-      )}
-      <AppShell.Main>
-        {stale ? (
-          <Alert color="orange" role="alert">
-            <Group gap="sm">
-              <Text size="sm">{t.common.sessionChanged}</Text>
-              <Button variant="outline" onClick={() => window.location.reload()}>
-                {t.common.reloadPage}
-              </Button>
-            </Group>
-          </Alert>
-        ) : (
-          children
+        </AppShell.Header>
+        {!stale && (
+          <>
+            <AppShell.Navbar
+              aria-hidden={mobile || undefined}
+              inert={mobile || undefined}
+              className={classes.navbar}
+            >
+              <AppShell.Section h={67} px={collapsed ? 15 : 17} className={classes.brandSection}>
+                <Brand compact={collapsed} />
+              </AppShell.Section>
+              <AppShell.Section component={ScrollArea} grow scrollbarSize={4}>
+                {navigation(collapsed)}
+              </AppShell.Section>
+            </AppShell.Navbar>
+            <Drawer
+              opened={mobileOpen && Boolean(mobile)}
+              onClose={closeMobile}
+              title={<Brand />}
+              closeButtonProps={{ "aria-label": t.common.closeNavigation }}
+              position="left"
+              size={280}
+              returnFocus
+              trapFocus
+              id="admin-mobile-navigation"
+              styles={{
+                body: {
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  height: "calc(100% - 76px)",
+                },
+              }}
+            >
+              <ScrollArea flex={1} scrollbarSize={4}>
+                {navigation(false, closeMobile)}
+              </ScrollArea>
+            </Drawer>
+          </>
         )}
-      </AppShell.Main>
+        <AppShell.Main>
+          {stale ? (
+            <Alert color="orange" role="alert">
+              <Group gap="sm">
+                <Text size="sm">{t.common.sessionChanged}</Text>
+                <Button variant="outline" onClick={() => window.location.reload()}>
+                  {t.common.reloadPage}
+                </Button>
+              </Group>
+            </Alert>
+          ) : (
+            children
+          )}
+        </AppShell.Main>
+      </AdminBreadcrumbProvider>
     </AppShell>
   );
 }

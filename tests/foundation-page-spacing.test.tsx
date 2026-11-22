@@ -18,3 +18,20 @@ it("lets a gap-owning page suppress extra header margins without changing headin
   ).toBe("0rem");
   expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
 });
+
+it("lets a migrated page hide only the duplicated title while preserving its heading semantics", () => {
+  render(
+    <PageHeading
+      title="Nguyễn Văn An"
+      visuallyHiddenTitle
+      description="Account profile"
+      action={<button type="button">Refresh</button>}
+    />,
+  );
+
+  expect(screen.getByRole("heading", { level: 1, name: "Nguyễn Văn An" })).toHaveClass(
+    "mantine-VisuallyHidden-root",
+  );
+  expect(screen.getByText("Account profile")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+});

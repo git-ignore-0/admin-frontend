@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { activeAdminSection, adminNavigation, isActiveAdminRoute } from "@/lib/admin-navigation";
+import { describe, expect, it, vi } from "vitest";
+import {
+  activeAdminSection,
+  adminNavigation,
+  isActiveAdminRoute,
+  isInternalAdminHref,
+  resolveAdminBreadcrumbs,
+} from "@/lib/admin-navigation";
 import { adminDictionaries } from "@/lib/admin-i18n";
 
 describe("foundation contextual navigation", () => {
@@ -25,5 +31,94 @@ describe("foundation contextual navigation", () => {
   });
   it("does not confuse unrelated paths with a nested record", () => {
     expect(isActiveAdminRoute("/users-other", "/users")).toBe(false);
+  });
+});
+
+describe("foundation breadcrumbs", () => {
+  function breadcrumbs(pathname: string, locale: "en" | "vi" = "en") {
+    const t = adminDictionaries[locale];
+    const activeItem = activeAdminSection(pathname, adminNavigation(t))?.items.find((item) =>
+      isActiveAdminRoute(pathname, item.href),
+    );
+    return resolveAdminBreadcrumbs(pathname, activeItem, t);
+  }
+
+  it.each([
+    ["/dashboard", "Overview"],
+    ["/users", "Users"],
+    ["/store-catalog", "Products"],
+    ["/membership-catalog", "CSA packages"],
+    ["/memberships", "CSA customers"],
+  ])("renders the active navigation label without a self link for %s", (pathname, label) => {
+    expect(breadcrumbs(pathname)).toEqual([{ label }]);
+  });
+
+  it("uses localized record fallbacks for direct child entries", () => {
+    expect(breadcrumbs("/users/record-uuid", "vi")).toEqual([
+      { label: "Người dùng", href: "/users" },
+      { label: "Chi tiết người dùng" },
+    ]);
+    expect(breadcrumbs("/memberships/record-uuid")).toEqual([
+      { label: "CSA customers", href: "/csa-customers" },
+      { label: "CSA membership details" },
+    ]);
+  });
+
+  it("preserves the Points list ancestor alongside its Users sidebar owner", () => {
+    expect(breadcrumbs("/points/record-uuid")).toEqual([
+      { label: "Users", href: "/users" },
+      { label: "Points", href: "/points" },
+      { label: "Point details" },
+    ]);
+  });
+
+  it("links to the real record detail from a directly entered edit screen", () => {
+    expect(breadcrumbs("/store-catalog/products/record-uuid/edit", "vi")).toEqual([
+      { label: "Sản phẩm", href: "/store-catalog/products" },
+      { label: "Chi tiết sản phẩm", href: "/store-catalog/products/record-uuid" },
+      { label: "Chỉnh sửa" },
+    ]);
+    expect(breadcrumbs("/store-catalog/products/new", "vi")).toEqual([
+      { label: "Sản phẩm", href: "/store-catalog/products" },
+      { label: "Thêm sản phẩm" },
+    ]);
+  });
+
+  it("uses the owning label for unrecognized descendants without deriving labels or links", () => {
+    expect(breadcrumbs("/users/a/unsupported/child")).toEqual([{ label: "Users" }]);
+    expect(breadcrumbs("/store-catalog/products/new/edit")).toEqual([{ label: "Products" }]);
+    expect(breadcrumbs("/unknown")).toEqual([]);
+  });
+
+  it("offers the Showcase fallback only outside production without a sidebar entry", () => {
+    expect(breadcrumbs("/dev/ui-foundation", "vi")).toEqual([{ label: "Nền tảng giao diện" }]);
+    expect(breadcrumbs("/dev/ui-foundation/sample-child")).toEqual([{ label: "UI Foundation" }]);
+    expect(breadcrumbs("/dev/ui-foundation-other")).toEqual([]);
+    expect(
+      activeAdminSection("/dev/ui-foundation", adminNavigation(adminDictionaries.vi)),
+    ).toBeUndefined();
+
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      expect(breadcrumbs("/dev/ui-foundation")).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("permits internal list destinations with query state", () => {
+    expect(isInternalAdminHref("/users?q=An+Nguyễn&page=2#results")).toBe(true);
+  });
+
+  it.each([
+    "users",
+    "#results",
+    "https://example.com/users",
+    "//example.com/users",
+    "/\\example.com/users",
+    "/%2fexample.com/users",
+    "/\n/example.com/users",
+  ])("rejects unsafe or unqualified ancestor destinations (%s)", (href) => {
+    expect(isInternalAdminHref(href)).toBe(false);
   });
 });

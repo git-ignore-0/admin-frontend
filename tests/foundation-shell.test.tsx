@@ -57,7 +57,11 @@ it("offers direct operational navigation and contextual point discovery without 
     "href",
     "/store-catalog/categories",
   );
-  expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("aria-current", "page");
+  expect(
+    within(screen.getByRole("navigation", { name: "Administration" })).getByRole("link", {
+      name: "Users",
+    }),
+  ).toHaveAttribute("aria-current", "page");
   expect(screen.queryByRole("link", { name: "Manage points" })).toBeNull();
   expect(screen.queryByRole("link", { name: /Tasks/ })).toBeNull();
 });

@@ -9,6 +9,8 @@ export function normalizeAdminLocale(value?: string | null): AdminLocale {
 const vi = {
   common: {
     navigation: "Quản trị",
+    breadcrumbs: "Đường dẫn điều hướng",
+    breadcrumbOverflow: "Hiện các trang cấp trên",
     overviewGroup: "Tổng quan",
     promotionsGroup: "Khuyến mãi",
     communityGroup: "Cộng đồng",
@@ -74,6 +76,19 @@ const vi = {
     resultCount: "{count} kết quả",
     resultCountSingular: "{count} kết quả",
     pagination: "Trang {page}/{pages}",
+  },
+  breadcrumb: {
+    uiFoundation: "Nền tảng giao diện",
+    edit: "Chỉnh sửa",
+    roundDetails: "Chi tiết đợt CSA",
+    newRound: "Tạo đợt CSA",
+    orderDetails: "Chi tiết đơn hàng",
+    productDetails: "Chi tiết sản phẩm",
+    categoryDetails: "Chi tiết danh mục",
+    membershipDetails: "Chi tiết gói CSA",
+    farmDetails: "Chi tiết trang trại",
+    newFarm: "Thêm trang trại",
+    trackerFarmDetails: "Cấu hình Growth Tracker",
   },
   shippingSettings: {
     title: "Cấu hình giao hàng",
@@ -1488,6 +1503,8 @@ export type AdminDictionary = typeof vi;
 const en: AdminDictionary = {
   common: {
     navigation: "Administration",
+    breadcrumbs: "Breadcrumbs",
+    breadcrumbOverflow: "Show ancestor screens",
     overviewGroup: "Overview",
     promotionsGroup: "Promotions",
     communityGroup: "Community",
@@ -1553,6 +1570,19 @@ const en: AdminDictionary = {
     resultCount: "{count} results",
     resultCountSingular: "{count} result",
     pagination: "Page {page}/{pages}",
+  },
+  breadcrumb: {
+    uiFoundation: "UI Foundation",
+    edit: "Edit",
+    roundDetails: "CSA round details",
+    newRound: "Create CSA round",
+    orderDetails: "Order details",
+    productDetails: "Product details",
+    categoryDetails: "Category details",
+    membershipDetails: "CSA membership details",
+    farmDetails: "Farm details",
+    newFarm: "Add farm",
+    trackerFarmDetails: "Growth Tracker settings",
   },
   shippingSettings: {
     title: "Delivery settings",

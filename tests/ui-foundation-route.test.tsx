@@ -30,7 +30,13 @@ vi.mock("@/components/admin-shell", () => ({
 vi.mock("@/components/ui-foundation-showcase", () => {
   loadShowcase();
   return {
-    UiFoundationShowcase: () => <h1>Component Showcase</h1>,
+    UiFoundationShowcase: ({ navigationContext }: { navigationContext?: { page: number } }) => (
+      <h1>
+        {navigationContext
+          ? `Component Showcase, page ${navigationContext.page}`
+          : "Component Showcase"}
+      </h1>
+    ),
   };
 });
 
@@ -60,7 +66,9 @@ describe("UI Foundation development route", () => {
     "does not load or render the Showcase in %s",
     async (environment) => {
       vi.stubEnv("NODE_ENV", environment);
-      await expect(UiFoundationPage()).rejects.toThrow("NOT_FOUND");
+      await expect(UiFoundationPage({ searchParams: Promise.resolve({}) })).rejects.toThrow(
+        "NOT_FOUND",
+      );
       expect(loadShowcase).not.toHaveBeenCalled();
     },
   );
@@ -75,10 +83,20 @@ describe("UI Foundation development route", () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.mocked(readSession).mockResolvedValue(session);
     vi.mocked(adminSessionBinding).mockReturnValue("local-binding");
-    render(await ProtectedLayout({ children: await UiFoundationPage() }));
+    const children = await UiFoundationPage({ searchParams: Promise.resolve({}) });
+    render(await ProtectedLayout({ children }));
     expect(screen.getByRole("main")).toHaveAttribute("data-admin-session", "local-binding");
     expect(screen.getByRole("heading", { name: "Component Showcase" })).toBeVisible();
     expect(adminSessionBinding).toHaveBeenCalledWith(session);
+  });
+
+  it("supplies the saved Data List page on a direct parent entry", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    render(
+      await UiFoundationPage({ searchParams: Promise.resolve({ review: "list", page: "2" }) }),
+    );
+
+    expect(screen.getByRole("heading", { name: "Component Showcase, page 2" })).toBeVisible();
   });
 
   it("does not expose the route in either admin navigation language", () => {
