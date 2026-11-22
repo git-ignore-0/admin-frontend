@@ -1,28 +1,6 @@
 /* Broad resets stay below Mantine. Scoped business layouts preserve existing
    responsive composition; widget appearance comes from the Mantine theme. */
 @layer legacy {
-  :root {
-    --background: #f7f8fa;
-    --surface: #ffffff;
-    --surface-subtle: #f4f6f8;
-    --text: #202938;
-    --text-muted: #5a6676;
-    --border: #e2e6eb;
-    --border-strong: #ced4da;
-    --primary: #1f7c4d;
-    --primary-hover: #17633d;
-    --primary-soft: #eaf6ef;
-    --danger: #b3261e;
-    --danger-hover: #8c1d18;
-    --danger-soft: #fce8e6;
-    --warning: #8a4b08;
-    --warning-soft: #fdf3e3;
-    --success: #1f6b3b;
-    --success-soft: #eaf5ed;
-    --focus: #1a73e8;
-    --radius: 10px;
-  }
-
   * {
     box-sizing: border-box;
   }
@@ -73,22 +51,22 @@
   h2,
   h3 {
     margin: 0;
-    color: var(--nfv-heading-color, var(--text));
+    color: var(--heading);
     font-family: inherit;
     font-weight: 650;
     line-height: 1.25;
   }
 
   h1 {
-    font-size: 1.75rem;
+    font-size: var(--mantine-h1-font-size);
   }
 
   h2 {
-    font-size: 1.2rem;
+    font-size: var(--mantine-h2-font-size);
   }
 
   h3 {
-    font-size: 1rem;
+    font-size: var(--mantine-h3-font-size);
   }
 }
 .auth-page {
@@ -120,7 +98,7 @@
   place-items: center;
   border-radius: 4px;
   background: var(--primary);
-  color: white;
+  color: var(--text-inverse);
   font-size: 0.9rem;
   font-weight: 700;
 }
@@ -159,7 +137,7 @@
   flex: 0 0 auto;
 }
 #redemption-summary-title:focus-visible {
-  outline: 3px solid rgb(26 115 232 / 30%);
+  outline: 2px solid var(--focus);
   outline-offset: 4px;
 }
 .detail-page-heading {
@@ -341,12 +319,12 @@
   font-weight: 650;
 }
 .payment-plan-type-option:has(input:focus-visible) {
-  outline: 3px solid rgba(26, 115, 232, 0.3);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .payment-plan-type-option:has(input:disabled) {
-  background: #f1f3f4;
-  color: #7d858c;
+  background: var(--surface-disabled);
+  color: var(--text-disabled);
   cursor: not-allowed;
 }
 .payment-plan-preview .detail-list {
@@ -1158,7 +1136,7 @@
   opacity: 0;
 }
 .reward-upload-button:has(input:focus-visible) {
-  outline: 3px solid rgb(26 115 232 / 30%);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .reward-number-fields {
@@ -1686,7 +1664,7 @@
   background: var(--primary-soft);
 }
 .admin-list-table .admin-list-clickable-row:focus-visible {
-  outline: 3px solid rgb(26 115 232 / 30%);
+  outline: 2px solid var(--focus);
   outline-offset: -3px;
 }
 .admin-list-table .admin-list-clickable-row:focus-visible > td {
@@ -1906,7 +1884,7 @@
   opacity: 0;
 }
 .testimonial-upload-button:has(input:focus-visible) {
-  outline: 3px solid rgb(26 115 232 / 30%);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .testimonial-general-fields {
@@ -2183,7 +2161,7 @@
 }
 .tiptap:focus {
   border-color: var(--focus);
-  outline: 2px solid rgba(26, 115, 232, 0.2);
+  outline: 2px solid var(--focus);
 }
 .tiptap p:first-child {
   margin-top: 0;
@@ -2193,7 +2171,7 @@
   height: auto;
 }
 .tiptap a {
-  color: var(--focus);
+  color: var(--primary-hover);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
@@ -2494,7 +2472,7 @@
 .csa-list-primary-link:focus-visible,
 .admin-list-primary-link:focus-visible {
   border-radius: 3px;
-  outline: 3px solid rgba(26, 115, 232, 0.3);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .package-lines {

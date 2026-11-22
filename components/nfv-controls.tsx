@@ -446,7 +446,8 @@ type StatusDomain =
   | "visibility"
   | "account-link"
   | "companion-delivery";
-const statusColors: Record<StatusDomain, Record<string, string>> = {
+type LegacyStatusColor = "green" | "yellow" | "orange" | "red" | "blue" | "gray";
+const statusColors: Record<StatusDomain, Record<string, LegacyStatusColor>> = {
   user: { active: "green", pending_activation: "orange", suspended: "red", anonymized: "gray" },
   membership: {
     scheduled: "yellow",
@@ -548,9 +549,11 @@ export function Status({
   color?: string;
   domain?: StatusDomain;
 }) {
+  const colors = domain ? statusColors[domain] : undefined;
+  const domainColor = colors && Object.hasOwn(colors, status) ? colors[status] : undefined;
   return (
     <Badge
-      color={color ?? (domain ? statusColors[domain][status] : undefined) ?? "gray"}
+      color={color ?? domainColor ?? "gray"}
       variant="light"
       radius="sm"
       className={className}

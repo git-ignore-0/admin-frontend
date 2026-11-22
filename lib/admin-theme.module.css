@@ -1,0 +1,88 @@
+.focusRing:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.secondaryButton {
+  --mantine-color-default-border: var(--control-border);
+}
+
+[data-mantine-color-scheme="light"] .inputWrapper[data-variant="default"]:not([data-error]) {
+  --input-bd: var(--control-border);
+}
+
+.inputWrapper[data-variant="filled"]:not([data-error]) {
+  --input-placeholder-color: var(--text-muted);
+}
+
+.inputWrapper:is([data-variant="default"], [data-variant="filled"]) .input {
+  --input-bd-focus: var(--focus);
+}
+
+.inputWrapper .input:is(:focus-visible, :has(input:focus-visible)) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.inputWrapper .input:is(:disabled, [data-disabled], :has(input:disabled)) {
+  opacity: 1;
+}
+
+[data-mantine-color-scheme="light"]
+  .choice:not(:checked, :disabled, [data-disabled], [data-error], [data-indeterminate]) {
+  border-color: var(--control-border);
+}
+
+.switchInput:not(:checked, :disabled, [data-disabled]) + .switchTrack {
+  --switch-bg: var(--surface);
+  --switch-text-color: var(--text-muted);
+  --switch-thumb-bg: var(--control-border);
+  box-shadow: inset 0 0 0 1px var(--control-border);
+}
+
+.switchInput:focus-visible + .switchTrack {
+  outline-color: var(--focus);
+}
+
+.segmentInput[data-focus-ring="auto"]:focus-visible + .segmentLabel {
+  --segmented-control-outline: 2px solid var(--focus);
+}
+
+.paginationControl:not([data-active], :disabled, [data-disabled]) {
+  border-color: var(--control-border);
+}
+
+.tableRow[data-selected="true"] {
+  background-color: var(--surface-selected);
+}
+
+.dialogOverlay {
+  --overlay-bg: var(--overlay);
+}
+
+.menuItem {
+  --menu-item-hover: var(--surface-hover);
+}
+
+.comboboxOption[data-checked] {
+  background-color: var(--surface-selected);
+  color: var(--text);
+}
+
+.comboboxOption[data-combobox-selected] {
+  background-color: var(--surface-selected);
+  color: var(--text);
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.calendarDay[data-weekend]:not([data-selected]) {
+  color: var(--danger);
+}
+
+.calendarDay[data-outside] {
+  opacity: 1;
+}
+
+.calendarDay[data-today][data-highlight-today]:not([data-selected], [data-in-range]) {
+  border-color: var(--control-border);
+}

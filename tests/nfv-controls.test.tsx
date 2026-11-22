@@ -23,12 +23,15 @@ function renderControl(children: React.ReactNode) {
 
 describe("Mantine control compatibility", () => {
   it.each([
+    ["user", "active", "green"],
     ["membership", "frozen", "orange"],
     ["user", "suspended", "red"],
     ["user", "pending_activation", "orange"],
     ["csa-purchase", "payment_confirmed", "yellow"],
     ["installment", "reported", "yellow"],
+    ["csa-customer", "scheduled", "blue"],
     ["membership", "unknown-status", "gray"],
+    ["membership", "constructor", "gray"],
   ] as const)("represents %s %s with its semantic tone", (domain, status, color) => {
     renderControl(<Status domain={domain} status={status} label={status} />);
     expect(screen.getByText(status).closest(".mantine-Badge-root")).toHaveStyle({

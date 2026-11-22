@@ -4,26 +4,34 @@ import { Alert, Button, Group, Loader, Paper, Stack, Text } from "@mantine/core"
 
 export function ListState({
   empty,
+  embedded = false,
   error,
   hasData,
   isEmpty,
   loading,
   loadingLabel,
+  noResults,
   onRetry,
+  refreshingLabel = loadingLabel,
   retryLabel,
 }: {
   empty: string;
+  /** Use inside an existing bordered list container. */
+  embedded?: boolean;
   error: string;
   hasData: boolean;
   isEmpty: boolean;
   loading: boolean;
   loadingLabel: string;
+  /** Supply when the empty result follows an applied query or filter. */
+  noResults?: string;
   onRetry: () => void;
+  refreshingLabel?: string;
   retryLabel: string;
 }) {
   if (!hasData && loading)
     return (
-      <Paper p="md" withBorder>
+      <Paper p="md" withBorder={!embedded}>
         <Group role="status" gap="sm">
           <Loader size="sm" />
           <Text size="sm">{loadingLabel}</Text>
@@ -32,10 +40,10 @@ export function ListState({
     );
   if (error)
     return (
-      <Alert color="red" role="alert">
+      <Alert color="red" variant={hasData ? "outline" : "light"} role="alert">
         <Stack gap="sm" align="flex-start">
           <Text size="sm">{error}</Text>
-          <Button variant="default" onClick={onRetry} type="button">
+          <Button variant="default" loading={loading} onClick={onRetry} type="button">
             {retryLabel}
           </Button>
         </Stack>
@@ -46,15 +54,15 @@ export function ListState({
       <Group role="status" aria-live="polite" gap="xs" py="xs">
         <Loader size="xs" />
         <Text size="sm" c="dimmed">
-          {loadingLabel}
+          {refreshingLabel}
         </Text>
       </Group>
     );
   if (isEmpty)
     return (
-      <Paper p="lg" withBorder>
+      <Paper p="lg" withBorder={!embedded}>
         <Text size="sm" c="dimmed" ta="center">
-          {empty}
+          {noResults ?? empty}
         </Text>
       </Paper>
     );

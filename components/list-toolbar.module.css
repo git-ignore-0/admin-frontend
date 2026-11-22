@@ -1,0 +1,67 @@
+.container {
+  container: list-toolbar / inline-size;
+  min-inline-size: 0;
+}
+
+.search,
+.legacySearch {
+  flex: 1 1 100%;
+  min-inline-size: 0;
+}
+
+.searchWithClear::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.actions {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.primaryAction {
+  margin-inline-start: auto;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.primaryAction > :is(button, a),
+.filterTrigger {
+  block-size: auto;
+  min-block-size: var(--button-height);
+  max-inline-size: 100%;
+  padding-block: calc(var(--mantine-spacing-xs) / 2);
+}
+
+.primaryAction :global(.mantine-Button-label),
+.filterLabel {
+  height: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.filterTrigger {
+  max-inline-size: min(40cqi, 12rem);
+  padding-inline: var(--mantine-spacing-sm);
+}
+
+.filterPanel {
+  max-inline-size: calc(100vw - 2 * var(--mantine-spacing-md));
+}
+
+/* The shell sidebar and a narrow preview both change the available toolbar width. */
+@container list-toolbar (min-width: 38rem) {
+  .search,
+  .legacySearch {
+    flex-basis: 15rem;
+  }
+
+  .search + .actions {
+    flex: 0 1 auto;
+  }
+}
+
+@container list-toolbar (max-width: 23rem) {
+  .filterLabel {
+    display: none;
+  }
+}

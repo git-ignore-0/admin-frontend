@@ -3,48 +3,152 @@
 import {
   ComboboxTarget,
   createTheme,
+  virtualColor,
   type CSSVariablesResolver,
+  type MantineColorsTuple,
   type MantineTheme,
   type TableScrollContainerProps,
 } from "@mantine/core";
+import classes from "./admin-theme.module.css";
+
+export const adminPalettes = {
+  gray: [
+    "#f7f8fa",
+    "#edf0f2",
+    "#e5e9ed",
+    "#d8dfe5",
+    "#b9c3cc",
+    "#919eaa",
+    "#6d7b8b",
+    "#526173",
+    "#334151",
+    "#202c38",
+  ],
+  forest: [
+    "#f0faf3",
+    "#e1f5e8",
+    "#bfe7cc",
+    "#90d5a8",
+    "#62c184",
+    "#3aa868",
+    "#248d53",
+    "#1f7c4d",
+    "#17633d",
+    "#144a2f",
+  ],
+} as const satisfies Record<string, MantineColorsTuple>;
+
+const white = "#ffffff";
+const subtleText = "#687483";
+const subtleSurface = "#f4f6f8";
+const softPrimary = "#eaf6ef";
+
+export const adminTokens = {
+  background: adminPalettes.gray[0],
+  surface: white,
+  "surface-subtle": subtleSurface,
+  text: "#202938",
+  heading: "#17212e",
+  "text-muted": "#5a6676",
+  "text-subtle": subtleText,
+  "text-inverse": white,
+  border: "#e2e6eb",
+  "border-strong": "#ced4da",
+  "control-border": adminPalettes.gray[6],
+  primary: adminPalettes.forest[7],
+  "primary-hover": adminPalettes.forest[8],
+  "primary-soft": softPrimary,
+  "surface-hover": subtleSurface,
+  "surface-selected": softPrimary,
+  "surface-disabled": adminPalettes.gray[1],
+  "text-disabled": subtleText,
+  focus: "#1a73e8",
+  overlay: "rgba(32, 41, 56, 0.25)",
+} as const;
+
+export const adminSemanticColors = {
+  success: { foreground: "#1f6b3b", background: "#eaf5ed", alias: "green" },
+  pending: { foreground: "#785600", background: "#fff9db", alias: "yellow" },
+  warning: { foreground: "#8a4b08", background: "#fdf3e3", alias: "orange" },
+  danger: { foreground: "#b3261e", background: "#fce8e6", alias: "red", hover: "#8c1d18" },
+  info: { foreground: "#195a9b", background: "#e7f5ff", alias: "blue" },
+  neutral: { foreground: adminPalettes.gray[7], background: adminPalettes.gray[1], alias: "gray" },
+} as const;
+
+const semanticColors = Object.entries(adminSemanticColors);
+const semanticPalettes = Object.fromEntries(
+  semanticColors.map(([role, { alias }]) => [
+    role,
+    virtualColor({ name: role, light: alias, dark: alias }),
+  ]),
+);
+
+const foundationVariables = {
+  ...Object.fromEntries(Object.entries(adminTokens).map(([token, value]) => [`--${token}`, value])),
+  ...Object.fromEntries(
+    semanticColors.flatMap(([role, { foreground, background }]) => [
+      [`--${role}`, foreground],
+      [`--${role}-soft`, background],
+    ]),
+  ),
+  "--danger-hover": adminSemanticColors.danger.hover,
+  "--radius": "var(--mantine-radius-lg)",
+  "--nfv-heading-color": "var(--heading)",
+  "--nfv-subtle-color": "var(--text-subtle)",
+};
+
+const semanticVariantVariables = Object.fromEntries(
+  semanticColors.flatMap(([role, { alias }]) => {
+    const foreground = `var(--${role})`;
+    const background = `var(--${role}-soft)`;
+    const filledHover =
+      role === "danger"
+        ? "var(--danger-hover)"
+        : `color-mix(in srgb, ${foreground}, var(--heading) 12%)`;
+    const lightHover = `color-mix(in srgb, ${background}, ${foreground} 5%)`;
+    return [role, alias].flatMap((color) => [
+      [`--mantine-color-${color}-filled`, foreground],
+      [`--mantine-color-${color}-filled-hover`, filledHover],
+      [`--mantine-color-${color}-light`, background],
+      [`--mantine-color-${color}-light-hover`, lightHover],
+      [`--mantine-color-${color}-light-color`, foreground],
+      [`--mantine-color-${color}-outline`, foreground],
+      [`--mantine-color-${color}-outline-hover`, background],
+    ]);
+  }),
+);
+
+const fontFamily =
+  '"Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const sizeSm = { size: "sm" } as const;
+const floatingSurface = {
+  backgroundColor: "var(--surface)",
+  color: "var(--text)",
+  borderColor: "var(--border)",
+};
+const optionsClassNames = { option: classes.comboboxOption };
+const optionsStyles = { dropdown: floatingSurface };
+const dateControl = { defaultProps: sizeSm, classNames: { day: classes.calendarDay } };
+const overlayStyles = {
+  header: { backgroundColor: "var(--surface)", borderBottom: "1px solid var(--border)" },
+  title: { color: "var(--heading)", fontSize: "var(--mantine-h2-font-size)", fontWeight: 700 },
+  body: { paddingBlockStart: "var(--mantine-spacing-md)" },
+};
+const drawerDefaults = { position: "right", size: 640 } as const;
+const modalDefaults = { centered: true, radius: "lg" } as const;
 
 /** Foundation defaults; domain states choose their semantic color at the call site. */
 export const adminTheme = createTheme({
   primaryColor: "forest",
   primaryShade: 7,
-  colors: {
-    gray: [
-      "#f7f8fa",
-      "#edf0f2",
-      "#e5e9ed",
-      "#d8dfe5",
-      "#b9c3cc",
-      "#919eaa",
-      "#6d7b8b",
-      "#526173",
-      "#334151",
-      "#202c38",
-    ],
-    forest: [
-      "#f0faf3",
-      "#e1f5e8",
-      "#bfe7cc",
-      "#90d5a8",
-      "#62c184",
-      "#3aa868",
-      "#248d53",
-      "#1f7c4d",
-      "#17633d",
-      "#144a2f",
-    ],
-  },
-  fontFamily: '"Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  colors: { ...adminPalettes, ...semanticPalettes },
+  fontFamily,
   fontSizes: { xs: "0.6875rem", sm: "0.78125rem", md: "0.8125rem", lg: "1rem", xl: "1.125rem" },
-  black: "#202938",
+  black: adminTokens.text,
+  white: adminTokens.surface,
   lineHeights: { md: "1.48" },
   headings: {
-    fontFamily:
-      '"Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontFamily,
     fontWeight: "700",
     sizes: { h1: { fontSize: "1.625rem" }, h2: { fontSize: "1.125rem" }, h3: { fontSize: "1rem" } },
   },
@@ -52,17 +156,34 @@ export const adminTheme = createTheme({
   radius: { xs: "0.25rem", sm: "0.375rem", md: "0.5rem", lg: "0.625rem", xl: "1rem" },
   defaultRadius: "md",
   respectReducedMotion: true,
+  focusClassName: classes.focusRing,
   shadows: { xs: "0 1px 2px rgb(22 40 30 / 4%)", sm: "0 4px 16px rgb(22 40 30 / 8%)" },
   components: {
     ComboboxTarget: ComboboxTarget.extend({ defaultProps: { withExpandedAttribute: true } }),
     // Normal controls: Mantine sm (36px); compact row/editor actions: xs (30px).
-    Button: { defaultProps: { size: "sm", fw: 600 }, styles: { label: { gap: 7 } } },
+    Button: {
+      defaultProps: { ...sizeSm, fw: 600 },
+      classNames: (_theme: MantineTheme, { variant }: { variant?: string }) =>
+        variant === "default" ? { root: classes.secondaryButton } : {},
+      styles: { label: { gap: 7 } },
+    },
     ActionIcon: { defaultProps: { size: 36, variant: "subtle" } },
-    TextInput: { defaultProps: { size: "sm" } },
-    PasswordInput: { defaultProps: { size: "sm" } },
-    NumberInput: { defaultProps: { size: "sm" } },
-    Select: { defaultProps: { size: "sm", allowDeselect: false, checkIconPosition: "right" } },
-    Textarea: { defaultProps: { size: "sm" } },
+    Input: { classNames: { wrapper: classes.inputWrapper, input: classes.input } },
+    TextInput: { defaultProps: sizeSm },
+    PasswordInput: { defaultProps: sizeSm },
+    NumberInput: { defaultProps: sizeSm },
+    Select: {
+      defaultProps: { ...sizeSm, allowDeselect: false, checkIconPosition: "right" },
+      classNames: optionsClassNames,
+      styles: optionsStyles,
+    },
+    MultiSelect: {
+      defaultProps: { ...sizeSm, checkIconPosition: "right" },
+      classNames: optionsClassNames,
+      styles: optionsStyles,
+    },
+    Combobox: { classNames: optionsClassNames, styles: optionsStyles },
+    Textarea: { defaultProps: sizeSm },
     Badge: {
       defaultProps: { size: "md", radius: "sm", variant: "light", tt: "none", fw: 600 },
       styles: {
@@ -74,28 +195,93 @@ export const adminTheme = createTheme({
         },
       },
     },
-    Checkbox: { defaultProps: { size: "sm" } },
-    Radio: { defaultProps: { size: "sm" } },
+    Checkbox: { defaultProps: sizeSm, classNames: { input: classes.choice } },
+    Radio: { defaultProps: sizeSm, classNames: { radio: classes.choice } },
+    Switch: {
+      defaultProps: sizeSm,
+      classNames: { input: classes.switchInput, track: classes.switchTrack },
+    },
     Tabs: { defaultProps: { keepMounted: true } },
-    Paper: { defaultProps: { withBorder: true, radius: "lg", shadow: "none" } },
-    Modal: {
-      defaultProps: {
-        centered: true,
-        radius: "lg",
-        overlayProps: { backgroundOpacity: 0.25, blur: 1 },
+    SegmentedControl: {
+      defaultProps: sizeSm,
+      classNames: { input: classes.segmentInput, label: classes.segmentLabel },
+      styles: (_theme: MantineTheme, { color }: { color?: string }) =>
+        color ? {} : { root: { "--sc-color": "var(--surface-selected)" } },
+    },
+    Paper: {
+      defaultProps: { withBorder: true, radius: "lg", shadow: "none" },
+      styles: { root: { backgroundColor: "var(--surface)", borderColor: "var(--border)" } },
+    },
+    Card: { styles: { root: { backgroundColor: "var(--surface)", borderColor: "var(--border)" } } },
+    Divider: { defaultProps: { color: "var(--border)" } },
+    Drawer: {
+      defaultProps: drawerDefaults,
+      classNames: { overlay: classes.dialogOverlay },
+      styles: {
+        ...overlayStyles,
+        content: { backgroundColor: "var(--background)", color: "var(--text)" },
       },
     },
+    DrawerRoot: { defaultProps: drawerDefaults },
+    Modal: {
+      defaultProps: modalDefaults,
+      classNames: { overlay: classes.dialogOverlay },
+      styles: {
+        ...overlayStyles,
+        content: { backgroundColor: "var(--surface)", color: "var(--text)" },
+      },
+    },
+    ModalRoot: { defaultProps: modalDefaults },
+    ModalOverlay: { defaultProps: { blur: 1 } },
+    Popover: { styles: { dropdown: floatingSurface, arrow: { borderColor: "var(--border)" } } },
+    Menu: {
+      styles: { dropdown: floatingSurface, arrow: { borderColor: "var(--border)" } },
+      classNames: { item: classes.menuItem },
+    },
+    Tooltip: {
+      defaultProps: { events: { hover: true, focus: true, touch: false } },
+      styles: (_theme: MantineTheme, { color }: { color?: string }) =>
+        color
+          ? {}
+          : { tooltip: { backgroundColor: "var(--heading)", color: "var(--text-inverse)" } },
+    },
+    Alert: { styles: { message: { color: "var(--alert-color)" } } },
+    Notification: {
+      styles: (_theme: MantineTheme, { color }: { color?: string }) => {
+        const semantic = semanticColors.find(
+          ([role, { alias }]) => color === role || color === alias,
+        );
+        if (!semantic)
+          return { root: floatingSurface, description: { color: "var(--text-muted)" } };
+
+        const [role] = semantic;
+        return {
+          root: { ...floatingSurface, backgroundColor: `var(--${role}-soft)` },
+          title: { color: `var(--${role})` },
+          description: { color: `var(--${role})` },
+        };
+      },
+    },
+    DateInput: dateControl,
+    DatePicker: dateControl,
+    DatePickerInput: dateControl,
+    DateTimePicker: dateControl,
+    TimeInput: { defaultProps: sizeSm },
+    Pagination: { classNames: { control: classes.paginationControl } },
     Table: {
       defaultProps: {
         horizontalSpacing: "md",
         verticalSpacing: "sm",
         highlightOnHover: true,
         withTableBorder: false,
+        borderColor: "var(--border)",
+        highlightOnHoverColor: "var(--surface-hover)",
       },
+      classNames: { tr: classes.tableRow },
       styles: {
         th: {
-          background: "var(--mantine-color-gray-0)",
-          color: "var(--mantine-color-gray-7)",
+          background: "var(--background)",
+          color: "var(--neutral)",
           fontSize: "var(--mantine-font-size-xs)",
         },
       },
@@ -129,30 +315,26 @@ export const adminTheme = createTheme({
 
 /** V5.1 is the visual baseline; both Mantine and retained module CSS share these tokens. */
 export const adminCssVariablesResolver: CSSVariablesResolver = () => ({
-  variables: {
-    "--background": "#f7f8fa",
-    "--surface": "#ffffff",
-    "--surface-subtle": "#f4f6f8",
-    "--text": "#202938",
-    "--text-muted": "#5a6676",
-    "--border": "#e2e6eb",
-    "--border-strong": "#ced4da",
-    "--primary": "#1f7c4d",
-    "--primary-hover": "#17633d",
-    "--primary-soft": "#eaf6ef",
-    "--radius": "10px",
-    "--nfv-heading-color": "#17212e",
-    "--nfv-subtle-color": "#687483",
-  },
+  variables: foundationVariables,
   light: {
-    "--mantine-color-body": "#f7f8fa",
-    "--mantine-color-text": "#202938",
-    "--mantine-color-dimmed": "#5a6676",
-    "--mantine-color-default-color": "#202938",
-    "--mantine-color-default-border": "#e2e6eb",
-    "--mantine-color-placeholder": "#687483",
-    "--mantine-primary-color-light": "#eaf6ef",
-    "--mantine-primary-color-light-color": "#17633d",
+    ...semanticVariantVariables,
+    "--mantine-color-body": adminTokens.background,
+    "--mantine-color-text": adminTokens.text,
+    "--mantine-color-dimmed": adminTokens["text-muted"],
+    "--mantine-color-default": "var(--surface)",
+    "--mantine-color-default-hover": "var(--surface-hover)",
+    "--mantine-color-default-color": "var(--text)",
+    "--mantine-color-default-border": "var(--border)",
+    "--mantine-color-placeholder": "var(--text-subtle)",
+    "--mantine-color-error": "var(--danger)",
+    "--mantine-color-disabled": "var(--surface-disabled)",
+    "--mantine-color-disabled-color": "var(--text-disabled)",
+    "--mantine-color-disabled-border": "var(--border)",
+    "--mantine-color-forest-filled": "var(--primary)",
+    "--mantine-color-forest-filled-hover": "var(--primary-hover)",
+    "--mantine-color-forest-light": "var(--primary-soft)",
+    "--mantine-color-forest-light-hover": "var(--surface-selected)",
+    "--mantine-color-forest-light-color": "var(--primary-hover)",
   },
   dark: {},
 });
