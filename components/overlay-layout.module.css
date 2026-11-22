@@ -22,7 +22,7 @@
   background: var(--surface);
 }
 
-.footer > :global(.mantine-Button-root) {
+.footer :global(.mantine-Button-root) {
   max-inline-size: 100%;
   min-block-size: var(--button-height);
   block-size: auto;
@@ -33,4 +33,25 @@
   line-height: var(--mantine-line-height-sm);
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/* Give the content one scroll area when there is too little height for fixed actions. */
+@media (max-height: 16rem) {
+  .recordDetailContent {
+    overflow-y: auto;
+  }
+
+  .recordDetailContent > header {
+    position: static;
+  }
+
+  .recordDetailContent > .body {
+    flex: 1 0 auto;
+    overflow: visible;
+  }
+
+  .recordDetailContent > .footer {
+    max-block-size: none;
+    overflow: visible;
+  }
 }

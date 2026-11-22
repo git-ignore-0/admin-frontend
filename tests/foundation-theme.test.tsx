@@ -638,5 +638,10 @@ describe("admin color foundation", () => {
       backgroundColor: "var(--surface)",
       color: "var(--text)",
     });
+    expect(screen.getByRole("heading", { name: "Edit" })).toHaveStyle({
+      fontSize: "var(--mantine-h2-font-size)",
+      fontWeight: 700,
+      color: "var(--heading)",
+    });
   });
 });

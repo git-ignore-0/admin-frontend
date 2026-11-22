@@ -116,6 +116,39 @@ it("keeps the desktop detail Drawer on the right at 640px", async () => {
   expect(dialog.closest(".mantine-Drawer-root")).toHaveStyle({
     "--drawer-justify": "flex-end",
     "--drawer-size": "calc(40rem * var(--mantine-scale))",
+    "--mb-padding": "var(--mantine-spacing-md)",
+  });
+  const detail = within(dialog);
+  const title = detail.getByRole("heading", { name: firstRecord });
+  expect(title).toHaveStyle({
+    fontSize: "var(--mantine-font-size-lg)",
+    fontWeight: 600,
+    color: "var(--heading)",
+    overflowWrap: "anywhere",
+  });
+  expect(detail.getAllByText("NFV-001")).toHaveLength(1);
+  expect(detail.getByText("NFV-001")).toHaveStyle({
+    color: "var(--mantine-color-dimmed)",
+    "--text-fz": "var(--mantine-font-size-sm)",
+  });
+  for (const name of ["Record information", "Field notes"]) {
+    expect(detail.getByRole("heading", { level: 2, name })).toHaveStyle({
+      "--title-fz": "var(--mantine-font-size-md)",
+      fontWeight: 600,
+    });
+  }
+  expect(detail.getByText("Category")).toHaveStyle({
+    color: "var(--mantine-color-dimmed)",
+    "--text-fz": "var(--mantine-font-size-sm)",
+  });
+  expect(detail.getByText("Đất và dinh dưỡng")).toHaveStyle({
+    "--text-fz": "var(--mantine-font-size-md)",
+  });
+  expect(detail.getByText("Khu thử nghiệm ven sông")).toBeVisible();
+  expect(detail.getByText("Chờ duyệt")).toBeVisible();
+  expect(detail.getByRole("button", { name: "Close sample detail" })).toHaveStyle({
+    "--cb-size": "calc(2rem * var(--mantine-scale))",
+    color: "var(--mantine-color-dimmed)",
   });
 });
 
@@ -131,6 +164,20 @@ it("places detail actions outside the scroll body and omits them for read-only d
   expect(footer?.parentElement).toBe(body?.parentElement);
   expect(body).toContainElement(within(drawer).getByRole("heading", { name: "Field notes" }));
   expect(within(drawer).getByText("NFV-001", { selector: "header *" })).toBeVisible();
+  expect(footer).toHaveStyle({
+    paddingInline: "var(--mantine-spacing-md)",
+    paddingBlock: "var(--mantine-spacing-sm)",
+  });
+  const remove = within(footer!).getByRole("button", { name: "Remove record" });
+  const edit = within(footer!).getByRole("button", { name: "Edit record" });
+  const confirm = within(footer!).getByRole("button", { name: "Confirm review" });
+  expect(remove.parentElement).toBe(footer);
+  expect(edit.parentElement).toBe(confirm.parentElement);
+  expect(edit.parentElement).not.toBe(footer);
+  expect(within(footer!).getAllByRole("button")).toEqual([remove, edit, confirm]);
+  expect(remove).toHaveAttribute("data-variant", "subtle");
+  expect(edit).toHaveAttribute("data-variant", "default");
+  expect(confirm).toHaveAttribute("data-variant", "filled");
 
   fireEvent.click(within(drawer).getByRole("button", { name: "Close sample detail" }));
   await waitFor(() => expect(drawer).not.toBeInTheDocument());
@@ -138,12 +185,40 @@ it("places detail actions outside the scroll body and omits them for read-only d
   fireEvent.click(screen.getByRole("button", { name: "Open long-content detail" }));
   const long = await screen.findByRole("dialog", { name: initialRecords[3].name });
   expect(long).toHaveTextContent("NFV-TRIAL-COMPOST-SEASON-02-BLOCK-NORTH-REFERENCE-2026");
+  const notes = within(long).getByText(/Khi hoàn thành, nhóm ghi rõ/);
+  expect(notes.textContent).toContain("\n\n");
+  expect(notes).toHaveStyle({ whiteSpace: "pre-wrap", overflowWrap: "anywhere" });
   fireEvent.click(within(long).getByRole("button", { name: "Close sample detail" }));
   await waitFor(() => expect(long).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "Open read-only detail" }));
   const readOnly = await screen.findByRole("dialog", { name: firstRecord });
   expect(within(readOnly).getByRole("heading", { name: "Field notes" })).toBeVisible();
   expect(readOnly.querySelector("footer")).toBeNull();
+});
+
+it("removes a sample only after confirming the Drawer destructive action", async () => {
+  render(<UiFoundationShowcase />);
+  showTab("details");
+  fireEvent.click(screen.getByRole("button", { name: "Open standard detail" }));
+  const drawer = await screen.findByRole("dialog", { name: firstRecord });
+  const remove = within(drawer).getByRole("button", { name: "Remove record" });
+  fireEvent.click(remove);
+  const confirmation = await screen.findByRole("dialog", { name: "Remove sample record" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(remove).toHaveFocus());
+  expect(drawer).toBeVisible();
+
+  fireEvent.click(remove);
+  const reopened = await screen.findByRole("dialog", { name: "Remove sample record" });
+  await finishSampleRequest(() => {
+    fireEvent.click(within(reopened).getByRole("button", { name: "Remove record" }));
+    expect(within(reopened).getByRole("button", { name: "Removing…" })).toBeDisabled();
+    fireEvent.keyDown(reopened, { key: "Escape" });
+    expect(reopened).toBeVisible();
+  });
+  await waitFor(() => expect(drawer).not.toBeInTheDocument());
+  showTab("list");
+  expect(screen.queryByRole("link", { name: firstRecord })).not.toBeInTheDocument();
 });
 
 it("submits a search, returns to the first page and retries an empty or failed list", async () => {

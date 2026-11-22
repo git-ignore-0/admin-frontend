@@ -397,15 +397,19 @@ export function UiFoundationShowcase() {
           onClose={closeDetail}
           position="right"
           size={640}
+          padding="md"
+          radius={0}
           zIndex={getDefaultZIndex("modal") - 1}
           returnFocus={false}
           trapFocus={!dialog}
           closeOnEscape={!dialog}
           closeOnClickOutside={!dialog}
           classNames={{ content: layout.content, body: layout.body }}
+          styles={{ title: { fontSize: "var(--mantine-font-size-lg)", fontWeight: 600 } }}
         >
           <Drawer.Overlay />
           <Drawer.Content
+            className={layout.recordDetailContent}
             inert={Boolean(dialog) || undefined}
             aria-hidden={dialog ? true : undefined}
           >
@@ -418,6 +422,10 @@ export function UiFoundationShowcase() {
               </Stack>
               <Drawer.CloseButton
                 aria-label="Close sample detail"
+                size={32}
+                iconSize={18}
+                c="dimmed"
+                style={{ alignSelf: "flex-start", flexShrink: 0 }}
                 ref={drawerClose}
                 data-autofocus={focusAction === null || undefined}
               />

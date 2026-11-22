@@ -31,26 +31,37 @@ export type RecordAction = "edit" | "confirm" | "remove";
 
 export function SampleRecordDetails({ record }: { record: SampleRecord }) {
   const details = [
-    ["Record code", record.id],
     ["Category", record.category],
-    ["Location", record.location || "Unspecified"],
+    ["Location", record.location],
   ];
 
   return (
     <Stack gap="md">
       <Paper p="md">
         <Stack gap="sm">
-          <Title order={2} size="h3" fw={600}>
+          <Title order={2} size="md" fw={600}>
             Record information
           </Title>
-          <SimpleGrid component="dl" type="container" cols={{ base: 1, "26rem": 2 }} m={0}>
+          <SimpleGrid
+            component="dl"
+            type="container"
+            cols={{ base: 1, "26rem": 2 }}
+            spacing="sm"
+            m={0}
+          >
             {details.map(([label, value]) => (
               <Stack key={label} gap={4} miw={0}>
                 <Text component="dt" size="sm" c="dimmed">
                   {label}
                 </Text>
-                <Text component="dd" m={0} style={{ overflowWrap: "anywhere" }}>
-                  {value}
+                <Text
+                  component="dd"
+                  m={0}
+                  size={value ? "md" : "sm"}
+                  c={value ? undefined : "dimmed"}
+                  style={{ overflowWrap: "anywhere" }}
+                >
+                  {value || "Unspecified"}
                 </Text>
               </Stack>
             ))}
@@ -67,10 +78,14 @@ export function SampleRecordDetails({ record }: { record: SampleRecord }) {
       </Paper>
       <Paper p="md">
         <Stack gap="xs">
-          <Title order={2} size="h3" fw={600}>
+          <Title order={2} size="md" fw={600}>
             Field notes
           </Title>
-          <Text style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+          <Text
+            size={record.notes ? "md" : "sm"}
+            c={record.notes ? undefined : "dimmed"}
+            style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
+          >
             {record.notes || "No field notes recorded."}
           </Text>
         </Stack>
@@ -92,15 +107,14 @@ export function SampleRecordActions({
     onAction(type, event.currentTarget);
 
   return (
-    <Group component="footer" className={layout.footer} gap="xs" justify="flex-end" p="md">
-      <Button
-        variant="default"
-        ref={focusAction === "edit" ? focusActionRef : undefined}
-        data-autofocus={focusAction === "edit" || undefined}
-        onClick={action("edit")}
-      >
-        Edit record
-      </Button>
+    <Group
+      component="footer"
+      className={layout.footer}
+      gap="xs"
+      justify="space-between"
+      px="md"
+      py="sm"
+    >
       <Button
         color="danger"
         variant="subtle"
@@ -110,13 +124,24 @@ export function SampleRecordActions({
       >
         Remove record
       </Button>
-      <Button
-        ref={focusAction === "confirm" ? focusActionRef : undefined}
-        data-autofocus={focusAction === "confirm" || undefined}
-        onClick={action("confirm")}
-      >
-        Confirm review
-      </Button>
+      <Group gap="xs" justify="flex-end" ms="auto" maw="100%">
+        <Button
+          variant="default"
+          ref={focusAction === "edit" ? focusActionRef : undefined}
+          data-autofocus={focusAction === "edit" || undefined}
+          onClick={action("edit")}
+        >
+          Edit record
+        </Button>
+        <Button
+          variant="filled"
+          ref={focusAction === "confirm" ? focusActionRef : undefined}
+          data-autofocus={focusAction === "confirm" || undefined}
+          onClick={action("confirm")}
+        >
+          Confirm review
+        </Button>
+      </Group>
     </Group>
   );
 }

@@ -31,7 +31,11 @@ const observations: [string, string, RecordStatus][] = [
   ["Khảo sát độ ẩm lớp phủ", "Khu thử nghiệm ven sông", "pending"],
   ["Thử nghiệm giống cải bẹ xanh", "Vườn ươm phía Đông", "success"],
   ["Theo dõi côn trùng có ích", "Bờ ruộng hướng Nam", "info"],
-  ["Đánh giá phân ủ từ phụ phẩm thực vật", "Khu ủ hữu cơ", "warning"],
+  [
+    "Đánh giá phân ủ từ phụ phẩm thực vật sau thu hoạch tại các luống đối chứng phía bắc sau nhiều đợt mưa liên tiếp",
+    "Khu ủ hữu cơ",
+    "warning",
+  ],
   ["Lưu hạt giống đậu đũa địa phương", "Kho hạt giống", "neutral"],
   ["Kiểm tra rãnh thoát nước", "Lô đất thấp", "danger"],
   ["So sánh đất phủ rơm và đất trống", "Luống đối chứng", "success"],
