@@ -20,12 +20,18 @@
   --input-bd: var(--control-border);
 }
 
+[data-mantine-color-scheme="light"]
+  .inputWrapper:is([data-variant="default"], [data-variant="filled"]) {
+  --input-bd-focus: var(--focus);
+}
+
 .inputWrapper[data-variant="filled"]:not([data-error]) {
   --input-placeholder-color: var(--text-muted);
 }
 
 .inputWrapper[data-error] .input {
   --input-color: var(--text);
+  --input-keyboard-outline: 2px solid var(--danger);
   --input-placeholder-color: var(--text-subtle);
 }
 
@@ -33,30 +39,38 @@
   --input-placeholder-color: var(--text-subtle);
 }
 
-/* A composite input can mark its visible shell directly, or expose a native inner field. */
-[data-mantine-color-scheme="light"]
-  .inputWrapper[data-variant="default"]:not([data-error]):has(
-    > .input:is(.readOnlyInput, [data-read-only], [readonly]:not([aria-haspopup])),
-    > .input input[readonly]:not([data-pointer])
-  ) {
-  --input-bg: var(--surface-subtle);
-  --input-bd: var(--border);
-}
-
 .inputWrapper:is([data-variant="default"], [data-variant="filled"]):not(
     [data-error],
     [data-disabled]
   )
-  .input[data-expanded] {
-  --input-bd: var(--focus);
+  > .input:is([data-expanded], [aria-expanded="true"]):not(:disabled, [data-disabled]) {
+  --input-bd: var(--input-bd-focus);
 }
 
-.inputWrapper .input:is(:focus-visible, :has(input:focus-visible)):not(:disabled, [data-disabled]) {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
+/* The shell can carry a read-only marker directly or wrap a read-only native field. */
+.inputWrapper[data-variant="default"]:not([data-error])
+  > .input:is(
+    .readOnlyInput,
+    [data-read-only],
+    [readonly]:not([aria-haspopup]),
+    :has(input[readonly]:not([data-pointer], [aria-haspopup]))
+  ) {
+  --input-bg: var(--surface-subtle);
+  --input-bd: var(--border);
+  --input-bd-focus: var(--border);
+  --input-keyboard-outline: 2px solid var(--focus);
+}
+
+/* Keep the keyboard cue on the border when its color would otherwise stay the same. */
+:root:not([data-admin-pointer-focus])
+  .inputWrapper:is([data-variant="default"], [data-variant="filled"])
+  > .input:is(:focus-visible, :has(input:focus-visible)):not(:disabled, [data-disabled]) {
+  outline: var(--input-keyboard-outline, none);
+  outline-offset: -2px;
 }
 
 .inputWrapper .input:is(:disabled, [data-disabled], :has(input:disabled)) {
+  --input-bd-focus: var(--border);
   opacity: 1;
 }
 

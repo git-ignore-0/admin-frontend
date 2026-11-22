@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Anchor,
   Box,
   Button,
   Checkbox,
@@ -10,6 +9,7 @@ import {
   Group,
   Modal,
   Stack,
+  Tabs,
   Text,
   Title,
 } from "@mantine/core";
@@ -18,7 +18,7 @@ import { IconArrowLeft } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import layout from "@/components/overlay-layout.module.css";
-import { ShowcaseComponents } from "./component-library";
+import { ShowcaseColor, ShowcaseComponents } from "./component-library";
 import { SampleRecordList } from "./record-list";
 import {
   SampleRecordActions,
@@ -35,6 +35,15 @@ import {
 } from "./sample-records";
 
 type Dialog = RecordAction | "create" | "info";
+const showcaseTabs = [
+  ["color", "2.1. Color"],
+  ["components", "2.2. Components"],
+  ["toolbar", "2.3. List Toolbar"],
+  ["list", "2.4. Data List"],
+  ["details", "2.5. Detail & Dialog"],
+] as const;
+type ShowcaseTab = (typeof showcaseTabs)[number][0];
+type OpenDetail = { id: string; readOnly: boolean };
 
 function activeRecordId() {
   const hash = window.location.hash;
@@ -44,37 +53,43 @@ function activeRecordId() {
 export function UiFoundationShowcase() {
   const mobile = useMediaQuery("(max-width: 47.99em)");
   const [records, setRecords] = useState(() => [...initialRecords, ...extendedRecords]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<ShowcaseTab>("color");
+  const [detail, setDetail] = useState<OpenDetail | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [dialogError, setDialogError] = useState("");
   const [failNextRequest, setFailNextRequest] = useState(false);
-  const [readOnlyDetail, setReadOnlyDetail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [focusAction, setFocusAction] = useState<RecordAction | null>(null);
   const [message, setMessage] = useState("");
   const nextRecordNumber = useRef(initialRecords.length + extendedRecords.length + 1);
-  const detailTrigger = useRef<HTMLAnchorElement | null>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const detailActionTrigger = useRef<HTMLButtonElement>(null);
-  const recordHistoryEntry = useRef<string | null>(null);
   const submission = useRef<number | null>(null);
   const mobileHeading = useRef<HTMLHeadingElement>(null);
-  const listHeading = useRef<HTMLHeadingElement>(null);
+  const activeTab = useRef<HTMLButtonElement>(null);
+  const tabList = useRef<HTMLDivElement>(null);
   const drawerClose = useRef<HTMLButtonElement>(null);
   const previousSelection = useRef<string | null>(null);
 
-  const selected = records.find((record) => record.id === selectedId);
+  const selected = records.find((record) => record.id === detail?.id);
+  const standardRecord = records.find((record) => record.id === "NFV-001") ?? records[0];
+  const longRecord = records.find((record) => record.id === "NFV-004");
   const mobileDetailOpen = mobile && Boolean(selected);
   const drawerOpen = !mobile && Boolean(selected);
-  const dialogRecord = selected ?? records[0];
+  const dialogRecord = selected ?? standardRecord;
   const dialogReturnFocus = selected ? detailActionTrigger : dialogTrigger;
-  const dialogFallback = selected ? (mobile ? mobileHeading : drawerClose) : listHeading;
+  const dialogFallback = selected ? (mobile ? mobileHeading : drawerClose) : activeTab;
 
   useEffect(() => {
     const readLocation = () => {
       const id = activeRecordId();
-      if (!id) recordHistoryEntry.current = null;
-      setSelectedId(id);
+      const storedTab = window.history.state?.nfvShowcaseTab;
+      const storedDetail = window.history.state?.nfvShowcaseDetail;
+      const isExampleEntry = storedDetail?.id === id && id !== null;
+      const historyTab = showcaseTabs.find(([value]) => value === storedTab)?.[0];
+      setTab(id && !isExampleEntry ? "list" : (historyTab ?? "color"));
+      setDetail(id ? { id, readOnly: isExampleEntry && storedDetail.readOnly === true } : null);
       setFocusAction(null);
       setDialog(null);
       if (submission.current !== null) window.clearTimeout(submission.current);
@@ -99,28 +114,39 @@ export function UiFoundationShowcase() {
     if (!displayedRecordId && previousSelection.current) {
       const trigger = detailTrigger.current?.isConnected
         ? detailTrigger.current
-        : listHeading.current;
+        : activeTab.current;
       trigger?.focus({ preventScroll: !mobile });
       detailTrigger.current = null;
     }
     previousSelection.current = displayedRecordId;
   }, [displayedRecordId, mobile]);
 
-  function openDetail(id: string, trigger: HTMLAnchorElement) {
+  function changeTab(value: string | null) {
+    const nextTab = showcaseTabs.find(([id]) => id === value)?.[0];
+    if (!nextTab || nextTab === tab) return;
+    window.history.replaceState({ nfvShowcaseTab: nextTab }, "");
+    setTab(nextTab);
+  }
+
+  function openDetail(id: string, trigger: HTMLElement, readOnly = false) {
+    const nextDetail = { id, readOnly };
     detailTrigger.current = trigger;
-    recordHistoryEntry.current = id;
     setFocusAction(null);
-    window.history.pushState(null, "", recordHref(id));
-    setSelectedId(id);
+    window.history.pushState(
+      { nfvShowcaseTab: tab, nfvShowcaseDetail: nextDetail },
+      "",
+      recordHref(id),
+    );
+    setDetail(nextDetail);
   }
 
   function closeDetail() {
-    if (recordHistoryEntry.current === selectedId) {
-      recordHistoryEntry.current = null;
+    if (window.history.state?.nfvShowcaseDetail?.id === detail?.id) {
       window.history.back();
     } else {
-      window.history.replaceState(null, "", "#sample-records");
-      setSelectedId(null);
+      const { pathname, search } = window.location;
+      window.history.replaceState({ nfvShowcaseTab: tab }, "", pathname + search);
+      setDetail(null);
     }
   }
 
@@ -165,9 +191,11 @@ export function UiFoundationShowcase() {
 
   function saveRecord(fields: RecordFields) {
     simulateUpdate(() => {
-      if (dialog === "edit" && selected) {
+      if (dialog === "edit" && dialogRecord) {
         setRecords((current) =>
-          current.map((record) => (record.id === selected.id ? { ...record, ...fields } : record)),
+          current.map((record) =>
+            record.id === dialogRecord.id ? { ...record, ...fields } : record,
+          ),
         );
         setMessage("Sample record updated.");
       } else {
@@ -199,7 +227,7 @@ export function UiFoundationShowcase() {
   }
 
   const details = selected && <SampleRecordDetails record={selected} />;
-  const detailActions = selected && !readOnlyDetail && (
+  const detailActions = selected && !detail?.readOnly && (
     <SampleRecordActions
       focusAction={focusAction}
       focusActionRef={detailActionTrigger}
@@ -211,93 +239,120 @@ export function UiFoundationShowcase() {
     <>
       <div hidden={mobileDetailOpen} inert={Boolean(dialog) || drawerOpen || undefined}>
         <Stack gap="xl" miw={0}>
-          <Stack gap="sm">
-            <Title order={1}>UI Foundation</Title>
-            <Text c="dimmed">Interactive Mantine examples and sample records for NFV Admin.</Text>
-            <Group component="nav" aria-label="Showcase sections" gap="md">
-              <Anchor href="#list-toolbar">ListToolbar</Anchor>
-              <Anchor href="#data-list">Data List</Anchor>
-              <Anchor href="#detail-examples">Detail and Drawer</Anchor>
-              <Anchor href="#modal-examples">Modal and ConfirmationDialog</Anchor>
-              <Anchor href="#colors-and-tokens">Color and typography</Anchor>
-              <Anchor href="#form-examples">Form controls</Anchor>
-              <Anchor href="#action-examples">Buttons and navigation</Anchor>
-              <Anchor href="#feedback-examples">Semantic feedback</Anchor>
-            </Group>
-          </Stack>
-
-          <Stack component="section" gap="md" aria-labelledby="sample-records" miw={0}>
-            <Title id="sample-records" order={2} tabIndex={-1} ref={listHeading}>
-              Sample records
-            </Title>
+          <Title order={1}>UI Foundation</Title>
+          <Tabs value={tab} onChange={changeTab} keepMounted={false}>
+            <Tabs.List aria-label="Foundation sections" ref={tabList}>
+              {showcaseTabs.map(([value, label]) => (
+                <Tabs.Tab
+                  key={value}
+                  value={value}
+                  data-review-tab={value}
+                  ref={value === tab ? activeTab : undefined}
+                >
+                  {label}
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+            <Tabs.Panel value="color" pt="lg">
+              <ShowcaseColor />
+            </Tabs.Panel>
+            <Tabs.Panel value="components" pt="lg">
+              <ShowcaseComponents
+                onNavigate={(value) => {
+                  tabList.current
+                    ?.querySelector<HTMLButtonElement>(`[data-review-tab="${value}"]`)
+                    ?.focus();
+                  changeTab(value);
+                }}
+              />
+            </Tabs.Panel>
             <SampleRecordList
               records={records}
               selectedId={displayedRecordId}
               onOpen={openDetail}
               onCreate={(trigger) => openDialog("create", trigger)}
             />
-          </Stack>
-
-          <Stack component="section" gap="md" aria-labelledby="detail-and-dialogs">
-            <Title id="detail-and-dialogs" order={2}>
-              Details and dialogs
-            </Title>
-            <Stack component="section" gap="xs" aria-labelledby="detail-examples">
-              <Title id="detail-examples" order={3}>
-                Detail and Drawer
-              </Title>
-              <Text c="dimmed">
-                Open a record to try editing and confirmation inside the Drawer. NFV-004 has long
-                field notes.
-              </Text>
-              <Checkbox
-                label="Read-only detail"
-                checked={readOnlyDetail}
-                onChange={(event) => setReadOnlyDetail(event.currentTarget.checked)}
-              />
-            </Stack>
-            <Stack component="section" gap="xs" aria-labelledby="modal-examples">
-              <Title id="modal-examples" order={3}>
-                Modal and ConfirmationDialog
-              </Title>
-              <Checkbox
-                label="Fail next sample request"
-                checked={failNextRequest}
-                onChange={(event) => setFailNextRequest(event.currentTarget.checked)}
-              />
-              <Group gap="xs">
-                <Button
-                  variant="default"
-                  onClick={(event) => openDialog("create", event.currentTarget)}
-                >
-                  Create modal
-                </Button>
-                <Button
-                  variant="default"
-                  disabled={!records.length}
-                  onClick={(event) => openDialog("confirm", event.currentTarget)}
-                >
-                  Confirmation
-                </Button>
-                <Button
-                  color="danger"
-                  variant="light"
-                  disabled={!records.length}
-                  onClick={(event) => openDialog("remove", event.currentTarget)}
-                >
-                  Destructive confirmation
-                </Button>
-                <Button
-                  variant="subtle"
-                  onClick={(event) => openDialog("info", event.currentTarget)}
-                >
-                  Information
-                </Button>
-              </Group>
-            </Stack>
-          </Stack>
-
-          <ShowcaseComponents />
+            <Tabs.Panel value="details" pt="lg">
+              <Stack gap="lg">
+                <Stack gap="sm">
+                  <Title order={2}>Drawer and mobile detail</Title>
+                  <Group gap="xs">
+                    <Button
+                      variant="default"
+                      disabled={!standardRecord}
+                      onClick={(event) =>
+                        standardRecord && openDetail(standardRecord.id, event.currentTarget)
+                      }
+                    >
+                      Open standard detail
+                    </Button>
+                    <Button
+                      variant="default"
+                      disabled={!longRecord}
+                      onClick={(event) =>
+                        longRecord && openDetail(longRecord.id, event.currentTarget)
+                      }
+                    >
+                      Open long-content detail
+                    </Button>
+                    <Button
+                      variant="default"
+                      disabled={!standardRecord}
+                      onClick={(event) =>
+                        standardRecord && openDetail(standardRecord.id, event.currentTarget, true)
+                      }
+                    >
+                      Open read-only detail
+                    </Button>
+                  </Group>
+                </Stack>
+                <Stack gap="sm">
+                  <Title order={2}>Modal and ConfirmationDialog</Title>
+                  <Checkbox
+                    label="Fail next sample request"
+                    checked={failNextRequest}
+                    onChange={(event) => setFailNextRequest(event.currentTarget.checked)}
+                  />
+                  <Group gap="xs">
+                    <Button
+                      variant="default"
+                      onClick={(event) => openDialog("info", event.currentTarget)}
+                    >
+                      Information
+                    </Button>
+                    <Button
+                      variant="default"
+                      disabled={!standardRecord}
+                      onClick={(event) => openDialog("confirm", event.currentTarget)}
+                    >
+                      Confirmation
+                    </Button>
+                    <Button
+                      color="danger"
+                      variant="light"
+                      disabled={!standardRecord}
+                      onClick={(event) => openDialog("remove", event.currentTarget)}
+                    >
+                      Destructive confirmation
+                    </Button>
+                    <Button
+                      variant="default"
+                      onClick={(event) => openDialog("create", event.currentTarget)}
+                    >
+                      Create form
+                    </Button>
+                    <Button
+                      variant="default"
+                      disabled={!standardRecord}
+                      onClick={(event) => openDialog("edit", event.currentTarget)}
+                    >
+                      Edit form (640 px)
+                    </Button>
+                  </Group>
+                </Stack>
+              </Stack>
+            </Tabs.Panel>
+          </Tabs>
         </Stack>
       </div>
 
@@ -315,7 +370,7 @@ export function UiFoundationShowcase() {
             leftSection={<IconArrowLeft size={16} aria-hidden />}
             onClick={closeDetail}
           >
-            Back to sample records
+            {tab === "details" ? "Back to Detail & Dialog" : "Back to sample records"}
           </Button>
           <Stack gap={4}>
             <Title
@@ -375,7 +430,7 @@ export function UiFoundationShowcase() {
 
       {(dialog === "create" || dialog === "edit") && (
         <SampleRecordEditor
-          record={dialog === "edit" ? selected : undefined}
+          record={dialog === "edit" ? dialogRecord : undefined}
           busy={busy}
           error={dialogError}
           onClose={closeDialog}

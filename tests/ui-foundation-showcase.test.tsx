@@ -1,11 +1,22 @@
+import { MantineProvider, Tabs } from "@mantine/core";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { UiFoundationShowcase } from "@/components/ui-foundation-showcase";
 import { SampleRecordList } from "@/components/ui-foundation-showcase/record-list";
-import { initialRecords, recordCategories } from "@/components/ui-foundation-showcase/sample-records";
+import {
+  initialRecords,
+  recordCategories,
+} from "@/components/ui-foundation-showcase/sample-records";
 
 const firstRecord = "Khảo sát độ ẩm lớp phủ";
 const originalMatchMedia = window.matchMedia;
+const tabLabels = {
+  color: "2.1. Color",
+  components: "2.2. Components",
+  toolbar: "2.3. List Toolbar",
+  list: "2.4. Data List",
+  details: "2.5. Detail & Dialog",
+};
 
 beforeEach(() => window.history.replaceState(null, "", "/dev/ui-foundation"));
 afterEach(() => {
@@ -41,9 +52,66 @@ function applyFilters() {
   fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
 }
 
+function showTab(tab: keyof typeof tabLabels) {
+  fireEvent.click(screen.getByRole("tab", { name: tabLabels[tab] }));
+}
+
+it("uses native keyboard navigation between five independent review panels", () => {
+  render(<UiFoundationShowcase />);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(
+    Object.values(tabLabels),
+  );
+  const color = screen.getByRole("tab", { name: tabLabels.color });
+  expect(color).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel", { name: tabLabels.color })).toBeVisible();
+  act(() => color.focus());
+  fireEvent.keyDown(color, { key: "ArrowRight" });
+  expect(screen.getByRole("tab", { name: tabLabels.components })).toHaveFocus();
+  expect(screen.getByRole("tabpanel", { name: tabLabels.components })).toBeVisible();
+  showTab("toolbar");
+  expect(screen.getByRole("searchbox", { name: "Search records" })).toBeVisible();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  showTab("list");
+  expect(screen.getByRole("table", { name: "Sample records" })).toBeVisible();
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+});
+
+it("opens a direct record hash in the data list context and closes to that tab", async () => {
+  window.history.replaceState(null, "", "/dev/ui-foundation#record-NFV-004");
+  render(<UiFoundationShowcase />);
+  const drawer = await screen.findByRole("dialog", { name: initialRecords[3].name });
+  expect(drawer).toBeVisible();
+  fireEvent.click(within(drawer).getByRole("button", { name: "Close sample detail" }));
+  await waitFor(() => expect(drawer).not.toBeInTheDocument());
+  const list = screen.getByRole("tab", { name: tabLabels.list });
+  expect(list).toHaveAttribute("aria-selected", "true");
+  expect(list).toHaveFocus();
+  expect(location.hash).toBe("");
+});
+
+it("preserves the originating tab and read-only mode across browser Back and Forward", async () => {
+  render(<UiFoundationShowcase />);
+  showTab("details");
+  const trigger = screen.getByRole("button", { name: "Open read-only detail" });
+  fireEvent.click(trigger);
+  const drawer = await screen.findByRole("dialog", { name: firstRecord });
+  expect(drawer.querySelector("footer")).toBeNull();
+  window.history.back();
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(location.hash).toBe("");
+
+  window.history.forward();
+  const reopened = await screen.findByRole("dialog", { name: firstRecord });
+  expect(reopened.querySelector("footer")).toBeNull();
+  fireEvent.click(within(reopened).getByRole("button", { name: "Close sample detail" }));
+  await waitFor(() => expect(reopened).not.toBeInTheDocument());
+  expect(screen.getByRole("tabpanel", { name: tabLabels.details })).toBeVisible();
+});
+
 it("keeps the desktop detail Drawer on the right at 640px", async () => {
   render(<UiFoundationShowcase />);
-  fireEvent.click(screen.getByRole("link", { name: firstRecord }));
+  showTab("details");
+  fireEvent.click(screen.getByRole("button", { name: "Open standard detail" }));
   const dialog = await screen.findByRole("dialog", { name: firstRecord });
   expect(dialog.closest(".mantine-Drawer-root")).toHaveStyle({
     "--drawer-justify": "flex-end",
@@ -53,7 +121,9 @@ it("keeps the desktop detail Drawer on the right at 640px", async () => {
 
 it("places detail actions outside the scroll body and omits them for read-only details", async () => {
   render(<UiFoundationShowcase />);
-  fireEvent.click(screen.getByRole("link", { name: firstRecord }));
+  showTab("details");
+  const standard = screen.getByRole("button", { name: "Open standard detail" });
+  fireEvent.click(standard);
   const drawer = await screen.findByRole("dialog", { name: firstRecord });
   const body = document.getElementById(drawer.getAttribute("aria-describedby")!);
   const footer = within(drawer).getByRole("button", { name: "Confirm review" }).closest("footer");
@@ -64,8 +134,13 @@ it("places detail actions outside the scroll body and omits them for read-only d
 
   fireEvent.click(within(drawer).getByRole("button", { name: "Close sample detail" }));
   await waitFor(() => expect(drawer).not.toBeInTheDocument());
-  fireEvent.click(screen.getByRole("checkbox", { name: "Read-only detail" }));
-  fireEvent.click(screen.getByRole("link", { name: firstRecord }));
+  expect(standard).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Open long-content detail" }));
+  const long = await screen.findByRole("dialog", { name: initialRecords[3].name });
+  expect(long).toHaveTextContent("NFV-TRIAL-COMPOST-SEASON-02-BLOCK-NORTH-REFERENCE-2026");
+  fireEvent.click(within(long).getByRole("button", { name: "Close sample detail" }));
+  await waitFor(() => expect(long).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Open read-only detail" }));
   const readOnly = await screen.findByRole("dialog", { name: firstRecord });
   expect(within(readOnly).getByRole("heading", { name: "Field notes" })).toBeVisible();
   expect(readOnly.querySelector("footer")).toBeNull();
@@ -73,19 +148,28 @@ it("places detail actions outside the scroll body and omits them for read-only d
 
 it("submits a search, returns to the first page and retries an empty or failed list", async () => {
   render(<UiFoundationShowcase />);
+  showTab("list");
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  expect(screen.queryByRole("link", { name: firstRecord })).not.toBeInTheDocument();
 
+  showTab("toolbar");
   const search = screen.getByRole("searchbox", { name: "Search records" });
   fireEvent.change(search, { target: { value: "khao sat do am" } });
+  showTab("list");
   expect(screen.queryByRole("link", { name: firstRecord })).not.toBeInTheDocument();
-  fireEvent.submit(search.closest("form")!);
+  showTab("toolbar");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  showTab("list");
   expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
 
-  fireEvent.change(search, { target: { value: "missing sample" } });
-  fireEvent.submit(search.closest("form")!);
+  showTab("toolbar");
+  submitSearch("missing sample");
+  showTab("list");
   expect(screen.getByText("No matching sample records")).toBeVisible();
+  showTab("toolbar");
   fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
 
+  showTab("list");
   fireEvent.click(screen.getByRole("textbox", { name: "List state" }));
   fireEvent.click(screen.getByRole("option", { name: "Refresh error" }));
   const list = screen.getByRole("region", { name: "Sample records" });
@@ -102,6 +186,7 @@ it("submits a search, returns to the first page and retries an empty or failed l
 
 it("keeps modified link clicks and nested row controls independent from row detail navigation", async () => {
   render(<UiFoundationShowcase />);
+  showTab("list");
   const link = screen.getByRole("link", { name: firstRecord });
   expect(link).toHaveAttribute("href", "#record-NFV-001");
   expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
@@ -121,6 +206,7 @@ it("keeps modified link clicks and nested row controls independent from row deta
 
 it("previews initial loading, many pages, and recovery from zero matching records", () => {
   render(<UiFoundationShowcase />);
+  showTab("list");
   const list = within(screen.getByRole("region", { name: "Data list" }));
   selectOption("List state", "Initial loading");
   expect(list.getByRole("status")).toHaveTextContent("Loading sample records");
@@ -137,17 +223,87 @@ it("previews initial loading, many pages, and recovery from zero matching record
   expect(screen.getByRole("navigation", { name: "Page 12 of 12" })).toBeVisible();
   expect(screen.getByText("NFV-060")).toBeVisible();
 
+  showTab("toolbar");
   submitSearch("not a sample");
+  showTab("list");
   expect(screen.getByText("No matching sample records")).toBeVisible();
-  fireEvent.click(list.getByRole("button", { name: "Clear search and filters" }));
-  expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Clear search and filters" }));
   expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
   expect(screen.getByRole("navigation", { name: "Page 1 of 12" })).toBeVisible();
+  showTab("toolbar");
+  expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("");
+});
+
+it("offers every list state directly and keeps rows during refresh and retry", async () => {
+  render(<UiFoundationShowcase />);
+  showTab("list");
+  const list = within(screen.getByRole("region", { name: "Data list" }));
+  selectOption("List state", "Initial loading");
+  expect(list.getByRole("status")).toHaveTextContent("Loading sample records");
+  expect(
+    list.getByRole("table", { hidden: true }).querySelector(".mantine-Skeleton-root"),
+  ).toBeInTheDocument();
+
+  selectOption("List state", "Refreshing");
+  expect(list.getByRole("table", { name: "Sample records" })).toHaveAttribute("aria-busy", "true");
+  expect(list.getByRole("link", { name: firstRecord })).toBeVisible();
+  expect(list.getByRole("button", { name: "Next page" })).toBeDisabled();
+
+  selectOption("List state", "Empty list");
+  expect(list.getByText("No sample records yet")).toBeVisible();
+  expect(list.getByText("0 records")).toBeVisible();
+  selectOption("List state", "No results");
+  expect(list.getByText("No matching sample records")).toBeVisible();
+  fireEvent.click(list.getByRole("button", { name: "Clear search and filters" }));
+  expect(list.getByRole("link", { name: firstRecord })).toBeVisible();
+
+  selectOption("List state", "Load error");
+  expect(list.getByRole("alert")).toHaveTextContent("Sample records could not be loaded.");
+  expect(list.queryByRole("table")).not.toBeInTheDocument();
+  await finishSampleRequest(() => {
+    fireEvent.click(list.getByRole("button", { name: "Retry" }));
+    expect(list.getByRole("status")).toHaveTextContent("Loading sample records");
+  });
+  expect(list.getByRole("link", { name: firstRecord })).toBeVisible();
+
+  selectOption("List state", "Refresh error");
+  expect(list.getByRole("alert")).toHaveTextContent("Sample refresh failed.");
+  expect(list.getByRole("link", { name: firstRecord })).toBeVisible();
+  await finishSampleRequest(() => {
+    fireEvent.click(list.getByRole("button", { name: "Retry" }));
+    expect(list.getByRole("link", { name: firstRecord })).toBeVisible();
+  });
+  expect(list.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("previews a busy toolbar independently from refresh and the data list", () => {
+  render(<UiFoundationShowcase />);
+  showTab("toolbar");
+  selectOption("Content width preview", "320 px");
+  fireEvent.click(screen.getByLabelText("Active filters"));
+  expect(screen.getByRole("button", { name: "Filters (1)" })).toBeVisible();
+  fireEvent.click(screen.getByLabelText("Toolbar busy"));
+  expect(screen.getByRole("searchbox")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Filters (1)" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "New record" })).toBeDisabled();
+  fireEvent.click(screen.getByLabelText("Toolbar busy"));
+  fireEvent.click(screen.getByLabelText("Preview refreshing"));
+  expect(screen.getByRole("button", { name: "Refresh records" })).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  expect(screen.getByRole("searchbox")).toBeEnabled();
+  expect(screen.getByRole("button", { name: "New record" })).toBeEnabled();
+  showTab("list");
+  expect(screen.getByRole("table", { name: "Sample records" })).not.toHaveAttribute("aria-busy");
+  expect(screen.getByText("2 records")).toBeVisible();
 });
 
 it("hands focus to the nested modal, dismisses only that modal on Escape and restores both triggers", async () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   submitSearch("NFV-001");
+  showTab("list");
   const link = screen.getByRole("link", { name: firstRecord });
   link.focus();
   fireEvent.click(link);
@@ -167,6 +323,8 @@ it("hands focus to the nested modal, dismisses only that modal on Escape and res
   fireEvent.keyDown(openConfirmation, { key: "Escape" });
   await waitFor(() => expect(drawer).not.toBeInTheDocument());
   expect(link).toHaveFocus();
+  expect(screen.getAllByRole("link", { name: firstRecord })).toHaveLength(1);
+  showTab("toolbar");
   expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("NFV-001");
 });
 
@@ -178,6 +336,7 @@ it("shows the same record fields on the mobile detail page and restores the list
   });
   render(<UiFoundationShowcase />);
 
+  showTab("list");
   const link = screen.getByRole("link", { name: firstRecord });
   fireEvent.click(link);
   const drawer = await screen.findByRole("dialog", { name: firstRecord });
@@ -198,6 +357,7 @@ it("shows the same record fields on the mobile detail page and restores the list
 
 it("shows create validation and locks a pending submission before adding one mock record", async () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   fireEvent.click(screen.getByRole("button", { name: "New record" }));
   const dialog = await screen.findByRole("dialog", { name: "Create sample record" });
   expect(dialog.closest(".mantine-Modal-root")).toHaveStyle({
@@ -220,11 +380,13 @@ it("shows create validation and locks a pending submission before adding one moc
     fireEvent.submit(name.closest("form")!);
   });
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  showTab("list");
   expect(screen.getAllByRole("link", { name: "Kiểm tra tạo bản ghi" })).toHaveLength(1);
 });
 
 it("opens information and destructive confirmations at 400px and focuses the safe action", async () => {
   render(<UiFoundationShowcase />);
+  showTab("details");
   const infoTrigger = screen.getByRole("button", { name: "Information" });
   fireEvent.click(infoTrigger);
   const info = await screen.findByRole("dialog", { name: "About sample records" });
@@ -248,15 +410,61 @@ it("opens information and destructive confirmations at 400px and focuses the saf
     fireEvent.click(within(confirmation).getByRole("button", { name: "Keep as draft" }));
     expect(cancel).toBeDisabled();
   });
+  showTab("list");
   expect(
     within(screen.getByRole("row", { name: /Khảo sát độ ẩm lớp phủ/ })).getByText("Bản nháp"),
   ).toBeVisible();
 });
 
+it("opens both forms and normal confirmation directly, with Select outside the editor scroll body", async () => {
+  render(
+    <MantineProvider env="default">
+      <UiFoundationShowcase />
+    </MantineProvider>,
+  );
+  showTab("details");
+  const create = screen.getByRole("button", { name: "Create form" });
+  fireEvent.click(create);
+  const creation = await screen.findByRole("dialog", { name: "Create sample record" });
+  fireEvent.click(within(creation).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(create).toHaveFocus());
+
+  const edit = screen.getByRole("button", { name: "Edit form (640 px)" });
+  fireEvent.click(edit);
+  const editor = await screen.findByRole("dialog", { name: "Edit sample record" });
+  expect(within(editor).getByRole("textbox", { name: "Record name" })).toHaveValue(firstRecord);
+  const body = document.getElementById(editor.getAttribute("aria-describedby")!);
+  const category = within(editor).getByRole("textbox", { name: "Category" });
+  fireEvent.click(category);
+  expect(category).toHaveAttribute("aria-expanded", "true");
+  const options = document.getElementById(category.getAttribute("aria-controls")!);
+  expect(options).toHaveAttribute("role", "listbox");
+  expect(editor).toContainElement(options);
+  expect(body).not.toContainElement(options);
+  fireEvent.keyDown(category, { key: "Escape" });
+  expect(category).toHaveAttribute("aria-expanded", "false");
+  expect(editor).toBeVisible();
+  fireEvent.keyDown(category, { key: "Escape" });
+  await waitFor(() => expect(edit).toHaveFocus());
+
+  const confirm = screen.getByRole("button", { name: "Confirmation" });
+  fireEvent.click(confirm);
+  const confirmation = await screen.findByRole("dialog", { name: "Confirm sample review" });
+  await finishSampleRequest(() => {
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm" }));
+  });
+  await waitFor(() => expect(confirm).toHaveFocus());
+  showTab("list");
+  expect(
+    within(screen.getByRole("row", { name: /Khảo sát độ ẩm lớp phủ/ })).getByText("Đã duyệt"),
+  ).toBeVisible();
+});
+
 it("preserves an edited draft after a mock request error and saves it once on retry", async () => {
   render(<UiFoundationShowcase />);
+  showTab("details");
   fireEvent.click(screen.getByRole("checkbox", { name: "Fail next sample request" }));
-  fireEvent.click(screen.getByRole("link", { name: firstRecord }));
+  fireEvent.click(screen.getByRole("button", { name: "Open standard detail" }));
   const drawer = await screen.findByRole("dialog", { name: firstRecord });
   const edit = within(drawer).getByRole("button", { name: "Edit record" });
   fireEvent.click(edit);
@@ -282,30 +490,34 @@ it("preserves an edited draft after a mock request error and saves it once on re
 
 it("filters the full record set, resets the filters and previews the real optional toolbar controls", async () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   selectOption("Status", "Tạm dừng");
   expect(screen.getByRole("button", { name: "Filters" })).toBeVisible();
-  expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
   applyFilters();
   expect(screen.getByRole("button", { name: "Filters (1)" })).toBeVisible();
+  showTab("list");
   expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
   expect(screen.queryByRole("link", { name: firstRecord })).not.toBeInTheDocument();
   expect(screen.getByText("1 record", { exact: true })).toBeVisible();
 
-  const refresh = screen.getByRole("button", { name: "Refresh records" });
+  showTab("toolbar");
   submitSearch("  NFV-006  ");
   fireEvent.click(screen.getByRole("button", { name: "Filters (1)" }));
   selectOption("Category", recordCategories[2]);
   applyFilters();
   await finishSampleRequest(() => {
+    const refresh = screen.getByRole("button", { name: "Refresh records" });
     fireEvent.click(refresh);
     expect(refresh).toBeDisabled();
+    showTab("list");
     expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
   });
   expect(screen.getByText("Sample records refreshed.")).toBeVisible();
+  expect(screen.getByText("1 record", { exact: true })).toBeVisible();
+  showTab("toolbar");
   expect(screen.getByRole("button", { name: "Filters (2)" })).toBeVisible();
   expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("NFV-006");
-  expect(screen.getByText("1 record", { exact: true })).toBeVisible();
 
   if (!screen.queryByRole("button", { name: "Clear filters" })) {
     fireEvent.click(screen.getByRole("button", { name: "Filters (2)" }));
@@ -316,10 +528,14 @@ it("filters the full record set, resets the filters and previews the real option
   expect(screen.getByRole("button", { name: "Filters" })).toBeVisible();
   expect(screen.getByRole("textbox", { name: "Category" })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: "Status" })).toHaveValue("");
+  showTab("list");
   expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
+  showTab("toolbar");
   fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  showTab("list");
   expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
 
+  showTab("toolbar");
   fireEvent.click(screen.getByRole("textbox", { name: "Toolbar controls" }));
   fireEvent.click(screen.getByRole("option", { name: "Search only" }));
   expect(screen.getByRole("searchbox", { name: "Search records" })).toBeVisible();
@@ -328,6 +544,7 @@ it("filters the full record set, resets the filters and previews the real option
 
 it("dismisses the nested Select before discarding unapplied filters on Escape", () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   const trigger = screen.getByRole("button", { name: "Filters" });
   fireEvent.click(trigger);
   selectOption("Category", recordCategories[2]);
@@ -344,23 +561,27 @@ it("dismisses the nested Select before discarding unapplied filters on Escape", 
   fireEvent.keyDown(status, { key: "Escape", code: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Filters" })).not.toBeInTheDocument();
   expect(trigger).toHaveFocus();
-  expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
   fireEvent.click(trigger);
   expect(screen.getByRole("textbox", { name: "Category" })).toHaveValue("");
+  showTab("list");
+  expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
 });
 
 it("applies changes immediately when the preview switches to immediate filtering", () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   selectOption("Filter behavior", "Immediate");
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   selectOption("Status", "Tạm dừng");
   expect(screen.getByRole("button", { name: "Filters (1)" })).toBeVisible();
-  expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Apply filters" })).not.toBeInTheDocument();
+  showTab("list");
+  expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
 });
 
 it("keeps the applied filters when an outside click dismisses a changed draft", () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   selectOption("Status", "Tạm dừng");
   applyFilters();
@@ -369,14 +590,16 @@ it("keeps the applied filters when an outside click dismisses a changed draft", 
   selectOption("Category", recordCategories[2]);
   fireEvent.mouseDown(screen.getByRole("searchbox", { name: "Search records" }));
   expect(trigger).toHaveAttribute("aria-expanded", "false");
-  expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
   fireEvent.click(trigger);
   expect(screen.getByRole("textbox", { name: "Category" })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: "Status" })).toHaveValue("Tạm dừng");
+  showTab("list");
+  expect(screen.getByRole("link", { name: "Kiểm tra rãnh thoát nước" })).toBeVisible();
 });
 
 it("can omit just the filter while retaining search, refresh and the primary action", () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   selectOption("Toolbar controls", "Without filters");
   expect(screen.queryByRole("button", { name: "Filters" })).not.toBeInTheDocument();
   expect(screen.getByRole("searchbox", { name: "Search records" })).toBeVisible();
@@ -386,6 +609,7 @@ it("can omit just the filter while retaining search, refresh and the primary act
 
 it("clears hidden filters in Search only while preserving the draft and applied search", () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   submitSearch("NFV-00");
   fireEvent.change(screen.getByRole("searchbox", { name: "Search records" }), {
     target: { value: "unsubmitted draft" },
@@ -393,43 +617,55 @@ it("clears hidden filters in Search only while preserving the draft and applied 
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   selectOption("Status", "Tạm dừng");
   applyFilters();
+  showTab("list");
   expect(screen.getByText("1 record", { exact: true })).toBeVisible();
   expect(screen.queryByRole("link", { name: firstRecord })).not.toBeInTheDocument();
 
+  showTab("toolbar");
   selectOption("Toolbar controls", "Search only");
   expect(screen.queryByRole("button", { name: /Filters/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("unsubmitted draft");
+  expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue(
+    "unsubmitted draft",
+  );
   expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveAccessibleDescription(
     "Applied search: “NFV-00”",
   );
+  showTab("list");
   expect(screen.getByText("9 records")).toBeVisible();
   expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
 
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  showTab("toolbar");
   selectOption("Toolbar controls", "All controls");
-  expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   expect(screen.getByRole("textbox", { name: "Status" })).toHaveValue("");
+  showTab("list");
+  expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
 });
 
 it("clears search and filters in Actions only and starts on the first page", () => {
   render(<UiFoundationShowcase />);
+  showTab("toolbar");
   submitSearch("NFV-006");
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   selectOption("Status", "Tạm dừng");
   selectOption("Category", recordCategories[2]);
   applyFilters();
+  showTab("list");
   expect(screen.getByText("1 record", { exact: true })).toBeVisible();
 
+  showTab("toolbar");
   selectOption("Toolbar controls", "Actions only");
   expect(screen.queryByRole("searchbox", { name: "Search records" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Filters/ })).not.toBeInTheDocument();
+  showTab("list");
   expect(screen.getByText("12 records")).toBeVisible();
   expect(screen.getByRole("navigation", { name: "Page 1 of 3" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   expect(screen.getByRole("link", { name: initialRecords[11].name })).toBeVisible();
 
+  showTab("toolbar");
   selectOption("Toolbar controls", "All controls");
   expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("");
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
@@ -443,18 +679,30 @@ it("preserves the query, both filters, and page across label changes and a refre
     category: recordCategories[index === 2 ? 1 : 0],
     status: index === 3 ? ("success" as const) : ("pending" as const),
   }));
-  render(<SampleRecordList records={records} selectedId={null} onOpen={vi.fn()} onCreate={vi.fn()} />);
+  render(
+    <Tabs defaultValue="toolbar" keepMounted={false}>
+      <Tabs.List>
+        <Tabs.Tab value="toolbar">{tabLabels.toolbar}</Tabs.Tab>
+        <Tabs.Tab value="list">{tabLabels.list}</Tabs.Tab>
+      </Tabs.List>
+      <SampleRecordList records={records} selectedId={null} onOpen={vi.fn()} onCreate={vi.fn()} />
+    </Tabs>,
+  );
   submitSearch("NFV-00");
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   selectOption("Category", recordCategories[0]);
   selectOption("Status", "Chờ duyệt");
   applyFilters();
+  showTab("list");
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
 
+  showTab("toolbar");
   selectOption("Toolbar controls", "Vietnamese labels");
   expect(screen.getByRole("searchbox", { name: "Tìm kiếm bản ghi" })).toHaveValue("NFV-00");
+  showTab("list");
   expect(screen.getByText("7 records")).toBeVisible();
   expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
+  showTab("toolbar");
   const viFilters = screen.getByRole("button", { name: "Bộ lọc quan sát (2)" });
   if (viFilters.getAttribute("aria-expanded") !== "true") fireEvent.click(viFilters);
   expect(screen.getByRole("textbox", { name: "Danh mục" })).toHaveValue(recordCategories[0]);
@@ -463,24 +711,29 @@ it("preserves the query, both filters, and page across label changes and a refre
   selectOption("Toolbar controls", "All controls");
   expect(screen.getByRole("searchbox", { name: "Search records" })).toHaveValue("NFV-00");
   expect(screen.getByRole("button", { name: "Filters (2)" })).toBeVisible();
-  expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
   await finishSampleRequest(() => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh records" }));
+    showTab("list");
     expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
   });
   expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
 
+  showTab("toolbar");
   selectOption("Toolbar controls", "Search only");
+  showTab("list");
   expect(screen.getByText("9 records")).toBeVisible();
   expect(screen.getByRole("navigation", { name: "Page 1 of 2" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  showTab("toolbar");
   selectOption("Toolbar controls", "All controls");
   selectOption("Toolbar controls", "Search only");
+  showTab("list");
   expect(screen.getByRole("navigation", { name: "Page 2 of 2" })).toBeVisible();
 });
 
 it("shows all six Badge and Alert roles and previews each dismissible Notification", () => {
   render(<UiFoundationShowcase />);
+  showTab("components");
   const feedback = within(screen.getByRole("region", { name: "Feedback" }));
   const examples = [
     ["success", "Sample saved"],
@@ -499,7 +752,9 @@ it("shows all six Badge and Alert roles and previews each dismissible Notificati
     const notification = feedback.getByRole("status");
     expect(notification).toHaveTextContent(title);
     expect(notification).toHaveStyle({ backgroundColor: `var(--${role}-soft)` });
-    fireEvent.click(within(notification).getByRole("button", { name: "Dismiss sample notification" }));
+    fireEvent.click(
+      within(notification).getByRole("button", { name: "Dismiss sample notification" }),
+    );
     expect(feedback.queryByRole("status")).not.toBeInTheDocument();
     expect(feedback.getByRole("textbox", { name: "Notification role" })).toHaveFocus();
   }
@@ -507,7 +762,13 @@ it("shows all six Badge and Alert roles and previews each dismissible Notificati
 
 it("lets reviewers compare native default controls and operate the password toggle", () => {
   render(<UiFoundationShowcase />);
+  showTab("components");
   const forms = within(screen.getByRole("region", { name: "Form inputs" }));
+  expect(forms.getByRole("heading", { name: "Input interaction" })).toBeVisible();
+  expect(forms.getByRole("textbox", { name: "Populated input" })).not.toHaveValue("");
+  expect(forms.getByRole("textbox", { name: "Invalid code" })).toBeInvalid();
+  expect(forms.getByRole("textbox", { name: "Read-only code" })).toHaveAttribute("readonly");
+  expect(forms.getByRole("textbox", { name: "Disabled field" })).toBeDisabled();
   const input = forms.getByRole("textbox", { name: "Control comparison" });
   fireEvent.change(input, { target: { value: "NFV-001" } });
   fireEvent.click(forms.getByRole("button", { name: "Clear comparison input" }));
@@ -531,6 +792,7 @@ it("restores the corresponding mobile action after resizing with a nested confir
   });
   render(<UiFoundationShowcase />);
 
+  showTab("list");
   fireEvent.click(screen.getByRole("link", { name: firstRecord }));
   const drawer = await screen.findByRole("dialog", { name: firstRecord });
   fireEvent.click(within(drawer).getByRole("button", { name: "Confirm review" }));

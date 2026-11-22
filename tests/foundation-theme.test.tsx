@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Anchor,
   Badge,
   Button,
   Checkbox,
@@ -21,12 +22,21 @@ import {
   Textarea,
 } from "@mantine/core";
 import { DateInput, DatePicker, DatePickerInput, DateTimePicker, TimeInput } from "@mantine/dates";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminUiProvider } from "@/components/admin-ui-provider";
 import { adminCssVariablesResolver, adminTheme, adminTokens } from "@/lib/admin-theme";
 import classes from "@/lib/admin-theme.module.css";
 
-afterEach(cleanup);
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
+afterEach(() => {
+  cleanup();
+  document.querySelector("style[data-foundation-test]")?.remove();
+});
 
 function contrast(first: string, second: string) {
   const luminance = (hex: string) => {
@@ -70,6 +80,31 @@ function renderTheme(children: React.ReactNode) {
       {children}
     </MantineProvider>,
   );
+}
+
+function renderWithInputStyles(children: React.ReactNode) {
+  // Load the same CSS sources as the admin layout. jsdom can check matched rules and
+  // their declarations. It does not render the colors, outlines, or border widths.
+  const require = createRequire(import.meta.url);
+  const mantineCss = readFileSync(require.resolve("@mantine/core/styles.css"), "utf8");
+  const foundationCss = readFileSync("lib/admin-theme.module.css", "utf8").replace(
+    /\.([a-zA-Z]\w*)/g,
+    (_, name: string) => `.${classes[name]}`,
+  );
+  const style = document.createElement("style");
+  style.setAttribute("data-foundation-test", "");
+  style.textContent = `${mantineCss}\n${foundationCss}`;
+  document.head.append(style);
+
+  return render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminUiProvider>{children}</AdminUiProvider>
+    </AdminI18nProvider>,
+  );
+}
+
+function inputBorderRule(element: Element) {
+  return getComputedStyle(element).getPropertyValue("--input-bd").trim();
 }
 
 describe("admin color foundation", () => {
@@ -320,8 +355,131 @@ describe("admin color foundation", () => {
     expect(screen.getByLabelText("Text")).toHaveValue("Entered");
   });
 
+  it("uses the native border focus rule for an editable field without a pointer outline", () => {
+    renderWithInputStyles(<TextInput label="Editable field" />);
+    const field = screen.getByLabelText("Editable field");
+    const wrapper = field.closest(`.${classes.inputWrapper}`)!;
+    expect(inputBorderRule(wrapper)).toBe("var(--control-border)");
+    expect(getComputedStyle(wrapper).getPropertyValue("--input-bd-focus").trim()).toBe(
+      "var(--focus)",
+    );
+
+    fireEvent.pointerDown(field);
+    act(() => field.focus());
+    expect(field).toHaveFocus();
+    expect(inputBorderRule(field)).toBe("var(--input-bd-focus)");
+    expect(getComputedStyle(field).outline).toBe("none");
+
+    act(() => field.blur());
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    act(() => field.focus());
+    expect(inputBorderRule(field)).toBe("var(--input-bd-focus)");
+    expect(getComputedStyle(field).getPropertyValue("--input-keyboard-outline")).toBe("");
+  });
+
+  it("keeps the Danger border on an invalid field and adds a cue only for keyboard focus", () => {
+    renderWithInputStyles(<TextInput label="Invalid field" error="Enter a name" />);
+    const field = screen.getByLabelText("Invalid field");
+    fireEvent.pointerDown(field);
+    act(() => field.focus());
+    expect(field).toHaveAccessibleDescription("Enter a name");
+    expect(inputBorderRule(field)).toBe("var(--mantine-color-error)");
+    expect(getComputedStyle(field).outline).toBe("none");
+
+    fireEvent.keyDown(field, { key: "Tab", ctrlKey: true });
+    expect(getComputedStyle(field).outline).toBe("none");
+    act(() => field.blur());
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    act(() => field.focus());
+    expect(inputBorderRule(field)).toBe("var(--mantine-color-error)");
+    expect(getComputedStyle(field).outline).toBe("var(--input-keyboard-outline, none)");
+    expect(getComputedStyle(field).outlineOffset).toBe("-2px");
+    expect(getComputedStyle(field).getPropertyValue("--input-keyboard-outline").trim()).toBe(
+      "2px solid var(--danger)",
+    );
+  });
+
+  it("applies the active border rule to an expanded date trigger and restores its idle state", () => {
+    renderWithInputStyles(<DatePickerInput label="Choose date" />);
+    const trigger = screen.getByRole("button", { name: "Choose date" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(inputBorderRule(trigger)).toBe("");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(inputBorderRule(trigger)).toBe("var(--input-bd-focus)");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(inputBorderRule(trigger)).toBe("");
+  });
+
+  it("targets the MultiSelect shell for expansion and keeps errors on that shell", () => {
+    renderWithInputStyles(
+      <>
+        <MultiSelect label="Crops" data={["Kale"]} searchable />
+        <MultiSelect label="Invalid crops" data={["Yam"]} error="Select a crop" searchable />
+        <fieldset disabled>
+          <MultiSelect label="Disabled crops" data={["Kale"]} dropdownOpened variant="filled" />
+        </fieldset>
+      </>,
+    );
+    const field = screen.getByLabelText("Crops", { selector: "input" });
+    const shell = field.closest(`.${classes.input}`)!;
+    expect(shell).not.toBe(field);
+    expect(inputBorderRule(shell)).toBe("");
+    fireEvent.keyDown(field, { key: "ArrowDown", code: "ArrowDown" });
+    expect(shell).toHaveAttribute("data-expanded");
+    expect(inputBorderRule(shell)).toBe("var(--input-bd-focus)");
+    expect(inputBorderRule(field)).toBe("");
+    fireEvent.keyDown(field, { key: "Escape", code: "Escape" });
+    expect(shell).not.toHaveAttribute("data-expanded");
+    expect(inputBorderRule(shell)).toBe("");
+
+    const invalid = screen.getByLabelText("Invalid crops", { selector: "input" });
+    const invalidShell = invalid.closest(`.${classes.input}`)!;
+    expect(invalid).toHaveAccessibleDescription("Select a crop");
+    fireEvent.keyDown(invalid, { key: "ArrowDown", code: "ArrowDown" });
+    expect(invalidShell).toHaveAttribute("data-expanded");
+    expect(inputBorderRule(invalidShell)).toBe("");
+    expect(inputBorderRule(invalidShell.closest(`.${classes.inputWrapper}`)!)).toBe(
+      "var(--mantine-color-error)",
+    );
+
+    const disabled = screen.getByLabelText("Disabled crops", { selector: "input" });
+    const disabledShell = disabled.closest(`.${classes.input}`)!;
+    expect(disabled).toBeDisabled();
+    expect(disabledShell).toHaveAttribute("data-expanded");
+    expect(inputBorderRule(disabledShell)).toBe("var(--input-bd-focus)");
+    expect(getComputedStyle(disabledShell).getPropertyValue("--input-bd-focus").trim()).toBe(
+      "var(--border)",
+    );
+  });
+
+  it("keeps keyboard focus styling on buttons, links and native choice controls", () => {
+    renderWithInputStyles(
+      <>
+        <Button>Save</Button>
+        <ActionIcon aria-label="Add">+</ActionIcon>
+        <Anchor href="#example">Open example</Anchor>
+        <Checkbox label="Confirm" />
+        <Radio label="Choose" />
+        <Switch label="Enable" />
+      </>,
+    );
+    for (const role of ["link", "checkbox", "radio"] as const) {
+      expect(screen.getByRole(role)).toHaveClass(classes.focusRing);
+    }
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).toHaveClass(classes.focusRing);
+    }
+    const toggle = screen.getByRole("switch");
+    act(() => toggle.focus());
+    expect(getComputedStyle(toggle.nextElementSibling!).outline).toBe(
+      "2px solid var(--mantine-primary-color-filled)",
+    );
+  });
+
   it("preserves native read-only, disabled and error behavior with the theme slots", () => {
-    renderTheme(
+    renderWithInputStyles(
       <>
         <TextInput label="Failure" error="Required value" />
         <PasswordInput label="Disabled password" disabled />
@@ -329,6 +487,7 @@ describe("admin color foundation", () => {
         <Select label="Read-only selection" readOnly data={["Kale"]} value="Kale" />
         <Select label="Editable selection" data={["Kale"]} />
         <MultiSelect label="Read-only choices" readOnly data={["Kale"]} value={["Kale"]} />
+        <TextInput label="Filled variant" defaultValue="NFV-002" variant="filled" />
         <Checkbox label="Checkbox" disabled />
         <Radio label="Radio" error="Pick a valid option" />
         <Switch label="Switch" defaultChecked />
@@ -341,18 +500,26 @@ describe("admin color foundation", () => {
     const password = screen.getByLabelText("Disabled password");
     expect(password).toBeDisabled();
     expect(password.closest(`.${classes.input}`)).toHaveAttribute("data-disabled");
-    expect(screen.getByLabelText("Read-only text")).toHaveAttribute("readonly");
-    expect(screen.getByLabelText("Read-only selection", { selector: "input" })).toHaveClass(
-      classes.readOnlyInput,
-    );
-    expect(screen.getByLabelText("Editable selection", { selector: "input" })).not.toHaveClass(
-      classes.readOnlyInput,
-    );
-    expect(
-      screen
-        .getByLabelText("Read-only choices", { selector: "input" })
-        .closest(`.${classes.input}`),
-    ).toHaveClass(classes.readOnlyInput);
+    expect(inputBorderRule(password.closest(`.${classes.input}`)!)).toBe("var(--border)");
+    const readOnlyText = screen.getByLabelText("Read-only text");
+    const readOnlySelection = screen.getByLabelText("Read-only selection", { selector: "input" });
+    const editableSelection = screen.getByLabelText("Editable selection", { selector: "input" });
+    const readOnlyChoices = screen.getByLabelText("Read-only choices", { selector: "input" });
+    expect(readOnlyText).toHaveAttribute("readonly");
+    expect(readOnlySelection).toHaveClass(classes.readOnlyInput);
+    expect(readOnlyChoices.closest(`.${classes.input}`)).toHaveClass(classes.readOnlyInput);
+    for (const field of [readOnlyText, readOnlySelection, readOnlyChoices]) {
+      const shell = field.closest(`.${classes.input}`)!;
+      expect(inputBorderRule(shell)).toBe("var(--border)");
+      expect(getComputedStyle(shell).getPropertyValue("--input-bg").trim()).toBe(
+        "var(--surface-subtle)",
+      );
+    }
+    expect(editableSelection).toHaveAttribute("readonly");
+    expect(editableSelection).not.toHaveClass(classes.readOnlyInput);
+    expect(inputBorderRule(editableSelection)).toBe("");
+    const filled = screen.getByLabelText("Filled variant").closest(`.${classes.inputWrapper}`)!;
+    expect(inputBorderRule(filled)).toBe("transparent");
     expect(screen.getByRole("checkbox", { name: "Checkbox" })).toHaveClass(classes.choice);
     expect(screen.getByRole("checkbox", { name: "Checkbox" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Radio" })).toHaveClass(classes.choice);

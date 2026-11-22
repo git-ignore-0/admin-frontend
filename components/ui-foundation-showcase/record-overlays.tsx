@@ -137,7 +137,17 @@ export function SampleRecordEditor({
   const [fields, setFields] = useState<RecordFields>(record ?? newRecordFields);
   const [invalidName, setInvalidName] = useState(false);
   const formId = useId();
+  const editorId = `${formId}-editor`;
   const name = useRef<HTMLInputElement>(null);
+  // Keep the dropdown inside the dialog's focus scope and outside its scrolling body.
+  const editorSelectProps = {
+    comboboxProps: {
+      portalProps: { target: `[id="${editorId}"]` },
+      middlewares: { size: true },
+    },
+    styles: { dropdown: { overflowY: "auto" } },
+    withScrollArea: false,
+  } as const;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -167,7 +177,7 @@ export function SampleRecordEditor({
       classNames={{ content: layout.content, body: layout.body }}
     >
       <Modal.Overlay />
-      <Modal.Content aria-busy={busy}>
+      <Modal.Content id={editorId} aria-busy={busy}>
         <Modal.Header>
           <Modal.Title>{record ? "Edit sample record" : "Create sample record"}</Modal.Title>
           {!busy && <Modal.CloseButton aria-label="Close record editor" />}
@@ -197,21 +207,21 @@ export function SampleRecordEditor({
               />
               <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }}>
                 <Select
+                  {...editorSelectProps}
                   label="Category"
                   data={recordCategories}
                   value={fields.category}
                   disabled={busy}
-                  comboboxProps={{ withinPortal: false }}
                   onChange={(value) =>
                     value && setFields((current) => ({ ...current, category: value }))
                   }
                 />
                 <Select
+                  {...editorSelectProps}
                   label="Status"
                   data={Object.entries(recordStatuses).map(([value, label]) => ({ value, label }))}
                   value={fields.status}
                   disabled={busy}
-                  comboboxProps={{ withinPortal: false }}
                   onChange={(value) =>
                     value && setFields((current) => ({ ...current, status: value as RecordStatus }))
                   }

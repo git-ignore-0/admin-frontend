@@ -27,12 +27,12 @@ import {
   Skeleton,
   Stack,
   Switch,
-  Tabs,
   Text,
   Textarea,
   TextInput,
   Title,
   Tooltip,
+  useMantineTheme,
 } from "@mantine/core";
 import { DateInput, DatePickerInput, DateTimePicker, TimeInput } from "@mantine/dates";
 import {
@@ -80,7 +80,7 @@ function ColorLibrary() {
       </Title>
       <Paper p="md">
         <Stack gap="lg">
-          {Object.entries(adminPalettes).map(([name, palette]) => (
+          {(["forest", "gray"] as const).map((name) => (
             <Stack key={name} gap="xs">
               <Title order={3} tt="capitalize">
                 {name}
@@ -92,7 +92,7 @@ function ColorLibrary() {
                   gap: "var(--mantine-spacing-xs)",
                 }}
               >
-                {palette.map((value, index) => (
+                {adminPalettes[name].map((value, index) => (
                   <ColorSample key={value} token={`${name}.${index}`} value={value} />
                 ))}
               </Box>
@@ -139,6 +139,8 @@ function ColorLibrary() {
 }
 
 function TypeExamples() {
+  const { headings } = useMantineTheme();
+
   return (
     <Stack component="section" gap="md" aria-labelledby="typography-examples">
       <Title id="typography-examples" order={2}>
@@ -146,24 +148,20 @@ function TypeExamples() {
       </Title>
       <Paper p="md">
         <Stack gap="xs">
-          <Title order={3} size="h1">
-            Page heading{" "}
-            <Text component="span" size="sm" c="dimmed">
-              H1
-            </Text>
-          </Title>
-          <Title order={3} size="h2">
-            Section heading{" "}
-            <Text component="span" size="sm" c="dimmed">
-              H2
-            </Text>
-          </Title>
-          <Title order={3} size="h3">
-            Subsection heading{" "}
-            <Text component="span" size="sm" c="dimmed">
-              H3
-            </Text>
-          </Title>
+          {(
+            [
+              ["h1", "Page heading"],
+              ["h2", "Section heading"],
+              ["h3", "Subsection heading"],
+            ] as const
+          ).map(([size, label]) => (
+            <Title key={size} order={3} size={size}>
+              {label}{" "}
+              <Text component="span" size="sm" c="dimmed">
+                {size.toUpperCase()} · {headings.sizes[size].fontSize}
+              </Text>
+            </Title>
+          ))}
           <Text>Ghi nhận thay đổi về độ ẩm và chất lượng đất sau mùa mưa.</Text>
           <Text size="sm" c="dimmed">
             Secondary text for context and dates.
@@ -171,7 +169,6 @@ function TypeExamples() {
           <Text size="xs" c="var(--text-subtle)">
             Supporting text for constraints and hints.
           </Text>
-          <Anchor href="#sample-records">Back to the sample list</Anchor>
           <TextInput
             label="Field label"
             description="The description explains what to enter."
@@ -180,6 +177,60 @@ function TypeExamples() {
           />
         </Stack>
       </Paper>
+    </Stack>
+  );
+}
+
+function ScaleExamples() {
+  const { spacing, radius, defaultRadius } = useMantineTheme();
+
+  return (
+    <Stack component="section" gap="md" aria-labelledby="scale-examples">
+      <Title id="scale-examples" order={2}>
+        Spacing and radii
+      </Title>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+        <Paper p="md">
+          <Stack gap="sm">
+            <Title order={3}>Spacing</Title>
+            {Object.entries(spacing).map(([size, value]) => (
+              <Group key={size} gap="sm">
+                <Text component="code" size="sm" w="7.5rem">
+                  {size} · {value}
+                </Text>
+                <Box aria-hidden w={value} h="xs" bg="var(--primary)" />
+              </Group>
+            ))}
+          </Stack>
+        </Paper>
+        <Paper p="md">
+          <Stack gap="sm">
+            <Title order={3}>Corner radii</Title>
+            <Group gap="md">
+              {Object.entries(radius).map(([size, value]) => (
+                <Stack key={size} gap="xs" align="flex-start">
+                  <Box
+                    aria-hidden
+                    w="2.5rem"
+                    h="2.5rem"
+                    bg="var(--primary-soft)"
+                    style={{
+                      border: "1px solid var(--control-border)",
+                      borderRadius: `var(--mantine-radius-${size})`,
+                    }}
+                  />
+                  <Text component="code" size="sm">
+                    {size} · {value}
+                  </Text>
+                </Stack>
+              ))}
+            </Group>
+            <Text size="sm" c="dimmed">
+              Default radius: {defaultRadius}
+            </Text>
+          </Stack>
+        </Paper>
+      </SimpleGrid>
     </Stack>
   );
 }
@@ -241,16 +292,71 @@ function ActionExamples() {
 function FormExamples() {
   const focusExample = useRef<HTMLInputElement>(null);
   const [comparisonValue, setComparisonValue] = useState("");
+
   return (
     <Stack component="section" gap="md" aria-labelledby="form-examples">
       <Title id="form-examples" order={2}>
         Form inputs
       </Title>
+      <Paper p="md">
+        <Stack gap="md">
+          <Title order={3}>Input interaction</Title>
+          <Text c="dimmed" size="sm">
+            Hover or focus the comparison field, then focus the invalid field to inspect its error
+            border.
+          </Text>
+          <Group align="flex-end" gap="xs">
+            <TextInput
+              label="Control comparison"
+              flex="1 1 9rem"
+              ref={focusExample}
+              value={comparisonValue}
+              placeholder="Enter a record code"
+              onChange={(event) => setComparisonValue(event.currentTarget.value)}
+            />
+            <Group gap="xs" wrap="nowrap">
+              <Button variant="default" onClick={() => focusExample.current?.focus()}>
+                Focus field
+              </Button>
+              <Tooltip label="Clear comparison input">
+                <ActionIcon
+                  variant="default"
+                  aria-label="Clear comparison input"
+                  onClick={() => {
+                    setComparisonValue("");
+                    focusExample.current?.focus();
+                  }}
+                >
+                  <IconX size={16} aria-hidden />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+          </Group>
+          <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="md">
+            <Input.Wrapper id="populated-input" label="Populated input">
+              <Input id="populated-input" defaultValue="Khảo sát độ ẩm lớp phủ" />
+            </Input.Wrapper>
+            <TextInput
+              label="Invalid code"
+              defaultValue="NFV"
+              error="Include a three-digit record number."
+            />
+            <TextInput label="Read-only code" value="NFV-001" readOnly />
+            <TextInput label="Disabled field" defaultValue="Unavailable" disabled />
+          </SimpleGrid>
+        </Stack>
+      </Paper>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
         <Paper p="md" miw={0}>
           <Stack gap="md">
             <Title order={3}>Entry fields</Title>
-            <TextInput label="Field observation" placeholder="Nhập tên lần quan sát" />
+            <Select label="Observation category" data={categories} defaultValue={categories[0]} />
+            <MultiSelect
+              label="Observation tags"
+              data={categories}
+              placeholder="Select tags"
+              defaultValue={[categories[1]]}
+            />
             <PasswordInput
               label="Sample password"
               description="Use the visibility toggle to inspect the icon action."
@@ -271,6 +377,11 @@ function FormExamples() {
               placeholder="Ghi nhận tình trạng đất và lớp phủ"
               minRows={3}
             />
+          </Stack>
+        </Paper>
+        <Paper p="md" miw={0}>
+          <Stack gap="md">
+            <Title order={3}>Date and time</Title>
             <DateInput
               label="Observation date"
               placeholder="Select or enter a date"
@@ -288,67 +399,38 @@ function FormExamples() {
             </SimpleGrid>
           </Stack>
         </Paper>
-        <Paper p="md" miw={0}>
-          <Stack gap="md">
-            <Title order={3}>Selection and validation</Title>
-            <Select label="Observation category" data={categories} defaultValue={categories[0]} />
-            <MultiSelect
-              label="Observation tags"
-              data={categories}
-              placeholder="Select tags"
-              defaultValue={[categories[1]]}
-            />
-            <Group gap="md">
-              <Checkbox label="Flag for follow-up" defaultChecked />
-              <Switch label="Send reminders" />
-            </Group>
-            <Radio.Group label="Visibility" defaultValue="internal">
-              <Group gap="md" mt="xs">
-                <Radio label="Internal" value="internal" />
-                <Radio label="Published" value="published" disabled />
-              </Group>
-            </Radio.Group>
-            <Group align="flex-end" gap="xs">
-              <Input.Wrapper id="control-comparison" label="Control comparison" flex="1 1 9rem">
-                <Input
-                  id="control-comparison"
-                  ref={focusExample}
-                  value={comparisonValue}
-                  placeholder="Inspect the focus ring"
-                  onChange={(event) => setComparisonValue(event.currentTarget.value)}
-                />
-              </Input.Wrapper>
-              <Button variant="default" onClick={() => focusExample.current?.focus()}>
-                Focus field
-              </Button>
-              <Tooltip label="Clear comparison input">
-                <ActionIcon
-                  variant="default"
-                  aria-label="Clear comparison input"
-                  onClick={() => {
-                    setComparisonValue("");
-                    focusExample.current?.focus();
-                  }}
-                >
-                  <IconX size={16} aria-hidden />
-                </ActionIcon>
-              </Tooltip>
-            </Group>
-            <TextInput label="Read-only code" value="NFV-001" readOnly />
-            <TextInput label="Disabled field" defaultValue="Unavailable" disabled />
-            <TextInput
-              label="Invalid code"
-              defaultValue="NFV"
-              error="Include a three-digit record number."
-            />
-          </Stack>
-        </Paper>
       </SimpleGrid>
     </Stack>
   );
 }
 
-function NavigationExamples() {
+function SelectionExamples() {
+  return (
+    <Stack component="section" gap="md" aria-labelledby="selection-examples">
+      <Title id="selection-examples" order={2}>
+        Selection controls
+      </Title>
+      <Paper p="md">
+        <Stack gap="md">
+          <Group gap="md">
+            <Checkbox label="Flag for follow-up" defaultChecked />
+            <Switch label="Send reminders" />
+          </Group>
+          <Radio.Group label="Visibility" defaultValue="internal">
+            <Group gap="md" mt="xs">
+              <Radio label="Internal" value="internal" />
+              <Radio label="Published" value="published" disabled />
+            </Group>
+          </Radio.Group>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+type ShowcaseComponentsProps = { onNavigate: (tab: "list" | "details") => void };
+
+function NavigationExamples({ onNavigate }: ShowcaseComponentsProps) {
   const [active, setActive] = useState("observations");
   return (
     <Stack component="section" gap="md" aria-labelledby="navigation-examples">
@@ -358,41 +440,19 @@ function NavigationExamples() {
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
         <Paper p="md" miw={0}>
           <Stack gap="md">
+            <Title order={3}>Navigation controls</Title>
             <Breadcrumbs
               aria-label="Example breadcrumb"
               component="nav"
               style={{ flexWrap: "wrap" }}
             >
-              <Anchor href="#sample-records">Showcase</Anchor>
-              <Text aria-current="page">Navigation</Text>
+              <Anchor component="button" type="button" onClick={() => onNavigate("list")}>
+                Sample records
+              </Anchor>
+              <Text aria-current="page">
+                {active === "observations" ? "Observations" : "Trial plots"}
+              </Text>
             </Breadcrumbs>
-            <Tabs defaultValue="overview">
-              <Tabs.List>
-                <Tabs.Tab value="overview">Overview</Tabs.Tab>
-                <Tabs.Tab value="activity">Activity</Tabs.Tab>
-                <Tabs.Tab value="history" disabled>
-                  History
-                </Tabs.Tab>
-              </Tabs.List>
-              <Tabs.Panel value="overview" pt="sm">
-                Summary of sample field observations.
-              </Tabs.Panel>
-              <Tabs.Panel value="activity" pt="sm">
-                One observation is waiting for review.
-              </Tabs.Panel>
-            </Tabs>
-            <SegmentedControl
-              aria-label="Example record layout"
-              data={[
-                { value: "list", label: "List" },
-                { value: "grid", label: "Grid" },
-              ]}
-              defaultValue="list"
-            />
-          </Stack>
-        </Paper>
-        <Paper p="md" miw={0}>
-          <Stack gap="sm">
             <Box component="nav" aria-label="Example navigation">
               <NavLink
                 component="button"
@@ -411,6 +471,19 @@ function NavigationExamples() {
                 onClick={() => setActive("plots")}
               />
             </Box>
+            <SegmentedControl
+              aria-label="Example record layout"
+              data={[
+                { value: "list", label: "List" },
+                { value: "grid", label: "Grid" },
+              ]}
+              defaultValue="list"
+            />
+          </Stack>
+        </Paper>
+        <Paper p="md" miw={0}>
+          <Stack gap="md">
+            <Title order={3}>Floating controls</Title>
             <Group gap="sm">
               <Menu>
                 <Menu.Target>
@@ -420,12 +493,8 @@ function NavigationExamples() {
                 </Menu.Target>
                 <Menu.Dropdown>
                   <Menu.Label>Showcase navigation</Menu.Label>
-                  <Menu.Item component="a" href="#sample-records">
-                    Sample records
-                  </Menu.Item>
-                  <Menu.Item component="a" href="#detail-and-dialogs">
-                    Dialogs
-                  </Menu.Item>
+                  <Menu.Item onClick={() => onNavigate("list")}>Data List</Menu.Item>
+                  <Menu.Item onClick={() => onNavigate("details")}>Detail &amp; Dialog</Menu.Item>
                 </Menu.Dropdown>
               </Menu>
               <Popover width={220} position="bottom-start" withArrow shadow="sm" returnFocus>
@@ -433,7 +502,7 @@ function NavigationExamples() {
                   <Button variant="light">Popover</Button>
                 </Popover.Target>
                 <Popover.Dropdown>
-                  <Text size="sm">Use the width control above to preview narrow list layouts.</Text>
+                  <Text size="sm">Use the menu to jump to the sample records or dialogs.</Text>
                 </Popover.Dropdown>
               </Popover>
             </Group>
@@ -509,67 +578,83 @@ function FeedbackExamples() {
               </Alert>
             ))}
           </SimpleGrid>
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-            <Stack gap="sm" miw={0}>
-              <Group gap="sm">
-                <Loader size="sm" aria-label="Loading example" />
-                <Text size="sm" c="dimmed">
-                  Loading preview
-                </Text>
-              </Group>
-              <Stack gap="xs" role="img" aria-label="Skeleton loading placeholder">
-                <Skeleton height={12} width="72%" />
-                <Skeleton height={12} width="55%" />
-                <Skeleton height={12} width="84%" />
-              </Stack>
-              <Text size="sm" c="dimmed">
-                Try empty, error and retry states under{" "}
-                <Anchor href="#sample-records">Sample records</Anchor>.
-              </Text>
-            </Stack>
-            <Stack gap="sm" miw={0}>
-              <Select
-                ref={notificationSelect}
-                label="Notification role"
-                placeholder="Choose a role"
-                data={notificationRoles}
-                value={notificationRole}
-                onChange={setNotificationRole}
-                maw={220}
-              />
-              {notification && (
-                <Notification
-                  color={notificationRole ?? undefined}
-                  title={notification.title}
-                  icon={<notification.icon size={16} aria-hidden />}
-                  onClose={() => {
-                    setNotificationRole(null);
-                    notificationSelect.current?.focus();
-                  }}
-                  closeButtonProps={{ "aria-label": "Dismiss sample notification" }}
-                  role="status"
-                  withBorder
-                >
-                  {notification.message}
-                </Notification>
-              )}
-            </Stack>
-          </SimpleGrid>
+          <Stack gap="sm" miw={0}>
+            <Select
+              ref={notificationSelect}
+              label="Notification role"
+              placeholder="Choose a role"
+              data={notificationRoles}
+              value={notificationRole}
+              onChange={setNotificationRole}
+              maw={220}
+            />
+            {notification && (
+              <Notification
+                color={notificationRole ?? undefined}
+                title={notification.title}
+                icon={<notification.icon size={16} aria-hidden />}
+                onClose={() => {
+                  setNotificationRole(null);
+                  notificationSelect.current?.focus();
+                }}
+                closeButtonProps={{ "aria-label": "Dismiss sample notification" }}
+                role="status"
+                withBorder
+              >
+                {notification.message}
+              </Notification>
+            )}
+          </Stack>
         </Stack>
       </Paper>
     </Stack>
   );
 }
 
-export function ShowcaseComponents() {
+function LoadingExamples() {
+  return (
+    <Stack component="section" gap="md" aria-labelledby="loading-examples">
+      <Title id="loading-examples" order={2}>
+        Loading indicators
+      </Title>
+      <Paper p="md">
+        <Stack gap="sm" maw="24rem">
+          <Group gap="sm">
+            <Loader size="sm" aria-label="Loading example" />
+            <Text size="sm" c="dimmed">
+              Loading preview
+            </Text>
+          </Group>
+          <Stack gap="xs" role="img" aria-label="Skeleton loading placeholder">
+            <Skeleton height={12} width="72%" />
+            <Skeleton height={12} width="55%" />
+            <Skeleton height={12} width="84%" />
+          </Stack>
+        </Stack>
+      </Paper>
+    </Stack>
+  );
+}
+
+export function ShowcaseColor() {
   return (
     <>
       <ColorLibrary />
       <TypeExamples />
-      <ActionExamples />
+      <ScaleExamples />
+    </>
+  );
+}
+
+export function ShowcaseComponents({ onNavigate }: ShowcaseComponentsProps) {
+  return (
+    <>
       <FormExamples />
-      <NavigationExamples />
+      <ActionExamples />
+      <SelectionExamples />
+      <NavigationExamples onNavigate={onNavigate} />
       <FeedbackExamples />
+      <LoadingExamples />
     </>
   );
 }
