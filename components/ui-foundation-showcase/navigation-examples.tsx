@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Avatar, Box, Button, Center, Group, Select, Stack, Text, Title } from "@mantine/core";
 import { IconMenu2 } from "@tabler/icons-react";
@@ -8,6 +7,7 @@ import { useState } from "react";
 import { AdminHeaderContent } from "@/components/admin-header";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import {
   readSampleListContext,
@@ -71,20 +71,35 @@ export function HeaderNavigationExamples({
             Open sample modal
           </Button>
           <Button
-            component={Link}
+            component={AdminNavigationLink}
             variant="default"
             href={sampleNavigationHref(standard.id, { context })}
           >
             Open sample child page
           </Button>
           <Button
-            component={Link}
+            component={AdminNavigationLink}
             variant="default"
             href={sampleNavigationHref(long.id, { edit: true, context })}
           >
             Open long example with deeper navigation
           </Button>
         </Group>
+      </Stack>
+
+      <Stack gap="sm" align="flex-start">
+        <Title order={2}>Route loading and recovery</Title>
+        <Text size="sm" c="dimmed">
+          This development preview simulates slow page rendering. Watch the Header and content while
+          opening it, then use its error action to try the shared retry.
+        </Text>
+        <Button
+          component={AdminNavigationLink}
+          href={sampleNavigationHref("route-preview", { context })}
+          variant="default"
+        >
+          Open slow route preview
+        </Button>
       </Stack>
 
       <Stack gap="sm">

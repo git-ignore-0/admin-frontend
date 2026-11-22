@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   ActionIcon,
   Alert,
@@ -15,12 +14,14 @@ import {
   Group,
   Menu,
   NavLink,
+  Progress,
   ScrollArea,
   Stack,
   Text,
   ThemeIcon,
   Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import {
@@ -31,11 +32,17 @@ import {
 } from "@tabler/icons-react";
 import {
   AdminBreadcrumbProvider,
+  useAdminBreadcrumbNavigationKey,
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
 import { AdminHeaderContent } from "@/components/admin-header";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import {
+  AdminNavigationLink,
+  AdminNavigationProvider,
+  type AdminNavigate,
+} from "@/components/admin-navigation-link";
 import { Icon } from "@/components/nfv-controls";
 import { clearAdminNotifications } from "@/components/toast-provider";
 import {
@@ -62,14 +69,35 @@ function AdminShellHeaderContent({
   ...controls
 }: React.ComponentProps<typeof AdminHeaderContent>) {
   const breadcrumbs = useAdminBreadcrumbs(items);
-  return <AdminHeaderContent items={breadcrumbs} {...controls} />;
+  const navigationKey = useAdminBreadcrumbNavigationKey();
+  return <AdminHeaderContent items={breadcrumbs} navigationKey={navigationKey} {...controls} />;
 }
 
-function Brand({ compact = false }: { compact?: boolean }) {
+function AdminShellScope({
+  pathname,
+  navigate,
+  children,
+}: {
+  pathname: string;
+  navigate: AdminNavigate;
+  children: React.ReactNode;
+}) {
+  const search = useSearchParams()?.toString();
+  return (
+    <AdminNavigationProvider value={navigate}>
+      <AdminBreadcrumbProvider pathname={pathname} search={search}>
+        {children}
+      </AdminBreadcrumbProvider>
+    </AdminNavigationProvider>
+  );
+}
+
+function Brand({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
   return (
     <Box
-      component={Link}
+      component={AdminNavigationLink}
       href="/dashboard"
+      onNavigate={onNavigate}
       aria-label="NFV Admin"
       style={{ textDecoration: "none", color: "inherit" }}
     >
@@ -104,7 +132,17 @@ function Brand({ compact = false }: { compact?: boolean }) {
 
 export function AdminShell({ user, sessionBinding, children }: Props) {
   const pathname = usePathname();
-  const search = useSearchParams()?.toString() ?? "";
+  const router = useRouter();
+  const [navigationPending, startNavigation] = useTransition();
+  const navigate = useCallback<AdminNavigate>(
+    (href, { replace, scroll }) => {
+      startNavigation(() => {
+        if (replace) router.replace(href, { scroll });
+        else router.push(href, { scroll });
+      });
+    },
+    [router],
+  );
   const { t } = useAdminI18n();
   const sections = adminNavigation(t);
   const activeSection = activeAdminSection(pathname, sections);
@@ -178,14 +216,14 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
     return (
       <NavLink
         key={item.href}
-        component={Link}
+        component={AdminNavigationLink}
         href={item.href}
         label={item.label}
         aria-label={item.label}
         active={active}
         aria-current={active ? "page" : undefined}
         leftSection={item.icon ? <Icon name={item.icon} size={16} /> : undefined}
-        onClick={onNavigate}
+        onNavigate={onNavigate}
         c={active ? "forest.8" : "dimmed"}
         fw={active ? 690 : 520}
       />
@@ -221,7 +259,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
                 {section.items.map((item) => (
                   <Menu.Item
                     key={item.href}
-                    component={Link}
+                    component={AdminNavigationLink}
                     href={item.href}
                     aria-current={item === activeItem ? "page" : undefined}
                     color={item === activeItem ? "forest" : undefined}
@@ -269,16 +307,11 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
       transitionDuration={150}
       classNames={{ main: classes.main }}
     >
-      <AdminBreadcrumbProvider
-        key={sessionBinding}
-        pathname={stale ? "" : pathname}
-        search={search}
-      >
+      <AdminShellScope key={sessionBinding} pathname={stale ? "" : pathname} navigate={navigate}>
         <AppShell.Header withBorder={stale}>
           {!stale && (
             <AdminShellHeaderContent
               items={resolveAdminBreadcrumbs(pathname, activeItem, t)}
-              navigationKey={`${pathname}?${search}`}
               navigationControl={
                 <>
                   <Burger
@@ -353,6 +386,33 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
               }
             />
           )}
+          {!stale && (
+            <>
+              <VisuallyHidden role="status">
+                {navigationPending ? t.common.navigationPending : ""}
+              </VisuallyHidden>
+              {navigationPending && (
+                <Progress.Root
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    insetInline: 0,
+                    insetBlockEnd: 0,
+                    pointerEvents: "none",
+                    background: "transparent",
+                  }}
+                  radius={0}
+                  size={3}
+                >
+                  <Progress.Section
+                    value={25}
+                    withAria={false}
+                    className={classes.navigationPulse}
+                  />
+                </Progress.Root>
+              )}
+            </>
+          )}
         </AppShell.Header>
         {!stale && (
           <>
@@ -371,7 +431,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
             <Drawer
               opened={mobileOpen && Boolean(mobile)}
               onClose={closeMobile}
-              title={<Brand />}
+              title={<Brand onNavigate={closeMobile} />}
               closeButtonProps={{ "aria-label": t.common.closeNavigation }}
               position="left"
               size={280}
@@ -407,7 +467,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
             children
           )}
         </AppShell.Main>
-      </AdminBreadcrumbProvider>
+      </AdminShellScope>
     </AppShell>
   );
 }

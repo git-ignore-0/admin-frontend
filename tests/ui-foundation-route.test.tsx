@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ProtectedLayout from "@/app/(admin)/layout";
 import UiFoundationPage from "@/app/(admin)/dev/ui-foundation/page";
+import NavigationPreviewLayout from "@/app/(admin)/dev/ui-foundation/navigation/route-preview/layout";
+import NavigationPreviewPage from "@/app/(admin)/dev/ui-foundation/navigation/route-preview/page";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { adminNavigation } from "@/lib/admin-navigation";
 import { adminSessionBinding, readSession, type AdminSession } from "@/lib/session";
@@ -72,6 +74,12 @@ describe("UI Foundation development route", () => {
       expect(loadShowcase).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects the navigation and loading preview outside development", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await expect(NavigationPreviewLayout({ children: null })).rejects.toThrow("NOT_FOUND");
+    await expect(NavigationPreviewPage()).rejects.toThrow("NOT_FOUND");
+  });
 
   it("requires the existing protected layout even in development", async () => {
     vi.stubEnv("NODE_ENV", "development");

@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ActionIcon, Anchor, Box, Breadcrumbs, Flex, Menu, Text } from "@mantine/core";
 import { IconChevronRight, IconDots } from "@tabler/icons-react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { isInternalAdminHref, type AdminBreadcrumbItem } from "@/lib/admin-navigation";
 import classes from "./admin-shell.module.css";
 
@@ -65,7 +65,7 @@ function BreadcrumbOverflowMenu({
       </Menu.Target>
       <Menu.Dropdown ref={dropdown} className={classes.breadcrumbMenu}>
         {ancestors.map(({ href, label }) => (
-          <Menu.Item key={href} component={Link} href={href}>
+          <Menu.Item key={href} component={AdminNavigationLink} href={href}>
             {label}
           </Menu.Item>
         ))}
@@ -85,7 +85,7 @@ export function AdminHeaderContent({ items, navigationKey, navigationControl, ac
     <Anchor
       key={href}
       ref={index === 0 ? firstLink : undefined}
-      component={Link}
+      component={AdminNavigationLink}
       href={href}
       title={label}
       className={[

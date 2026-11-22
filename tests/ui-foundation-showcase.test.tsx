@@ -214,6 +214,10 @@ it("uses the URL for the review tab and returns an overlay to its opening tab", 
     "href",
     "/dev/ui-foundation/navigation/NFV-001?review=navigation&q=NFV-001",
   );
+  expect(screen.getByRole("link", { name: "Open slow route preview" })).toHaveAttribute(
+    "href",
+    "/dev/ui-foundation/navigation/route-preview?review=navigation&q=NFV-001",
+  );
 
   const trigger = screen.getByRole("button", { name: "Open sample detail" });
   fireEvent.click(trigger);

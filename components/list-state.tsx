@@ -1,18 +1,9 @@
 "use client";
 
-import {
-  Alert,
-  Box,
-  Button,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  VisuallyHidden,
-} from "@mantine/core";
+import { Box, Group, Loader, Paper, Stack, Text, VisuallyHidden } from "@mantine/core";
 import { IconInbox, IconSearch } from "@tabler/icons-react";
 import type { ReactNode } from "react";
+import { RecoveryAlert } from "@/components/recovery-alert";
 
 export function ListState({
   action,
@@ -66,14 +57,13 @@ export function ListState({
   }
   if (error)
     return (
-      <Alert color="red" variant={hasData ? "outline" : "light"} role="alert">
-        <Stack gap="sm" align="flex-start">
-          <Text size="sm">{error}</Text>
-          <Button variant="default" loading={loading} onClick={onRetry} type="button">
-            {retryLabel}
-          </Button>
-        </Stack>
-      </Alert>
+      <RecoveryAlert
+        message={error}
+        retryLabel={retryLabel}
+        onRetry={onRetry}
+        loading={loading}
+        variant={hasData ? "outline" : "light"}
+      />
     );
   if (loading)
     return (

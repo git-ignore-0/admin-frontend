@@ -1,6 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { startTransition, Suspense, use, useLayoutEffect, useState } from "react";
+import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
+import type { NextRouter } from "next/router";
 
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -10,13 +13,24 @@ import { activeAdminSection, adminNavigation, isActiveAdminRoute } from "@/lib/a
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { ADMIN_SESSION_CHANGED_EVENT, api, apiFile } from "@/lib/client-api";
 
-const navigation = vi.hoisted(() => ({ pathname: "/dashboard", search: "" }));
+const navigation = vi.hoisted(() => ({
+  pathname: "/dashboard",
+  search: "",
+  router: {
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+  },
+}));
 const originalResizeObserver = window.ResizeObserver;
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
   useSearchParams: () => new URLSearchParams(navigation.search),
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => navigation.router,
 }));
 
 afterEach(() => {
@@ -24,8 +38,10 @@ afterEach(() => {
   delete document.documentElement.dataset.adminPageSession;
   navigation.pathname = "/dashboard";
   navigation.search = "";
+  window.history.replaceState(null, "", "/");
   window.ResizeObserver = originalResizeObserver;
   vi.clearAllMocks();
+  navigation.router.push.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -50,6 +66,82 @@ function renderShell(
       </AdminShell>
     </AdminI18nProvider>,
   );
+}
+
+function renderNavigableShell(initialPath = "/dashboard") {
+  const requests = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  window.history.replaceState(null, "", initialPath);
+  let restoreRoute: (href: string) => void;
+
+  function Destination({ href }: { href: string }) {
+    const request = requests.get(href);
+    if (request) use(request.promise);
+    const url = new URL(href, window.location.origin);
+    navigation.pathname = url.pathname;
+    navigation.search = url.search.slice(1);
+    useLayoutEffect(() => {
+      window.history.replaceState(null, "", href);
+    }, [href]);
+    return (
+      <AdminI18nProvider initialLocale="en">
+        <AdminShell
+          user={{ name: "Admin", email: null, login_phone_number: null }}
+          sessionBinding="test-session"
+        >
+          <p>Content at {href}</p>
+        </AdminShell>
+      </AdminI18nProvider>
+    );
+  }
+
+  function Router() {
+    const [href, setHref] = useState(initialPath);
+    restoreRoute = setHref;
+    navigation.router.push.mockImplementation((target: string) => {
+      if (target === window.location.pathname + window.location.search) {
+        setHref(target);
+        return;
+      }
+      let resolve!: () => void;
+      const promise = new Promise<void>((ready) => {
+        resolve = ready;
+      });
+      requests.set(target, { promise, resolve });
+      setHref(target);
+    });
+    return (
+      // Vitest resolves the public package entry, without the App Router's webpack alias.
+      <RouterContext.Provider value={navigation.router as unknown as NextRouter}>
+        <Suspense fallback={null}>
+          <Destination href={href} />
+        </Suspense>
+      </RouterContext.Provider>
+    );
+  }
+
+  return {
+    ...render(<Router />),
+    async commit(href: string) {
+      await act(async () => requests.get(href)?.resolve());
+    },
+    async restore(href: string) {
+      await act(async () => {
+        startTransition(() => restoreRoute(href));
+      });
+    },
+  };
+}
+
+function clickModified(link: HTMLElement, modifiers: { ctrlKey?: boolean; metaKey?: boolean }) {
+  // Suppress jsdom's attempted new-tab navigation after Link has handled the event.
+  document.addEventListener("click", (event) => event.preventDefault(), { once: true });
+  fireEvent.click(link, modifiers);
+}
+
+async function clickRoute(link: HTMLElement) {
+  await act(async () => {
+    fireEvent.click(link);
+  });
 }
 
 describe("admin account identity", () => {
@@ -393,6 +485,96 @@ describe("admin sidebar navigation", () => {
       dispatchEvent: vi.fn(),
     }));
   }
+
+  it("shows pending feedback and waits for the last committed route before changing the active item", async () => {
+    const { commit } = renderNavigableShell();
+    const header = within(screen.getByRole("banner"));
+    const sidebar = within(screen.getByRole("navigation", { name: "Administration" }));
+    const overview = sidebar.getByRole("link", { name: "Overview" });
+    const users = sidebar.getByRole("link", { name: "Users" });
+    const orders = sidebar.getByRole("link", { name: "Orders" });
+    clickModified(users, { ctrlKey: true });
+    expect(navigation.router.push).not.toHaveBeenCalled();
+    expect(header.queryByText("Opening page…")).not.toBeInTheDocument();
+
+    await clickRoute(users);
+    expect(header.getByRole("status")).toHaveTextContent("Opening page…");
+    expect(overview).toHaveAttribute("aria-current", "page");
+    expect(users).not.toHaveAttribute("aria-current");
+    expect(screen.getByText("Content at /dashboard")).toBeVisible();
+
+    await clickRoute(orders);
+    expect(navigation.router.push.mock.calls.map(([href]) => href)).toEqual([
+      "/users",
+      "/store-orders",
+    ]);
+    await commit("/store-orders");
+    expect(header.queryByText("Opening page…")).not.toBeInTheDocument();
+    expect(header.getByText("Orders")).toHaveAttribute("aria-current", "page");
+    expect(orders).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByText("Content at /dashboard")).not.toBeInTheDocument();
+    await commit("/users");
+    expect(orders).toHaveAttribute("aria-current", "page");
+  });
+
+  it("keeps feedback in the header when the collapsed menu closes", async () => {
+    const { commit } = renderNavigableShell();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Store" }));
+    await clickRoute(screen.getByRole("menuitem", { name: "Orders" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(within(screen.getByRole("banner")).getByRole("status")).toHaveTextContent(
+      "Opening page…",
+    );
+    await commit("/store-orders");
+    expect(screen.queryByText("Opening page…")).not.toBeInTheDocument();
+  });
+
+  it("drops pending feedback when a history restoration supersedes the transition", async () => {
+    const { commit, restore } = renderNavigableShell("/users");
+    const header = within(screen.getByRole("banner"));
+    await clickRoute(screen.getByRole("link", { name: "Orders" }));
+    expect(header.getByRole("status")).toHaveTextContent("Opening page…");
+    await restore("/dashboard");
+    expect(header.queryByText("Opening page…")).not.toBeInTheDocument();
+    expect(header.getByText("Overview")).toHaveAttribute("aria-current", "page");
+    await commit("/store-orders");
+    expect(screen.queryByText("Content at /store-orders")).not.toBeInTheDocument();
+  });
+
+  it("lets a click on the current route supersede a pending destination through native Link", async () => {
+    const { commit } = renderNavigableShell();
+    const sidebar = within(screen.getByRole("navigation", { name: "Administration" }));
+    await clickRoute(sidebar.getByRole("link", { name: "Users" }));
+    expect(screen.getByText("Opening page…")).toBeInTheDocument();
+
+    const overview = sidebar.getByRole("link", { name: "Overview" });
+    await clickRoute(overview);
+    expect(navigation.router.push.mock.calls.map(([href]) => href)).toEqual([
+      "/users",
+      "/dashboard",
+    ]);
+    expect(screen.queryByText("Opening page…")).not.toBeInTheDocument();
+    await commit("/users");
+    expect(overview).toHaveAttribute("aria-current", "page");
+  });
+
+  it("uses the same transition for a parent breadcrumb and removes feedback on session invalidation", async () => {
+    const { commit } = renderNavigableShell("/users/record-id");
+    const header = within(screen.getByRole("banner"));
+    await clickRoute(header.getByRole("link", { name: "Users" }));
+    expect(header.getByRole("status")).toHaveTextContent("Opening page…");
+    expect(header.getByText("User details")).toHaveAttribute("aria-current", "page");
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(ADMIN_SESSION_CHANGED_EVENT, { detail: "test-session" }),
+      );
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("The admin session changed");
+    expect(header.queryByText("Opening page…")).not.toBeInTheDocument();
+    await commit("/users");
+    expect(screen.queryByText("Content at /users")).not.toBeInTheDocument();
+  });
   it("keeps all current workflow destinations in one localized model", () => {
     const sections = adminNavigation(adminDictionaries.en);
     const routes = sections.flatMap((section) => section.items.map((item) => item.href));
@@ -526,7 +708,8 @@ describe("admin sidebar navigation", () => {
     "closes mobile navigation by %s and restores focus",
     async (action) => {
       mobileViewport();
-      const { container } = renderShell("/farms/a");
+      const shell = action === "route" ? renderNavigableShell("/farms/a") : null;
+      const { container } = shell ?? renderShell("/farms/a");
       const trigger = screen.getByRole("button", { name: "Open navigation" });
       trigger.focus();
       fireEvent.click(trigger);
@@ -542,13 +725,21 @@ describe("admin sidebar navigation", () => {
       if (action === "outside") fireEvent.click(document.querySelector(".mantine-Drawer-overlay")!);
       if (action === "route") {
         const link = within(dialog).getByRole("link", { name: "Farm list" });
-        link.addEventListener("click", (event) => event.preventDefault(), { once: true });
-        fireEvent.click(link);
+        clickModified(link, { metaKey: true });
+        expect(dialog).toBeVisible();
+        await clickRoute(link);
+        expect(within(screen.getByRole("banner")).getByRole("status")).toHaveTextContent(
+          "Opening page…",
+        );
       }
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(trigger).toHaveAttribute("aria-expanded", "false");
       await waitFor(() => expect(trigger).toHaveFocus());
       expect(container.querySelector(".mantine-AppShell-navbar")).toHaveAttribute("inert");
+      if (shell) {
+        await shell.commit("/farms");
+        expect(screen.queryByText("Opening page…")).not.toBeInTheDocument();
+      }
     },
   );
   it("keeps keyboard focus within the open mobile Drawer", async () => {

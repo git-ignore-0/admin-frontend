@@ -9,6 +9,9 @@ export function normalizeAdminLocale(value?: string | null): AdminLocale {
 const vi = {
   common: {
     navigation: "Quản trị",
+    navigationPending: "Đang mở trang…",
+    routeLoading: "Đang tải trang…",
+    routeError: "Không thể mở trang này.",
     breadcrumbs: "Đường dẫn điều hướng",
     breadcrumbOverflow: "Hiện các trang cấp trên",
     overviewGroup: "Tổng quan",
@@ -1503,6 +1506,9 @@ export type AdminDictionary = typeof vi;
 const en: AdminDictionary = {
   common: {
     navigation: "Administration",
+    navigationPending: "Opening page…",
+    routeLoading: "Loading page…",
+    routeError: "This page could not be opened.",
     breadcrumbs: "Breadcrumbs",
     breadcrumbOverflow: "Show ancestor screens",
     overviewGroup: "Overview",

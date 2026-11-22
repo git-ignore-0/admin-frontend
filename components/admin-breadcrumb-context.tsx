@@ -63,6 +63,11 @@ export function useAdminBreadcrumbs(fallback: readonly AdminBreadcrumbItem[]) {
   return useContext(CurrentBreadcrumbs) ?? fallback;
 }
 
+export function useAdminBreadcrumbNavigationKey() {
+  const scope = useContext(BreadcrumbRegistration);
+  return scope ? `${scope.pathname}?${scope.search}` : undefined;
+}
+
 /** Pass the owning pathname and include its query when the trail depends on search params. */
 export function AdminBreadcrumbForRoute({
   pathname,

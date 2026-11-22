@@ -16,6 +16,16 @@
   min-height: 59px;
   border-bottom: 1px solid var(--border);
 }
+@media (prefers-reduced-motion: no-preference) {
+  .navigationPulse {
+    animation: navigation-pulse 1s ease-in-out infinite alternate;
+  }
+}
+@keyframes navigation-pulse {
+  to {
+    transform: translateX(300%);
+  }
+}
 .headerControls,
 .headerActions {
   flex: none;
