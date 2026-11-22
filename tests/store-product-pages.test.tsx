@@ -280,21 +280,25 @@ describe("store product editor", () => {
     expect(screen.getByLabelText(/Tên sản phẩm/)).not.toBeRequired();
     expect(screen.getByLabelText(/Tên sản phẩm/)).toHaveAttribute("maxlength", "200");
 
+    const viEditor = await screen.findByLabelText("Mô tả chi tiết");
     act(() =>
-      (
-        screen.getByLabelText("Mô tả chi tiết") as HTMLElement & { editor: Editor }
-      ).editor.commands.setContent("<p>Chi tiết tiếng Việt</p>", true),
+      (viEditor as HTMLElement & { editor: Editor }).editor.commands.setContent(
+        "<p>Chi tiết tiếng Việt</p>",
+        true,
+      ),
     );
     fireEvent.click(screen.getByRole("tab", { name: /English/ }));
-    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveTextContent("");
+    const enEditor = await screen.findByLabelText("Mô tả chi tiết");
+    expect(enEditor).toHaveTextContent("");
     act(() =>
-      (
-        screen.getByLabelText("Mô tả chi tiết") as HTMLElement & { editor: Editor }
-      ).editor.commands.setContent("<p>English details</p>", true),
+      (enEditor as HTMLElement & { editor: Editor }).editor.commands.setContent(
+        "<p>English details</p>",
+        true,
+      ),
     );
     fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
 
-    expect(screen.getByLabelText("Mô tả chi tiết")).toHaveTextContent("Chi tiết tiếng Việt");
+    expect(await screen.findByLabelText("Mô tả chi tiết")).toHaveTextContent("Chi tiết tiếng Việt");
     expect(screen.queryByRole("heading", { name: "Mô tả chi tiết" })).not.toBeInTheDocument();
   });
 
@@ -334,10 +338,12 @@ describe("store product editor", () => {
       screen.queryByRole("button", { name: adminDictionaries.vi.richText.image }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /English/ }));
+    const enEditor = await screen.findByLabelText("Mô tả chi tiết");
     act(() =>
-      (
-        screen.getByLabelText("Mô tả chi tiết") as HTMLElement & { editor: Editor }
-      ).editor.commands.setContent("<p><em>Keep cool</em></p>", true),
+      (enEditor as HTMLElement & { editor: Editor }).editor.commands.setContent(
+        "<p><em>Keep cool</em></p>",
+        true,
+      ),
     );
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
@@ -359,7 +365,7 @@ describe("store product editor", () => {
       expect(screen.getByLabelText("Mô tả chi tiết")).toHaveAttribute("contenteditable", "true"),
     );
     fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
-    expect(screen.getByRole("heading", { name: "Bảo quản" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Bảo quản" })).toBeInTheDocument();
     expect(screen.getByText("Giữ mát").closest("strong")).not.toBeNull();
   });
 

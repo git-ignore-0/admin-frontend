@@ -381,9 +381,13 @@ describe("Store order list", () => {
       expect(path).toContain("sort=total_desc");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Sau" }));
+    const nextPage = await screen.findByRole("button", { name: "Sau" });
+    await waitFor(() => expect(nextPage).toBeEnabled());
+    fireEvent.click(nextPage);
     await waitFor(() => expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("page=2"));
-    selectOption(screen.getByRole("combobox", { name: "Trạng thái tiền" }), "");
+    const paymentStatus = screen.getByRole("combobox", { name: "Trạng thái tiền" });
+    await waitFor(() => expect(paymentStatus).toBeEnabled());
+    selectOption(paymentStatus, "");
     fireEvent.click(
       within(screen.getByRole("radiogroup", { name: "Trạng thái" })).getByRole("radio", {
         name: "Đã hủy",
