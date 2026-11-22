@@ -3,7 +3,7 @@
   outline-offset: 2px;
 }
 
-.secondaryButton {
+.defaultControl {
   --mantine-color-default-border: var(--control-border);
 }
 

@@ -342,4 +342,16 @@ describe("admin sidebar navigation", () => {
     fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
     expect(last).toHaveFocus();
   });
+
+  it("anchors the mobile navigation Drawer on the left at 280px", async () => {
+    mobileViewport();
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const dialog = await screen.findByRole("dialog");
+    const drawer = dialog.closest<HTMLElement>(".mantine-Drawer-root");
+    expect(drawer).not.toBeNull();
+    expect(drawer).toHaveStyle({ "--drawer-size": "calc(17.5rem * var(--mantine-scale))" });
+    // Mantine aligns left by default and emits flex-end for a right-side Drawer.
+    expect(drawer?.style.getPropertyValue("--drawer-justify")).toBe("");
+  });
 });

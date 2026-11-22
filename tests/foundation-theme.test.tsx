@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -11,6 +12,7 @@ import {
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { adminCssVariablesResolver, adminTheme, adminTokens } from "@/lib/admin-theme";
+import classes from "@/lib/admin-theme.module.css";
 
 afterEach(cleanup);
 
@@ -132,10 +134,16 @@ describe("admin color foundation", () => {
           <Badge color={role} data-testid="badge">
             Status
           </Badge>
-          <Alert color={alias} title="Alert" data-testid="alert">
+          <Alert color={alias} title="Alert" icon={<svg aria-hidden />} data-testid="alert">
             Message
           </Alert>
-          <Notification color={role} title="Notification" data-testid="notification">
+          <Notification
+            color={role}
+            title="Notification"
+            icon={<svg aria-hidden />}
+            closeButtonProps={{ "aria-label": "Dismiss notification" }}
+            data-testid="notification"
+          >
             Notice
           </Notification>
         </>,
@@ -152,14 +160,55 @@ describe("admin color foundation", () => {
         "--alert-color": `var(--mantine-color-${alias}-light-color)`,
         "--alert-bg": `var(--mantine-color-${alias}-light)`,
       });
+      expect(screen.getByText("Message")).toHaveStyle({ color: "var(--alert-color)" });
       expect(screen.getByTestId("notification")).toHaveStyle({
         "--notification-color": `var(--mantine-color-${role}-filled)`,
         backgroundColor: `var(--${role}-soft)`,
       });
+      const semanticText = { color: `var(--${role})` };
+      expect(screen.getByText("Notification")).toHaveStyle(semanticText);
+      expect(screen.getByText("Notice")).toHaveStyle(semanticText);
+      expect(screen.getByRole("button", { name: "Dismiss notification" })).toHaveStyle(semanticText);
       expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(readColor("--text-inverse"), foreground)).toBeGreaterThanOrEqual(4.5);
     },
   );
+
+  it("shares the control border only on default Button and ActionIcon variants", () => {
+    const variants = ["default", "filled", "light", "subtle", "transparent", "outline"] as const;
+    renderTheme(
+      <>
+        {variants.map((variant) => (
+          <div key={variant}>
+            <Button variant={variant}>{variant} button</Button>
+            <ActionIcon variant={variant} aria-label={`${variant} icon`} />
+          </div>
+        ))}
+        <ActionIcon aria-label="Implicit icon" />
+      </>,
+    );
+    for (const variant of variants) {
+      const button = screen.getByRole("button", { name: `${variant} button` });
+      const icon = screen.getByRole("button", { name: `${variant} icon` });
+      if (variant === "default") {
+        expect(button).toHaveClass(classes.defaultControl);
+        expect(icon).toHaveClass(classes.defaultControl);
+        expect(button).toHaveStyle({
+          "--button-bd": "calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border)",
+        });
+        expect(icon).toHaveStyle({
+          "--ai-bd": "calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border)",
+        });
+        continue;
+      }
+      expect(button).not.toHaveClass(classes.defaultControl);
+      expect(icon).not.toHaveClass(classes.defaultControl);
+    }
+    const implicitIcon = screen.getByRole("button", { name: "Implicit icon" });
+    expect(implicitIcon).toHaveAttribute("data-variant", "subtle");
+    expect(implicitIcon).toHaveStyle({ "--ai-size": "calc(2.25rem * var(--mantine-scale))" });
+    expect(implicitIcon).not.toHaveClass(classes.defaultControl);
+  });
 
   it("meets normal text contrast for active actions, inputs, and overlay content", () => {
     renderTheme(<Button color="red">Delete</Button>);
@@ -214,6 +263,17 @@ describe("admin color foundation", () => {
   });
 
   it("uses the foundation surfaces and overlay for portalled dialogs and compound drawers", () => {
+    const nativeDrawer = renderTheme(
+      <Drawer opened onClose={() => {}} title="Navigation" transitionProps={{ duration: 0 }} />,
+    );
+    expect(screen.getByRole("dialog", { name: "Navigation" })).toHaveStyle({
+      backgroundColor: "var(--background)",
+      color: "var(--text)",
+    });
+    expect(nativeDrawer.container).not.toContainElement(screen.getByRole("dialog"));
+    expect(document.querySelector(".mantine-Drawer-overlay")).toHaveClass(classes.dialogOverlay);
+    nativeDrawer.unmount();
+
     const { container, unmount } = renderTheme(
       <Drawer.Root opened onClose={() => {}} transitionProps={{ duration: 0 }}>
         <Drawer.Overlay data-testid="drawer-overlay" />

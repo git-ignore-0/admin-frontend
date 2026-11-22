@@ -134,8 +134,9 @@ const overlayStyles = {
   title: { color: "var(--heading)", fontSize: "var(--mantine-h2-font-size)", fontWeight: 700 },
   body: { paddingBlockStart: "var(--mantine-spacing-md)" },
 };
-const drawerDefaults = { position: "right", size: 640 } as const;
 const modalDefaults = { centered: true, radius: "lg" } as const;
+const defaultControlClassNames = (_theme: MantineTheme, { variant }: { variant?: string }) =>
+  variant === "default" ? { root: classes.defaultControl } : {};
 
 /** Foundation defaults; domain states choose their semantic color at the call site. */
 export const adminTheme = createTheme({
@@ -163,11 +164,13 @@ export const adminTheme = createTheme({
     // Normal controls: Mantine sm (36px); compact row/editor actions: xs (30px).
     Button: {
       defaultProps: { ...sizeSm, fw: 600 },
-      classNames: (_theme: MantineTheme, { variant }: { variant?: string }) =>
-        variant === "default" ? { root: classes.secondaryButton } : {},
+      classNames: defaultControlClassNames,
       styles: { label: { gap: 7 } },
     },
-    ActionIcon: { defaultProps: { size: 36, variant: "subtle" } },
+    ActionIcon: {
+      defaultProps: { size: 36, variant: "subtle" },
+      classNames: defaultControlClassNames,
+    },
     Input: { classNames: { wrapper: classes.inputWrapper, input: classes.input } },
     TextInput: { defaultProps: sizeSm },
     PasswordInput: { defaultProps: sizeSm },
@@ -215,14 +218,12 @@ export const adminTheme = createTheme({
     Card: { styles: { root: { backgroundColor: "var(--surface)", borderColor: "var(--border)" } } },
     Divider: { defaultProps: { color: "var(--border)" } },
     Drawer: {
-      defaultProps: drawerDefaults,
       classNames: { overlay: classes.dialogOverlay },
       styles: {
         ...overlayStyles,
         content: { backgroundColor: "var(--background)", color: "var(--text)" },
       },
     },
-    DrawerRoot: { defaultProps: drawerDefaults },
     Modal: {
       defaultProps: modalDefaults,
       classNames: { overlay: classes.dialogOverlay },
@@ -259,6 +260,7 @@ export const adminTheme = createTheme({
           root: { ...floatingSurface, backgroundColor: `var(--${role}-soft)` },
           title: { color: `var(--${role})` },
           description: { color: `var(--${role})` },
+          closeButton: { color: `var(--${role})` },
         };
       },
     },

@@ -192,6 +192,20 @@ export function SampleRecordList({
   const vietnamese = toolbar === "vietnamese";
   const showFilters = toolbar === "all" || vietnamese;
 
+  function changeToolbar(value: string | null) {
+    if (!value || value === toolbar) return;
+    setToolbar(value);
+    if (value === "all" || value === "vietnamese") return;
+
+    setCategory(null);
+    setStatus(null);
+    if (value === "actions") {
+      setDraftQuery("");
+      setQuery("");
+    }
+    if (value === "actions" || filterCount > 0) setPage(1);
+  }
+
   return (
     <Stack gap="md" miw={0}>
       <Group align="flex-end" gap="sm">
@@ -212,9 +226,7 @@ export function SampleRecordList({
           label="Toolbar controls"
           data={toolbarOptions}
           value={toolbar}
-          onChange={(value) => {
-            if (value) setToolbar(value);
-          }}
+          onChange={changeToolbar}
           flex="1 1 120px"
           miw={0}
           maw={160}

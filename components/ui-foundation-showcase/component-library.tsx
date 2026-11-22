@@ -35,12 +35,16 @@ import {
 } from "@mantine/core";
 import { DateInput, DatePickerInput } from "@mantine/dates";
 import {
+  IconAlertTriangle,
   IconCheck,
+  IconClock,
   IconDots,
+  IconFileText,
   IconInfoCircle,
   IconLayoutGrid,
   IconList,
   IconStar,
+  IconX,
 } from "@tabler/icons-react";
 import { useRef, useState } from "react";
 import { adminPalettes, adminSemanticColors, adminTokens } from "@/lib/admin-theme";
@@ -412,71 +416,119 @@ function NavigationExamples() {
   );
 }
 
+const feedbackExamples = {
+  success: {
+    title: "Sample saved",
+    message: "The example record is ready for review.",
+    icon: IconCheck,
+  },
+  pending: {
+    title: "Review pending",
+    message: "Check the observation details before confirming the review.",
+    icon: IconClock,
+  },
+  warning: {
+    title: "Follow-up needed",
+    message: "Check the moisture reading again after the next irrigation.",
+    icon: IconAlertTriangle,
+  },
+  danger: {
+    title: "Validation error",
+    message: "The record code is missing its sequence number.",
+    icon: IconX,
+  },
+  info: {
+    title: "Observation recorded",
+    message: "The field notes are available in the sample record.",
+    icon: IconInfoCircle,
+  },
+  neutral: {
+    title: "Draft retained",
+    message: "You can finish the observation later.",
+    icon: IconFileText,
+  },
+} satisfies Record<
+  keyof typeof adminSemanticColors,
+  { title: string; message: string; icon: typeof IconCheck }
+>;
+
+const feedbackEntries = Object.entries(feedbackExamples);
+const notificationRoles = feedbackEntries.map(([role]) => role);
+
 function FeedbackExamples() {
-  const [notification, setNotification] = useState(false);
+  const [notificationRole, setNotificationRole] = useState<string | null>(null);
+  const notificationSelect = useRef<HTMLInputElement>(null);
+  const notification = feedbackEntries.find(([role]) => role === notificationRole)?.[1];
+
   return (
     <Stack component="section" gap="md" aria-labelledby="feedback-examples">
       <Title id="feedback-examples" order={2}>
         Feedback
       </Title>
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-        <Paper p="md" miw={0}>
-          <Stack gap="sm">
-            <Group gap="xs">
-              {semanticEntries.map(([role]) => (
-                <Badge color={role} key={role} tt="capitalize">
-                  {role}
-                </Badge>
-              ))}
-            </Group>
-            <Alert
-              title="Review pending"
-              color="pending"
-              icon={<IconInfoCircle size={18} aria-hidden />}
-            >
-              Check the observation details before confirming a sample review.
-            </Alert>
-            <Alert title="Validation error" color="danger">
-              The record code is missing its sequence number.
-            </Alert>
-          </Stack>
-        </Paper>
-        <Paper p="md" miw={0}>
-          <Stack gap="md">
-            <Group gap="sm">
-              <Loader size="sm" aria-label="Loading example" />
+      <Paper p="md" miw={0}>
+        <Stack gap="md">
+          <Group gap="xs">
+            {semanticEntries.map(([role]) => (
+              <Badge color={role} key={role} tt="capitalize">
+                {role}
+              </Badge>
+            ))}
+          </Group>
+          <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="sm">
+            {feedbackEntries.map(([role, { title, message, icon: Icon }]) => (
+              <Alert key={role} title={title} color={role} icon={<Icon size={18} aria-hidden />}>
+                {message}
+              </Alert>
+            ))}
+          </SimpleGrid>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+            <Stack gap="sm" miw={0}>
+              <Group gap="sm">
+                <Loader size="sm" aria-label="Loading example" />
+                <Text size="sm" c="dimmed">
+                  Loading preview
+                </Text>
+              </Group>
+              <Stack gap="xs" role="img" aria-label="Skeleton loading placeholder">
+                <Skeleton height={12} width="72%" />
+                <Skeleton height={12} width="55%" />
+                <Skeleton height={12} width="84%" />
+              </Stack>
               <Text size="sm" c="dimmed">
-                Loading preview
+                Try empty, error and retry states under{" "}
+                <Anchor href="#sample-records">Sample records</Anchor>.
               </Text>
-            </Group>
-            <Stack gap="xs" role="img" aria-label="Skeleton loading placeholder">
-              <Skeleton height={12} width="72%" />
-              <Skeleton height={12} width="55%" />
-              <Skeleton height={12} width="84%" />
             </Stack>
-            <Button variant="default" w="fit-content" onClick={() => setNotification(true)}>
-              Show notification
-            </Button>
-            {notification && (
-              <Notification
-                color="success"
-                title="Sample saved"
-                icon={<IconCheck size={16} aria-hidden />}
-                onClose={() => setNotification(false)}
-                closeButtonProps={{ "aria-label": "Dismiss sample notification" }}
-                role="status"
-                withBorder
-              >
-                The example record is ready for review.
-              </Notification>
-            )}
-            <Text size="sm" c="dimmed">
-              Try empty, error and retry states under{" "}
-              <Anchor href="#sample-records">Sample records</Anchor>.
-            </Text>
-          </Stack>
-        </Paper>
-      </SimpleGrid>
+            <Stack gap="sm" miw={0}>
+              <Select
+                ref={notificationSelect}
+                label="Notification role"
+                placeholder="Choose a role"
+                data={notificationRoles}
+                value={notificationRole}
+                onChange={setNotificationRole}
+                maw={220}
+              />
+              {notification && (
+                <Notification
+                  color={notificationRole ?? undefined}
+                  title={notification.title}
+                  icon={<notification.icon size={16} aria-hidden />}
+                  onClose={() => {
+                    setNotificationRole(null);
+                    notificationSelect.current?.focus();
+                  }}
+                  closeButtonProps={{ "aria-label": "Dismiss sample notification" }}
+                  role="status"
+                  withBorder
+                >
+                  {notification.message}
+                </Notification>
+              )}
+            </Stack>
+          </SimpleGrid>
+        </Stack>
+      </Paper>
     </Stack>
   );
 }

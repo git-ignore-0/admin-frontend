@@ -358,6 +358,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
             onClose={closeMobile}
             title={<Brand />}
             closeButtonProps={{ "aria-label": t.common.closeNavigation }}
+            position="left"
             size={280}
             returnFocus
             trapFocus
