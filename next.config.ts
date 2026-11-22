@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Next.js traces the dev-only imports even though these routes return notFound in production.
+  outputFileTracingExcludes: {
+    "/dev/ui-foundation{,/**}": ["./components/ui-foundation-showcase/**/*"],
+  },
   poweredByHeader: false,
   experimental: {
     optimizePackageImports: ["@mantine/core", "@mantine/hooks"],

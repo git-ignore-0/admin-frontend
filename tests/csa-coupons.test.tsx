@@ -372,8 +372,10 @@ describe("CSA coupon administration", () => {
         expect.objectContaining({ method: "PATCH", body: JSON.stringify({ usage_limit: 3 }) }),
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate" }));
-    const dialog = screen.getByRole("dialog");
+    const deactivateButton = screen.getByRole("button", { name: "Deactivate" });
+    await waitFor(() => expect(deactivateButton).toBeEnabled());
+    fireEvent.click(deactivateButton);
+    const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Deactivate" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
