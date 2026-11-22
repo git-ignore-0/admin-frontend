@@ -1,8 +1,10 @@
 "use client";
 
-import { type FormEvent, useId, useLayoutEffect, useRef, useState } from "react";
+import { Stack, Text } from "@mantine/core";
+import { type FormEvent, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FormField, FormInput } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
@@ -12,6 +14,7 @@ import {
   type AccountField,
   requireAccountActionResult,
 } from "@/lib/admin-users";
+import { useRefreshAdminUsers } from "@/lib/admin-users-query";
 import { api } from "@/lib/client-api";
 import type { AdminAccountSummary } from "@/lib/types";
 
@@ -19,6 +22,9 @@ export type UserAccountDialogAction = "suspend" | "reset-password";
 type Props = {
   onCancel: () => void;
   onSuccess: (userId: string) => void;
+  confirmDisabled?: boolean;
+  fallbackFocusRef?: RefObject<HTMLElement | null>;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 } & (
   | { action: "create"; userId?: never; onStateConflict?: never }
   | {
@@ -32,8 +38,19 @@ export function UserAccountDialog(props: Props) {
   return <UserAccountDialogForm key={`${props.action}:${props.userId ?? ""}`} {...props} />;
 }
 
-function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateConflict }: Props) {
+function UserAccountDialogForm({
+  action,
+  userId,
+  onCancel,
+  onSuccess,
+  onStateConflict,
+  confirmDisabled = false,
+  fallbackFocusRef,
+  returnFocusRef,
+}: Props) {
   const { locale, t } = useAdminI18n();
+  const isScopeCurrent = useIsAdminQueryScopeCurrent();
+  const refreshUsers = useRefreshAdminUsers();
   const copy = t.users.accountActions;
   const toast = useToast();
   const formId = useId();
@@ -57,20 +74,20 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
     };
   }, []);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pendingSubmission.current) return;
-    const form = event.currentTarget;
-    const values = new FormData(form);
+  async function submit(form?: HTMLFormElement) {
+    if (confirmDisabled || pendingSubmission.current || !isScopeCurrent()) return;
     const payload: Partial<Record<AccountField, FormDataEntryValue>> = {};
-    for (const field of accountFields) {
-      const value = values.get(field);
-      if (value !== null && (field !== "email" || String(value).trim())) {
-        payload[field] = value;
+    if (form) {
+      const values = new FormData(form);
+      for (const field of accountFields) {
+        const value = values.get(field);
+        if (value !== null && (field !== "email" || String(value).trim())) {
+          payload[field] = value;
+        }
       }
     }
     const submission = Symbol();
-    const isCurrent = () => pendingSubmission.current === submission;
+    const isCurrent = () => pendingSubmission.current === submission && isScopeCurrent();
     pendingSubmission.current = submission;
     setBusy(true);
     setFailure({ message: "", fields: {} });
@@ -86,7 +103,7 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
       );
       if (!isCurrent()) return;
       const accountId = requireAccountActionResult(result, action, userId);
-      form.reset();
+      form?.reset();
       toast(create ? copy.created : reset ? copy.resetSuccess : copy.success);
       onSuccess(accountId);
     } catch (caught) {
@@ -94,6 +111,7 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
       const failure = accountFailure(caught, t, locale);
       if (failure.stateConflict && onStateConflict) onStateConflict(failure.message);
       else setFailure(failure);
+      if (failure.recheckAccess) await refreshUsers(userId);
     } finally {
       if (isCurrent()) {
         pendingSubmission.current = null;
@@ -102,18 +120,32 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
     }
   }
 
+  function submitForm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submit(event.currentTarget);
+  }
+
   function field(
     name: AccountField,
     label: string,
     type: "text" | "tel" | "email" | "password",
     autoComplete: string,
   ) {
+    const showPasswordPolicy = create && name === "password1";
     return (
-      <FormField error={failure.fields[name]} label={label}>
+      <FormField
+        error={failure.fields[name]}
+        hint={showPasswordPolicy ? copy.passwordPolicy : undefined}
+        label={label}
+      >
         <FormInput
           aria-invalid={Boolean(failure.fields[name])}
           autoComplete={autoComplete}
+          data-autofocus={name === "name" || (reset && name === "password1") || undefined}
           disabled={busy}
+          inputWrapperOrder={
+            showPasswordPolicy ? ["label", "input", "description", "error"] : undefined
+          }
           name={name}
           required={name !== "email"}
           type={type}
@@ -127,29 +159,34 @@ function UserAccountDialogForm({ action, userId, onCancel, onSuccess, onStateCon
       busy={busy}
       busyLabel={copy.saving}
       cancelLabel={t.membershipCatalog.cancel}
+      confirmDisabled={confirmDisabled}
       confirmLabel={copy[action]}
       danger={action === "suspend"}
       error={failure.message}
-      formId={formId}
-      onCancel={onCancel}
+      fallbackFocusRef={fallbackFocusRef}
+      returnFocusRef={returnFocusRef}
+      {...(action === "suspend" ? { onConfirm: () => void submit() } : { formId })}
+      onCancel={() => {
+        if (!pendingSubmission.current) onCancel();
+      }}
       title={copy[action]}
     >
-      {notice && <p>{notice}</p>}
-      <form className="form-grid one" id={formId} method="post" onSubmit={submit}>
-        {create && (
-          <>
-            {field("name", copy.fullName, "text", "name")}
-            {field("login_phone_number", t.users.loginPhone, "tel", "tel")}
-            {field("email", copy.optionalEmail, "email", "email")}
-          </>
-        )}
-        {(create || reset) && (
-          <>
+      {notice && <Text>{notice}</Text>}
+      {(create || reset) && (
+        <form id={formId} method="post" onSubmit={submitForm}>
+          <Stack gap="md">
+            {create && (
+              <>
+                {field("name", copy.fullName, "text", "name")}
+                {field("login_phone_number", t.users.loginPhone, "tel", "tel")}
+                {field("email", copy.optionalEmail, "email", "email")}
+              </>
+            )}
             {field("password1", copy.password, "password", "new-password")}
             {field("password2", copy.confirmPassword, "password", "new-password")}
-          </>
-        )}
-      </form>
+          </Stack>
+        </form>
+      )}
     </ConfirmationDialog>
   );
 }

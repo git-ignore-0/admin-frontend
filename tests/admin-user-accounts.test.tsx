@@ -1,16 +1,30 @@
+import { focusManager } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
+import type { NextRouter } from "next/router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
+import { AdminShell } from "@/components/admin-shell";
 import { LinkCustomerUserDialog } from "@/components/link-customer-user-dialog";
 import { ToastProvider } from "@/components/toast-provider";
 import { UserDetail } from "@/components/user-detail";
 import { UserDirectory } from "@/components/user-directory";
 import { adminDictionaries } from "@/lib/admin-i18n";
+import { ADMIN_SESSION_CHANGED_EVENT } from "@/lib/client-api";
 
-const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+const router = vi.hoisted(() => ({
+  push: vi.fn(),
+  back: vi.fn(),
+  refresh: vi.fn(),
+  prefetch: vi.fn(),
+}));
+const { push } = router;
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, refresh: vi.fn() }),
+  useRouter: () => router,
+  usePathname: () => window.location.pathname,
+  useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
 const userId = "58cbea40-4749-4400-9fa3-188de573abaf";
@@ -37,12 +51,17 @@ const user = {
 };
 const otherUser = { ...user, id: otherUserId, name: "Orchard Member" };
 const password = "  Strong-Harvest-42!  ";
+const originalMatchMedia = window.matchMedia;
 
 function scene(children: React.ReactNode, initialLocale: "en" | "vi" = "en") {
   return (
-    <AdminI18nProvider initialLocale={initialLocale}>
-      <ToastProvider>{children}</ToastProvider>
-    </AdminI18nProvider>
+    <RouterContext.Provider value={router as unknown as NextRouter}>
+      <AdminI18nProvider initialLocale={initialLocale}>
+        <ToastProvider>
+          <AdminQueryProvider>{children}</AdminQueryProvider>
+        </ToastProvider>
+      </AdminI18nProvider>
+    </RouterContext.Provider>
   );
 }
 
@@ -71,8 +90,22 @@ function passwords(dialog: HTMLElement, first = password, second = password, loc
   return { password1, password2 };
 }
 
+function setMobileViewport() {
+  vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+    const result = originalMatchMedia(query);
+    return query === "(max-width: 47.99em)" ? { ...result, matches: true } : result;
+  });
+}
+
+beforeEach(() => {
+  window.history.replaceState(null, "", "/users");
+  router.prefetch.mockResolvedValue(undefined);
+});
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
+  delete document.documentElement.dataset.adminPageSession;
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -134,8 +167,8 @@ describe("CMS account administration", () => {
     expect(fetcher.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "POST"]);
   });
 
-  it.each([null, {}, { ...user, name: {} }])(
-    "rejects a malformed Users page before replacing the last valid rows (%j)",
+  it.each([null, {}, { ...user, name: {} }, { ...user, has_csa_customer: "false" }])(
+    "rejects a malformed Users refresh before replacing the last valid rows (%j)",
     async (row) => {
       vi.stubGlobal(
         "fetch",
@@ -146,8 +179,7 @@ describe("CMS account administration", () => {
       );
       show(<UserDirectory />);
       expect(await screen.findByRole("link", { name: /Garden Member/ })).toBeVisible();
-      fireEvent.change(screen.getByRole("searchbox"), { target: { value: "bad row" } });
-      fireEvent.submit(screen.getByRole("searchbox").closest("form")!);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
       expect(await screen.findByText(invalidResponseMessage)).toBeVisible();
       expect(screen.getByRole("link", { name: /Garden Member/ })).toBeVisible();
       expect(screen.queryByText("42 results")).toBeNull();
@@ -174,29 +206,77 @@ describe("CMS account administration", () => {
     expect(screen.getByRole("button", { name: "Confirm link" })).toBeDisabled();
   });
 
-  it("shows Chờ kích hoạt and the login phone independently of historical contact data", async () => {
+  it("shows Chờ kích hoạt in Users and keeps both phone fields in the account detail", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ data: [user], meta: listMeta })),
+      vi.fn(async (path: string) =>
+        path.includes("?invited_page=")
+          ? Response.json({ data: user, meta: { invited: listMeta } })
+          : Response.json({ data: [user], meta: listMeta }),
+      ),
     );
-    show(<UserDirectory />, "vi");
+    const directory = show(<UserDirectory />, "vi");
     const row = await screen.findByRole("row", { name: /Garden Member/ });
     expect(within(row).getByText("Chờ kích hoạt")).toBeVisible();
     expect(within(row).getByText("Chưa có email")).toBeVisible();
-    expect(within(row).getByText(user.login_phone_number)).toBeVisible();
+    expect(within(row).queryByText(user.login_phone_number)).toBeNull();
     expect(within(row).queryByText(user.phone)).toBeNull();
-    expect(screen.getByRole("columnheader", { name: "SĐT đăng nhập" })).toBeVisible();
+    expect(screen.queryByRole("columnheader", { name: "SĐT đăng nhập" })).toBeNull();
+
+    directory.rerender(scene(<UserDetail userId={userId} />, "vi"));
+    expect(await screen.findByText(user.login_phone_number)).toBeVisible();
+    expect(screen.getByText(user.phone)).toBeVisible();
+    expect(screen.getByText("SĐT đăng nhập")).toBeVisible();
   });
+
+  it.each([
+    [
+      "vi",
+      "Tạo tài khoản",
+      "Mật khẩu mới",
+      "Tối thiểu 12 ký tự. Không dùng mật khẩu phổ biến, chỉ gồm chữ số hoặc quá giống thông tin tài khoản.",
+    ],
+    [
+      "en",
+      "Create account",
+      "New password",
+      "Use at least 12 characters. Avoid common passwords, passwords made only of numbers, and passwords too similar to account information.",
+    ],
+  ] as const)(
+    "describes the password policy below the create password field in %s",
+    (locale, label, field, policy) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ data: [], meta: listMeta })),
+      );
+      show(<UserDirectory />, locale);
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      const dialog = within(screen.getByRole("dialog", { name: label }));
+      const input = dialog.getByLabelText(field);
+      const description = dialog.getByText(policy);
+      expect(input).toHaveAccessibleDescription(policy);
+      expect(
+        input.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    },
+  );
 
   it("creates a phone-only account and opens its detail with the password preserved in the POST", async () => {
     let resolveCreate!: (response: Response) => void;
     const create = new Promise<Response>((resolve) => {
       resolveCreate = resolve;
     });
+    let created = false;
     const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
-      init?.method === "POST" ? create : Response.json({ data: [], meta: listMeta }),
+      init?.method === "POST"
+        ? create
+        : Response.json({
+            data: created ? [user] : [],
+            meta: { ...listMeta, page: 2, total: 31 },
+          }),
     );
     vi.stubGlobal("fetch", fetcher);
+    window.history.replaceState(null, "", "/users?page=2&search=garden&status=pending_activation");
     show(<UserDirectory />);
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     const dialog = screen.getByRole("dialog", { name: "Create account" });
@@ -211,10 +291,25 @@ describe("CMS account administration", () => {
     expect(within(dialog).getByRole("button", { name: /saving/i })).toBeDisabled();
     fireEvent.submit(dialog.querySelector("form")!);
     expect(fetcher.mock.calls.filter(([, request]) => request?.method === "POST")).toHaveLength(1);
+    created = true;
     resolveCreate(
       Response.json({ data: { id: userId, status: "pending_activation" } }, { status: 201 }),
     );
-    await waitFor(() => expect(push).toHaveBeenCalledWith(`/users/${userId}`));
+    await waitFor(() => expect(push).toHaveBeenCalledOnce());
+    const destination = new URL(String(push.mock.calls[0][0]), window.location.origin);
+    expect(destination.pathname).toBe(`/users/${userId}`);
+    expect(Object.fromEntries(destination.searchParams)).toEqual({
+      page: "2",
+      search: "garden",
+      status: "pending_activation",
+    });
+    expect(await screen.findByRole("link", { name: /Garden Member/ })).toBeVisible();
+    expect(
+      fetcher.mock.calls.filter(([, request]) => request?.method !== "POST").map(([path]) => path),
+    ).toEqual([
+      "/api/backend/admin/users?page=2&search=garden&status=pending_activation",
+      "/api/backend/admin/users?page=2&search=garden&status=pending_activation",
+    ]);
     const [path, init] = fetcher.mock.calls.find(([, request]) => request?.method === "POST")!;
     expect(path).toBe("/api/backend/admin/users");
     expect(JSON.parse(String(init?.body))).toEqual({
@@ -306,12 +401,15 @@ describe("CMS account administration", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("activates, suspends after confirmation, and reactivates using a fresh detail projection", async () => {
+  it("synchronizes Users and detail after activating, confirming suspension, and reactivating", async () => {
     let status = user.status;
     const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
       if (init?.method === "POST") {
         status = path.endsWith("/suspend") ? "suspended" : "active";
         return Response.json({ data: { id: userId, status } });
+      }
+      if (path.startsWith("/api/backend/admin/users?")) {
+        return Response.json({ data: [{ ...user, status }], meta: listMeta });
       }
       return Response.json({
         data: { ...user, status },
@@ -319,7 +417,13 @@ describe("CMS account administration", () => {
       });
     });
     vi.stubGlobal("fetch", fetcher);
-    show(<UserDetail userId={userId} />);
+    show(
+      <>
+        <UserDirectory />
+        <UserDetail userId={userId} />
+      </>,
+    );
+    const list = await screen.findByRole("table", { name: "Users" });
     for (const [action, urlAction, nextStatus] of [
       ["Activate", "activate", "Active"],
       ["Suspend", "suspend", "Suspended"],
@@ -333,7 +437,8 @@ describe("CMS account administration", () => {
         const dialog = screen.getByRole("dialog", { name: action });
         fireEvent.click(within(dialog).getByRole("button", { name: action }));
       }
-      expect(await screen.findByText(nextStatus)).toBeVisible();
+      expect(await within(list).findByText(nextStatus)).toBeVisible();
+      await waitFor(() => expect(screen.getAllByText(nextStatus)).toHaveLength(2));
       expect(fetcher).toHaveBeenCalledWith(
         path,
         expect.objectContaining({ method: "POST", body: "{}" }),
@@ -342,7 +447,10 @@ describe("CMS account administration", () => {
       expect(screen.getByText("Invited Member")).toBeVisible();
       expect(screen.getByText("50")).toBeVisible();
     }
-    expect(fetcher.mock.calls.filter(([, init]) => init?.method !== "POST")).toHaveLength(4);
+    expect(fetcher.mock.calls.filter(([path]) => path.includes("?invited_page="))).toHaveLength(4);
+    expect(
+      fetcher.mock.calls.filter(([path]) => path.startsWith("/api/backend/admin/users?")),
+    ).toHaveLength(4);
   });
 
   it.each([
@@ -487,6 +595,210 @@ describe("CMS account administration", () => {
     expect(await screen.findByText(/forgot password with their verified email/i)).toBeVisible();
     expect(screen.getByText("Verified")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Reset password" })).toBeNull();
+  });
+
+  it.each([
+    ["deletion_requested", "Deletion requested"],
+    ["anonymized", "Anonymized"],
+  ])("shows %s details without account mutations", async (status, label) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: { ...user, status } })),
+    );
+    show(<UserDetail userId={userId} />);
+    expect(await screen.findByText(label)).toBeVisible();
+    expect(screen.getByText("NFV1234567")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
+  });
+
+  it("paginates referrals without redirecting to a different account", async () => {
+    const fetcher = vi.fn(async (path: string) => {
+      const page = path.endsWith("invited_page=2") ? 2 : 1;
+      const invited = {
+        ...user.invited_users[0],
+        id: page === 2 ? "invitee-two" : "invitee",
+        name: page === 2 ? "Second Invited Member" : "Invited Member",
+      };
+      return Response.json({
+        data: { ...user, invited_count: 31, invited_users: [invited] },
+        meta: { invited: { page, page_size: 30, total: 31 } },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    expect(await screen.findByText("Invited Member")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Second Invited Member")).toBeVisible();
+    expect(screen.queryByText("Invited Member")).toBeNull();
+    expect(screen.getByRole("heading", { name: user.name })).toBeVisible();
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+      `/api/backend/admin/users/${userId}?invited_page=1`,
+      `/api/backend/admin/users/${userId}?invited_page=2`,
+    ]);
+  });
+
+  it("uses the desktop drawer preset and restores the reset action after nested Escape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: user })),
+    );
+    show(<UserDetail userId={userId} intercepted />);
+    const drawer = await screen.findByRole("dialog", { name: user.name });
+    expect(drawer.closest(".mantine-Drawer-root")).toHaveStyle({
+      "--drawer-size": "calc(40rem * var(--mantine-scale))",
+    });
+    expect(within(drawer).getByRole("heading", { name: user.name })).toBeVisible();
+    expect(within(drawer).getByText("NFV1234567")).toBeVisible();
+    const reset = within(drawer).getByRole("button", { name: "Reset password" });
+    expect(reset.closest("footer")).toBeInTheDocument();
+    reset.focus();
+    fireEvent.click(reset);
+
+    const confirmation = await screen.findByRole("dialog", { name: "Reset password" });
+    expect(drawer).toHaveAttribute("inert");
+    await waitFor(() =>
+      expect(confirmation).toContainElement(document.activeElement as HTMLElement),
+    );
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+    expect(drawer).toBeVisible();
+    expect(router.back).not.toHaveBeenCalled();
+    await waitFor(() => expect(reset).toHaveFocus());
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    expect(router.back).toHaveBeenCalledOnce();
+  });
+
+  it("shows shared account and referral content on the intercepted mobile detail page", async () => {
+    setMobileViewport();
+    window.history.replaceState(null, "", `/users/${userId}?page=2&search=garden`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: user })),
+    );
+    show(<UserDetail userId={userId} intercepted />);
+
+    expect(await screen.findByRole("heading", { name: user.name, level: 1 })).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText(user.login_phone_number)).toBeVisible();
+    expect(screen.getByText("NFV1234567")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Activate" }).closest("footer")).toBeInTheDocument();
+    const back = screen.getByRole("link", { name: "Users" });
+    expect(back).toHaveAttribute("href", "/users?search=garden&page=2");
+    fireEvent.click(back);
+    expect(router.back).toHaveBeenCalledOnce();
+  });
+
+  it.each(["desktop", "mobile"] as const)(
+    "drops protected detail and closes a reset dialog after a %s background read returns 403",
+    async (viewport) => {
+      if (viewport === "mobile") setMobileViewport();
+      const protectedAccount = {
+        ...user,
+        email: "member@example.com",
+        address: "12 Private Lane",
+      };
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            data: protectedAccount,
+            meta: {
+              invited: { ...listMeta, total: 31 },
+            },
+          }),
+        )
+        .mockResolvedValueOnce(Response.json({}, { status: 403 }));
+      vi.stubGlobal("fetch", fetcher);
+      show(<UserDetail userId={userId} intercepted />);
+      expect(await screen.findByText(protectedAccount.address)).toBeVisible();
+      expect(screen.getByText(protectedAccount.email)).toBeVisible();
+      expect(screen.getByText("50")).toBeVisible();
+      expect(screen.getByText("Invited Member")).toBeVisible();
+      expect(screen.getByRole("navigation", { name: "Page 1/2" })).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
+      const dialog = await screen.findByRole("dialog", { name: "Reset password" });
+      passwords(dialog);
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
+      expect(dialog).not.toBeInTheDocument();
+      expect(screen.queryByText(protectedAccount.address)).toBeNull();
+      expect(screen.queryByText(protectedAccount.email)).toBeNull();
+      expect(screen.queryByText(user.login_phone_number)).toBeNull();
+      expect(screen.queryByText(user.phone)).toBeNull();
+      expect(screen.queryByText("50")).toBeNull();
+      expect(screen.queryByText("NFV1234567")).toBeNull();
+      expect(screen.queryByText("Invited Member")).toBeNull();
+      expect(screen.queryByRole("navigation", { name: "Page 1/2" })).toBeNull();
+      expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("rechecks read access after a forbidden mutation and removes protected detail on denial", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ data: user }))
+      .mockResolvedValueOnce(Response.json({ detail: "Forbidden" }, { status: 403 }))
+      .mockResolvedValueOnce(Response.json({ detail: "Forbidden" }, { status: 403 }));
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Reset password" }));
+    const dialog = screen.getByRole("dialog", { name: "Reset password" });
+    passwords(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset password" }));
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
+    expect(screen.queryByText(user.login_phone_number)).toBeNull();
+    expect(screen.queryByText("NFV1234567")).toBeNull();
+    expect(fetcher.mock.calls.map(([, init]) => init.method ?? "GET")).toEqual([
+      "GET",
+      "POST",
+      "GET",
+    ]);
+  });
+
+  it("removes the reset dialog for a retired session and ignores its late mutation result", async () => {
+    const reset = deferredResponse();
+    const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
+      init?.method === "POST" ? reset.promise : Response.json({ data: user }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const sessionBinding = "test-users-session";
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <AdminShell sessionBinding={sessionBinding} user={{ ...user, name: "Administrator" }}>
+            <UserDetail userId={userId} intercepted />
+          </AdminShell>
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Reset password" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reset password" });
+    passwords(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset password" }));
+    expect(within(dialog).getByRole("button", { name: /saving/i })).toBeDisabled();
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(ADMIN_SESSION_CHANGED_EVENT, { detail: sessionBinding }),
+      );
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("The admin session changed");
+    expect(dialog).not.toBeInTheDocument();
+    expect(screen.queryByText(user.name)).toBeNull();
+    await act(async () =>
+      reset.resolve(Response.json({ data: { id: userId, status: user.status } })),
+    );
+    expect(screen.queryByText("Password reset.")).toBeNull();
+    expect(screen.queryByText(user.login_phone_number)).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it.each([

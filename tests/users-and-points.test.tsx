@@ -1,9 +1,15 @@
 import { selectOption } from "./select-option";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
+import { usePathname } from "next/navigation";
+import type { NextRouter } from "next/router";
 import { useCallback } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import UsersLayout from "@/app/(admin)/users/layout";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminNavigationProvider, type AdminNavigate } from "@/components/admin-navigation-link";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { PointDetail } from "@/components/point-detail";
 import { PointLedger } from "@/components/point-ledger";
 import { PointsManager } from "@/components/points-manager";
@@ -14,23 +20,74 @@ import { api, apiEnvelope } from "@/lib/client-api";
 import type { AdminUserListItem, PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-  usePathname: () => "/users",
+const router = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  back: vi.fn(),
+  refresh: vi.fn(),
+  prefetch: vi.fn(),
 }));
+vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("next/navigation", async () => {
+  const { useMemo, useSyncExternalStore } = await import("react");
+  const subscribe = (notify: () => void) => {
+    window.addEventListener("popstate", notify);
+    window.addEventListener("test-history-change", notify);
+    return () => {
+      window.removeEventListener("popstate", notify);
+      window.removeEventListener("test-history-change", notify);
+    };
+  };
+  return {
+    useRouter: () => router,
+    usePathname: () => useSyncExternalStore(subscribe, () => window.location.pathname),
+    useSearchParams: () => {
+      const search = useSyncExternalStore(subscribe, () => window.location.search);
+      return useMemo(() => new URLSearchParams(search), [search]);
+    },
+  };
+});
 
+beforeEach(() => {
+  window.history.replaceState(null, "", "/users");
+  router.prefetch.mockResolvedValue(undefined);
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path === "administrative-units/provinces") return [{ code: "79", name: "Sample City" }];
+    if (path === "administrative-units/wards?province=79") {
+      return [{ code: "26734", name: "Sample Ward" }];
+    }
+    throw new Error(`Unexpected API request: ${path}`);
+  });
+  const replaceState = window.history.replaceState.bind(window.history);
+  vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
+    replaceState(data, unused, url);
+    window.dispatchEvent(new Event("test-history-change"));
+  });
+});
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.mocked(api).mockReset();
+  vi.mocked(apiEnvelope).mockReset();
   vi.clearAllMocks();
 });
 
-function providers(children: React.ReactNode) {
-  return render(
-    <AdminI18nProvider initialLocale="en">
-      <ToastProvider>{children}</ToastProvider>
-    </AdminI18nProvider>,
+function scene(children: React.ReactNode, navigate?: AdminNavigate) {
+  return (
+    <RouterContext.Provider value={router as unknown as NextRouter}>
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <AdminQueryProvider>
+            <AdminNavigationProvider value={navigate ?? null}>{children}</AdminNavigationProvider>
+          </AdminQueryProvider>
+        </ToastProvider>
+      </AdminI18nProvider>
+    </RouterContext.Provider>
   );
+}
+
+function providers(children: React.ReactNode) {
+  return render(scene(children));
 }
 
 function PaginatedUserHarness({
@@ -82,19 +139,20 @@ describe("users and points", () => {
 
     expect(await screen.findByText("green@example.com")).toBeInTheDocument();
     const table = screen.getByRole("table", { name: "Users" });
-    const scrollArea = table.closest<HTMLElement>(".mantine-ScrollArea-root");
-    expect(scrollArea).toBeInTheDocument();
-    expect(scrollArea?.style.overflowX).toBe("");
-    expect(screen.getByText("20/07/2026 09:00")).toBeInTheDocument();
+    const scrollArea = screen.getByRole("region", { name: "Users" });
+    expect(scrollArea).toContainElement(table);
+    expect(scrollArea).toHaveAttribute("tabindex", "0");
+    expect(screen.getByText("20/07/2026")).toBeInTheDocument();
+    expect(within(table).queryByText("20/07/2026 09:00")).toBeNull();
     expect(screen.getByRole("link", { name: `View details: ${user.name}` })).toHaveAttribute(
       "href",
       `/users/${user.id}`,
     );
     expect(screen.getAllByRole("link", { name: `View details: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute("href", "/points");
 
     usersView.unmount();
+    window.history.replaceState(null, "", "/points");
     providers(<PointsManager />);
     expect(await screen.findByRole("link", { name: `View points: ${user.name}` })).toHaveAttribute(
       "href",
@@ -102,6 +160,61 @@ describe("users and points", () => {
     );
     expect(screen.getAllByRole("link", { name: `View points: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View points" })).toBeNull();
+    const pointsRow = screen.getByRole("row", { name: /Green Member/ });
+    expect(within(pointsRow).getByText("50")).toBeVisible();
+    expect(within(pointsRow).getByText(user.login_phone_number)).toBeVisible();
+    expect(within(pointsRow).getByText("20/07/2026 09:00")).toBeVisible();
+  });
+
+  it("renders the four Users columns with verification, CSA and every account status", async () => {
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [
+        { ...user, has_csa_customer: true },
+        {
+          ...user,
+          id: "pending",
+          name: "Pending Member",
+          email_verified: false,
+          status: "pending_activation",
+        },
+        { ...user, id: "suspended", name: "Suspended Member", status: "suspended" },
+        { ...user, id: "deletion", name: "Deletion Member", status: "deletion_requested" },
+        { ...user, id: "anonymized", name: "Anonymized Member", email: null, status: "anonymized" },
+        { ...user, id: "unknown", name: "Unknown Member", status: "external_review" },
+      ],
+      meta: { page: 1, page_size: 30, total: 6 },
+    });
+    providers(<UserDirectory />);
+
+    const table = await screen.findByRole("table", { name: "Users" });
+    const head = within(table).getAllByRole("columnheader");
+    expect(head.map((header) => header.textContent)).toEqual(["Users", "CSA", "Created", "Status"]);
+    const headings = screen.getAllByRole("heading", { name: "Users" });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveClass("mantine-VisuallyHidden-root");
+
+    const active = within(within(table).getByRole("row", { name: /Green Member/ }));
+    const pending = within(within(table).getByRole("row", { name: /Pending Member/ }));
+    expect(active.getByLabelText(/verified/i)).toBeInTheDocument();
+    expect(pending.queryByLabelText(/verified/i)).toBeNull();
+    expect(active.getByRole("cell", { name: "Has a CSA customer profile" })).toBeInTheDocument();
+    expect(pending.getByRole("cell", { name: "No CSA customer profile" })).toBeInTheDocument();
+    expect(active.getAllByRole("cell")[1].querySelector("svg")).toBeInTheDocument();
+    expect(pending.getAllByRole("cell")[1].querySelector("svg")).toBeNull();
+    expect(active.queryByText(user.login_phone_number)).toBeNull();
+    expect(active.queryByText(user.phone)).toBeNull();
+    expect(active.queryByText("50")).toBeNull();
+    for (const status of [
+      "Active",
+      "Pending activation",
+      "Suspended",
+      "Deletion requested",
+      "Anonymized",
+      "external_review",
+    ]) {
+      expect(within(table).getByText(status)).toBeVisible();
+    }
+    expect(within(table).getByText("No email")).toBeVisible();
   });
 
   it("uses the same suspended status treatment in the directory and user detail", async () => {
@@ -148,52 +261,67 @@ describe("users and points", () => {
       screen.getByRole("searchbox", { name: "Search by name, email, or phone number" }),
     ).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(apiEnvelope).toHaveBeenLastCalledWith("admin/users?page=2&search="));
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        "admin/users?page=2&search=",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
     await waitFor(() => expect(screen.getByRole("searchbox")).toBeEnabled());
 
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: " 912 " } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/users?page=1&search=912"),
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        "admin/users?page=1&search=912",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
     );
     expect(await screen.findByText("1 result")).toBeVisible();
 
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
-    await waitFor(() => expect(apiEnvelope).toHaveBeenLastCalledWith("admin/users?page=1&search="));
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        "admin/users?page=1&search=",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
     expect(await screen.findByText("31 results")).toBeVisible();
+    expect(window.location.search).toBe("");
   });
 
-  it("keeps old users visible and disables list controls while a search is pending", async () => {
+  it("keeps current rows and metadata available while their refresh is pending", async () => {
     let resolveSearch!: (value: { data: AdminUserListItem[]; meta: PaginationMeta }) => void;
-    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
-      if (path.includes("search=green")) {
-        return new Promise((resolve) => {
-          resolveSearch = resolve;
-        });
-      }
-      return { data: [user], meta: { page: 1, page_size: 30, total: 31 } };
-    });
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [user], meta: { page: 1, page_size: 30, total: 31 } })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSearch = resolve;
+          }),
+      );
+    window.history.replaceState(null, "", "/users?search=green");
     providers(<UserDirectory />);
 
     const detailLink = await screen.findByRole("link", { name: `View details: ${user.name}` });
     const searchbox = screen.getByRole("searchbox", {
       name: "Search by name, email, or phone number",
     });
-    fireEvent.change(searchbox, { target: { value: "green" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
 
     await waitFor(() => expect(searchbox).toBeDisabled());
     expect(detailLink).toBeVisible();
-    expect(screen.getByRole("button", { name: "Searching…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear filters" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refresh users" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
     expect(screen.getByRole("navigation", { name: "Page 1/2" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
-    expect(detailLink.closest("section")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("status")).toHaveTextContent("Loading users…");
+    expect(detailLink.closest('[aria-busy="true"]')).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/loading|refreshing/i);
     expect(screen.getByText("31 results")).toBeVisible();
 
     await act(async () =>
@@ -204,6 +332,239 @@ describe("users and points", () => {
     );
     expect(await screen.findByRole("link", { name: "View details: Matched Member" })).toBeVisible();
     expect(screen.getByText("1 result")).toBeVisible();
+  });
+
+  it("keeps the canonical detail link and delegates row clicks while preserving native modified clicks", async () => {
+    window.history.replaceState(null, "", "/users?page=2&search=green&status=active");
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [user],
+      meta: { page: 2, page_size: 30, total: 31 },
+    });
+    const navigate = vi.fn<AdminNavigate>();
+    render(scene(<UserDirectory />, navigate));
+    const link = await screen.findByRole("link", { name: "View details: Green Member" });
+    expect(link).toHaveAttribute("data-underline", "never");
+    const href = new URL(link.getAttribute("href")!, window.location.origin);
+    expect(href.pathname).toBe(`/users/${user.id}`);
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      page: "2",
+      search: "green",
+      status: "active",
+    });
+
+    let wasPrevented = true;
+    document.addEventListener(
+      "click",
+      (event) => {
+        wasPrevented = event.defaultPrevented;
+        event.preventDefault();
+      },
+      { once: true },
+    );
+    fireEvent.click(link, { ctrlKey: true });
+    expect(wasPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    const statusCell = within(link.closest("tr")!).getByRole("cell", { name: "Active" });
+    fireEvent.click(statusCell);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith(`${href.pathname}${href.search}`, {
+      scroll: false,
+      replace: undefined,
+    });
+  });
+
+  it("restores focus and keeps the draft and applied list context through close and browser forward", async () => {
+    const listHref = "/users?search=green&status=active&page=2";
+    window.history.replaceState(null, "", listHref);
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) =>
+      path.startsWith("admin/users?")
+        ? { data: [user], meta: { page: 2, page_size: 30, total: 31 } }
+        : {
+            data: {
+              ...user,
+              referral_code: "NFV1234567",
+              source: "organic",
+              referrer: null,
+              invited_count: 0,
+              invited_users: [],
+            },
+          },
+    );
+    const navigate: AdminNavigate = (href) => {
+      window.history.pushState(null, "", href);
+      window.dispatchEvent(new Event("test-history-change"));
+    };
+    router.back.mockImplementationOnce(() => window.history.back());
+
+    function InterceptedRoute() {
+      const pathname = usePathname();
+      return (
+        <UsersLayout
+          detail={
+            pathname === `/users/${user.id}` ? <UserDetail userId={user.id} intercepted /> : null
+          }
+        >
+          <UserDirectory />
+        </UsersLayout>
+      );
+    }
+
+    render(scene(<InterceptedRoute />, navigate));
+    const link = await screen.findByRole("link", { name: "View details: Green Member" });
+    const searchbox = screen.getByRole("searchbox");
+    fireEvent.change(searchbox, { target: { value: "unsubmitted search" } });
+    expect(searchbox).toHaveAccessibleDescription("Applied search: green");
+    link.focus();
+    fireEvent.click(link);
+    const drawer = await screen.findByRole("dialog", { name: user.name });
+    expect(window.location.pathname).toBe(`/users/${user.id}`);
+    expect(link.closest("tr")).toHaveAttribute("data-selected", "true");
+    expect(link.closest("[inert]")).toBeInTheDocument();
+    expect(within(drawer).getByText("NFV1234567")).toBeVisible();
+
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(link).toHaveFocus());
+    expect(window.location.pathname + window.location.search).toBe(listHref);
+    expect(link.closest("[inert]")).toBeNull();
+    expect(searchbox).toHaveValue("unsubmitted search");
+    expect(searchbox).toHaveAccessibleDescription("Applied search: green");
+    expect(screen.getByRole("button", { name: "Filter (1)" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Page 2/2" })).toBeVisible();
+
+    window.history.forward();
+    expect(await screen.findByRole("dialog", { name: user.name })).toBeVisible();
+    expect(window.location.pathname).toBe(`/users/${user.id}`);
+  });
+
+  it("loads only an applied account-status filter and refreshes the filtered page", async () => {
+    window.history.replaceState(null, "", "/users?page=2&search=green");
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => ({
+      data: [path.includes("status=suspended") ? { ...user, status: "suspended" } : user],
+      meta: { page: path.includes("page=2") ? 2 : 1, page_size: 30, total: 31 },
+    }));
+    providers(<UserDirectory />);
+    expect(await screen.findByRole("navigation", { name: "Page 2/2" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    selectOption(screen.getByRole("textbox", { name: "Account status" }), "suspended");
+    expect(apiEnvelope).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText("Suspended")).toBeVisible();
+    expect(window.location.search).toBe("?search=green&status=suspended");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("navigation", { name: "Page 2/2" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Filter (1)" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Filter (1)" }));
+    const filter = screen.getByRole("dialog", { name: "Filter (1)" });
+    const clearFilter = within(filter).getByRole("button", {
+      name: "Clear filters",
+    });
+    fireEvent.click(clearFilter);
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(5));
+    expect(window.location.search).toBe("?search=green");
+    expect(screen.getByRole("searchbox")).toHaveValue("green");
+    expect(vi.mocked(apiEnvelope).mock.calls.map(([path]) => path)).toEqual([
+      "admin/users?page=2&search=green",
+      "admin/users?page=1&search=green&status=suspended",
+      "admin/users?page=2&search=green&status=suspended",
+      "admin/users?page=2&search=green&status=suspended",
+      "admin/users?page=1&search=green",
+    ]);
+  });
+
+  it("distinguishes initial loading, an empty directory, and no search matches", async () => {
+    let resolveInitial!: (value: { data: AdminUserListItem[]; meta: PaginationMeta }) => void;
+    const empty = { data: [], meta: { page: 1, page_size: 30, total: 0 } };
+    vi.mocked(apiEnvelope)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitial = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(empty);
+    providers(<UserDirectory />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading users…");
+    expect(screen.queryByText("No users found.")).toBeNull();
+    expect(screen.queryByText("0 results")).toBeNull();
+
+    await act(async () => resolveInitial(empty));
+    expect(await screen.findByText("No users found.")).toBeVisible();
+    const search = screen.getByRole("searchbox");
+    fireEvent.change(search, { target: { value: "missing" } });
+    fireEvent.submit(search.closest("form")!);
+    expect(await screen.findByText("No matching users.")).toBeVisible();
+    expect(screen.queryByText("No users found.")).toBeNull();
+  });
+
+  it("retries an initial load error and retains loaded rows after a recoverable refresh error", async () => {
+    const unavailable = Object.assign(new Error("server_error"), { status: 500 });
+    vi.mocked(apiEnvelope)
+      .mockRejectedValueOnce(unavailable)
+      .mockResolvedValueOnce({
+        data: [user],
+        meta: { page: 1, page_size: 30, total: 31 },
+      })
+      .mockRejectedValueOnce(unavailable);
+    providers(<UserDirectory />);
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Green Member/ })).toBeNull();
+    expect(screen.queryByText("31 results")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.getByRole("link", { name: /Green Member/ })).toBeVisible();
+    expect(screen.getByText("31 results")).toBeVisible();
+  });
+
+  it("removes cached Users rows and pagination metadata after refresh loses read permission", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [user], meta: { page: 1, page_size: 30, total: 31 } })
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    providers(<UserDirectory />);
+    expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Page 1/2" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh users" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
+    expect(screen.queryByText(user.email)).toBeNull();
+    expect(screen.queryByRole("link", { name: /Green Member/ })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Page 1/2" })).toBeNull();
+    expect(screen.queryByText("31 results")).toBeNull();
+    expect(screen.getByRole("button", { name: "Create account" })).toBeDisabled();
+  });
+
+  it("cancels a superseded Users query and ignores its late success after the new query is forbidden", async () => {
+    let resolveStale!: (value: { data: AdminUserListItem[]; meta: PaginationMeta }) => void;
+    vi.mocked(apiEnvelope)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStale = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    providers(<UserDirectory />);
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledOnce());
+    const originalSignal = vi.mocked(apiEnvelope).mock.calls[0][1]?.signal;
+    expect(originalSignal).toBeInstanceOf(AbortSignal);
+
+    act(() => window.history.replaceState(null, "", "/users?search=other"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
+    expect(originalSignal?.aborted).toBe(true);
+
+    await act(async () =>
+      resolveStale({ data: [user], meta: { page: 1, page_size: 30, total: 31 } }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/not allowed/i);
+    expect(screen.queryByText(user.email)).toBeNull();
+    expect(screen.queryByText("31 results")).toBeNull();
   });
 
   it("does not let an older paginated response overwrite newer user data or metadata", async () => {
@@ -257,20 +618,55 @@ describe("users and points", () => {
         meta: { invited: { page: 1, page_size: 30, total: 0 } },
       };
     });
-    vi.mocked(api).mockResolvedValue([]);
     providers(<UserDetail userId={user.id} />);
 
     expect(await screen.findByText("NFV1234567")).toBeInTheDocument();
     expect(screen.getByText("Organic signup")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "User details" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: user.name })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
     expect(screen.getByRole("link", { name: "Manage points" })).toHaveAttribute(
       "href",
       `/points/${user.id}`,
     );
+    expect(screen.getByRole("link", { name: "Points directory" })).toHaveAttribute(
+      "href",
+      "/points",
+    );
+    expect(await screen.findByText("Sample City")).toBeVisible();
+    expect(await screen.findByText("Sample Ward")).toBeVisible();
     expect(screen.queryByText("Transaction history")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete|save profile/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps Points directory search and server-side pagination", async () => {
+    window.history.replaceState(null, "", "/points");
+    vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
+      const filtered = path.includes("search=green");
+      const page = path.includes("page=2") ? 2 : 1;
+      return {
+        data: [page === 2 ? { ...user, name: "Second Page Member" } : user],
+        meta: { page, page_size: 30, total: filtered ? 1 : 31 },
+      };
+    });
+    providers(<PointsManager />);
+    expect(await screen.findByText("31 results")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(
+      await screen.findByRole("link", { name: "View points: Second Page Member" }),
+    ).toBeVisible();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "green" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("1 result")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View points: Green Member" })).toHaveAttribute(
+      "href",
+      `/points/${user.id}`,
+    );
+    expect(vi.mocked(apiEnvelope).mock.calls.map(([path]) => path)).toEqual([
+      "admin/users?page=1&search=",
+      "admin/users?page=2&search=",
+      "admin/users?page=1&search=green",
+    ]);
   });
 
   it("confirms a manual transaction and blocks an insufficient debit before submission", async () => {

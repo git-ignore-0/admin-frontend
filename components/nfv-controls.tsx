@@ -7,6 +7,7 @@ import {
   Checkbox,
   Group,
   Input,
+  type InputWrapperProps,
   Loader,
   Paper,
   PasswordInput,
@@ -163,7 +164,9 @@ function useFieldProps(props: FieldControl & Pick<SelectProps, "errorProps" | "d
   };
 }
 
-type FormInputProps = InputHTMLAttributes<HTMLInputElement> & FieldFeedback;
+type FormInputProps = InputHTMLAttributes<HTMLInputElement> &
+  FieldFeedback &
+  Pick<InputWrapperProps, "inputWrapperOrder">;
 export function FormInput({ className, size: _size, type, ...props }: FormInputProps) {
   void _size;
   const { aria, ...field } = useFieldProps(props);
