@@ -1,0 +1,135 @@
+.main {
+  min-width: 0;
+  /* AppShell owns outer padding; tables scroll within their own containers. */
+  background: var(--mantine-color-body);
+}
+.navbar {
+  background: var(--mantine-color-white);
+}
+.headerFrame {
+  container: admin-header / inline-size;
+  height: 100%;
+  background: var(--surface);
+}
+.headerRow {
+  height: 100%;
+  min-height: 59px;
+  border-bottom: 1px solid var(--border);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .navigationPulse {
+    animation: navigation-pulse 1s ease-in-out infinite alternate;
+  }
+}
+@keyframes navigation-pulse {
+  to {
+    transform: translateX(300%);
+  }
+}
+.headerControls,
+.headerActions {
+  flex: none;
+}
+.headerActions {
+  margin-inline-start: auto;
+}
+.account {
+  border-radius: var(--mantine-radius-md);
+}
+.account:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.breadcrumbColumn {
+  container: admin-breadcrumb / inline-size;
+  flex: 1;
+  min-width: 0;
+}
+.breadcrumbColumn .breadcrumbs {
+  flex-wrap: nowrap;
+}
+.breadcrumbSeparator {
+  flex: none;
+  color: var(--text-muted);
+}
+.breadcrumbs :is(.breadcrumbLink, .breadcrumbCurrent) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.45;
+  font-size: var(--mantine-font-size-md);
+}
+.breadcrumbs .breadcrumbLink {
+  max-inline-size: 38%;
+  color: var(--primary-hover);
+  font-weight: 500;
+}
+.breadcrumbs .breadcrumbLink:hover {
+  color: var(--primary);
+}
+.breadcrumbs .breadcrumbCurrent {
+  min-inline-size: min(100%, 3rem);
+  color: var(--heading);
+  font-weight: 600;
+}
+.breadcrumbOverflow,
+.breadcrumbOverflow + .breadcrumbSeparator {
+  display: none;
+}
+.breadcrumbOverflow {
+  flex: none;
+}
+.breadcrumbMenu {
+  max-inline-size: min(16rem, calc(100vw - 2 * var(--mantine-spacing-xs)));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Use the breadcrumb column after the sidebar and Header controls take their space. */
+@container admin-breadcrumb (width <= 20rem) {
+  .breadcrumbIntermediate,
+  .breadcrumbIntermediate + .breadcrumbSeparator {
+    display: none;
+  }
+  .breadcrumbOverflow[data-deep],
+  .breadcrumbOverflow[data-deep] + .breadcrumbSeparator {
+    display: flex;
+  }
+}
+@container admin-breadcrumb (width <= 12rem) {
+  .breadcrumbFirst,
+  .breadcrumbFirst + .breadcrumbSeparator {
+    display: none;
+  }
+  .breadcrumbOverflow,
+  .breadcrumbOverflow + .breadcrumbSeparator {
+    display: flex;
+  }
+  .breadcrumbs .breadcrumbCurrent {
+    min-inline-size: 0;
+  }
+}
+
+/* At the desktop breakpoint, the expanded sidebar leaves at least 524px for the Header. */
+@media (min-width: 48em) {
+  @container admin-header (width >= 26rem) {
+    .headerRow {
+      min-height: 67px;
+    }
+    .breadcrumbs .breadcrumbRoot {
+      font-size: var(--mantine-font-size-lg);
+    }
+  }
+}
+
+.brandSection {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--surface-subtle);
+}
+.brandIcon {
+  background: linear-gradient(145deg, var(--mantine-color-forest-7), var(--mantine-color-forest-9));
+  box-shadow: 0 4px 9px color-mix(in srgb, var(--mantine-color-forest-7) 19%, transparent);
+}

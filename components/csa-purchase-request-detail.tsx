@@ -1,13 +1,36 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Anchor,
+  Box,
+  Button,
+  Divider,
+  Group,
+  Input,
+  Paper,
+  Radio,
+  SimpleGrid,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Textarea,
+  Title,
+} from "@mantine/core";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminDateInput } from "@/components/admin-date-input";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { CSAPurchaseStatusBadge } from "@/components/csa-purchase-request-list";
 import { DetailPageHeading } from "@/components/detail-page-heading";
+import { DataState, Section, Status } from "@/components/nfv-controls";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import {
   adminDateInputToIso,
@@ -26,20 +49,24 @@ import type {
   CSAPurchaseResolutionContext,
 } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
+import styles from "./csa-purchase-request-detail.module.css";
 
 type Action = "approve" | "reject" | "mark-refunded";
 
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{value || "—"}</dd>
-    </div>
-  );
-}
-
-export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
+export function CSAPurchaseRequestDetail({
+  requestId,
+  backHref = "/csa-purchase-requests",
+}: {
+  requestId: string;
+  backHref?: string;
+}) {
   const { locale, t } = useAdminI18n();
+  const search = useSearchParams()?.toString();
+  const copy = t.csaPurchases;
+  const breadcrumbs = useMemo(
+    () => [{ label: t.common.csaPurchaseRequests, href: backHref }, { label: copy.detailTitle }],
+    [backHref, copy.detailTitle, t.common.csaPurchaseRequests],
+  );
   const toast = useToast();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const savingRef = useRef(false);
@@ -298,28 +325,41 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
     }
   }
 
+  const heading = (
+    <>
+      <AdminBreadcrumbForRoute
+        pathname={`/csa-purchase-requests/${encodeURIComponent(requestId)}`}
+        search={search}
+        items={breadcrumbs}
+      />
+      <DetailPageHeading backHref={backHref} backLabel={copy.back} title={copy.detailTitle} />
+    </>
+  );
+
   if (!item) {
     return (
-      <div className={loadError ? "error-box retry-error" : "panel"}>
-        <span>{loadError || t.csaPurchases.loadingDetail}</span>
-        {loadError && (
-          <button
-            className="button secondary"
-            disabled={loading}
-            onClick={() => void load()}
-            type="button"
-          >
-            {t.common.retry}
-          </button>
+      <>
+        {heading}
+        {loadError ? (
+          <RecoveryAlert
+            message={loadError}
+            retryLabel={t.common.retry}
+            loading={loading}
+            onRetry={() => void load()}
+          />
+        ) : (
+          <Paper withBorder p="md">
+            <DataState kind="loading" title={copy.loadingDetail} compact />
+          </Paper>
         )}
-      </div>
+      </>
     );
   }
 
   const canApprove = item.status === "payment_confirmed";
   const canReject = item.status === "pending" || item.status === "payment_confirmed";
   const canMarkRefunded = item.status === "rejected" && item.refund_status === "pending";
-  const installmentCopy = t.csaPurchases.installments;
+  const installmentCopy = copy.installments;
   const paymentMethod =
     item.payment_plan?.payment_type === "installment"
       ? installmentCopy.installment.replace("{count}", String(item.payment_plan.installment_count))
@@ -330,374 +370,371 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
   const selectedPayment = orderedPayments.find(
     (payment) => payment.installment_sequence === paymentAction?.sequence,
   );
+  const showInstallmentActions =
+    item.status === "approved" && orderedPayments.some((payment) => payment.status === "reported");
   const formatAmount = new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US", {
     style: "currency",
     currency: item.currency,
     maximumFractionDigits: 0,
   }).format(Number(item.amount));
+  const installmentColumns = [
+    installmentCopy.installmentNumber.replace("{count}", "#"),
+    installmentCopy.dueAmount,
+    installmentCopy.paidAmount,
+    installmentCopy.cycles,
+    installmentCopy.dueAt,
+    installmentCopy.paymentStatus,
+    ...(showInstallmentActions ? [copy.actions] : []),
+  ];
 
   return (
     <>
-      <DetailPageHeading
-        backHref="/csa-purchase-requests"
-        backLabel={t.csaPurchases.back}
-        title={t.csaPurchases.detailTitle}
-      />
-      <section className="panel csa-purchase-summary">
-        <div>
-          <CSAPurchaseStatusBadge status={item.status} />
-          <h2 ref={headingRef} tabIndex={-1}>
-            {item.request_code}
-          </h2>
-          <p>
-            {item.name} · {formatAmount}
-          </p>
-        </div>
-        {(canApprove || canReject || canMarkRefunded) && (
-          <div className="detail-actions" aria-label={t.csaPurchases.actions}>
-            {canApprove && (
-              <button
-                className="button"
-                disabled={saving}
-                onClick={() => openAction("approve")}
-                type="button"
-              >
-                {t.csaPurchases.approve}
-              </button>
+      {heading}
+      <Stack gap="md" miw={0}>
+        <Paper component="section" withBorder p="md">
+          <Group align="flex-start" gap="md" justify="space-between">
+            <Stack align="flex-start" gap={4} miw={0}>
+              <CSAPurchaseStatusBadge status={item.status} />
+              <Title order={2} size="h3" ref={headingRef} tabIndex={-1} className={styles.wrapText}>
+                {item.request_code}
+              </Title>
+              <Text size="sm" c="dimmed" className={styles.wrapText}>
+                {item.name} · {formatAmount}
+              </Text>
+            </Stack>
+            {(canApprove || canReject || canMarkRefunded) && (
+              <Group gap="xs" role="group" aria-label={copy.actions}>
+                {canApprove && (
+                  <Button disabled={saving} onClick={() => openAction("approve")} type="button">
+                    {copy.approve}
+                  </Button>
+                )}
+                {canReject && (
+                  <Button
+                    color="red"
+                    variant="light"
+                    disabled={saving}
+                    onClick={() => openAction("reject")}
+                    type="button"
+                  >
+                    {copy.reject}
+                  </Button>
+                )}
+                {canMarkRefunded && (
+                  <Button
+                    variant="default"
+                    disabled={saving}
+                    onClick={() => openAction("mark-refunded")}
+                    type="button"
+                  >
+                    {copy.markRefunded}
+                  </Button>
+                )}
+              </Group>
             )}
-            {canReject && (
-              <button
-                className="button danger"
-                disabled={saving}
-                onClick={() => openAction("reject")}
-                type="button"
-              >
-                {t.csaPurchases.reject}
-              </button>
-            )}
-            {canMarkRefunded && (
-              <button
-                className="button secondary"
-                disabled={saving}
-                onClick={() => openAction("mark-refunded")}
-                type="button"
-              >
-                {t.csaPurchases.markRefunded}
-              </button>
-            )}
-          </div>
+          </Group>
+        </Paper>
+        {refundFeedback && (
+          <Alert color="red" role="alert">
+            {refundFeedback}
+          </Alert>
         )}
-      </section>
-      {refundFeedback && (
-        <p className="error-box" role="alert">
-          {refundFeedback}
-        </p>
-      )}
-      {paymentFeedback && (
-        <p className="error-box" role="alert">
-          {paymentFeedback}
-        </p>
-      )}
+        {paymentFeedback && (
+          <Alert color="red" role="alert">
+            {paymentFeedback}
+          </Alert>
+        )}
 
-      <div className="csa-purchase-detail-sections">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>{t.csaPurchases.buyerInformation}</h2>
-          </div>
-          <dl className="detail-list">
-            <DetailRow label={t.csaPurchases.name} value={item.name} />
-            <DetailRow label={t.csaPurchases.phone} value={item.phone} />
-            <DetailRow
-              label={t.csaPurchases.websiteAccount}
-              value={item.user ? `${item.user.name} · ${item.user.email}` : t.csaPurchases.guest}
-            />
-            <DetailRow label={t.csaPurchases.province} value={provinceName} />
-            <DetailRow label={t.csaPurchases.ward} value={wardName} />
-            <DetailRow label={t.csaPurchases.address} value={item.address} />
-          </dl>
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <h2>{t.csaPurchases.packageSnapshot}</h2>
-          </div>
-          <dl className="detail-list">
-            <DetailRow label={t.csaPurchases.package} value={item.package_snapshot.name} />
-            <DetailRow label={t.csaPurchases.priceOption} value={item.price_option_snapshot.name} />
-            <DetailRow
-              label={t.csaPurchases.duration}
-              value={t.csaPurchases.months.replace(
-                "{count}",
-                String(item.price_option_snapshot.duration_months),
-              )}
-            />
-            <DetailRow label={t.csaPurchases.amount} value={formatAmount} />
-            <DetailRow label={installmentCopy.method} value={paymentMethod} />
-          </dl>
-        </section>
-        <section className="panel csa-installment-section">
-          <div className="panel-head">
-            <h2>{installmentCopy.schedule}</h2>
-          </div>
+        <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+          <Section title={copy.buyerInformation}>
+            <RecordDetailFields>
+              <RecordDetailField label={copy.name}>{item.name}</RecordDetailField>
+              <RecordDetailField label={copy.phone}>{item.phone}</RecordDetailField>
+              <RecordDetailField label={copy.websiteAccount}>
+                {item.user
+                  ? [item.user.name, item.user.email].filter(Boolean).join(" · ")
+                  : copy.guest}
+              </RecordDetailField>
+              <RecordDetailField label={copy.province}>{provinceName}</RecordDetailField>
+              <RecordDetailField label={copy.ward}>{wardName}</RecordDetailField>
+              <RecordDetailField label={copy.address}>{item.address}</RecordDetailField>
+            </RecordDetailFields>
+          </Section>
+          <Section title={copy.packageSnapshot}>
+            <RecordDetailFields>
+              <RecordDetailField label={copy.package}>
+                {item.package_snapshot.name}
+              </RecordDetailField>
+              <RecordDetailField label={copy.priceOption}>
+                {item.price_option_snapshot.name}
+              </RecordDetailField>
+              <RecordDetailField label={copy.duration}>
+                {copy.months.replace("{count}", String(item.price_option_snapshot.duration_months))}
+              </RecordDetailField>
+              <RecordDetailField label={copy.amount}>{formatAmount}</RecordDetailField>
+              <RecordDetailField label={installmentCopy.method}>{paymentMethod}</RecordDetailField>
+            </RecordDetailFields>
+          </Section>
+        </SimpleGrid>
+
+        <Section title={installmentCopy.schedule}>
           {item.payment_summary && (
-            <dl className="detail-list csa-installment-summary">
-              <DetailRow
-                label={t.csaPurchases.amount}
-                value={formatMembershipMoney(item.payment_summary.total_amount, locale)}
-              />
-              <DetailRow
-                label={installmentCopy.paid}
-                value={formatMembershipMoney(item.payment_summary.paid_amount, locale)}
-              />
-              <DetailRow
-                label={installmentCopy.remaining}
-                value={formatMembershipMoney(item.payment_summary.remaining_amount, locale)}
-              />
-              <DetailRow
-                label={installmentCopy.confirmedCount}
-                value={`${item.payment_summary.confirmed_installments}/${item.payment_summary.installment_count}`}
-              />
-              <DetailRow
-                label={installmentCopy.openedCycles}
-                value={`${item.payment_summary.paid_cycles}/${item.payment_summary.total_cycles}`}
-              />
-            </dl>
+            <RecordDetailFields>
+              <RecordDetailField label={copy.amount}>
+                {formatMembershipMoney(item.payment_summary.total_amount, locale)}
+              </RecordDetailField>
+              <RecordDetailField label={installmentCopy.paid}>
+                {formatMembershipMoney(item.payment_summary.paid_amount, locale)}
+              </RecordDetailField>
+              <RecordDetailField label={installmentCopy.remaining}>
+                {formatMembershipMoney(item.payment_summary.remaining_amount, locale)}
+              </RecordDetailField>
+              <RecordDetailField label={installmentCopy.confirmedCount}>
+                {`${item.payment_summary.confirmed_installments}/${item.payment_summary.installment_count}`}
+              </RecordDetailField>
+              <RecordDetailField label={installmentCopy.openedCycles}>
+                {`${item.payment_summary.paid_cycles}/${item.payment_summary.total_cycles}`}
+              </RecordDetailField>
+            </RecordDetailFields>
           )}
           {orderedPayments.length ? (
-            <div className="table-wrap csa-installment-wrap">
-              <table className="table csa-installment-table">
-                <thead>
-                  <tr>
-                    <th>{installmentCopy.installmentNumber.replace("{count}", "#")}</th>
-                    <th>{installmentCopy.dueAmount}</th>
-                    <th>{installmentCopy.paidAmount}</th>
-                    <th>{installmentCopy.cycles}</th>
-                    <th>{installmentCopy.dueAt}</th>
-                    <th>{installmentCopy.paymentStatus}</th>
-                    <th>{t.csaPurchases.actions}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orderedPayments.map((payment) => (
-                    <tr key={payment.id}>
-                      <th
-                        data-label={installmentCopy.installmentNumber.replace("{count}", "#")}
-                        scope="row"
-                      >
-                        {installmentCopy.installmentNumber.replace(
-                          "{count}",
-                          String(payment.installment_sequence),
+            <Table.ScrollContainer
+              aria-label={installmentCopy.schedule}
+              className={styles.installmentScroll}
+              minWidth={0}
+              role="region"
+              tabIndex={0}
+              type="native"
+            >
+              <Table
+                aria-label={installmentCopy.schedule}
+                className={styles.installmentTable}
+                role="table"
+                withRowBorders
+              >
+                <Table.Thead role="rowgroup">
+                  <Table.Tr role="row">
+                    {installmentColumns.map((label) => (
+                      <Table.Th key={label} role="columnheader" scope="col">
+                        {label}
+                      </Table.Th>
+                    ))}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody role="rowgroup">
+                  {orderedPayments.map((payment) => {
+                    const paymentDetails = [
+                      [
+                        installmentCopy.confirmedAt,
+                        payment.confirmed_at && formatAdminDateTime(payment.confirmed_at),
+                      ],
+                      [installmentCopy.confirmedBy, payment.confirmed_by?.name],
+                      [
+                        installmentCopy.rejectedAt,
+                        payment.rejected_at && formatAdminDateTime(payment.rejected_at),
+                      ],
+                      [installmentCopy.rejectedBy, payment.rejected_by?.name],
+                      [installmentCopy.rejectionReason, payment.rejection_reason],
+                      [installmentCopy.note, payment.note],
+                    ] as const;
+                    return (
+                      <Table.Tr role="row" key={payment.id}>
+                        <Table.Th role="rowheader" scope="row">
+                          {installmentCopy.installmentNumber.replace(
+                            "{count}",
+                            String(payment.installment_sequence),
+                          )}
+                        </Table.Th>
+                        <Table.Td role="cell" data-label={installmentCopy.dueAmount}>
+                          {formatMembershipMoney(payment.amount_due, locale)}
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={installmentCopy.paidAmount}>
+                          {payment.amount_paid
+                            ? formatMembershipMoney(payment.amount_paid, locale)
+                            : "—"}
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={installmentCopy.cycles}>
+                          {payment.cycle_count}
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={installmentCopy.dueAt}>
+                          {formatAdminDateTime(payment.due_at)}
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={installmentCopy.paymentStatus}>
+                          <Stack gap={4} align="flex-start">
+                            <Status
+                              domain="installment"
+                              status={payment.status}
+                              label={installmentCopy.statuses[payment.status]}
+                            />
+                            {paymentDetails.map(
+                              ([label, value]) =>
+                                value && (
+                                  <Text key={label} component="span" size="xs" c="dimmed">
+                                    {label}: {value}
+                                  </Text>
+                                ),
+                            )}
+                          </Stack>
+                        </Table.Td>
+                        {showInstallmentActions && (
+                          <Table.Td role="cell">
+                            {payment.status === "reported" && (
+                              <Group gap="xs">
+                                <Button
+                                  variant="default"
+                                  size="xs"
+                                  disabled={paymentSaving}
+                                  onClick={() => openPaymentAction(payment, "confirm")}
+                                  type="button"
+                                >
+                                  {installmentCopy.confirm}
+                                </Button>
+                                <Button
+                                  color="red"
+                                  variant="light"
+                                  size="xs"
+                                  disabled={paymentSaving}
+                                  onClick={() => openPaymentAction(payment, "reject")}
+                                  type="button"
+                                >
+                                  {installmentCopy.reject}
+                                </Button>
+                              </Group>
+                            )}
+                          </Table.Td>
                         )}
-                      </th>
-                      <td data-label={installmentCopy.dueAmount}>
-                        {formatMembershipMoney(payment.amount_due, locale)}
-                      </td>
-                      <td data-label={installmentCopy.paidAmount}>
-                        {payment.amount_paid
-                          ? formatMembershipMoney(payment.amount_paid, locale)
-                          : "—"}
-                      </td>
-                      <td data-label={installmentCopy.cycles}>{payment.cycle_count}</td>
-                      <td data-label={installmentCopy.dueAt}>
-                        {formatAdminDateTime(payment.due_at)}
-                      </td>
-                      <td data-label={installmentCopy.paymentStatus}>
-                        <span className={`badge csa-installment-status ${payment.status}`}>
-                          {installmentCopy.statuses[payment.status]}
-                        </span>
-                        {payment.confirmed_at && (
-                          <small className="table-secondary">
-                            {installmentCopy.confirmedAt}:{" "}
-                            {formatAdminDateTime(payment.confirmed_at)}
-                          </small>
-                        )}
-                        {payment.confirmed_by?.name && (
-                          <small className="table-secondary">
-                            {installmentCopy.confirmedBy}: {payment.confirmed_by.name}
-                          </small>
-                        )}
-                        {payment.rejected_at && (
-                          <small className="table-secondary">
-                            {installmentCopy.rejectedAt}: {formatAdminDateTime(payment.rejected_at)}
-                          </small>
-                        )}
-                        {payment.rejected_by?.name && (
-                          <small className="table-secondary">
-                            {installmentCopy.rejectedBy}: {payment.rejected_by.name}
-                          </small>
-                        )}
-                        {payment.rejection_reason && (
-                          <small className="table-secondary">
-                            {installmentCopy.rejectionReason}: {payment.rejection_reason}
-                          </small>
-                        )}
-                        {payment.note && (
-                          <small className="table-secondary">
-                            {installmentCopy.note}: {payment.note}
-                          </small>
-                        )}
-                      </td>
-                      <td data-label={t.csaPurchases.actions}>
-                        {item.status === "approved" && payment.status === "reported" && (
-                          <div className="detail-actions csa-installment-actions">
-                            <button
-                              className="button secondary"
-                              disabled={paymentSaving}
-                              onClick={() => openPaymentAction(payment, "confirm")}
-                              type="button"
-                            >
-                              {installmentCopy.confirm}
-                            </button>
-                            <button
-                              className="button danger"
-                              disabled={paymentSaving}
-                              onClick={() => openPaymentAction(payment, "reject")}
-                              type="button"
-                            >
-                              {installmentCopy.reject}
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
           ) : (
-            <p>{installmentCopy.noSchedule}</p>
+            <DataState kind="empty" title={installmentCopy.noSchedule} compact />
           )}
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <h2>{t.csaPurchases.transferInformation}</h2>
-          </div>
-          <dl className="detail-list">
-            <DetailRow label={t.csaPurchases.bank} value={`${item.bank_name} (${item.bank_bin})`} />
-            <DetailRow label={t.csaPurchases.accountNumber} value={item.account_number} />
-            <DetailRow label={t.csaPurchases.accountName} value={item.account_name} />
-            <DetailRow label={t.csaPurchases.transferContent} value={item.transfer_content} />
-            <DetailRow
-              label={t.csaPurchases.paymentVersion}
-              value={String(item.payment_config_version)}
-            />
-          </dl>
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <h2>{t.csaPurchases.workflow}</h2>
-          </div>
-          <dl className="detail-list">
-            <DetailRow
-              label={t.csaPurchases.createdAt}
-              value={formatAdminDateTime(item.created_at)}
-            />
-            <DetailRow
-              label={t.csaPurchases.expiresAt}
-              value={formatAdminDateTime(item.expires_at)}
-            />
-            {item.status === "expired" && (
-              <>
-                <DetailRow
-                  label={t.csaPurchases.expiredAt}
-                  value={formatAdminDateTime(item.expired_at)}
-                />
-                <DetailRow
-                  label={t.csaPurchases.expiredReason}
-                  value={
-                    item.expired_reason === "request_expiry_elapsed"
-                      ? t.csaPurchases.expiryElapsed
-                      : item.expired_reason
-                  }
-                />
-              </>
-            )}
-            <DetailRow
-              label={t.csaPurchases.paymentConfirmedAt}
-              value={formatAdminDateTime(item.payment_confirmed_at)}
-            />
-            <DetailRow
-              label={t.csaPurchases.approvedAt}
-              value={formatAdminDateTime(item.approved_at)}
-            />
-            <DetailRow
-              label={t.csaPurchases.rejectedAt}
-              value={formatAdminDateTime(item.rejected_at)}
-            />
-            <DetailRow
-              label={t.csaPurchases.processedBy}
-              value={item.approved_by?.name || item.rejected_by?.name}
-            />
-            <DetailRow label={t.csaPurchases.rejectionReason} value={item.rejection_reason} />
-            {item.status === "rejected" && (
-              <>
-                <DetailRow
-                  label={t.csaPurchases.refundStatus}
-                  value={
-                    item.refund_status === "completed"
-                      ? t.csaPurchases.refundCompleted
+        </Section>
+
+        <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+          <Section title={copy.transferInformation}>
+            <RecordDetailFields>
+              <RecordDetailField label={copy.bank}>
+                {item.bank_name} ({item.bank_bin})
+              </RecordDetailField>
+              <RecordDetailField label={copy.accountNumber}>
+                {item.account_number}
+              </RecordDetailField>
+              <RecordDetailField label={copy.accountName}>{item.account_name}</RecordDetailField>
+              <RecordDetailField label={copy.transferContent}>
+                {item.transfer_content}
+              </RecordDetailField>
+              <RecordDetailField label={copy.paymentVersion}>
+                {String(item.payment_config_version)}
+              </RecordDetailField>
+            </RecordDetailFields>
+          </Section>
+          <Section title={copy.workflow}>
+            <RecordDetailFields>
+              <RecordDetailField label={copy.createdAt}>
+                {formatAdminDateTime(item.created_at)}
+              </RecordDetailField>
+              <RecordDetailField label={copy.expiresAt}>
+                {formatAdminDateTime(item.expires_at)}
+              </RecordDetailField>
+              {item.status === "expired" && (
+                <>
+                  <RecordDetailField label={copy.expiredAt}>
+                    {formatAdminDateTime(item.expired_at)}
+                  </RecordDetailField>
+                  <RecordDetailField label={copy.expiredReason}>
+                    {item.expired_reason === "request_expiry_elapsed"
+                      ? copy.expiryElapsed
+                      : item.expired_reason}
+                  </RecordDetailField>
+                </>
+              )}
+              <RecordDetailField label={copy.paymentConfirmedAt}>
+                {formatAdminDateTime(item.payment_confirmed_at)}
+              </RecordDetailField>
+              <RecordDetailField label={copy.approvedAt}>
+                {formatAdminDateTime(item.approved_at)}
+              </RecordDetailField>
+              <RecordDetailField label={copy.rejectedAt}>
+                {formatAdminDateTime(item.rejected_at)}
+              </RecordDetailField>
+              <RecordDetailField label={copy.processedBy}>
+                {item.approved_by?.name || item.rejected_by?.name}
+              </RecordDetailField>
+              <RecordDetailField label={copy.rejectionReason}>
+                {item.rejection_reason}
+              </RecordDetailField>
+              {item.status === "rejected" && (
+                <>
+                  <RecordDetailField label={copy.refundStatus}>
+                    {item.refund_status === "completed"
+                      ? copy.refundCompleted
                       : item.refund_status === "pending"
-                        ? t.csaPurchases.refundPending
-                        : "—"
-                  }
-                />
-                {item.refund_status === "completed" && (
-                  <>
-                    <DetailRow
-                      label={t.csaPurchases.refundMarkedAt}
-                      value={formatAdminDateTime(item.refund_marked_at)}
-                    />
-                    <DetailRow
-                      label={t.csaPurchases.refundMarkedBy}
-                      value={item.refund_marked_by?.name}
-                    />
-                    <DetailRow label={t.csaPurchases.refundNote} value={item.refund_note} />
-                  </>
+                        ? copy.refundPending
+                        : "—"}
+                  </RecordDetailField>
+                  {item.refund_status === "completed" && (
+                    <>
+                      <RecordDetailField label={copy.refundMarkedAt}>
+                        {formatAdminDateTime(item.refund_marked_at)}
+                      </RecordDetailField>
+                      <RecordDetailField label={copy.refundMarkedBy}>
+                        {item.refund_marked_by?.name}
+                      </RecordDetailField>
+                      <RecordDetailField label={copy.refundNote}>
+                        {item.refund_note}
+                      </RecordDetailField>
+                    </>
+                  )}
+                </>
+              )}
+              <RecordDetailField label={copy.customerLink}>
+                {item.customer_id && (
+                  <Anchor
+                    component={AdminNavigationLink}
+                    href={`/csa-customers/${item.customer_id}`}
+                  >
+                    {item.customer_id}
+                  </Anchor>
                 )}
-              </>
-            )}
-            <DetailRow
-              label={t.csaPurchases.customerLink}
-              value={
-                item.customer_id ? (
-                  <Link href={`/csa-customers/${item.customer_id}`}>{item.customer_id}</Link>
-                ) : (
-                  "—"
-                )
-              }
-            />
-            <DetailRow
-              label={t.csaPurchases.membershipLink}
-              value={
-                item.membership_id ? (
-                  <Link href={`/memberships/${item.membership_id}`}>{item.membership_id}</Link>
-                ) : (
-                  "—"
-                )
-              }
-            />
-            {item.status === "approved" && item.membership_id && item.contract && (
-              <DetailRow
-                label={t.csaPurchases.contractLink}
-                value={
-                  <Link href={`/memberships/${item.membership_id}`}>
+              </RecordDetailField>
+              <RecordDetailField label={copy.membershipLink}>
+                {item.membership_id && (
+                  <Anchor
+                    component={AdminNavigationLink}
+                    href={`/memberships/${item.membership_id}`}
+                  >
+                    {item.membership_id}
+                  </Anchor>
+                )}
+              </RecordDetailField>
+              {item.status === "approved" && item.membership_id && item.contract && (
+                <RecordDetailField label={copy.contractLink}>
+                  <Anchor
+                    component={AdminNavigationLink}
+                    href={`/memberships/${item.membership_id}`}
+                  >
                     {item.contract.reference_code}
-                  </Link>
-                }
-              />
-            )}
-          </dl>
-        </section>
-      </div>
+                  </Anchor>
+                </RecordDetailField>
+              )}
+            </RecordDetailFields>
+          </Section>
+        </SimpleGrid>
+      </Stack>
 
       {action && (
         <ConfirmationDialog
           busy={saving}
           busyLabel={
             action === "mark-refunded"
-              ? t.csaPurchases.markingRefunded
+              ? copy.markingRefunded
               : action === "reject" || isConflictRejection
-                ? t.csaPurchases.rejecting
-                : t.csaPurchases.approving
+                ? copy.rejecting
+                : copy.approving
           }
           cancelLabel={t.memberships.cancel}
           confirmDisabled={
@@ -709,10 +746,10 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           }
           confirmLabel={
             action === "mark-refunded"
-              ? t.csaPurchases.confirmMarkRefunded
+              ? copy.confirmMarkRefunded
               : action === "reject" || isConflictRejection
-                ? t.csaPurchases.confirmReject
-                : t.csaPurchases.confirmApprove
+                ? copy.confirmReject
+                : copy.confirmApprove
           }
           danger={action === "reject" || resolution === "reject_conflict"}
           error={actionError}
@@ -721,35 +758,32 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
           onConfirm={() => void confirmAction()}
           title={
             action === "mark-refunded"
-              ? t.csaPurchases.markRefundedTitle
+              ? copy.markRefundedTitle
               : action === "reject" || isConflictRejection
-                ? t.csaPurchases.rejectTitle
-                : t.csaPurchases.approveTitle
+                ? copy.rejectTitle
+                : copy.approveTitle
           }
         >
           {action === "mark-refunded" ? (
-            <label className="field" htmlFor="purchase-refund-note">
-              <span>{t.csaPurchases.refundNote}</span>
-              <textarea
-                className="textarea"
-                disabled={saving}
-                id="purchase-refund-note"
-                maxLength={1000}
-                onChange={(event) => setRefundNote(event.target.value)}
-                value={refundNote}
-              />
-            </label>
-          ) : action === "approve" ? (
+            <Textarea
+              disabled={saving}
+              id="purchase-refund-note"
+              label={copy.refundNote}
+              maxLength={1000}
+              onChange={(event) => setRefundNote(event.currentTarget.value)}
+              value={refundNote}
+            />
+          ) : (
             <>
-              {!isConflictRejection && (
-                <div className="field">
-                  <label htmlFor="purchase-start-date">{t.csaPurchases.startDate}</label>
+              {action === "approve" && !isConflictRejection && (
+                <Box>
+                  <Input.Label htmlFor="purchase-start-date">{copy.startDate}</Input.Label>
                   <AdminDateInput
                     aria-describedby={
                       displayedStartDateError ? "purchase-start-date-error" : undefined
                     }
                     aria-invalid={Boolean(displayedStartDateError)}
-                    className="input"
+                    disabled={saving}
                     id="purchase-start-date"
                     onValueChange={(value) => {
                       setStartDateInput(value);
@@ -760,127 +794,121 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
                     value={startDateInput}
                   />
                   {displayedStartDateError && (
-                    <small className="field-error" id="purchase-start-date-error" role="alert">
+                    <Input.Error
+                      className="field-error"
+                      id="purchase-start-date-error"
+                      role="alert"
+                      mt={4}
+                    >
                       {displayedStartDateError}
-                    </small>
+                    </Input.Error>
                   )}
-                </div>
+                </Box>
               )}
-              {resolutionContext && (
-                <section
-                  className="purchase-resolution"
+              {action === "approve" && resolutionContext && (
+                <Stack
+                  component="section"
+                  gap="sm"
                   aria-labelledby="purchase-resolution-title"
+                  miw={0}
                 >
-                  <h3 id="purchase-resolution-title">{t.csaPurchases.resolutionTitle}</h3>
-                  <div className="resolution-comparison">
-                    <div>
-                      <strong>{t.csaPurchases.existingCustomer}</strong>
-                      <p>
-                        {resolutionContext.customer.name}
-                        <br />
-                        {resolutionContext.customer.phone}
-                        <br />
-                        {resolutionContext.customer.address}
-                      </p>
-                    </div>
-                    <div>
-                      <strong>{t.csaPurchases.requestCustomer}</strong>
-                      <p>
-                        {resolutionContext.request.name}
-                        <br />
-                        {resolutionContext.request.phone}
-                        <br />
-                        {resolutionContext.request.address}
-                      </p>
-                    </div>
-                  </div>
-                  <strong>{t.csaPurchases.existingPackages}</strong>
-                  {resolutionContext.customer.memberships.length ? (
-                    <ul className="compact-list">
-                      {resolutionContext.customer.memberships.map((membership) => (
-                        <li key={membership.id}>
-                          {membership.package_name} · {formatAdminDate(membership.start_date)}–
-                          {formatAdminDate(membership.end_date)}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>{t.csaPurchases.noExistingPackages}</p>
-                  )}
-                  <div className="resolution-options">
-                    {(["keep_existing", "use_request_data", "reject_conflict"] as const).map(
-                      (value) => (
-                        <label className="radio-option" key={value}>
-                          <input
-                            checked={resolution === value}
-                            name="customer-resolution"
-                            onChange={() => {
-                              setResolution(value);
-                              setActionError("");
-                              setFieldError("");
-                            }}
-                            type="radio"
-                            value={value}
-                          />
-                          {value === "keep_existing"
-                            ? t.csaPurchases.keepExisting
-                            : value === "use_request_data"
-                              ? t.csaPurchases.useRequestData
-                              : t.csaPurchases.rejectConflict}
-                        </label>
-                      ),
+                  <Divider />
+                  <Title order={3} size="sm" id="purchase-resolution-title">
+                    {copy.resolutionTitle}
+                  </Title>
+                  <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                    {(
+                      [
+                        [copy.existingCustomer, resolutionContext.customer],
+                        [copy.requestCustomer, resolutionContext.request],
+                      ] as const
+                    ).map(([label, customer]) => (
+                      <Paper withBorder p="sm" key={label} className={styles.wrapText}>
+                        <Stack gap={4} miw={0}>
+                          <Text size="sm" fw={600}>
+                            {label}
+                          </Text>
+                          <Text size="sm">{customer.name}</Text>
+                          <Text size="sm" c="dimmed">
+                            {customer.phone}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {customer.address}
+                          </Text>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </SimpleGrid>
+                  <Stack gap={4}>
+                    <Text size="sm" fw={600}>
+                      {copy.existingPackages}
+                    </Text>
+                    {resolutionContext.customer.memberships.length ? (
+                      <Stack component="ul" gap={4} my={0} pl="md">
+                        {resolutionContext.customer.memberships.map((membership) => (
+                          <Text
+                            component="li"
+                            size="sm"
+                            key={membership.id}
+                            className={styles.wrapText}
+                          >
+                            {membership.package_name} · {formatAdminDate(membership.start_date)}–
+                            {formatAdminDate(membership.end_date)}
+                          </Text>
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        {copy.noExistingPackages}
+                      </Text>
                     )}
-                  </div>
-                  {isConflictRejection && (
-                    <label className="field" htmlFor="purchase-conflict-rejection-reason">
-                      <span>{t.csaPurchases.rejectReason}</span>
-                      <textarea
-                        aria-describedby={
-                          fieldError ? "purchase-conflict-rejection-error" : undefined
-                        }
-                        aria-invalid={Boolean(fieldError)}
-                        autoFocus
-                        className="textarea"
-                        id="purchase-conflict-rejection-reason"
-                        maxLength={1000}
-                        onChange={(event) => {
-                          setRejectionReason(event.target.value);
+                  </Stack>
+                  <Stack gap="xs" role="radiogroup" aria-label={copy.resolutionTitle}>
+                    {(
+                      [
+                        ["keep_existing", copy.keepExisting],
+                        ["use_request_data", copy.useRequestData],
+                        ["reject_conflict", copy.rejectConflict],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <Radio
+                        key={value}
+                        checked={resolution === value}
+                        disabled={saving}
+                        label={label}
+                        name="customer-resolution"
+                        onChange={() => {
+                          setResolution(value);
+                          setActionError("");
                           setFieldError("");
                         }}
-                        value={rejectionReason}
+                        value={value}
                       />
-                      {fieldError && (
-                        <small className="field-error" id="purchase-conflict-rejection-error">
-                          {fieldError}
-                        </small>
-                      )}
-                    </label>
-                  )}
-                </section>
+                    ))}
+                  </Stack>
+                </Stack>
+              )}
+              {(action === "reject" || isConflictRejection) && (
+                <Textarea
+                  aria-invalid={Boolean(fieldError)}
+                  autoFocus
+                  disabled={saving}
+                  error={fieldError || undefined}
+                  id={
+                    isConflictRejection
+                      ? "purchase-conflict-rejection-reason"
+                      : "purchase-rejection-reason"
+                  }
+                  label={copy.rejectReason}
+                  maxLength={1000}
+                  onChange={(event) => {
+                    setRejectionReason(event.currentTarget.value);
+                    setFieldError("");
+                  }}
+                  value={rejectionReason}
+                />
               )}
             </>
-          ) : (
-            <label className="field" htmlFor="purchase-rejection-reason">
-              <span>{t.csaPurchases.rejectReason}</span>
-              <textarea
-                aria-describedby={fieldError ? "purchase-rejection-error" : undefined}
-                aria-invalid={Boolean(fieldError)}
-                autoFocus
-                className="textarea"
-                id="purchase-rejection-reason"
-                maxLength={1000}
-                onChange={(event) => {
-                  setRejectionReason(event.target.value);
-                  setFieldError("");
-                }}
-                value={rejectionReason}
-              />
-              {fieldError && (
-                <small className="field-error" id="purchase-rejection-error">
-                  {fieldError}
-                </small>
-              )}
-            </label>
           )}
         </ConfirmationDialog>
       )}
@@ -917,69 +945,53 @@ export function CSAPurchaseRequestDetail({ requestId }: { requestId: string }) {
         >
           {paymentAction.kind === "confirm" ? (
             <>
-              <label className="field" htmlFor="installment-amount-received">
-                <span>{installmentCopy.amountReceived}</span>
-                <input
-                  aria-describedby={
-                    paymentFieldError ? "installment-payment-field-error" : undefined
-                  }
-                  aria-invalid={Boolean(paymentFieldError)}
-                  className="input"
-                  disabled={paymentSaving}
-                  id="installment-amount-received"
-                  inputMode="numeric"
-                  maxLength={19}
-                  onBlur={() => {
-                    const value = paymentAmount.trim();
-                    if (!/^[1-9]\d*$/u.test(value))
-                      setPaymentFieldError(installmentCopy.amountRequired);
-                    else if (BigInt(value) !== BigInt(selectedPayment.amount_due))
-                      setPaymentFieldError(installmentCopy.amountMismatch);
-                  }}
-                  onChange={(event) => {
-                    setPaymentAmount(event.target.value);
-                    setPaymentFieldError("");
-                  }}
-                  value={paymentAmount}
-                />
-              </label>
-              <label className="field" htmlFor="installment-payment-note">
-                <span>{installmentCopy.note}</span>
-                <textarea
-                  className="textarea"
-                  disabled={paymentSaving}
-                  id="installment-payment-note"
-                  maxLength={1000}
-                  onChange={(event) => setPaymentNote(event.target.value)}
-                  value={paymentNote}
-                />
-              </label>
-            </>
-          ) : (
-            <label className="field" htmlFor="installment-rejection-reason">
-              <span>{installmentCopy.rejectionReason}</span>
-              <textarea
-                aria-describedby={paymentFieldError ? "installment-payment-field-error" : undefined}
+              <TextInput
                 aria-invalid={Boolean(paymentFieldError)}
-                className="textarea"
                 disabled={paymentSaving}
-                id="installment-rejection-reason"
-                maxLength={1000}
+                error={paymentFieldError || undefined}
+                id="installment-amount-received"
+                inputMode="numeric"
+                label={installmentCopy.amountReceived}
+                maxLength={19}
                 onBlur={() => {
-                  if (!paymentReason.trim()) setPaymentFieldError(installmentCopy.reasonRequired);
+                  const value = paymentAmount.trim();
+                  if (!/^[1-9]\d*$/u.test(value))
+                    setPaymentFieldError(installmentCopy.amountRequired);
+                  else if (BigInt(value) !== BigInt(selectedPayment.amount_due))
+                    setPaymentFieldError(installmentCopy.amountMismatch);
                 }}
                 onChange={(event) => {
-                  setPaymentReason(event.target.value);
+                  setPaymentAmount(event.currentTarget.value);
                   setPaymentFieldError("");
                 }}
-                value={paymentReason}
+                value={paymentAmount}
               />
-            </label>
-          )}
-          {paymentFieldError && (
-            <small className="field-error" id="installment-payment-field-error" role="alert">
-              {paymentFieldError}
-            </small>
+              <Textarea
+                disabled={paymentSaving}
+                id="installment-payment-note"
+                label={installmentCopy.note}
+                maxLength={1000}
+                onChange={(event) => setPaymentNote(event.currentTarget.value)}
+                value={paymentNote}
+              />
+            </>
+          ) : (
+            <Textarea
+              aria-invalid={Boolean(paymentFieldError)}
+              disabled={paymentSaving}
+              error={paymentFieldError || undefined}
+              id="installment-rejection-reason"
+              label={installmentCopy.rejectionReason}
+              maxLength={1000}
+              onBlur={() => {
+                if (!paymentReason.trim()) setPaymentFieldError(installmentCopy.reasonRequired);
+              }}
+              onChange={(event) => {
+                setPaymentReason(event.currentTarget.value);
+                setPaymentFieldError("");
+              }}
+              value={paymentReason}
+            />
           )}
         </ConfirmationDialog>
       )}

@@ -1,393 +1,501 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { flushSync } from "react-dom";
+import {
+  ActionIcon,
+  Alert,
+  AppShell,
+  Avatar,
+  Box,
+  Burger,
+  Button,
+  Drawer,
+  Group,
+  Menu,
+  NavLink,
+  Progress,
+  ScrollArea,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
+  UnstyledButton,
+  VisuallyHidden,
+} from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
+import {
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
+  IconLogout,
+  IconPlant2,
+} from "@tabler/icons-react";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbNavigationKey,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
+import { AdminHeaderContent } from "@/components/admin-header";
+import { Icon } from "@/components/admin-icon";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { Icon } from "@/components/nfv-controls";
+import {
+  AdminNavigationLink,
+  AdminNavigationProvider,
+  type AdminNavigate,
+} from "@/components/admin-navigation-link";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
+import { clearAdminNotifications } from "@/components/toast-provider";
 import {
   activeAdminSection,
   adminNavigation,
   type AdminNavigationItem,
   type AdminNavigationSection,
-  type AdminNavigationSectionKey,
   isActiveAdminRoute,
+  resolveAdminBreadcrumbs,
 } from "@/lib/admin-navigation";
 import { ADMIN_SESSION_CHANGED_EVENT, pageSessionBinding } from "@/lib/client-api";
 import type { AdminSessionUser } from "@/lib/session";
+import classes from "./admin-shell.module.css";
 
 type Props = {
   user: Pick<AdminSessionUser, "name" | "email" | "login_phone_number">;
   sessionBinding: string;
   children: React.ReactNode;
 };
-
 const SIDEBAR_PREFERENCE_KEY = "nfv-admin-sidebar-collapsed";
-const MOBILE_NAVIGATION_QUERY = "(max-width: 820px)";
-const FOCUSABLE_SELECTOR =
-  "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]";
 
-function NavigationLink({
-  item,
+function AdminShellHeaderContent({
+  items,
+  ...controls
+}: React.ComponentProps<typeof AdminHeaderContent>) {
+  const breadcrumbs = useAdminBreadcrumbs(items);
+  const navigationKey = useAdminBreadcrumbNavigationKey();
+  return <AdminHeaderContent items={breadcrumbs} navigationKey={navigationKey} {...controls} />;
+}
+
+function AdminShellScope({
   pathname,
-  collapsed = false,
-  onNavigate,
+  navigate,
+  children,
 }: {
-  item: AdminNavigationItem;
   pathname: string;
-  collapsed?: boolean;
-  onNavigate?: () => void;
+  navigate: AdminNavigate;
+  children: React.ReactNode;
 }) {
-  const active = isActiveAdminRoute(pathname, item.href);
+  const search = useSearchParams()?.toString();
   return (
-    <Link
-      aria-current={active ? "page" : undefined}
-      aria-label={item.label}
-      className={`nav-link ${active ? "active" : ""}`.trim()}
-      data-tooltip={collapsed ? item.label : undefined}
-      href={item.href}
-      onClick={onNavigate}
-      title={collapsed ? item.label : undefined}
+    <AdminNavigationProvider value={navigate}>
+      <AdminBreadcrumbProvider pathname={pathname} search={search}>
+        {children}
+      </AdminBreadcrumbProvider>
+    </AdminNavigationProvider>
+  );
+}
+
+function Brand({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
+  return (
+    <Box
+      component={AdminNavigationLink}
+      href="/dashboard"
+      onNavigate={onNavigate}
+      aria-label="NFV Admin"
+      style={{ textDecoration: "none", color: "inherit" }}
     >
-      {item.icon ? <Icon name={item.icon} /> : <span aria-hidden="true" className="nav-item-dot" />}
-      <span aria-hidden="true" className="nav-label">
-        {item.label}
-      </span>
-    </Link>
-  );
-}
-
-function ExpandedSection({
-  section,
-  pathname,
-  onNavigate,
-}: {
-  section: AdminNavigationSection;
-  pathname: string;
-  onNavigate?: () => void;
-}) {
-  if (section.key === "main") {
-    return section.items.map((item) => (
-      <NavigationLink item={item} key={item.href} onNavigate={onNavigate} pathname={pathname} />
-    ));
-  }
-
-  return (
-    <section className="nav-section">
-      <div className="nav-section-label">
-        <Icon name={section.icon} />
-        <span>{section.label}</span>
-      </div>
-      <div className="nav-section-items">
-        {section.items.map((item) => (
-          <NavigationLink item={item} key={item.href} onNavigate={onNavigate} pathname={pathname} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CollapsedSection({
-  section,
-  pathname,
-  open,
-  onToggle,
-  flyoutTop,
-}: {
-  section: AdminNavigationSection;
-  pathname: string;
-  open: boolean;
-  onToggle: (top: number) => void;
-  flyoutTop: number;
-}) {
-  const label = section.label ?? "";
-  const active = section.items.some((item) => isActiveAdminRoute(pathname, item.href));
-  const panelId = `admin-nav-${section.key}`;
-
-  return (
-    <div className="nav-group">
-      <button
-        aria-controls={panelId}
-        aria-expanded={open}
-        aria-label={label}
-        className={`nav-group-toggle ${active ? "has-active-item" : ""}`.trim()}
-        data-tooltip={label}
-        onClick={(event) => onToggle(event.currentTarget.getBoundingClientRect().top)}
-        title={label}
-        type="button"
-      >
-        <Icon name={section.icon} />
-      </button>
-      {open ? (
-        <div className="nav-flyout" id={panelId} style={{ top: flyoutTop }}>
-          <div className="nav-flyout-heading">{label}</div>
-          {section.items.map((item) => (
-            <NavigationLink item={item} key={item.href} pathname={pathname} />
-          ))}
-        </div>
-      ) : null}
-    </div>
+      <Group gap="xs" wrap="nowrap">
+        <ThemeIcon size={34} radius={11} className={classes.brandIcon}>
+          <IconPlant2 size={22} stroke={1.7} />
+        </ThemeIcon>
+        {!compact && (
+          <Box>
+            <Text
+              fw={770}
+              size="16px"
+              lh={1.1}
+              c="var(--nfv-heading-color)"
+              style={{ letterSpacing: "-0.04em" }}
+            >
+              natural
+              <Text component="span" inherit c="forest.7">
+                farm
+              </Text>
+              .
+            </Text>
+            <Text size="10px" c="dimmed" mt={3}>
+              NFV Operations Console
+            </Text>
+          </Box>
+        )}
+      </Group>
+    </Box>
   );
 }
 
 export function AdminShell({ user, sessionBinding, children }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [navigationPending, startNavigation] = useTransition();
+  const navigate = useCallback<AdminNavigate>(
+    (href, { replace, scroll }) => {
+      startNavigation(() => {
+        if (replace) router.replace(href, { scroll });
+        else router.push(href, { scroll });
+      });
+    },
+    [router],
+  );
   const { t } = useAdminI18n();
   const sections = adminNavigation(t);
   const activeSection = activeAdminSection(pathname, sections);
-  const sidebarRef = useRef<HTMLElement>(null);
-  const mobileTriggerRef = useRef<HTMLButtonElement>(null);
-  const mobileCloseRef = useRef<HTMLButtonElement>(null);
+  const activeItem = activeSection?.items.find((item) => isActiveAdminRoute(pathname, item.href));
   const [collapsed, setCollapsed] = useState(false);
   const [preferenceLoaded, setPreferenceLoaded] = useState(false);
-  const [openFlyout, setOpenFlyout] = useState<AdminNavigationSectionKey | null>(null);
-  const [flyoutTop, setFlyoutTop] = useState(8);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [mobileViewport, setMobileViewport] = useState(false);
   const [sessionChanged, setSessionChanged] = useState(false);
+  const mobile = useMediaQuery("(max-width: 47.99em)");
+  const mobileTrigger = useRef<HTMLButtonElement>(null);
+  const retireQueryScope = useRef<(() => void) | null>(null);
+  // Do not mount protected children during a partial navigation from another login.
+  const stale =
+    sessionChanged ||
+    (typeof document !== "undefined" &&
+      Boolean(
+        document.documentElement.dataset.adminPageSession &&
+        document.documentElement.dataset.adminPageSession !== sessionBinding,
+      ));
 
   useEffect(() => {
-    if (pageSessionBinding(sessionBinding) !== sessionBinding) setSessionChanged(true);
-    const showReloadNotice = (event: Event) => {
+    const discardProtectedContent = () => {
+      clearAdminNotifications();
+      setMobileOpen(false);
+      setSessionChanged(true);
+    };
+    if (pageSessionBinding(sessionBinding) !== sessionBinding) {
+      retireQueryScope.current?.();
+      discardProtectedContent();
+    }
+
+    const discardProtectedScope = () => {
+      const retire = retireQueryScope.current;
+      // Detach observers before clearing the cache so they cannot recreate entries.
+      flushSync(discardProtectedContent);
+      retire?.();
+    };
+
+    const onSessionChanged = (event: Event) => {
       if (event instanceof CustomEvent && event.detail === sessionBinding) {
-        setSessionChanged(true);
+        discardProtectedScope();
       }
     };
-    window.addEventListener(ADMIN_SESSION_CHANGED_EVENT, showReloadNotice);
-    return () => window.removeEventListener(ADMIN_SESSION_CHANGED_EVENT, showReloadNotice);
+    const onPageHide = (event: PageTransitionEvent) => {
+      // Drop the protected DOM before the browser freezes a history snapshot.
+      if (event.persisted) discardProtectedScope();
+      else retireQueryScope.current?.();
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) window.location.reload();
+    };
+    window.addEventListener(ADMIN_SESSION_CHANGED_EVENT, onSessionChanged);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.removeEventListener(ADMIN_SESSION_CHANGED_EVENT, onSessionChanged);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, [sessionBinding]);
-
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY);
-      if (stored === "true" || stored === "false") setCollapsed(stored === "true");
+      const saved = window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY);
+      if (saved === "true" || saved === "false") setCollapsed(saved === "true");
     } catch {
-      // Storage can be unavailable in private or restricted browser contexts.
-    } finally {
-      setPreferenceLoaded(true);
+      /* In-memory navigation remains available when storage is restricted. */
     }
+    setPreferenceLoaded(true);
   }, []);
-
   useEffect(() => {
     if (!preferenceLoaded) return;
     try {
       window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(collapsed));
     } catch {
-      // The in-memory preference remains usable when persistence is unavailable.
+      /* Optional preference. */
     }
   }, [collapsed, preferenceLoaded]);
-
   useEffect(() => {
-    setOpenFlyout(null);
-  }, [pathname, collapsed]);
-
+    setMobileOpen(false);
+  }, [pathname]);
   useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia(MOBILE_NAVIGATION_QUERY);
-    const updateViewport = () => {
-      setMobileViewport(query.matches);
-      if (!query.matches) setMobileOpen(false);
-    };
-    updateViewport();
-    query.addEventListener("change", updateViewport);
-    return () => query.removeEventListener("change", updateViewport);
-  }, []);
-
-  useEffect(() => {
-    if (mobileOpen) mobileCloseRef.current?.focus();
-  }, [mobileOpen]);
-
-  useEffect(() => {
-    if (!mobileOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMobileOpen(false);
-        mobileTriggerRef.current?.focus();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = Array.from(
-        sidebarRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? [],
-      );
-      const first = items[0];
-      const last = items.at(-1);
-      if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [mobileOpen]);
-
-  useEffect(() => {
-    if (!openFlyout) return;
-    const closeOnOutsideInteraction = (event: MouseEvent) => {
-      if (!sidebarRef.current?.contains(event.target as Node)) setOpenFlyout(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenFlyout(null);
-    };
-    document.addEventListener("mousedown", closeOnOutsideInteraction);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", closeOnOutsideInteraction);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [openFlyout]);
+    if (!mobile) setMobileOpen(false);
+  }, [mobile]);
 
   const userName = user.name.trim();
-  const email = user.email?.trim();
-  const identifier = email || user.login_phone_number?.trim();
+  const identifier = user.email?.trim() || user.login_phone_number?.trim();
   const userLabel = userName || identifier || "NFV Admin";
-  const userInitial = (userName || email || "A").charAt(0).toUpperCase();
-  const closeMobileDrawer = () => {
+  const initial = (userName || identifier || "A").charAt(0).toUpperCase();
+  const sidebarToggleLabel = collapsed ? t.common.expandSidebar : t.common.collapseSidebar;
+  const closeMobile = () => {
     setMobileOpen(false);
-    mobileTriggerRef.current?.focus();
+    mobileTrigger.current?.focus();
   };
-  const renderCollapsedNavigation = collapsed && !mobileOpen;
 
-  return (
-    <div
-      className="admin-shell"
-      data-admin-session={sessionBinding}
-      data-active-section={activeSection?.key}
-      data-sidebar={collapsed ? "collapsed" : "expanded"}
-    >
-      <header className="mobile-admin-bar">
-        <Link aria-label="NFV Admin" className="brand-mark" href="/dashboard">
-          <span className="brand-seed">N</span>
-          <span>NFV Admin</span>
-        </Link>
-        <button
-          aria-controls="admin-sidebar"
-          aria-expanded={mobileOpen}
-          aria-label={t.common.openNavigation}
-          className="mobile-menu-button"
-          onClick={() => setMobileOpen(true)}
-          ref={mobileTriggerRef}
-          type="button"
-        >
-          <Icon name="menu" />
-        </button>
-      </header>
-      {mobileOpen ? (
-        <button
-          aria-label={t.common.dismissNavigation}
-          className="sidebar-backdrop"
-          data-testid="sidebar-backdrop"
-          onClick={closeMobileDrawer}
-          type="button"
-        />
-      ) : null}
-      <aside
-        aria-hidden={mobileViewport && !mobileOpen ? true : undefined}
-        className="sidebar"
-        data-mobile-open={mobileOpen}
-        id="admin-sidebar"
-        inert={mobileViewport && !mobileOpen}
-        ref={sidebarRef}
-      >
-        <div className="sidebar-header">
-          <Link aria-label="NFV Admin" className="brand-mark" href="/dashboard">
-            <span className="brand-seed">N</span>
-            <span aria-hidden="true" className="sidebar-brand-label">
-              NFV Admin
-            </span>
-          </Link>
-          <button
-            aria-label={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}
-            className="sidebar-collapse-button"
-            onClick={() => setCollapsed((current) => !current)}
-            title={collapsed ? t.common.expandSidebar : t.common.collapseSidebar}
-            type="button"
-          >
-            <Icon name="panelLeft" />
-          </button>
-          {mobileOpen ? (
-            <button
-              aria-label={t.common.closeNavigation}
-              className="mobile-drawer-close"
-              onClick={closeMobileDrawer}
-              ref={mobileCloseRef}
-              type="button"
+  function itemLink(item: AdminNavigationItem, onNavigate?: () => void) {
+    const active = item === activeItem;
+    return (
+      <NavLink
+        key={item.href}
+        component={AdminNavigationLink}
+        href={item.href}
+        label={item.label}
+        aria-label={item.label}
+        active={active}
+        aria-current={active ? "page" : undefined}
+        leftSection={item.icon ? <Icon name={item.icon} size={16} /> : undefined}
+        onNavigate={onNavigate}
+        c={active ? "forest.8" : "dimmed"}
+        fw={active ? 690 : 520}
+      />
+    );
+  }
+  function navigation(compact: boolean, onNavigate?: () => void) {
+    return (
+      <Stack gap={15} component="nav" aria-label={t.common.navigation} px={10} py={16}>
+        {sections.map((section: AdminNavigationSection) =>
+          compact ? (
+            <Menu
+              key={`${section.key}:${pathname}`}
+              position="right-start"
+              offset={12}
+              shadow="sm"
+              withinPortal
+              closeOnItemClick
             >
-              <Icon name="close" />
-            </button>
-          ) : null}
-        </div>
-        <nav className="nav nav-scroll" aria-label={t.common.navigation}>
-          {renderCollapsedNavigation
-            ? sections.map((section) =>
-                section.key === "main" ? (
-                  section.items.map((item) => (
-                    <NavigationLink collapsed item={item} key={item.href} pathname={pathname} />
-                  ))
-                ) : (
-                  <CollapsedSection
-                    flyoutTop={flyoutTop}
-                    key={section.key}
-                    onToggle={(top) => {
-                      setFlyoutTop(Math.max(8, Math.min(top, window.innerHeight - 260)));
-                      setOpenFlyout((current) => (current === section.key ? null : section.key));
-                    }}
-                    open={openFlyout === section.key}
-                    pathname={pathname}
-                    section={section}
-                  />
-                ),
-              )
-            : sections.map((section) => (
-                <ExpandedSection
-                  key={section.key}
-                  onNavigate={mobileOpen ? closeMobileDrawer : undefined}
-                  pathname={pathname}
-                  section={section}
-                />
-              ))}
-        </nav>
-        <div className="sidebar-footer">
-          <LanguageSwitcher />
-          <div className="sidebar-account" title={collapsed ? userLabel : undefined}>
-            <span aria-hidden="true" className="sidebar-avatar">
-              {userInitial}
-            </span>
-            <span className="sidebar-user">
-              <strong>{userLabel}</strong>
-              {identifier && identifier !== userLabel ? <span>{identifier}</span> : null}
-            </span>
-          </div>
-          <form action="/api/auth/logout" method="post">
-            <input type="hidden" name="sessionBinding" value={sessionBinding} />
-            <button aria-label={t.common.logout} className="logout-button" title={t.common.logout}>
-              <Icon name="logout" />
-              <span aria-hidden="true" className="nav-label">
-                {t.common.logout}
-              </span>
-            </button>
-          </form>
-        </div>
-      </aside>
-      <main className="main">
-        <div className="content">
-          {sessionChanged ? (
-            <div className="error-box" role="alert">
-              {t.common.sessionChanged}{" "}
-              <button className="button secondary" onClick={() => window.location.reload()}>
-                {t.common.reloadPage}
-              </button>
-            </div>
+              <Tooltip label={section.label} position="right">
+                <Menu.Target>
+                  <ActionIcon
+                    size={40}
+                    variant={section.key === activeSection?.key ? "light" : "subtle"}
+                    color={section.key === activeSection?.key ? "forest" : "gray"}
+                    aria-label={section.label}
+                  >
+                    <Icon name={section.icon} />
+                  </ActionIcon>
+                </Menu.Target>
+              </Tooltip>
+              <Menu.Dropdown>
+                <Menu.Label>{section.label}</Menu.Label>
+                {section.items.map((item) => (
+                  <Menu.Item
+                    key={item.href}
+                    component={AdminNavigationLink}
+                    href={item.href}
+                    aria-current={item === activeItem ? "page" : undefined}
+                    color={item === activeItem ? "forest" : undefined}
+                    leftSection={item.icon ? <Icon name={item.icon} size={16} /> : undefined}
+                  >
+                    {item.label}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
           ) : (
-            children
+            <Box key={section.key}>
+              <Text
+                size="10px"
+                c="var(--nfv-subtle-color)"
+                fw={730}
+                tt="uppercase"
+                px={10}
+                pt={8}
+                mb={6}
+                style={{ letterSpacing: "0.095em" }}
+              >
+                {section.label}
+              </Text>
+              <Stack gap={2}>{section.items.map((item) => itemLink(item, onNavigate))}</Stack>
+            </Box>
+          ),
+        )}
+      </Stack>
+    );
+  }
+  return (
+    <AppShell
+      data-admin-session={sessionBinding}
+      data-sidebar={collapsed ? "collapsed" : "expanded"}
+      data-active-section={activeSection?.key}
+      layout="alt"
+      header={{ height: { base: 59, sm: 67 } }}
+      navbar={{
+        width: collapsed ? 64 : 244,
+        breakpoint: "sm",
+        collapsed: { mobile: true, desktop: stale },
+      }}
+      padding={{ base: "md", sm: "lg" }}
+      transitionDuration={150}
+      classNames={{ main: classes.main }}
+    >
+      <AdminShellScope key={sessionBinding} pathname={stale ? "" : pathname} navigate={navigate}>
+        <AppShell.Header withBorder={stale}>
+          {!stale && (
+            <AdminShellHeaderContent
+              items={resolveAdminBreadcrumbs(pathname, activeItem, t)}
+              navigationControl={
+                <>
+                  <Burger
+                    ref={mobileTrigger}
+                    hiddenFrom="sm"
+                    opened={mobileOpen}
+                    onClick={() => setMobileOpen((value) => !value)}
+                    aria-label={t.common.openNavigation}
+                    aria-expanded={mobileOpen}
+                    aria-controls="admin-mobile-navigation"
+                    size="sm"
+                    w={36}
+                    h={36}
+                    color="var(--text-muted)"
+                  />
+                  <Tooltip label={sidebarToggleLabel}>
+                    <ActionIcon
+                      visibleFrom="sm"
+                      aria-label={sidebarToggleLabel}
+                      onClick={() => setCollapsed((value) => !value)}
+                      size={36}
+                      color="gray"
+                      c="var(--text-muted)"
+                    >
+                      {collapsed ? (
+                        <IconLayoutSidebarLeftExpand size={20} />
+                      ) : (
+                        <IconLayoutSidebarLeftCollapse size={20} />
+                      )}
+                    </ActionIcon>
+                  </Tooltip>
+                </>
+              }
+              actions={
+                <>
+                  <LanguageSwitcher />
+                  <Menu position="bottom-end" shadow="sm" withinPortal>
+                    <Menu.Target>
+                      <UnstyledButton
+                        aria-label={t.common.accountMenu}
+                        title={userLabel}
+                        className={classes.account}
+                      >
+                        <Avatar color="forest" radius="xl" size={30}>
+                          {initial}
+                        </Avatar>
+                      </UnstyledButton>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Label>
+                        {userLabel}
+                        {identifier && identifier !== userLabel && (
+                          <Text size="xs" c="dimmed">
+                            {identifier}
+                          </Text>
+                        )}
+                      </Menu.Label>
+                      <form action="/api/auth/logout" method="post">
+                        <input type="hidden" name="sessionBinding" value={sessionBinding} />
+                        <Menu.Item
+                          component="button"
+                          type="submit"
+                          color="red"
+                          leftSection={<IconLogout size={16} />}
+                        >
+                          {t.common.logout}
+                        </Menu.Item>
+                      </form>
+                    </Menu.Dropdown>
+                  </Menu>
+                </>
+              }
+            />
           )}
-        </div>
-      </main>
-    </div>
+          {!stale && (
+            <>
+              <VisuallyHidden role="status">
+                {navigationPending ? t.common.navigationPending : ""}
+              </VisuallyHidden>
+              {navigationPending && (
+                <Progress.Root
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    insetInline: 0,
+                    insetBlockEnd: 0,
+                    pointerEvents: "none",
+                    background: "transparent",
+                  }}
+                  radius={0}
+                  size={3}
+                >
+                  <Progress.Section
+                    value={25}
+                    withAria={false}
+                    className={classes.navigationPulse}
+                  />
+                </Progress.Root>
+              )}
+            </>
+          )}
+        </AppShell.Header>
+        {!stale && (
+          <>
+            <AppShell.Navbar
+              aria-hidden={mobile || undefined}
+              inert={mobile || undefined}
+              className={classes.navbar}
+            >
+              <AppShell.Section h={67} px={collapsed ? 15 : 17} className={classes.brandSection}>
+                <Brand compact={collapsed} />
+              </AppShell.Section>
+              <AppShell.Section component={ScrollArea} grow scrollbarSize={4}>
+                {navigation(collapsed)}
+              </AppShell.Section>
+            </AppShell.Navbar>
+            <Drawer
+              opened={mobileOpen && Boolean(mobile)}
+              onClose={closeMobile}
+              title={<Brand onNavigate={closeMobile} />}
+              closeButtonProps={{ "aria-label": t.common.closeNavigation }}
+              position="left"
+              size={280}
+              returnFocus
+              trapFocus
+              id="admin-mobile-navigation"
+              styles={{
+                body: {
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  height: "calc(100% - 76px)",
+                },
+              }}
+            >
+              <ScrollArea flex={1} scrollbarSize={4}>
+                {navigation(false, closeMobile)}
+              </ScrollArea>
+            </Drawer>
+          </>
+        )}
+        <AppShell.Main>
+          {stale ? (
+            <Alert color="orange" role="alert">
+              <Group gap="sm">
+                <Text size="sm">{t.common.sessionChanged}</Text>
+                <Button variant="outline" onClick={() => window.location.reload()}>
+                  {t.common.reloadPage}
+                </Button>
+              </Group>
+            </Alert>
+          ) : (
+            <AdminQueryProvider ref={retireQueryScope}>{children}</AdminQueryProvider>
+          )}
+        </AppShell.Main>
+      </AdminShellScope>
+    </AppShell>
   );
 }

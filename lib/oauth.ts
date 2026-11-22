@@ -22,6 +22,7 @@ async function authFetch(input: string, init: RequestInit = {}) {
   try {
     return await fetch(input, {
       ...init,
+      redirect: "error",
       signal: init.signal ?? AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {

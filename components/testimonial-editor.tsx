@@ -1,5 +1,9 @@
 "use client";
 
+import { FormInput, FormTextarea, FormSelect, Status, FormField } from "@/components/nfv-controls";
+
+import { Button, Checkbox, Alert, Group } from "@mantine/core";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -352,12 +356,12 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
   if (loadError)
     return (
       <div className="panel load-error-state">
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {requestErrorMessage(loadError, t)}
-        </p>
-        <button className="button secondary" onClick={() => setLoadAttempt((value) => value + 1)}>
+        </Alert>
+        <Button variant="default" onClick={() => setLoadAttempt((value) => value + 1)}>
           {t.common.retry}
-        </button>
+        </Button>
       </div>
     );
 
@@ -370,37 +374,39 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
         onSubmit={saveDraft}
       >
         {error && (
-          <div className="error-box retry-error" role="alert">
-            <span>{error}</span>
-            {editorConflict && (
-              <button
-                className="button secondary"
-                onClick={() => {
-                  void (async () => {
-                    let latest = serverConflict;
-                    if (!latest && persistedIdRef.current) {
-                      try {
-                        latest = await api<Testimonial>(
-                          `admin/testimonials/${persistedIdRef.current}`,
-                        );
-                      } catch {
-                        return;
+          <Alert color="red" className="retry-error" role="alert">
+            <Group gap="sm">
+              <span>{error}</span>
+              {editorConflict && (
+                <Button
+                  variant="default"
+                  onClick={() => {
+                    void (async () => {
+                      let latest = serverConflict;
+                      if (!latest && persistedIdRef.current) {
+                        try {
+                          latest = await api<Testimonial>(
+                            `admin/testimonials/${persistedIdRef.current}`,
+                          );
+                        } catch {
+                          return;
+                        }
                       }
-                    }
-                    if (!latest) return;
-                    applyAuthoritative(latest);
-                    setServerConflict(null);
-                    setEditorConflict(false);
-                    setError("");
-                    preparedPublishRef.current = null;
-                  })();
-                }}
-                type="button"
-              >
-                {t.testimonials.loadServerVersion}
-              </button>
-            )}
-          </div>
+                      if (!latest) return;
+                      applyAuthoritative(latest);
+                      setServerConflict(null);
+                      setEditorConflict(false);
+                      setError("");
+                      preparedPublishRef.current = null;
+                    })();
+                  }}
+                  type="button"
+                >
+                  {t.testimonials.loadServerVersion}
+                </Button>
+              )}
+            </Group>
+          </Alert>
         )}
         <section className="panel testimonial-basics" aria-labelledby="testimonial-basics-title">
           <div className="panel-head">
@@ -421,7 +427,7 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
               )}
             </div>
             <div className="testimonial-image-actions">
-              <label className="button secondary testimonial-upload-button">
+              <Button component="label" className="testimonial-upload-button" variant="default">
                 <span>
                   {uploading
                     ? t.testimonials.uploading
@@ -433,10 +439,10 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                   onChange={selectImage}
                   type="file"
                 />
-              </label>
+              </Button>
               {(image || selectedImage) && (
-                <button
-                  className="button secondary"
+                <Button
+                  variant="default"
                   disabled={busy}
                   onClick={() => {
                     imageRef.current = null;
@@ -447,7 +453,7 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                   type="button"
                 >
                   {t.testimonials.removeImage}
-                </button>
+                </Button>
               )}
               <small className="muted-copy">{t.testimonials.imageHelp}</small>
             </div>
@@ -456,8 +462,7 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
           <div className="form-grid testimonial-general-fields">
             <label className="field">
               <span>{t.testimonials.displayName} *</span>
-              <input
-                className="input"
+              <FormInput
                 disabled={busy}
                 maxLength={240}
                 onChange={(event) => setDisplayName(event.target.value)}
@@ -465,26 +470,21 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                 value={displayName}
               />
             </label>
-            <label className="field">
-              <span>{t.testimonials.typeLabel} *</span>
-              <select
-                className="input"
+            <FormField className="field" label={`${t.testimonials.typeLabel} *`}>
+              <FormSelect
                 disabled={busy}
-                onChange={(event) => setType(event.target.value as TestimonialType)}
                 value={type}
-              >
-                {(Object.keys(t.testimonials.types) as TestimonialType[]).map((value) => (
-                  <option key={value} value={value}>
-                    {t.testimonials.types[value]}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={(value) => setType((value ?? "farmer") as TestimonialType)}
+                data={(Object.keys(t.testimonials.types) as TestimonialType[]).map((value) => ({
+                  value,
+                  label: t.testimonials.types[value],
+                }))}
+              />
+            </FormField>
             <label className="field">
               <span>{t.testimonials.sortOrder}</span>
-              <input
+              <FormInput
                 aria-invalid={Boolean(sortOrderError)}
-                className="input"
                 disabled={busy}
                 inputMode="numeric"
                 onChange={(event) => {
@@ -500,24 +500,20 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
               )}
             </label>
             <div className="testimonial-checkboxes">
-              <label className="checkbox field">
-                <input
-                  checked={featured}
-                  disabled={busy}
-                  onChange={(event) => setFeatured(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>{t.testimonials.featuredHelp}</span>
-              </label>
-              <label className="checkbox field">
-                <input
-                  checked={consentConfirmed}
-                  disabled={busy}
-                  onChange={(event) => setConsentConfirmed(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>{t.testimonials.consent}</span>
-              </label>
+              <Checkbox
+                className="field"
+                checked={featured}
+                disabled={busy}
+                onChange={(event) => setFeatured(event.target.checked)}
+                label={t.testimonials.featuredHelp}
+              />
+              <Checkbox
+                className="field"
+                checked={consentConfirmed}
+                disabled={busy}
+                onChange={(event) => setConsentConfirmed(event.target.checked)}
+                label={t.testimonials.consent}
+              />
               <small className="muted-copy">{t.testimonials.consentHelp}</small>
             </div>
           </div>
@@ -533,15 +529,16 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                     <h2>{locale === "vi" ? t.common.vietnamese : t.common.english}</h2>
                     <p className="muted-copy">{t.testimonials.translationHelp}</p>
                   </div>
-                  <span className={`badge ${complete ? "" : "warm"}`}>
-                    {complete ? t.testimonials.complete : t.testimonials.incomplete}
-                  </span>
+                  <Status
+                    domain="completion"
+                    status={complete ? "complete" : "incomplete"}
+                    label={complete ? t.testimonials.complete : t.testimonials.incomplete}
+                  />
                 </div>
                 <div className="form-grid one">
                   <label className="field">
                     <span>{t.testimonials.role}</span>
-                    <input
-                      className="input"
+                    <FormInput
                       disabled={busy}
                       maxLength={240}
                       onChange={(event) => updateTranslation(locale, "role", event.target.value)}
@@ -550,8 +547,7 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                   </label>
                   <label className="field">
                     <span>{t.testimonials.location}</span>
-                    <input
-                      className="input"
+                    <FormInput
                       disabled={busy}
                       maxLength={240}
                       onChange={(event) =>
@@ -562,8 +558,7 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                   </label>
                   <label className="field">
                     <span>{t.testimonials.quote}</span>
-                    <textarea
-                      className="textarea"
+                    <FormTextarea
                       disabled={busy}
                       maxLength={800}
                       onChange={(event) => updateTranslation(locale, "quote", event.target.value)}
@@ -572,8 +567,8 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
                   </label>
                   <label className="field">
                     <span>{t.testimonials.fullStory}</span>
-                    <textarea
-                      className="textarea testimonial-story-input"
+                    <FormTextarea
+                      className="testimonial-story-input"
                       disabled={busy}
                       maxLength={20_000}
                       onChange={(event) =>
@@ -589,9 +584,10 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
         </section>
 
         <div className="form-actions">
-          <Link
+          <Button
+            component={Link}
             aria-disabled={busy}
-            className="button secondary"
+            variant="default"
             href={
               persistedIdRef.current ? `/testimonials/${persistedIdRef.current}` : "/testimonials"
             }
@@ -600,20 +596,19 @@ export function TestimonialEditor({ testimonialId }: { testimonialId?: string })
             }}
           >
             {t.testimonials.cancel}
-          </Link>
-          <button className="button secondary" disabled={busy || editorConflict} type="submit">
+          </Button>
+          <Button variant="default" disabled={busy || editorConflict} type="submit">
             {saving ? t.testimonials.saving : t.testimonials.save}
-          </button>
+          </Button>
           {status !== "published" && (
-            <button
-              className="button"
+            <Button
               disabled={busy || !canPublish}
               onClick={openPublishDialog}
               ref={publishButtonRef}
               type="button"
             >
               {t.testimonials.publish}
-            </button>
+            </Button>
           )}
           {!canPublish && status !== "published" && (
             <small className="form-action-help">{t.testimonials.publishUnavailable}</small>

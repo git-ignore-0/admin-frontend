@@ -1,4 +1,9 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { FormInput } from "@/components/nfv-controls";
+
+import { Button, Checkbox } from "@mantine/core";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -27,7 +32,10 @@ export function SiteSettingsForm() {
       .then(setData)
       .catch((caught) => setLoadError(requestErrorMessage(caught, t)));
   }, [t]);
-  if (!data) return <div className="panel">{loadError || t.settings.loading}</div>;
+  if (!data)
+    return (
+      <DataState kind={loadError ? "error" : "loading"} title={loadError || t.settings.loading} />
+    );
   function updateLink(kind: EditableLinkKind, patch: Partial<ExternalLink>) {
     setData((current) => {
       if (!current) return current;
@@ -113,38 +121,30 @@ export function SiteSettingsForm() {
         <div className="form-grid">
           <div className="field">
             <label htmlFor="email">{t.settings.email}</label>
-            <input
+            <FormInput
               id="email"
-              className="input"
               type="email"
               value={data.email}
               onChange={(e) => setData({ ...data, email: e.target.value })}
             />
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={data.is_email_enabled}
-                onChange={(e) => setData({ ...data, is_email_enabled: e.target.checked })}
-              />
-              {t.settings.showEmail}
-            </label>
+            <Checkbox
+              checked={data.is_email_enabled}
+              onChange={(e) => setData({ ...data, is_email_enabled: e.target.checked })}
+              label={t.settings.showEmail}
+            />
           </div>
           <div className="field">
             <label htmlFor="phone-display">{t.settings.phoneDisplay}</label>
-            <input
+            <FormInput
               id="phone-display"
-              className="input"
               value={data.phone_display}
               onChange={(e) => setData({ ...data, phone_display: e.target.value })}
             />
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={data.is_phone_enabled}
-                onChange={(e) => setData({ ...data, is_phone_enabled: e.target.checked })}
-              />
-              {t.settings.showPhone}
-            </label>
+            <Checkbox
+              checked={data.is_phone_enabled}
+              onChange={(e) => setData({ ...data, is_phone_enabled: e.target.checked })}
+              label={t.settings.showPhone}
+            />
           </div>
         </div>
       </section>
@@ -165,32 +165,28 @@ export function SiteSettingsForm() {
               <div className="link-row" key={kind}>
                 <div className="field">
                   <label htmlFor={`link-${kind}`}>{kindLabels[kind]}</label>
-                  <input
+                  <FormInput
                     id={`link-${kind}`}
-                    className="input"
                     type="url"
                     placeholder="https://"
                     value={link.url}
                     onChange={(e) => updateLink(kind, { url: e.target.value })}
                   />
                 </div>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={link.is_enabled}
-                    onChange={(e) => updateLink(kind, { is_enabled: e.target.checked })}
-                  />
-                  {t.settings.showLink}
-                </label>
+                <Checkbox
+                  checked={link.is_enabled}
+                  onChange={(e) => updateLink(kind, { is_enabled: e.target.checked })}
+                  label={t.settings.showLink}
+                />
               </div>
             );
           })}
         </div>
       </section>
       <div className="form-actions">
-        <button className="button" disabled={saving}>
+        <Button type="submit" disabled={saving}>
           {saving ? t.settings.saving : t.settings.save}
-        </button>
+        </Button>
       </div>
     </form>
   );

@@ -4,6 +4,7 @@ import {
   addFarmProduct,
   cancelFarmStockBatch,
   createFarmStockBatch,
+  deleteFarmImage,
   listFarms,
   listFarmProducts,
   listAvailableFarmProducts,
@@ -17,24 +18,47 @@ const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 beforeEach(() => fetchMock.mockReset());
 
+it("cleans up Farm media on HTTP 204 with keepalive and no JSON parsing", async () => {
+  const response = new Response(null, { status: 204 });
+  const readJson = vi.spyOn(response, "json");
+  fetchMock.mockResolvedValueOnce(response);
+  await expect(deleteFarmImage("image-1", { keepalive: true })).resolves.toBeUndefined();
+  expect(readJson).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/backend/admin/farms/media/image-1",
+    expect.objectContaining({ method: "DELETE", keepalive: true }),
+  );
+});
+
 it("queries farms through the same-origin BFF with filters and pagination", async () => {
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ data: [], meta: {} }),
-  });
+  fetchMock.mockResolvedValue(
+    Response.json({ data: [], meta: { page: 2, page_size: 20, total: 0 } }),
+  );
   await listFarms({ search: "Đà Lạt", is_active: false, page: 2 });
   expect(fetchMock.mock.calls[0][0]).toBe(
     "/api/backend/admin/farms?page=2&search=%C4%90%C3%A0+L%E1%BA%A1t&is_active=false",
   );
 });
 
+it("rejects missing pagination metadata from the Farm collection", async () => {
+  fetchMock.mockResolvedValue(Response.json({ data: [] }));
+  await expect(listFarms()).rejects.toThrow("invalid_response");
+});
+
+it("rejects a Farm page with an invalid record despite valid metadata", async () => {
+  fetchMock.mockResolvedValue(
+    Response.json({
+      data: [{}],
+      meta: { page: 1, page_size: 20, total: 1 },
+    }),
+  );
+  await expect(listFarms()).rejects.toThrow("invalid_response");
+});
+
 it("queries linked Farm products through the BFF with server-side search and pagination", async () => {
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ data: [], meta: { page: 2, total_pages: 3 } }),
-  });
+  fetchMock.mockResolvedValue(
+    Response.json({ data: [], meta: { page: 2, page_size: 20, total: 40 } }),
+  );
   await listFarmProducts("farm-1", { page: 2, search: "rau muống" });
   expect(fetchMock.mock.calls[0][0]).toBe(
     "/api/backend/admin/farms/farm-1/products?page=2&search=rau+mu%E1%BB%91ng",
@@ -42,11 +66,9 @@ it("queries linked Farm products through the BFF with server-side search and pag
 });
 
 it("queries only available Farm products with server-side search and pagination", async () => {
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ data: [], meta: { page: 2, page_size: 30, total: 31 } }),
-  });
+  fetchMock.mockResolvedValue(
+    Response.json({ data: [], meta: { page: 2, page_size: 30, total: 31 } }),
+  );
   await listAvailableFarmProducts("farm-1", { page: 2, search: "rau muống" });
   expect(fetchMock.mock.calls[0][0]).toBe(
     "/api/backend/admin/farms/farm-1/available-products?page=2&search=rau+mu%E1%BB%91ng",
@@ -54,11 +76,7 @@ it("queries only available Farm products with server-side search and pagination"
 });
 
 it("sends Farm version and photo IDs without sending tracker counts", async () => {
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ data: { id: "farm-1" } }),
-  });
+  fetchMock.mockResolvedValue(Response.json({ data: { id: "farm-1" } }));
   await saveFarm("farm-1", {
     version: 3,
     name_vi: "Nông trại Xanh",
@@ -73,8 +91,16 @@ it("sends Farm version and photo IDs without sending tracker counts", async () =
   });
 });
 
+it("does not treat a Farm save with a missing record ID as authoritative", async () => {
+  fetchMock.mockResolvedValue(Response.json({ data: {} }, { status: 201 }));
+  await expect(saveFarm(undefined, { name_vi: "Nông trại Xanh" })).rejects.toThrow(
+    "invalid_response",
+  );
+  expect(fetchMock).toHaveBeenCalledOnce();
+});
+
 it("creates a Farm product together with its first stock batch", async () => {
-  fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ data: {} }) });
+  fetchMock.mockResolvedValue(Response.json({ data: { id: "link-1" } }, { status: 201 }));
 
   await addFarmProduct("farm-1", "product-1", {
     start_date: "2026-10-26",
@@ -93,11 +119,9 @@ it("creates a Farm product together with its first stock batch", async () => {
 });
 
 it("lists, creates, updates, and cancels Farm stock batches through the BFF", async () => {
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ data: [], meta: {} }),
-  });
+  fetchMock
+    .mockResolvedValueOnce(Response.json({ data: [], meta: { page: 2, page_size: 20, total: 0 } }))
+    .mockImplementation(() => Promise.resolve(Response.json({ data: { id: "batch-1" } })));
 
   await listFarmStockBatches("farm-1", "product-1", { page: 2, status: "active" });
   await createFarmStockBatch("farm-1", "product-1", {
@@ -134,7 +158,7 @@ it("lists, creates, updates, and cancels Farm stock batches through the BFF", as
 });
 
 it("enables an existing Farm profile", async () => {
-  fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: {} }) });
+  fetchMock.mockResolvedValue(Response.json({ data: { id: "farm-1" } }));
   await enableFarmTracker("farm-1", { signup_count: 4, one_month_signup_count: 1 });
   expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/admin/farms/farm-1/growth-tracker");
   expect(fetchMock.mock.calls[0][1].method).toBe("POST");

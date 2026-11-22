@@ -1,4 +1,7 @@
 "use client";
+import { Stack, Alert, Button, Table } from "@mantine/core";
+
+import { FormField, FormSelect, Status } from "@/components/nfv-controls";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -9,9 +12,10 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { formatAdminDate } from "@/lib/admin-date";
 import { listStoreCategories, listStoreProducts } from "@/lib/commerce-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { categoryPath } from "@/lib/store-categories";
 import type { StoreCategory, StoreProduct } from "@/lib/types";
@@ -19,6 +23,18 @@ import { usePaginatedList } from "@/lib/use-paginated-list";
 
 function booleanFilter(value: string) {
   return value === "true" ? true : value === "false" ? false : undefined;
+}
+
+function validateProductRecord(product: StoreProduct) {
+  requireResponseEntity(product);
+  requireResponseList(product.translations, (translation) => {
+    if (!isApiObject(translation) || typeof translation.name !== "string") {
+      throw invalidApiResponse();
+    }
+  });
+  if (typeof product.retail_price_vnd !== "string" || !/^\d+$/u.test(product.retail_price_vnd)) {
+    throw invalidApiResponse();
+  }
 }
 
 export function StoreProductList() {
@@ -81,6 +97,7 @@ export function StoreProductList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { items, meta, loading, error, reload, setPage } = usePaginatedList<StoreProduct>({
     fetchPage,
+    validateRecord: validateProductRecord,
     getErrorMessage,
     controlledPage: page,
     onPage: (next) => navigate({ page: next > 1 ? String(next) : "" }),
@@ -101,57 +118,52 @@ export function StoreProductList() {
         clearLabel={t.common.clearFilters}
         filter={
           <>
-            <label className="field">
-              <span>{copy.category}</span>
-              <select
-                className="input"
+            <FormField label={copy.category} className="field">
+              <FormSelect
                 value={categoryId}
-                onChange={(event) => navigate({ category_id: event.target.value, page: "" })}
-              >
-                <option value="">{copy.all}</option>
-                {categories.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {categoryPath(item, categories, locale)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>{copy.status}</span>
-              <select
-                className="input"
+                onChange={(selection) => navigate({ category_id: selection ?? "", page: "" })}
+                data={[
+                  { value: "", label: copy.all },
+                  ...categories.map((item) => ({
+                    value: item.id,
+                    label: categoryPath(item, categories, locale),
+                  })),
+                ]}
+              />
+            </FormField>
+            <FormField label={copy.status} className="field">
+              <FormSelect
                 value={published}
-                onChange={(event) => navigate({ is_published: event.target.value, page: "" })}
-              >
-                <option value="">{copy.all}</option>
-                <option value="true">{copy.published}</option>
-                <option value="false">{copy.draft}</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>{copy.activeLabel}</span>
-              <select
-                className="input"
+                onChange={(selection) => navigate({ is_published: selection ?? "", page: "" })}
+                data={[
+                  { value: "", label: copy.all },
+                  { value: "true", label: copy.published },
+                  { value: "false", label: copy.draft },
+                ]}
+              />
+            </FormField>
+            <FormField label={copy.activeLabel} className="field">
+              <FormSelect
                 value={active}
-                onChange={(event) => navigate({ is_active: event.target.value, page: "" })}
-              >
-                <option value="">{copy.all}</option>
-                <option value="true">{copy.active}</option>
-                <option value="false">{copy.inactive}</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>{copy.saleType}</span>
-              <select
-                className="input"
+                onChange={(selection) => navigate({ is_active: selection ?? "", page: "" })}
+                data={[
+                  { value: "", label: copy.all },
+                  { value: "true", label: copy.active },
+                  { value: "false", label: copy.inactive },
+                ]}
+              />
+            </FormField>
+            <FormField label={copy.saleType} className="field">
+              <FormSelect
                 value={csa}
-                onChange={(event) => navigate({ csa_eligible: event.target.value, page: "" })}
-              >
-                <option value="">{copy.all}</option>
-                <option value="true">{copy.csaSaleOption}</option>
-                <option value="false">{copy.retailOnly}</option>
-              </select>
-            </label>
+                onChange={(selection) => navigate({ csa_eligible: selection ?? "", page: "" })}
+                data={[
+                  { value: "", label: copy.all },
+                  { value: "true", label: copy.csaSaleOption },
+                  { value: "false", label: copy.retailOnly },
+                ]}
+              />
+            </FormField>
           </>
         }
         hasFilters={Boolean(query || search || categoryId || active || published || csa)}
@@ -177,15 +189,14 @@ export function StoreProductList() {
         searchSubmitLabel={copy.search}
       />
       {categoryError && (
-        <p className="error-box" role="alert">
-          {categoryError}{" "}
-          <button
-            className="button secondary"
-            onClick={() => setCategoryRetry((value) => value + 1)}
-          >
-            {t.common.retry}
-          </button>
-        </p>
+        <Alert color="red" role="alert">
+          <Stack gap="sm" align="flex-start">
+            {categoryError}{" "}
+            <Button variant="default" onClick={() => setCategoryRetry((value) => value + 1)}>
+              {t.common.retry}
+            </Button>
+          </Stack>
+        </Alert>
       )}
       <ListState
         empty={copy.noProducts}
@@ -198,27 +209,27 @@ export function StoreProductList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap">
-          <table className="table store-product-table">
-            <thead>
-              <tr>
-                <th>{copy.productName}</th>
-                <th>{copy.category}</th>
-                <th>{copy.price}</th>
-                <th>{copy.saleType}</th>
-                <th>{copy.status}</th>
-                <th>{copy.updatedAt}</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap">
+          <Table role="table" className="store-product-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{copy.productName}</Table.Th>
+                <Table.Th role="columnheader">{copy.category}</Table.Th>
+                <Table.Th role="columnheader">{copy.price}</Table.Th>
+                <Table.Th role="columnheader">{copy.saleType}</Table.Th>
+                <Table.Th role="columnheader">{copy.status}</Table.Th>
+                <Table.Th role="columnheader">{copy.updatedAt}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => {
                 const name =
                   item.translations.find((value) => value.locale === locale)?.name ||
                   item.translations[0]?.name ||
                   item.sku;
                 return (
-                  <tr key={item.id}>
-                    <td data-label={copy.productName}>
+                  <Table.Tr role="row" key={item.id}>
+                    <Table.Td role="cell" data-label={copy.productName}>
                       <div className="store-product-identity">
                         {item.primary_image && (
                           <Image
@@ -239,32 +250,38 @@ export function StoreProductList() {
                           <small className="table-secondary">{item.sku}</small>
                         </div>
                       </div>
-                    </td>
-                    <td data-label={copy.category}>
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.category}>
                       {labels.get(item.category_id) ?? item.category_slug}
-                    </td>
-                    <td data-label={copy.price}>
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.price}>
                       {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
                         BigInt(item.retail_price_vnd),
                       )}{" "}
                       ₫
-                    </td>
-                    <td data-label={copy.saleType}>
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.saleType}>
                       {item.csa_quota_group_id ? copy.csaEligible : copy.retailOnly}
-                    </td>
-                    <td data-label={copy.status}>
-                      <span className={`badge ${item.is_published ? "" : "warm"}`}>
-                        {item.is_published ? copy.published : copy.draft}
-                      </span>{" "}
-                      {!item.is_active && <span className="badge warm">{copy.inactive}</span>}
-                    </td>
-                    <td data-label={copy.updatedAt}>{formatAdminDate(item.updated_at)}</td>
-                  </tr>
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.status}>
+                      <Status
+                        domain="publication"
+                        status={item.is_published ? "published" : "draft"}
+                        label={item.is_published ? copy.published : copy.draft}
+                      />{" "}
+                      {!item.is_active && (
+                        <Status domain="availability" status={"inactive"} label={copy.inactive} />
+                      )}
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.updatedAt}>
+                      {formatAdminDate(item.updated_at)}
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deleteStoreProductImage, listStoreProducts, saveStoreProduct } from "@/lib/commerce-api";
+import {
+  deleteStoreProductImage,
+  listStoreCategories,
+  listStoreProducts,
+  saveStoreProduct,
+} from "@/lib/commerce-api";
 import { fromLegacyPackageItems, toLegacyPackageItems } from "@/lib/membership-catalog-adapter";
 import { categoryDescendantIds, categoryPath, categoryTreeRows } from "@/lib/store-categories";
 import type { StoreCategory } from "@/lib/types";
@@ -11,12 +16,44 @@ vi.stubGlobal("fetch", fetchMock);
 beforeEach(() => fetchMock.mockReset());
 
 describe("Commerce API and compatibility adapter", () => {
+  it("accepts an empty unpaginated category response", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [] }));
+    await expect(listStoreCategories()).resolves.toEqual([]);
+  });
+
+  it("rejects an object in place of an unpaginated category list", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: {} }));
+    await expect(listStoreCategories()).rejects.toThrow("invalid_response");
+  });
+
+  it("rejects a malformed category record in an unpaginated response", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [null] }));
+    await expect(listStoreCategories()).rejects.toThrow("invalid_response");
+  });
+
+  it("rejects a product save without an identifier", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: {} }, { status: 201 }));
+    const payload = {
+      sku: "RAU-1",
+      category_id: "category",
+      unit_size: "0.500",
+      unit_label_vi: "kg",
+      unit_label_en: "kg",
+      retail_price_vnd: "1000",
+      csa_quota_group_id: null,
+      csa_quota_cost: 0,
+      primary_image_id: null,
+      is_active: false,
+      is_published: false,
+      translations: [],
+    };
+    await expect(saveStoreProduct(payload)).rejects.toThrow("invalid_response");
+  });
+
   it("serializes product filters through the existing same-origin BFF", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ data: [], meta: { page: 2, page_size: 30, total: 0 } }),
-    });
+    fetchMock.mockResolvedValue(
+      Response.json({ data: [], meta: { page: 2, page_size: 30, total: 0 } }),
+    );
     await listStoreProducts({ page: 2, search: "rau", is_active: false, csa_eligible: true });
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/backend/admin/store-products?page=2&search=rau&is_active=false&csa_eligible=true",
@@ -24,11 +61,7 @@ describe("Commerce API and compatibility adapter", () => {
   });
 
   it("keeps VND as a lossless decimal integer string in product writes", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ data: { id: "product" } }),
-    });
+    fetchMock.mockResolvedValue(Response.json({ data: { id: "product" } }, { status: 201 }));
     await saveStoreProduct({
       sku: "RAU-1",
       slug: "rau-1",
@@ -51,11 +84,7 @@ describe("Commerce API and compatibility adapter", () => {
   });
 
   it("keeps orphan-image cleanup alive while leaving the editor", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 204,
-      json: async () => ({}),
-    });
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
     await deleteStoreProductImage("image-1", { keepalive: true });
 

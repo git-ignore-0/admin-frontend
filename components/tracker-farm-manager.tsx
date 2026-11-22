@@ -1,4 +1,8 @@
 "use client";
+import { IconEdit, IconTrash } from "@tabler/icons-react";
+import { Alert, ActionIcon, Button, Table } from "@mantine/core";
+
+import { Status } from "@/components/nfv-controls";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -18,7 +22,9 @@ import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { ListState } from "@/components/list-state";
 import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { api } from "@/lib/client-api";
+import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
+import { disableFarmTracker } from "@/lib/farms-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import type { AdminDictionary } from "@/lib/admin-i18n";
@@ -96,7 +102,10 @@ export function TrackerFarmManager() {
     if (showLoading) setLoading(true);
     setLoadError("");
     try {
-      const latest = await api<TrackerFarm[]>("admin/tracker-farms");
+      const latest = requireResponseList(
+        await api<TrackerFarm[]>("admin/tracker-farms"),
+        requireResponseEntity,
+      );
       setFarms(latest);
       setSavedFarms(latest);
       return latest;
@@ -154,6 +163,7 @@ export function TrackerFarmManager() {
           })),
         }),
       });
+      requireResponseList(saved, requireResponseEntity);
       setFarms(saved);
       setSavedFarms(saved);
       toast(t.trackerFarms.orderSaved);
@@ -200,7 +210,7 @@ export function TrackerFarmManager() {
     setDeleting(true);
     setDeleteError("");
     try {
-      await apiEnvelope(`admin/farms/${deleteTarget.id}/growth-tracker`, { method: "DELETE" });
+      await disableFarmTracker(deleteTarget.id);
       setFarms((current) => current?.filter((farm) => farm.id !== deleteTarget.id) ?? []);
       setSavedFarms((current) => current.filter((farm) => farm.id !== deleteTarget.id));
       setDeleteTarget(null);
@@ -216,14 +226,15 @@ export function TrackerFarmManager() {
     <>
       <PageHeading
         action={
-          <Link
+          <Button
+            component={Link}
             aria-haspopup={orderDirty ? "dialog" : undefined}
-            className="button"
+
             href="/tracker-farms/new"
             onClick={(event) => guardNavigation(event, "/tracker-farms/new")}
           >
             {t.trackerFarms.create}
-          </Link>
+          </Button>
         }
         description={t.page.trackerFarmsDescription}
         title={t.common.trackerFarms}
@@ -248,8 +259,8 @@ export function TrackerFarmManager() {
               <p className="muted-copy">{t.trackerFarms.reorderHelp}</p>
               {orderDirty && (
                 <div className="tracker-order-actions">
-                  <button
-                    className="button secondary"
+                  <Button
+                    variant="default"
                     disabled={savingOrder}
                     onClick={() => {
                       setFarms(savedFarms);
@@ -259,25 +270,28 @@ export function TrackerFarmManager() {
                     type="button"
                   >
                     {t.trackerFarms.cancelOrder}
-                  </button>
-                  <button
-                    className="button"
+                  </Button>
+                  <Button
                     disabled={savingOrder}
                     onClick={() => void saveOrderChanges()}
                     type="button"
                   >
                     {savingOrder ? t.trackerFarms.savingOrder : t.trackerFarms.saveOrder}
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
             {reorderError && (
-              <p className="error-box" role="alert">
+              <Alert color="red" role="alert">
                 {reorderError}
-              </p>
+              </Alert>
             )}
-            <div className="table-wrap admin-list-wrap">
-              <table className="table admin-list-table tracker-farm-table">
+            <Table.ScrollContainer
+              type="native"
+              minWidth={0}
+              className="table-wrap admin-list-wrap"
+            >
+              <Table role="table" className="admin-list-table tracker-farm-table">
                 <colgroup>
                   <col className="tracker-farm-order-column" />
                   <col className="tracker-farm-image-column" />
@@ -288,19 +302,31 @@ export function TrackerFarmManager() {
                   <col className="tracker-farm-visibility-column" />
                   <col className="tracker-farm-actions-column" />
                 </colgroup>
-                <thead>
-                  <tr>
-                    <th aria-label={t.trackerFarms.order} scope="col" />
-                    <th aria-label={t.trackerFarms.image} scope="col" />
-                    <th scope="col">{t.trackerFarms.farmName}</th>
-                    <th scope="col">{t.trackerFarms.location}</th>
-                    <th scope="col">{t.trackerFarms.signups}</th>
-                    <th scope="col">{t.trackerFarms.milestone}</th>
-                    <th scope="col">{t.trackerFarms.visibility}</th>
-                    <th scope="col">{t.trackerFarms.actions}</th>
-                  </tr>
-                </thead>
-                <tbody>
+                <Table.Thead role="rowgroup">
+                  <Table.Tr role="row">
+                    <Table.Th role="columnheader" aria-label={t.trackerFarms.order} scope="col" />
+                    <Table.Th role="columnheader" aria-label={t.trackerFarms.image} scope="col" />
+                    <Table.Th role="columnheader" scope="col">
+                      {t.trackerFarms.farmName}
+                    </Table.Th>
+                    <Table.Th role="columnheader" scope="col">
+                      {t.trackerFarms.location}
+                    </Table.Th>
+                    <Table.Th role="columnheader" scope="col">
+                      {t.trackerFarms.signups}
+                    </Table.Th>
+                    <Table.Th role="columnheader" scope="col">
+                      {t.trackerFarms.milestone}
+                    </Table.Th>
+                    <Table.Th role="columnheader" scope="col">
+                      {t.trackerFarms.visibility}
+                    </Table.Th>
+                    <Table.Th role="columnheader" scope="col">
+                      {t.trackerFarms.actions}
+                    </Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody role="rowgroup">
                   {farms.map((farm, index) => {
                     const name = locale === "vi" ? farm.name_vi : farm.name_en;
                     const location = locale === "vi" ? farm.location_vi : farm.location_en;
@@ -308,7 +334,8 @@ export function TrackerFarmManager() {
                     const deleteLabel = t.trackerFarms.delete.replace("{name}", name);
 
                     return (
-                      <tr
+                      <Table.Tr
+                        role="row"
                         className={draggedId === farm.id ? "is-dragging" : undefined}
                         key={farm.id}
                         onDragOver={(event) => {
@@ -323,9 +350,9 @@ export function TrackerFarmManager() {
                           setDraggedId("");
                         }}
                       >
-                        <td data-label={t.trackerFarms.order}>
+                        <Table.Td role="cell" data-label={t.trackerFarms.order}>
                           <div className="tracker-order-controls">
-                            <button
+                            <Button
                               aria-label={t.trackerFarms.drag.replace("{name}", name)}
                               className="tracker-drag-handle"
                               disabled={orderLocked}
@@ -335,81 +362,73 @@ export function TrackerFarmManager() {
                               type="button"
                             >
                               <span aria-hidden="true">⠿</span>
-                            </button>
+                            </Button>
                             <div className="tracker-order-buttons">
-                              <button
+                              <Button
                                 aria-label={t.trackerFarms.moveUp.replace("{name}", name)}
                                 disabled={orderLocked || index === 0}
                                 onClick={() => moveFarm(farm.id, index - 1)}
                                 type="button"
                               >
                                 ↑
-                              </button>
-                              <button
+                              </Button>
+                              <Button
                                 aria-label={t.trackerFarms.moveDown.replace("{name}", name)}
                                 disabled={orderLocked || index === farms.length - 1}
                                 onClick={() => moveFarm(farm.id, index + 1)}
                                 type="button"
                               >
                                 ↓
-                              </button>
+                              </Button>
                             </div>
                           </div>
-                        </td>
-                        <td
+                        </Table.Td>
+                        <Table.Td
+                          role="cell"
                           className="tracker-farm-thumbnail-cell"
                           data-label={t.trackerFarms.image}
                         >
                           <FarmThumbnail farm={farm} name={name} />
-                        </td>
-                        <td data-label={t.trackerFarms.farmName}>
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={t.trackerFarms.farmName}>
                           <strong lang={locale}>{name}</strong>
-                        </td>
-                        <td data-label={t.trackerFarms.location}>
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={t.trackerFarms.location}>
                           <span lang={locale}>{location}</span>
-                        </td>
-                        <td data-label={t.trackerFarms.signups}>
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={t.trackerFarms.signups}>
                           <strong>{farm.signup_count}</strong>
-                        </td>
-                        <td data-label={t.trackerFarms.milestone}>
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={t.trackerFarms.milestone}>
                           {milestoneLabel(farm.signup_count, t)}
-                        </td>
-                        <td data-label={t.trackerFarms.visibility}>
-                          <span className={`badge ${farm.is_visible ? "" : "warm"}`}>
-                            {farm.is_visible ? t.trackerFarms.visible : t.trackerFarms.hidden}
-                          </span>
-                        </td>
-                        <td data-label={t.trackerFarms.actions}>
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={t.trackerFarms.visibility}>
+                          <Status
+                            domain="visibility"
+                            status={farm.is_visible ? "visible" : "hidden"}
+                            label={farm.is_visible ? t.trackerFarms.visible : t.trackerFarms.hidden}
+                          />
+                        </Table.Td>
+                        <Table.Td role="cell" data-label={t.trackerFarms.actions}>
                           <div className="tracker-row-actions">
-                            <Link
+                            <ActionIcon
+                              component={Link}
                               aria-label={editLabel}
                               aria-haspopup={orderDirty ? "dialog" : undefined}
-                              className="button secondary icon-only-action"
+                              variant="default"
+
                               href={`/tracker-farms/${farm.id}`}
                               onClick={(event) =>
                                 guardNavigation(event, `/tracker-farms/${farm.id}`)
                               }
                               title={editLabel}
                             >
-                              <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
-                                <path
-                                  d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
-                                  stroke="currentColor"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="1.8"
-                                />
-                                <path
-                                  d="m13.5 8.5 3 3"
-                                  stroke="currentColor"
-                                  strokeLinecap="round"
-                                  strokeWidth="1.8"
-                                />
-                              </svg>
-                            </Link>
-                            <button
+                              <IconEdit aria-hidden="true" size={18} stroke={1.8} />
+                            </ActionIcon>
+                            <ActionIcon
                               aria-label={deleteLabel}
-                              className="button danger icon-only-action"
+                              color="red"
+
                               disabled={mutationLocked}
                               onClick={() => {
                                 setDeleteError("");
@@ -418,24 +437,16 @@ export function TrackerFarmManager() {
                               title={deleteLabel}
                               type="button"
                             >
-                              <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
-                                <path
-                                  d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"
-                                  stroke="currentColor"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="1.8"
-                                />
-                              </svg>
-                            </button>
+                              <IconTrash aria-hidden="true" size={18} stroke={1.8} />
+                            </ActionIcon>
                           </div>
-                        </td>
-                      </tr>
+                        </Table.Td>
+                      </Table.Tr>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
           </>
         )}
       </section>

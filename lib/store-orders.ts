@@ -1,5 +1,7 @@
 import { formatAdminDate } from "@/lib/admin-date";
+import { requirePaginatedList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import type {
   PaginationMeta,
   StoreOrder,
@@ -63,25 +65,56 @@ export function buildStoreOrderQuery(query: StoreOrderQuery) {
   return params.toString();
 }
 
-export function listStoreOrders(query: StoreOrderQuery = {}) {
-  return apiEnvelope<StoreOrder[], PaginationMeta>(
-    `admin/store-orders?${buildStoreOrderQuery(query)}`,
+function hasStoreOrderSummary(order: StoreOrder) {
+  return (
+    isApiObject(order) &&
+    typeof order.id === "string" &&
+    typeof order.reference_code === "string" &&
+    storeOrderDisplayStatuses.includes(order.status) &&
+    typeof order.payment_status === "string" &&
+    typeof order.total_vnd === "string" &&
+    typeof order.created_at === "string" &&
+    typeof order.server_time === "string" &&
+    (order.expires_at === null || typeof order.expires_at === "string") &&
+    isApiObject(order.shipping_address) &&
+    typeof order.shipping_address.recipient_name === "string" &&
+    typeof order.shipping_address.phone_number === "string" &&
+    (order.csa === undefined || (isApiObject(order.csa) && isApiObject(order.csa.round)))
   );
+}
+
+export async function listStoreOrders(query: StoreOrderQuery = {}) {
+  const payload = await apiEnvelope<StoreOrder[], PaginationMeta>(
+    `admin/store-orders?${buildStoreOrderQuery(query)}`,
+  ).then(requirePaginatedList);
+  if (!payload.data.every(hasStoreOrderSummary)) throw invalidApiResponse();
+  return payload;
 }
 
 export function getStoreOrder(id: string) {
   return api<StoreOrder>(`admin/store-orders/${id}`);
 }
 
-export function mutateStoreOrder(
+export async function mutateStoreOrder(
   id: string,
   action: StoreOrderAction,
   payload: Record<string, unknown>,
 ) {
-  return api<StoreOrder>(`admin/store-orders/${id}/${action}`, {
+  const updated = await api<StoreOrder>(`admin/store-orders/${id}/${action}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  if (
+    !hasStoreOrderSummary(updated) ||
+    updated.id !== id ||
+    !Array.isArray(updated.lines) ||
+    !updated.lines.every(isApiObject) ||
+    (updated.allocations !== undefined && !Array.isArray(updated.allocations)) ||
+    (updated.csa !== undefined && !isApiObject(updated.csa.selection))
+  ) {
+    throw invalidApiResponse();
+  }
+  return updated;
 }
 
 export function formatStoreMoney(value: string, locale: AdminLocale) {

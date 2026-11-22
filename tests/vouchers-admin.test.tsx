@@ -1,3 +1,4 @@
+import { selectOption } from "@/tests/select-option";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -60,7 +61,7 @@ it.each(["csa", "store", "both"])(
     editor();
     await screen.findByLabelText("Application scope *");
     fill();
-    fireEvent.change(screen.getByLabelText("Application scope *"), { target: { value: scope } });
+    selectOption(screen.getByLabelText("Application scope *"), scope);
     expect(screen.queryByText("CSA conditions")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Voucher preview" })).toBeNull();
     expect(api).not.toHaveBeenCalledWith("admin/vouchers/options");
@@ -126,9 +127,7 @@ it("renders all scopes, treats old responses as CSA and filters via backend", as
   expect(screen.getByRole("cell", { name: /Both/ })).toBeVisible();
   expect(screen.getByRole("cell", { name: "Store orders" })).toBeVisible();
   expect(screen.getByRole("cell", { name: /CSA packages/ })).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Filter application scope"), {
-    target: { value: "both" },
-  });
+  selectOption(screen.getByLabelText("Filter application scope"), "both");
   await waitFor(() =>
     expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("application_scope=both"),
   );
@@ -139,7 +138,7 @@ it("keeps creation simple when switching application scopes", async () => {
   editor();
   await screen.findByLabelText("Coupon code *");
   for (const scope of ["both", "store", "csa"]) {
-    fireEvent.change(screen.getByLabelText("Application scope *"), { target: { value: scope } });
+    selectOption(screen.getByLabelText("Application scope *"), scope);
     expect(screen.queryByText("CSA conditions")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Voucher preview" })).toBeNull();
   }
@@ -166,7 +165,7 @@ it.each(["vi", "en"] as const)(
       expect(couponErrorMessage(new Error(code), t)).toBe(message);
     }
     expect(couponErrorMessage(new Error("forbidden"), t)).toBe(t.common.forbidden);
-    expect(couponErrorMessage(new Error("upstream_timeout"), t)).toBe(t.common.networkError);
+    expect(couponErrorMessage(new Error("upstream_timeout"), t)).toBe(t.common.requestTimeout);
     expect(couponErrorMessage(new Error("__proto__"), t)).toBe(t.common.requestFailed);
     expect(couponErrorMessage(new Error("Unknown stack trace or secret"), t)).toBe(
       t.common.requestFailed,

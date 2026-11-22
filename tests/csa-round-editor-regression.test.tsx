@@ -4,7 +4,10 @@ import { AdminI18nProvider, useAdminI18n } from "@/components/admin-i18n-provide
 import { CSARoundEditor } from "@/components/csa-round-editor";
 import { api, apiEnvelope } from "@/lib/client-api";
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
@@ -29,16 +32,18 @@ it("preserves unsaved round edits when switching locale", async () => {
       <CSARoundEditor roundId="r" />
     </AdminI18nProvider>,
   );
-  fireEvent.change(await screen.findByLabelText("Round name"), {
+  fireEvent.change(await screen.findByRole("textbox", { name: "Round name" }), {
     target: { value: "Unsaved new name" },
   });
-  expect(screen.getByLabelText("Round name")).toHaveValue("Unsaved new name");
-  fireEvent.change(screen.getByLabelText("Selection opens"), {
+  expect(screen.getByRole("textbox", { name: "Round name" })).toHaveValue("Unsaved new name");
+  fireEvent.change(screen.getByLabelText(/^Selection opens/), {
     target: { value: "2026-11-20T10:00" },
   });
   fireEvent.click(screen.getByText("Switch locale"));
-  await waitFor(() => expect(screen.getByLabelText("Tên đợt")).toHaveValue("Unsaved new name"));
-  expect(screen.getByLabelText("Bắt đầu chọn hàng")).toHaveValue("2026-11-20T10:00");
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Tên đợt" })).toHaveValue("Unsaved new name"),
+  );
+  expect(screen.getByLabelText(/^Bắt đầu chọn hàng/)).toHaveValue("2026-11-20T10:00");
   expect(api).toHaveBeenCalledTimes(1);
   expect(apiEnvelope).not.toHaveBeenCalled();
 });

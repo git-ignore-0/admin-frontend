@@ -1,0 +1,58 @@
+.strip {
+  overflow-x: auto;
+  padding: 3px 3px 7px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.tile {
+  position: relative;
+  flex: none;
+  display: grid;
+  width: 80px;
+  height: 80px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--surface-subtle);
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tile[aria-pressed="true"] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.add {
+  gap: 2px;
+  align-content: center;
+  border-style: dashed;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.add:hover:not(:disabled) {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.note {
+  overflow-wrap: anywhere;
+}
+
+.position {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 420px) {
+  .position {
+    display: none;
+  }
+}

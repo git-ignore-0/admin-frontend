@@ -1,4 +1,5 @@
 "use client";
+import { Alert } from "@mantine/core";
 
 import { useEffect, useState } from "react";
 
@@ -37,7 +38,11 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeading title={t.common.dashboard} description={t.page.dashboardDescription} />
-      {error && <p className="error-box">{error}</p>}
+      {error && (
+        <Alert color="red" role="alert">
+          {error}
+        </Alert>
+      )}
       <section className="stats" aria-label={t.dashboard.statsLabel}>
         <div className="stat">
           <strong>{data?.upcoming ?? "—"}</strong>

@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import {
   act,
   cleanup,
@@ -12,13 +13,26 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import PackageEditPage from "@/app/(admin)/membership-catalog/packages/[id]/edit/page";
+import PackageDetailPage from "@/app/(admin)/membership-catalog/packages/[id]/page";
+import NewPackagePage from "@/app/(admin)/membership-catalog/packages/new/page";
+import ProductEditPage from "@/app/(admin)/membership-catalog/products/[id]/edit/page";
+import ProductDetailPage from "@/app/(admin)/membership-catalog/products/[id]/page";
+import NewProductPage from "@/app/(admin)/membership-catalog/products/new/page";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { MembershipPackageDetail } from "@/components/membership-catalog-detail";
 import {
   MembershipPackageEditor,
   MembershipProductEditor,
 } from "@/components/membership-catalog-editors";
-import { MembershipPackageList } from "@/components/membership-catalog-lists";
+import {
+  MembershipPackageList,
+  MembershipProductList,
+} from "@/components/membership-catalog-lists";
 import { MembershipDetail } from "@/components/membership-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope, apiFile } from "@/lib/client-api";
@@ -32,17 +46,18 @@ import type {
   PaginationMeta,
 } from "@/lib/types";
 
-const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), search: "" }));
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn(), apiFile: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: navigation.push, replace: navigation.replace, refresh: vi.fn() }),
   usePathname: () => "/memberships",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 afterEach(() => {
   cleanup();
+  navigation.search = "";
   vi.useRealTimers();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -227,13 +242,185 @@ function mockCatalogLookups() {
   });
 }
 
+function CatalogBreadcrumbLinks() {
+  const items = useAdminBreadcrumbs([]);
+  return (
+    <nav aria-label="Breadcrumb">
+      {items.map(({ href, label }) =>
+        href ? (
+          <a href={href} key={label}>
+            {label}
+          </a>
+        ) : (
+          <span key={label}>{label}</span>
+        ),
+      )}
+    </nav>
+  );
+}
+
+describe.each([
+  {
+    resource: "products",
+    record: product,
+    listLabel: "CSA quota groups",
+    create: "Create quota group",
+    edit: "Edit quota group",
+    backToList: "Quota-group list",
+    backToDetail: "Quota-group details",
+    List: MembershipProductList,
+    DetailPage: ProductDetailPage,
+    EditPage: ProductEditPage,
+    NewPage: NewProductPage,
+  },
+  {
+    resource: "packages",
+    record: packageItem,
+    listLabel: "CSA packages",
+    create: "Create package",
+    edit: "Edit package",
+    backToList: "Package list",
+    backToDetail: "Package details",
+    List: MembershipPackageList,
+    DetailPage: PackageDetailPage,
+    EditPage: PackageEditPage,
+    NewPage: NewPackagePage,
+  },
+])("CSA $resource navigation", (fixture) => {
+  const { resource, record, listLabel, create, edit, backToList, backToDetail } = fixture;
+  const { List, DetailPage, EditPage, NewPage } = fixture;
+  const listPath = `/membership-catalog/${resource}`;
+  const recordPath = `${listPath}/${record.id}`;
+  const query = "?search=CSA+%26+farm&active=true&page=3";
+
+  function renderPage(pathname: string, page: React.ReactNode) {
+    return providers(
+      <AdminBreadcrumbProvider pathname={pathname} search={query}>
+        <CatalogBreadcrumbLinks />
+        {page}
+      </AdminBreadcrumbProvider>,
+    );
+  }
+
+  function breadcrumb(name: string) {
+    return within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", {
+      name,
+    });
+  }
+
+  it("preserves list context when opening the create or detail route", async () => {
+    navigation.search = query;
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [record],
+      meta: { ...meta, page: 3, total: 61 },
+    });
+    providers(<List />);
+
+    expect(await screen.findByRole("link", { name: record.name })).toHaveAttribute(
+      "href",
+      `${recordPath}${query}`,
+    );
+    expect(screen.getByRole("link", { name: create })).toHaveAttribute(
+      "href",
+      `${listPath}/new${query}`,
+    );
+    expect(apiEnvelope).toHaveBeenCalledWith(
+      `admin/membership-${resource}?page=3&search=CSA+%26+farm&active=true`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("preserves list context in detail back, edit and breadcrumb links", async () => {
+    navigation.search = query;
+    vi.mocked(api).mockResolvedValue(record);
+    renderPage(recordPath, await DetailPage({ params: Promise.resolve({ id: record.id }) }));
+
+    expect(await screen.findByRole("link", { name: backToList })).toHaveAttribute(
+      "href",
+      `${listPath}${query}`,
+    );
+    expect(screen.getByRole("link", { name: edit })).toHaveAttribute(
+      "href",
+      `${recordPath}/edit${query}`,
+    );
+    expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+  });
+
+  it("returns to the filtered list from the create heading, breadcrumb and Cancel", async () => {
+    navigation.search = query;
+    mockCatalogLookups();
+    renderPage(`${listPath}/new`, NewPage());
+
+    expect(screen.getByRole("link", { name: backToList })).toHaveAttribute(
+      "href",
+      `${listPath}${query}`,
+    );
+    expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(navigation.push).toHaveBeenCalledWith(`${listPath}${query}`);
+  });
+
+  it("retains list context in the edit heading, breadcrumbs and save or cancel destination", async () => {
+    navigation.search = query;
+    mockCatalogLookups();
+    vi.mocked(api).mockResolvedValue(record);
+    renderPage(
+      `${recordPath}/edit`,
+      await EditPage({ params: Promise.resolve({ id: record.id }) }),
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: backToDetail }),
+    ).toHaveAttribute("href", `${recordPath}${query}`);
+    expect(breadcrumb(backToDetail)).toHaveAttribute("href", `${recordPath}${query}`);
+    expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(navigation.push).toHaveBeenCalledWith(`${recordPath}${query}`);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith(`${recordPath}${query}`));
+  });
+});
+
 async function fillBilingualNames() {
   fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "CSA package" } });
   fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
   fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "Gói CSA" } });
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "CSA quota group 1" })).toBeEnabled(),
+  );
 }
 
 describe("CSA package price options", () => {
+  it("retains the selected quota group and draft units when jumping to another catalog page", async () => {
+    const lastGroup = {
+      ...product,
+      id: "f76403bc-1ee2-4b11-bfac-f3a9035a6b02",
+      name: "Fruit basket",
+      translations: [],
+    };
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+      return { data: [page === 1 ? product : lastGroup], meta: { ...meta, page, total: 61 } };
+    });
+    providers(<MembershipPackageEditor />);
+    await fillBilingualNames();
+
+    const group = screen.getByRole("combobox", { name: "CSA quota group 1" });
+    selectOption(group, product.id);
+    const units = screen.getByLabelText("Included units each month 1");
+    fireEvent.change(units, { target: { value: "9" } });
+    const pages = screen.getByRole("navigation", { name: "Page 1/3" });
+    fireEvent.click(within(pages).getByRole("button", { name: "3" }));
+    expect(await screen.findByRole("navigation", { name: "Page 3/3" })).toBeVisible();
+    expect(apiEnvelope).toHaveBeenLastCalledWith("admin/membership-products?page=3&active=true");
+    expect(group).toHaveValue("Vegetable basket");
+    expect(units).toHaveValue("9");
+    expect(api).not.toHaveBeenCalled();
+    fireEvent.click(group);
+    expect(await screen.findByRole("option", { name: "Fruit basket" })).toBeVisible();
+  });
+
   it("blocks saving a package whose existing quota group is inactive", async () => {
     const inactivePackage = {
       ...packageItem,
@@ -242,7 +429,7 @@ describe("CSA package price options", () => {
     vi.mocked(api).mockResolvedValue(inactivePackage);
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
     providers(<MembershipPackageEditor packageId={packageItem.id} />);
-    await screen.findByLabelText("CSA quota group 1");
+    await screen.findByRole("combobox", { name: "CSA quota group 1" });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Inactive");
     expect(vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(
@@ -265,7 +452,7 @@ describe("CSA package price options", () => {
     fireEvent.blur(monthly);
     expect(monthly).toHaveValue("₫750,000");
     expect(screen.getByText("₫4,500,000")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
+    selectOption(screen.getByRole("combobox", { name: "CSA quota group 1" }), product.id);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(api).toHaveBeenCalled());
@@ -347,7 +534,7 @@ describe("CSA package price options", () => {
     providers(<MembershipPackageEditor />);
     await fillBilingualNames();
     fireEvent.change(screen.getByLabelText("Monthly price *"), { target: { value: "750000" } });
-    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
+    selectOption(screen.getByRole("combobox", { name: "CSA quota group 1" }), product.id);
     fireEvent.click(screen.getByRole("button", { name: "+ Add price option" }));
     const durations = screen.getAllByLabelText("Months *");
     const prices = screen.getAllByLabelText("Monthly price *");
@@ -374,7 +561,7 @@ describe("CSA package price options", () => {
     fireEvent.change(screen.getByLabelText("Monthly price *"), {
       target: { value: "5000000000000000000" },
     });
-    fireEvent.change(screen.getByLabelText("CSA quota group 1"), { target: { value: product.id } });
+    selectOption(screen.getByRole("combobox", { name: "CSA quota group 1" }), product.id);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("total price exceeds");
     expect(api).not.toHaveBeenCalled();
@@ -438,6 +625,37 @@ describe("CSA package price options", () => {
       is_active: true,
     });
   });
+
+  it.each([
+    {
+      List: MembershipProductList,
+      record: product,
+      resource: "products",
+      create: "Create quota group",
+    },
+    {
+      List: MembershipPackageList,
+      record: packageItem,
+      resource: "packages",
+      create: "Create package",
+    },
+  ])(
+    "adds the Foundation create, filter and refresh actions to CSA $resource",
+    async ({ List, record, resource, create }) => {
+      vi.mocked(apiEnvelope).mockResolvedValue({ data: [record], meta });
+      providers(<List />);
+
+      const name = await screen.findByRole("link", { name: record.name });
+      expect(name).toHaveAttribute("href", `/membership-catalog/${resource}/${record.id}`);
+      expect(screen.getByRole("link", { name: create })).toHaveAttribute(
+        "href",
+        `/membership-catalog/${resource}/new`,
+      );
+      expect(screen.getByRole("button", { name: "Filter" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+      await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
+    },
+  );
 
   it("shows active and historical prices in list/detail", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [packageItem], meta });
@@ -931,7 +1149,7 @@ describe("Membership detail snapshots and usage regressions", () => {
       expect(within(table).getByRole("columnheader", { name: heading })).toBeVisible();
     }
     expect(within(table).queryByRole("columnheader", { name: "Trạng thái" })).toBeNull();
-    expect(table.querySelector(".membership-status")).toBeNull();
+    expect(table.querySelector(".mantine-Badge-root")).toBeNull();
     expect(screen.getByText("Đang hoạt động")).toBeVisible();
     expect(
       within(within(table).getByRole("row", { name: /Kỳ 1/ }))
@@ -1132,7 +1350,7 @@ describe("Membership detail snapshots and usage regressions", () => {
           .getByText(warning)
           .closest("p"),
       ).toHaveClass("membership-snapshot-warning");
-      expect(screen.getAllByText(status, { selector: ".membership-status" })).toHaveLength(1);
+      expect(screen.getAllByText(status, { selector: ".mantine-Badge-label" })).toHaveLength(1);
       expect(
         screen.queryByRole("button", {
           name: locale === "vi" ? "Hoàn tác lần nhận hàng" : "Undo product collection",
@@ -1245,10 +1463,10 @@ describe("Membership detail snapshots and usage regressions", () => {
     fireEvent.click(trigger);
     expect(screen.getByLabelText("Revoke reason")).toHaveFocus();
 
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText("Revoke reason"), { key: "Escape" });
 
     expect(screen.queryByRole("dialog", { name: "Confirm CSA package revocation" })).toBeNull();
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("requires a reason, submits revoke once, and reloads the revoked detail", async () => {
@@ -1307,7 +1525,7 @@ describe("Membership detail snapshots and usage regressions", () => {
 
     await act(async () => resolveRevoke(revoked));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
+    expect(screen.getByText("Revoked", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     expect(screen.getByRole("heading", { name: packageItem.name })).toHaveFocus();
     expect(
@@ -1369,13 +1587,13 @@ describe("Membership detail snapshots and usage regressions", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Revoke CSA package" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("Revoked", { selector: ".membership-status" })).toBeVisible();
+    expect(screen.getByText("Revoked", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.getByText("Assigned by mistake")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Revoke CSA package" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Record received products" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Undo product collection" })).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The backend encountered an error. Check the Django terminal.",
+      "The service is currently unavailable. Try again later.",
     );
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(revokeRequests).toBe(1);

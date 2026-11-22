@@ -1,4 +1,6 @@
 "use client";
+import { Button } from "@mantine/core";
+import { FormField, FormSelect, Status } from "@/components/nfv-controls";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -58,9 +60,9 @@ export function FarmList() {
         title={c.list}
         description={c.description}
         action={
-          <Link className="button" href="/farms/new">
+          <Button component={Link} href="/farms/new">
             {c.new}
-          </Link>
+          </Button>
         }
       />
       <ListToolbar
@@ -83,21 +85,20 @@ export function FarmList() {
         searchLabel={c.search}
         searchSubmitLabel={c.searchButton}
         filter={
-          <label className="field">
-            <span>{c.status}</span>
-            <select
-              className="input"
+          <FormField label={c.status} className="field">
+            <FormSelect
               value={status}
-              onChange={(event) => {
-                setStatus(event.target.value);
+              onChange={(selection) => {
+                setStatus(selection ?? "");
                 setPage(1);
               }}
-            >
-              <option value="">{c.all}</option>
-              <option value="true">{c.active}</option>
-              <option value="false">{c.inactive}</option>
-            </select>
-          </label>
+              data={[
+                { value: "", label: c.all },
+                { value: "true", label: c.active },
+                { value: "false", label: c.inactive },
+              ]}
+            />
+          </FormField>
         }
       />
       <ListState
@@ -133,9 +134,11 @@ export function FarmList() {
                     <span>{locale === "vi" ? farm.location_vi : farm.location_en}</span>
                   </div>
                 </div>
-                <span className={`farm-status ${farm.is_active ? "active" : "inactive"}`}>
-                  {farm.is_active ? c.active : c.inactive}
-                </span>
+                <Status
+                  domain="availability"
+                  status={farm.is_active ? "active" : "inactive"}
+                  label={farm.is_active ? c.active : c.inactive}
+                />
                 <div className="farm-inventory-counts">
                   <span>
                     {c.inStockProducts.replace("{count}", String(farm.in_stock_product_count))}
@@ -147,9 +150,9 @@ export function FarmList() {
                     )}
                   </span>
                 </div>
-                <Link className="button secondary" href={`/farms/${farm.id}`}>
+                <Button component={Link} variant="default" href={`/farms/${farm.id}`}>
                   {c.manageStock}
-                </Link>
+                </Button>
               </article>
             );
           })}

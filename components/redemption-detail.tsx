@@ -1,5 +1,9 @@
 "use client";
 
+import { FormTextarea, Status } from "@/components/nfv-controls";
+
+import { Button, Alert, Badge, Group } from "@mantine/core";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -104,12 +108,12 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
   if (loadError && !item)
     return (
       <div className="panel load-error-state">
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {requestErrorMessage(loadError, t)}
-        </p>
-        <button className="button secondary" disabled={loading} onClick={() => void load()}>
+        </Alert>
+        <Button variant="default" disabled={loading} onClick={() => void load()}>
           {t.common.retry}
-        </button>
+        </Button>
       </div>
     );
   if (!item) return <div className="panel">{t.redemptions.loadingDetail}</div>;
@@ -127,19 +131,19 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
         title={t.redemptions.detailTitle}
       />
       {loadError && (
-        <div className="error-box retry-error" role="alert">
-          <span>{requestErrorMessage(loadError, t)}</span>
-          <button className="button secondary" disabled={loading} onClick={() => void load()}>
-            {loading ? t.redemptions.refreshing : t.common.retry}
-          </button>
-        </div>
+        <Alert color="red" className="retry-error" role="alert">
+          <Group gap="sm">
+            <span>{requestErrorMessage(loadError, t)}</span>
+            <Button variant="default" disabled={loading} onClick={() => void load()}>
+              {loading ? t.redemptions.refreshing : t.common.retry}
+            </Button>
+          </Group>
+        </Alert>
       )}
 
       <section className="redemption-hero" aria-labelledby="redemption-summary-title">
         <div>
-          <span className={`badge redemption-status ${item.status}`}>
-            {statusLabels[item.status]}
-          </span>
+          <Status domain="redemption" status={item.status} label={statusLabels[item.status]} />
           <h2 id="redemption-summary-title" ref={summaryFocusRef} tabIndex={-1}>
             {rewardName}
           </h2>
@@ -150,31 +154,30 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
         {open && (
           <div className="redemption-actions" aria-label={t.redemptions.actions}>
             {item.status === "pending" && (
-              <button
-                className="button secondary"
+              <Button
+                variant="default"
                 disabled={saving || loading || actionsLocked}
                 onClick={() => openAction("mark-contacted")}
                 type="button"
               >
                 {t.redemptions.markContacted}
-              </button>
+              </Button>
             )}
-            <button
-              className="button"
+            <Button
               disabled={saving || loading || actionsLocked}
               onClick={() => openAction("complete")}
               type="button"
             >
               {t.redemptions.complete}
-            </button>
-            <button
-              className="button danger"
+            </Button>
+            <Button
+              color="red"
               disabled={saving || loading || actionsLocked}
               onClick={() => openAction("reject")}
               type="button"
             >
               {t.redemptions.reject}
-            </button>
+            </Button>
           </div>
         )}
       </section>
@@ -244,7 +247,7 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
           </div>
           <div className="note-block private-note">
             <strong>{t.redemptions.internalNote}</strong>
-            <span className="badge warm">{t.redemptions.private}</span>
+            <Badge color="gray">{t.redemptions.private}</Badge>
             <p>{item.internal_note || "—"}</p>
           </div>
         </section>
@@ -272,9 +275,8 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
           {action === "reject" && (
             <label className="field">
               <span>{t.redemptions.rejectionMessage} *</span>
-              <textarea
+              <FormTextarea
                 autoFocus
-                className="textarea"
                 disabled={saving}
                 maxLength={800}
                 onChange={(event) => setRejectionMessage(event.target.value)}
@@ -285,8 +287,7 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
           )}
           <label className="field redemption-dialog-note">
             <span>{t.redemptions.internalNote}</span>
-            <textarea
-              className="textarea"
+            <FormTextarea
               disabled={saving}
               onChange={(event) => setInternalNote(event.target.value)}
               value={internalNote}

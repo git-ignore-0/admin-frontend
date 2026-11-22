@@ -1,4 +1,5 @@
 "use client";
+import { Alert, Group } from "@mantine/core";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -371,7 +372,10 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       if (!mounted.current) return;
       discardPendingReads();
       const status = (caught as { status?: number }).status;
-      const unknownResult = status === undefined || status >= 500;
+      const unknownResult =
+        status === undefined ||
+        status >= 500 ||
+        (caught instanceof Error && caught.message === "invalid_response");
       setUnresolved(unknownResult);
       if (!unknownResult) pendingIntent.current = null;
       if (status === 409) {
@@ -397,7 +401,12 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
 
   return (
     <div className="store-order-detail-page">
-      <DetailPageHeading backHref="/store-orders" backLabel={c.back} title={order.reference_code} />
+      <DetailPageHeading
+        bottomSpacing={0}
+        backHref="/store-orders"
+        backLabel={c.back}
+        title={order.reference_code}
+      />
       <header className="store-order-detail-header">
         <div className="store-order-state-line">
           <StoreOrderStatusBadge order={order} />
@@ -425,17 +434,19 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         </Button>
       </header>
       {error || reloadRequired ? (
-        <div className="error-box retry-error" role="alert">
-          <span>{error ? `${error} ${c.staleSnapshot}` : c.conflictReloadRequired}</span>
-          <Button
-            variant="outline"
-            disabled={loading || actionBusy}
-            onClick={() => void load()}
-            type="button"
-          >
-            {t.common.retry}
-          </Button>
-        </div>
+        <Alert color="red" role="alert">
+          <Group gap="sm" justify="space-between">
+            <span>{error ? `${error} ${c.staleSnapshot}` : c.conflictReloadRequired}</span>
+            <Button
+              variant="outline"
+              disabled={loading || actionBusy}
+              onClick={() => void load()}
+              type="button"
+            >
+              {t.common.retry}
+            </Button>
+          </Group>
+        </Alert>
       ) : null}
       {order.cancellation_reason ? (
         <p className="store-order-cancellation-reason">
@@ -639,9 +650,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                 aria-label={c.reconciliationDecision}
                 disabled={actionBusy || unresolved || reloadRequired}
                 value={reconciliationChoice ?? ""}
-                onChange={(event) => {
+                onChange={(choice) => {
                   if (actionBusy || unresolved || reloadRequired) return;
-                  const choice = event.target.value;
                   if (choice === "record-payment" || choice === "close-refund-request") {
                     setReconciliationChoice(choice);
                     setAction(choice);
@@ -651,11 +661,12 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                   }
                   setActionError("");
                 }}
-              >
-                <option value="">{c.reconciliationUnknown}</option>
-                <option value="record-payment">{c.paymentReceived}</option>
-                <option value="close-refund-request">{c.paymentNotReceived}</option>
-              </FormSelect>
+                data={[
+                  { value: "", label: c.reconciliationUnknown },
+                  { value: "record-payment", label: c.paymentReceived },
+                  { value: "close-refund-request", label: c.paymentNotReceived },
+                ]}
+              />
             </FormField>
           ) : null}
           {action === "approve" ? <p>{c.approveAllocationInvalid}</p> : null}

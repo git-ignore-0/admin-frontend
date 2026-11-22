@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import {
   act,
   cleanup,
@@ -114,11 +115,9 @@ describe("testimonial list", () => {
     );
     expect(screen.getAllByRole("cell")[0]).toHaveAttribute("data-label", "Testimonial");
 
-    fireEvent.change(screen.getByLabelText("Lọc trạng thái"), {
-      target: { value: "published" },
-    });
+    selectOption(screen.getByLabelText("Lọc trạng thái"), "published");
     await waitFor(() => expect(vi.mocked(apiEnvelope)).toHaveBeenCalledTimes(2));
-    fireEvent.change(screen.getByLabelText("Lọc loại"), { target: { value: "farmer" } });
+    selectOption(screen.getByLabelText("Lọc loại"), "farmer");
     await waitFor(() => expect(vi.mocked(apiEnvelope)).toHaveBeenCalledTimes(3));
     fireEvent.change(screen.getByLabelText("Tìm testimonial"), {
       target: { value: "Đồng Nai" },
@@ -148,7 +147,7 @@ describe("testimonial list", () => {
       </Providers>,
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Không kết nối được");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Không thể kết nối");
     fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
     expect(await screen.findByText("Không tìm thấy testimonial.")).toBeInTheDocument();
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
@@ -194,7 +193,7 @@ function fillCompleteEditor() {
   fireEvent.change(screen.getByLabelText("Tên hiển thị *"), {
     target: { value: "Trần Thị Bình" },
   });
-  fireEvent.change(screen.getByLabelText("Loại *"), { target: { value: "farmer" } });
+  selectOption(screen.getByLabelText("Loại *"), "farmer");
   fireEvent.change(screen.getByLabelText("Thứ tự hiển thị"), { target: { value: "7" } });
   const roles = screen.getAllByLabelText("Vai trò");
   const locations = screen.getAllByLabelText("Địa điểm");
@@ -429,7 +428,7 @@ describe("testimonial editor", () => {
     const dialog = screen.getByRole("dialog", { name: "Xác nhận xuất bản" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Backend gặp lỗi");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Dịch vụ đang gặp sự cố");
     expect(window.location.pathname).toBe("/testimonials/created-id/edit");
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -459,7 +458,7 @@ describe("testimonial editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Xuất bản" }));
     const dialog = screen.getByRole("dialog", { name: "Xác nhận xuất bản" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Backend gặp lỗi");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Dịch vụ đang gặp sự cố");
     fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 

@@ -1,0 +1,23 @@
+.footer {
+  container: list-pagination / inline-size;
+  min-inline-size: 0;
+}
+
+.numbered {
+  display: contents;
+}
+
+.compact {
+  display: none;
+  white-space: nowrap;
+}
+
+@container list-pagination (width < 32rem) {
+  .numbered {
+    display: none;
+  }
+
+  .compact {
+    display: block;
+  }
+}

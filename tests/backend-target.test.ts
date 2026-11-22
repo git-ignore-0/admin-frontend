@@ -1,9 +1,96 @@
+import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-target";
 
+const uuid = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"];
+// Canonical path and method columns from the Phase 3.0.3 audit, with Django URLconf slash rules.
+const auditedRoutes = readFileSync(
+  new NodeURL("./fixtures/bff-endpoints.tsv", import.meta.url),
+  "utf8",
+)
+  .trimEnd()
+  .split("\n")
+  .slice(1)
+  .map((line) => {
+    const [shape, allowed, trailingSlash] = line.split("\t");
+    return { shape, allowed: allowed.split(","), trailingSlash: trailingSlash === "yes" };
+  });
+
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
+
+  it("covers the 117 canonical route shapes and 166 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(117);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(117);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(166);
+    for (const { allowed } of auditedRoutes) {
+      expect(allowed.every((method) => methods.includes(method))).toBe(true);
+      expect(new Set(allowed).size).toBe(allowed.length);
+    }
+  });
+
+  it.each(auditedRoutes)(
+    "checks the exact audited route $shape",
+    ({ shape, allowed, trailingSlash }) => {
+      const segments = shape.split("/");
+      const path = segments.map((segment) => {
+        if (segment === "{province}") return "01";
+        if (segment === "{sequence}") return "12";
+        return segment.startsWith("{") ? uuid : segment;
+      });
+      for (const method of methods) {
+        expect(isAllowedBackendRequest(method, path), method).toBe(allowed.includes(method));
+      }
+      for (const method of allowed) {
+        expect(isAllowedBackendRequest(method, [...path, "extra"]), method).toBe(false);
+        for (const [index, segment] of segments.entries()) {
+          if (!segment.startsWith("{")) continue;
+          const invalidId = ["{province}", "{sequence}"].includes(segment) ? "0" : "invalid-id";
+          const invalidPath = path.with(index, invalidId);
+          expect(isAllowedBackendRequest(method, invalidPath), `${method} ${segment}`).toBe(false);
+          const missingId = path.filter((_, position) => index !== position);
+          // Removing the terminal ID can resolve to an independent collection route.
+          if (index < segments.length - 1) {
+            expect(isAllowedBackendRequest(method, missingId), `${method} without ${segment}`).toBe(
+              false,
+            );
+          }
+        }
+      }
+      const target = buildBackendTarget(origin, path, "");
+      expect(target.origin).toBe(origin);
+      expect(target.pathname).toBe(`/api/v1/${path.join("/")}${trailingSlash ? "/" : ""}`);
+    },
+  );
+
+  it.each([
+    { kind: "empty", segment: "" },
+    { kind: "dot", segment: "." },
+    { kind: "dot-dot", segment: ".." },
+    { kind: "decoded forward slash", segment: "/" },
+    { kind: "decoded backslash", segment: "\\" },
+    { kind: "C0 control character", segment: "\u0001" },
+    { kind: "C1 control character", segment: "\u0085" },
+    { kind: "unpaired surrogate", segment: "\uD800" },
+    { kind: "remaining percent encoding", segment: "test%2Did" },
+  ])("rejects a decoded $kind segment", ({ segment }) => {
+    expect(isAllowedBackendRequest("GET", ["admin", "workshops", segment])).toBe(false);
+  });
+
+  it.each([
+    "24803641-2DCE-4CAC-8FC4-91E55F03E95F",
+    "24803641-2dce-7cac-afc4-91e55f03e95f",
+    "00000000-0000-0000-0000-000000000000",
+  ])("preserves canonical UUIDs supported by Django: %s", (id) => {
+    const path = ["admin", "users", id];
+    expect(isAllowedBackendRequest("GET", path)).toBe(true);
+    expect(buildBackendTarget(origin, path, "").pathname).toBe(
+      `/api/v1/admin/users/${id.toLowerCase()}`,
+    );
+  });
 
   it("allowlists voucher administration by exact method and UUID path", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
@@ -170,17 +257,15 @@ describe("backend API target", () => {
   });
 
   it("adds the trailing slash to workshop detail and action routes", () => {
-    const target = buildBackendTarget(origin, ["admin", "workshops", "workshop-id", "publish"], "");
+    const target = buildBackendTarget(origin, ["admin", "workshops", uuid, "publish"], "");
 
-    expect(target.toString()).toBe(
-      "http://127.0.0.1:8000/api/v1/admin/workshops/workshop-id/publish/",
-    );
+    expect(target.toString()).toBe(`http://127.0.0.1:8000/api/v1/admin/workshops/${uuid}/publish/`);
   });
 
   it("does not proxy the removed workshop preview action", () => {
-    expect(
-      isAllowedBackendRequest("POST", ["admin", "workshops", "workshop-id", "preview-token"]),
-    ).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "workshops", uuid, "preview-token"])).toBe(
+      false,
+    );
   });
 
   it("adds DRF trailing slashes to all Testimonial router routes", () => {
@@ -188,12 +273,8 @@ describe("backend API target", () => {
       "http://127.0.0.1:8000/api/v1/admin/testimonials/",
     );
     expect(
-      buildBackendTarget(
-        origin,
-        ["admin", "testimonials", "testimonial-id", "publish"],
-        "",
-      ).toString(),
-    ).toBe("http://127.0.0.1:8000/api/v1/admin/testimonials/testimonial-id/publish/");
+      buildBackendTarget(origin, ["admin", "testimonials", uuid, "publish"], "").toString(),
+    ).toBe(`http://127.0.0.1:8000/api/v1/admin/testimonials/${uuid}/publish/`);
   });
 
   it("does not add a slash to endpoints that intentionally omit it", () => {
@@ -216,23 +297,21 @@ describe("backend API target", () => {
     expect(
       isAllowedBackendRequest("POST", ["admin", "membership-requests", "request-id", "approve"]),
     ).toBe(false);
-    expect(isAllowedBackendRequest("POST", ["admin", "membership-usage", "usage-id", "undo"])).toBe(
-      true,
-    );
+    expect(isAllowedBackendRequest("POST", ["admin", "membership-usage", uuid, "undo"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "memberships"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "memberships"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "memberships", membershipId, "revoke"])).toBe(
+      true,
+    );
+    expect(isAllowedBackendRequest("GET", ["admin", "memberships", membershipId, "revoke"])).toBe(
+      false,
+    );
     expect(
-      isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "revoke"]),
-    ).toBe(true);
-    expect(
-      isAllowedBackendRequest("GET", ["admin", "memberships", "membership-id", "revoke"]),
+      isAllowedBackendRequest("DELETE", ["admin", "memberships", membershipId, "revoke"]),
     ).toBe(false);
-    expect(
-      isAllowedBackendRequest("DELETE", ["admin", "memberships", "membership-id", "revoke"]),
-    ).toBe(false);
-    expect(
-      isAllowedBackendRequest("POST", ["admin", "memberships", "membership-id", "unknown"]),
-    ).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "memberships", membershipId, "unknown"])).toBe(
+      false,
+    );
     expect(isAllowedBackendRequest("GET", ["admin", "memberships", membershipId, "contract"])).toBe(
       true,
     );
@@ -403,28 +482,20 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", ["admin", "testimonials"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "testimonials"])).toBe(true);
     expect(isAllowedBackendRequest("PATCH", ["admin", "testimonials"])).toBe(false);
-    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", "item-id"])).toBe(true);
-    expect(isAllowedBackendRequest("PATCH", ["admin", "testimonials", "item-id"])).toBe(true);
-    expect(isAllowedBackendRequest("DELETE", ["admin", "testimonials", "item-id"])).toBe(false);
+    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", uuid])).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "testimonials", uuid])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "testimonials", uuid])).toBe(false);
     expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "media"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "testimonials", "media"])).toBe(false);
-    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "publish"])).toBe(
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", uuid, "publish"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", uuid, "hide"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", uuid, "unpublish"])).toBe(
       true,
     );
-    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "hide"])).toBe(
-      true,
-    );
-    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "unpublish"])).toBe(
-      true,
-    );
-    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", "item-id", "publish"])).toBe(
-      false,
-    );
-    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "delete"])).toBe(
-      false,
-    );
+    expect(isAllowedBackendRequest("GET", ["admin", "testimonials", uuid, "publish"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", ["admin", "testimonials", uuid, "delete"])).toBe(false);
     expect(
-      isAllowedBackendRequest("POST", ["admin", "testimonials", "item-id", "publish", "extra"]),
+      isAllowedBackendRequest("POST", ["admin", "testimonials", uuid, "publish", "extra"]),
     ).toBe(false);
   });
 
@@ -433,9 +504,9 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms"])).toBe(true);
     expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms"])).toBe(true);
     expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms"])).toBe(false);
-    expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", "farm-id"])).toBe(true);
-    expect(isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", "farm-id"])).toBe(true);
-    expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "farm-id"])).toBe(false);
+    expect(isAllowedBackendRequest("PATCH", ["admin", "tracker-farms", uuid])).toBe(true);
+    expect(isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", uuid])).toBe(true);
+    expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", uuid])).toBe(false);
     expect(isAllowedBackendRequest("POST", ["admin", "tracker-farms", "media"])).toBe(true);
     expect(isAllowedBackendRequest("GET", ["admin", "tracker-farms", "media"])).toBe(false);
     expect(isAllowedBackendRequest("DELETE", ["admin", "tracker-farms", "media", mediaId])).toBe(

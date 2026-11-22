@@ -1,3 +1,4 @@
+import { Button } from "@mantine/core";
 import Link from "next/link";
 
 import { PageHeading } from "@/components/page-heading";
@@ -16,9 +17,9 @@ export default async function TestimonialsPage() {
     <>
       <PageHeading
         action={
-          <Link className="button" href="/testimonials/new">
+          <Button component={Link} href="/testimonials/new">
             {t.testimonials.create}
-          </Link>
+          </Button>
         }
         description={t.page.testimonialsDescription}
         title={t.common.testimonials}

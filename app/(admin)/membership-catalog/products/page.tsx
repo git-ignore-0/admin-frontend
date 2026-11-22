@@ -1,25 +1,18 @@
-import Link from "next/link";
-
 import { MembershipProductList } from "@/components/membership-catalog-lists";
 import { PageHeading } from "@/components/page-heading";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { getAdminLocale } from "@/lib/admin-locale";
 
+export async function generateMetadata() {
+  const t = adminDictionaries[await getAdminLocale()];
+  return { title: t.membershipCatalog.products };
+}
+
 export default async function ProductListPage() {
   const t = adminDictionaries[await getAdminLocale()];
   return (
     <>
-      <PageHeading
-        action={
-          <Link className="button" href="/membership-catalog/products/new">
-            {t.membershipCatalog.addProduct}
-          </Link>
-        }
-        backHref="/membership-catalog"
-        backLabel={t.membershipCatalog.catalogTitle}
-        description={t.page.membershipProductsDescription}
-        title={t.membershipCatalog.products}
-      />
+      <PageHeading title={t.membershipCatalog.products} visuallyHiddenTitle />
       <MembershipProductList />
     </>
   );

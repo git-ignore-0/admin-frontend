@@ -1,5 +1,9 @@
-import { Button } from "@/components/nfv-controls";
+"use client";
 
+import { Box, Group, Pagination as MantinePagination, Text } from "@mantine/core";
+import classes from "./pagination.module.css";
+
+/** The caller reconciles the selected page and loads or slices its records. */
 export function Pagination({
   page,
   total,
@@ -9,7 +13,8 @@ export function Pagination({
   nextLabel,
   summary,
   disabled = false,
-  controls = "default",
+  resultCountLabel,
+  resultCountSingularLabel,
 }: {
   page: number;
   total: number;
@@ -19,34 +24,84 @@ export function Pagination({
   nextLabel: string;
   summary: string;
   disabled?: boolean;
+  resultCountLabel?: string;
+  resultCountSingularLabel?: string;
+  /** Retained while business modules migrate; both variants now use Mantine. */
   controls?: "default" | "nfv";
 }) {
-  const PageButton = controls === "nfv" ? Button : "button";
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  if (total <= pageSize) return null;
+  const validTotal = Number.isSafeInteger(total) && total >= 0;
+  const validSize = Number.isSafeInteger(pageSize) && pageSize > 0;
+  const pages = validTotal && validSize ? Math.ceil(total / pageSize) : 0;
+  const canNavigate = pages > 1 && Number.isSafeInteger(page) && page >= 1 && page <= pages;
+  const label = summary.replace("{page}", String(page)).replace("{pages}", String(pages));
+  const spacing = "var(--admin-pagination-gap, var(--mantine-spacing-md))";
+  const navigation = canNavigate && (
+    <Group
+      component="nav"
+      aria-busy={disabled}
+      aria-label={label}
+      justify="flex-end"
+      gap="sm"
+      miw={0}
+      ms={resultCountLabel === undefined ? undefined : "auto"}
+      mt={resultCountLabel === undefined ? spacing : undefined}
+    >
+      {resultCountLabel === undefined && (
+        <Text size="sm" c="dimmed">
+          {label}
+        </Text>
+      )}
+      <MantinePagination.Root
+        total={pages}
+        value={page}
+        onChange={onPage}
+        disabled={disabled}
+        size="sm"
+        siblings={resultCountLabel === undefined ? 0 : 1}
+        boundaries={1}
+      >
+        <Group gap="xs" wrap={resultCountLabel === undefined ? "wrap" : "nowrap"}>
+          <MantinePagination.Previous aria-label={previousLabel} />
+          <Box className={classes.numbered}>
+            <MantinePagination.Items />
+          </Box>
+          {resultCountLabel !== undefined && (
+            <Text size="sm" c="dimmed" aria-hidden className={classes.compact}>
+              {page} / {pages}
+            </Text>
+          )}
+          <MantinePagination.Next aria-label={nextLabel} />
+        </Group>
+      </MantinePagination.Root>
+    </Group>
+  );
+
+  if (resultCountLabel === undefined || !validTotal) return navigation || null;
   return (
-    <nav aria-busy={disabled} className="pagination" aria-label={summary}>
-      <PageButton
-        {...(controls === "nfv"
-          ? { variant: "outline" as const }
-          : { className: "button secondary" })}
-        disabled={disabled || page <= 1}
-        onClick={() => onPage(page - 1)}
-        type="button"
-      >
-        {previousLabel}
-      </PageButton>
-      <span>{summary.replace("{page}", String(page)).replace("{pages}", String(pages))}</span>
-      <PageButton
-        {...(controls === "nfv"
-          ? { variant: "outline" as const }
-          : { className: "button secondary" })}
-        disabled={disabled || page >= pages}
-        onClick={() => onPage(page + 1)}
-        type="button"
-      >
-        {nextLabel}
-      </PageButton>
-    </nav>
+    <Group justify="space-between" gap="sm" className={classes.footer}>
+      <ListResultSummary
+        count={total}
+        label={resultCountLabel}
+        singularLabel={resultCountSingularLabel ?? resultCountLabel}
+      />
+      {navigation}
+    </Group>
+  );
+}
+
+export function ListResultSummary({
+  count,
+  label,
+  singularLabel,
+}: {
+  count?: number;
+  label: string;
+  singularLabel: string;
+}) {
+  if (count === undefined) return null;
+  return (
+    <Text size="sm" c="dimmed" aria-atomic="true" aria-live="polite">
+      {(count === 1 ? singularLabel : label).replace("{count}", String(count))}
+    </Text>
   );
 }

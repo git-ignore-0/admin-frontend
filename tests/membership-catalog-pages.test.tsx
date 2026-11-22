@@ -1,8 +1,15 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import { getURLFromRedirectError } from "next/dist/client/components/redirect";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import PackageListPage from "@/app/(admin)/membership-catalog/packages/page";
-import ProductListPage from "@/app/(admin)/membership-catalog/products/page";
+import PackageListPage, {
+  generateMetadata as packageMetadata,
+} from "@/app/(admin)/membership-catalog/packages/page";
+import MembershipCatalogPage from "@/app/(admin)/membership-catalog/page";
+import ProductListPage, {
+  generateMetadata as productMetadata,
+} from "@/app/(admin)/membership-catalog/products/page";
 
 const adminLocale = vi.hoisted(() => ({ value: "en" as "vi" | "en" }));
 
@@ -20,50 +27,43 @@ afterEach(() => {
 });
 
 describe("CSA catalog list navigation", () => {
+  it("redirects the obsolete catalog overview to the package list", async () => {
+    try {
+      await MembershipCatalogPage();
+      expect.unreachable("Expected the old catalog route to redirect");
+    } catch (error) {
+      if (!isRedirectError(error)) throw error;
+      expect(getURLFromRedirectError(error)).toBe("/membership-catalog/packages");
+    }
+  });
+
   it.each([
-    {
-      locale: "vi" as const,
-      backLabel: "Danh mục CSA",
-      productTitle: "Nhóm quota CSA",
-      productCreate: "Tạo nhóm quota",
-      packageTitle: "Gói CSA",
-      packageCreate: "Tạo gói",
-    },
-    {
-      locale: "en" as const,
-      backLabel: "CSA catalog",
-      productTitle: "CSA quota groups",
-      productCreate: "Create quota group",
-      packageTitle: "CSA packages",
-      packageCreate: "Create package",
-    },
+    { locale: "vi" as const, productTitle: "Nhóm quota CSA", packageTitle: "Gói CSA" },
+    { locale: "en" as const, productTitle: "CSA quota groups", packageTitle: "CSA packages" },
   ])(
-    "links both $locale list headings back to the catalog overview",
-    async ({ locale, backLabel, productTitle, productCreate, packageTitle, packageCreate }) => {
+    "keeps accessible $locale list titles without an in-page catalog header",
+    async ({ locale, productTitle, packageTitle }) => {
       adminLocale.value = locale;
 
       const productPage = render(await ProductListPage());
-      expect(screen.getByRole("link", { name: backLabel })).toHaveAttribute(
-        "href",
-        "/membership-catalog",
+      expect(screen.getByRole("heading", { level: 1, name: productTitle })).toHaveClass(
+        "mantine-VisuallyHidden-root",
       );
-      expect(screen.getByRole("heading", { name: productTitle })).toBeVisible();
-      expect(screen.getByRole("link", { name: new RegExp(productCreate) })).toHaveAttribute(
-        "href",
-        "/membership-catalog/products/new",
-      );
+      expect(screen.getByText("Product list")).toBeInTheDocument();
+      expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
       productPage.unmount();
 
       render(await PackageListPage());
-      expect(screen.getByRole("link", { name: backLabel })).toHaveAttribute(
-        "href",
-        "/membership-catalog",
+      expect(screen.getByRole("heading", { level: 1, name: packageTitle })).toHaveClass(
+        "mantine-VisuallyHidden-root",
       );
-      expect(screen.getByRole("heading", { name: packageTitle })).toBeVisible();
-      expect(screen.getByRole("link", { name: new RegExp(packageCreate) })).toHaveAttribute(
-        "href",
-        "/membership-catalog/packages/new",
-      );
+      expect(screen.getByText("Package list")).toBeInTheDocument();
+      expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+
+      await expect(productMetadata()).resolves.toMatchObject({ title: productTitle });
+      await expect(packageMetadata()).resolves.toMatchObject({ title: packageTitle });
     },
   );
 });

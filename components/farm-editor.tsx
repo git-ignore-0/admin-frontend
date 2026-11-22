@@ -1,4 +1,8 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Stack, Alert, Button } from "@mantine/core";
+
+import { FormField, FormInput, FormSelect } from "@/components/nfv-controls";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -120,9 +124,7 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
   useEffect(() => {
     if (!pendingFocus.current) return;
     const selector =
-      pendingFocus.current === "name"
-        ? ".bilingual-content-editor .catalog-language-panel input"
-        : "[data-farm-location]";
+      pendingFocus.current === "name" ? "[data-bilingual-name]" : "[data-farm-location]";
     formRef.current?.querySelector<HTMLInputElement>(selector)?.focus();
     pendingFocus.current = null;
   }, [activeLocale, error]);
@@ -141,18 +143,21 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
     setUploading(true);
     try {
       for (const file of files) {
-        const asset = await uploadFarmImage(file);
-        if (!mounted.current) {
-          void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
-          break;
+        try {
+          const asset = await uploadFarmImage(file);
+          if (!mounted.current) {
+            void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
+            break;
+          }
+          temporaryIds.current.add(asset.id);
+          setForm((current) => ({ ...current, photos: [...current.photos, asset] }));
+        } catch (caught) {
+          if (!mounted.current) break;
+          setPhotoError(requestErrorMessage(caught, translationRef.current));
         }
-        temporaryIds.current.add(asset.id);
-        setForm((current) => ({ ...current, photos: [...current.photos, asset] }));
       }
-    } catch (caught) {
-      setPhotoError(requestErrorMessage(caught, t));
     } finally {
-      setUploading(false);
+      if (mounted.current) setUploading(false);
     }
   }
 
@@ -197,10 +202,7 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
           ? "location"
           : null;
       if (missing) {
-        const selector =
-          missing === "name"
-            ? ".bilingual-content-editor .catalog-language-panel input"
-            : "[data-farm-location]";
+        const selector = missing === "name" ? "[data-bilingual-name]" : "[data-farm-location]";
         if (activeLocale === language) {
           formRef.current?.querySelector<HTMLInputElement>(selector)?.focus();
         } else {
@@ -241,15 +243,17 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
     }
   }
 
-  if (loading) return <p role="status">{c.loading}</p>;
+  if (loading) return <DataState kind="loading" title={c.loading} />;
   if (error && farmId && !form.version)
     return (
-      <div className="error-box" role="alert">
-        {error}
-        <button className="button secondary" onClick={() => setRetry((n) => n + 1)}>
-          {t.common.retry}
-        </button>
-      </div>
+      <Alert color="red" role="alert">
+        <Stack gap="sm" align="flex-start">
+          {error}
+          <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
+            {t.common.retry}
+          </Button>
+        </Stack>
+      </Alert>
     );
   const content = {
     vi: { ...initialContent.vi, name: form.name_vi, description: form.description_vi },
@@ -280,10 +284,8 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
           nameLabel={c.nameField}
           onLocaleChange={setActiveLocale}
           renderAfterName={(language) => (
-            <label className="field full">
-              <span>{c.location} *</span>
-              <input
-                className="input"
+            <FormField label={c.location + " *"} className="field full">
+              <FormInput
                 data-farm-location
                 disabled={saving}
                 maxLength={240}
@@ -296,7 +298,7 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
                 required
                 value={form[`location_${language}`]}
               />
-            </label>
+            </FormField>
           )}
           title={c.shared}
           value={content}
@@ -342,40 +344,37 @@ export function FarmEditor({ farmId }: { farmId?: string }) {
             onRemove={removePhoto}
           />
         </section>
-        <label className="farm-editor-status">
-          <span>{c.status}</span>
-          <select
-            className="input"
+        <FormField label={c.status} className="farm-editor-status">
+          <FormSelect
             value={String(form.is_active)}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, is_active: event.target.value === "true" }))
+            onChange={(selection) =>
+              setForm((current) => ({ ...current, is_active: (selection ?? "") === "true" }))
             }
-          >
-            <option value="true">{c.active}</option>
-            <option value="false">{c.inactive}</option>
-          </select>
-        </label>
+            data={[
+              { value: "true", label: c.active },
+              { value: "false", label: c.inactive },
+            ]}
+          />
+        </FormField>
         {error && (
-          <div className="error-box" role="alert">
-            {error}
-            {conflict && (
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => setRetry((n) => n + 1)}
-              >
-                {c.reload}
-              </button>
-            )}
-          </div>
+          <Alert color="red" role="alert">
+            <Stack gap="sm" align="flex-start">
+              {error}
+              {conflict && (
+                <Button variant="default" type="button" onClick={() => setRetry((n) => n + 1)}>
+                  {c.reload}
+                </Button>
+              )}
+            </Stack>
+          </Alert>
         )}
         <div className="farm-editor-actions">
-          <Link className="button secondary" href={farmId ? `/farms/${farmId}` : "/farms"}>
+          <Button component={Link} variant="default" href={farmId ? `/farms/${farmId}` : "/farms"}>
             {c.cancel}
-          </Link>
-          <button className="button" type="submit" disabled={saving || uploading || conflict}>
+          </Button>
+          <Button type="submit" disabled={saving || uploading || conflict}>
             {saving ? c.saving : farmId ? c.save : c.create}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

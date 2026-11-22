@@ -1,9 +1,13 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+import { Stack, Alert, Button, Tabs } from "@mantine/core";
+
+import { Status } from "@/components/nfv-controls";
 
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { KeyboardEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
@@ -28,11 +32,6 @@ export function FarmDetail({ farmId }: { farmId: string }) {
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(0);
   const [tab, setTab] = useState<DetailTab>("products");
-  const tabRefs = useRef<Record<DetailTab, HTMLButtonElement | null>>({
-    products: null,
-    information: null,
-    tracker: null,
-  });
   const [trackerCount, setTrackerCount] = useState<number | null | undefined>(null);
 
   useEffect(() => {
@@ -94,31 +93,19 @@ export function FarmDetail({ farmId }: { farmId: string }) {
     }
   }
 
-  function moveTab(event: KeyboardEvent<HTMLButtonElement>) {
-    const current = detailTabs.indexOf(tab);
-    let next: DetailTab;
-    if (event.key === "Home") next = detailTabs[0];
-    else if (event.key === "End") next = detailTabs[detailTabs.length - 1];
-    else if (event.key === "ArrowRight") next = detailTabs[(current + 1) % detailTabs.length];
-    else if (event.key === "ArrowLeft") {
-      next = detailTabs[(current - 1 + detailTabs.length) % detailTabs.length];
-    } else return;
-    event.preventDefault();
-    setTab(next);
-    tabRefs.current[next]?.focus();
-  }
-
   if (error) {
     return (
-      <div className="error-box" role="alert">
-        {error}
-        <button className="button secondary" type="button" onClick={() => setRetry((n) => n + 1)}>
-          {t.common.retry}
-        </button>
-      </div>
+      <Alert color="red" role="alert">
+        <Stack gap="sm" align="flex-start">
+          {error}
+          <Button variant="default" type="button" onClick={() => setRetry((n) => n + 1)}>
+            {t.common.retry}
+          </Button>
+        </Stack>
+      </Alert>
     );
   }
-  if (!farm) return <p role="status">{c.loading}</p>;
+  if (!farm) return <DataState kind="loading" title={c.loading} />;
 
   const name = locale === "vi" ? farm.name_vi : farm.name_en;
   const location = locale === "vi" ? farm.location_vi : farm.location_en;
@@ -149,115 +136,91 @@ export function FarmDetail({ farmId }: { farmId: string }) {
           <div>
             <div className="farm-detail-title-line">
               <h1>{name}</h1>
-              <span className={`farm-status ${farm.is_active ? "active" : "inactive"}`}>
-                {farm.is_active ? c.active : c.inactive}
-              </span>
+              <Status
+                domain="availability"
+                status={farm.is_active ? "active" : "inactive"}
+                label={farm.is_active ? c.active : c.inactive}
+              />
             </div>
             <p>{location}</p>
           </div>
         </div>
         <div className="farm-detail-actions">
-          <Link className="button secondary" href={`/farms/${farm.id}/edit`}>
+          <Button component={Link} variant="default" href={`/farms/${farm.id}/edit`}>
             {c.edit}
-          </Link>
-          <button className="button danger" onClick={() => setDialog(true)} type="button">
+          </Button>
+          <Button color="red" onClick={() => setDialog(true)} type="button">
             {c.farmDelete}
-          </button>
+          </Button>
         </div>
       </header>
 
-      <div className="farm-detail-tabs" role="tablist" aria-label={c.detailSections}>
-        {detailTabs.map((item) => (
-          <button
-            key={item}
-            ref={(node) => {
-              tabRefs.current[item] = node;
-            }}
-            id={`farm-${item}-tab`}
-            type="button"
-            role="tab"
-            aria-controls={`farm-${item}-panel`}
-            aria-selected={tab === item}
-            tabIndex={tab === item ? 0 : -1}
-            onKeyDown={moveTab}
-            onClick={() => setTab(item)}
-          >
-            {labels[item]}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onChange={(value) => setTab(value as DetailTab)} keepMounted>
+        <Tabs.List mb="md" className="farm-detail-tabs" aria-label={c.detailSections}>
+          {detailTabs.map((item) => (
+            <Tabs.Tab key={item} value={item}>
+              {labels[item]}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
 
-      <section
-        id="farm-products-panel"
-        role="tabpanel"
-        aria-labelledby="farm-products-tab"
-        hidden={tab !== "products"}
-      >
-        <FarmProducts
-          farmId={farm.id}
-          inStockCount={farm.in_stock_product_count}
-          outOfStockCount={farm.out_of_stock_product_count}
-          onInventoryChanged={() => setRetry((value) => value + 1)}
-        />
-      </section>
-      <section
-        id="farm-information-panel"
-        role="tabpanel"
-        aria-labelledby="farm-information-tab"
-        hidden={tab !== "information"}
-      >
-        <div className="farm-overview-grid">
-          <div className="farm-detail-cover">
-            {farm.image ? (
-              <Image
-                alt={name}
-                src={mediaUrlForWidth(farm.image, 800)}
-                width={480}
-                height={320}
-                unoptimized
-              />
-            ) : (
-              <span>{c.noCover}</span>
-            )}
+        <Tabs.Panel value="products">
+          <FarmProducts
+            farmId={farm.id}
+            inStockCount={farm.in_stock_product_count}
+            outOfStockCount={farm.out_of_stock_product_count}
+            onInventoryChanged={() => setRetry((value) => value + 1)}
+          />
+        </Tabs.Panel>
+        <Tabs.Panel value="information">
+          <div className="farm-overview-grid">
+            <div className="farm-detail-cover">
+              {farm.image ? (
+                <Image
+                  alt={name}
+                  src={mediaUrlForWidth(farm.image, 800)}
+                  width={480}
+                  height={320}
+                  unoptimized
+                />
+              ) : (
+                <span>{c.noCover}</span>
+              )}
+            </div>
+            <div className="farm-overview-copy">
+              <h2>{c.farmInfo}</h2>
+              <p>{(locale === "vi" ? farm.description_vi : farm.description_en) || "—"}</p>
+              <dl>
+                <div>
+                  <dt>{c.location}</dt>
+                  <dd>{location}</dd>
+                </div>
+                <div>
+                  <dt>{c.status}</dt>
+                  <dd>{farm.is_active ? c.active : c.inactive}</dd>
+                </div>
+              </dl>
+            </div>
           </div>
-          <div className="farm-overview-copy">
-            <h2>{c.farmInfo}</h2>
-            <p>{(locale === "vi" ? farm.description_vi : farm.description_en) || "—"}</p>
-            <dl>
-              <div>
-                <dt>{c.location}</dt>
-                <dd>{location}</dd>
-              </div>
-              <div>
-                <dt>{c.status}</dt>
-                <dd>{farm.is_active ? c.active : c.inactive}</dd>
-              </div>
-            </dl>
+        </Tabs.Panel>
+        <Tabs.Panel value="tracker">
+          <div className="farm-overview-link">
+            <div>
+              <h2>{c.tracker}</h2>
+              <p>
+                {trackerCount === null
+                  ? c.summaryUnavailable
+                  : trackerCount === undefined
+                    ? c.trackerNotEnabled
+                    : `${trackerCount} ${c.trackerSignupSuffix}`}
+              </p>
+            </div>
+            <Button component={Link} variant="default" href={`/tracker-farms/${farm.id}`}>
+              {c.trackerEdit}
+            </Button>
           </div>
-        </div>
-      </section>
-      <section
-        id="farm-tracker-panel"
-        role="tabpanel"
-        aria-labelledby="farm-tracker-tab"
-        hidden={tab !== "tracker"}
-      >
-        <div className="farm-overview-link">
-          <div>
-            <h2>{c.tracker}</h2>
-            <p>
-              {trackerCount === null
-                ? c.summaryUnavailable
-                : trackerCount === undefined
-                  ? c.trackerNotEnabled
-                  : `${trackerCount} ${c.trackerSignupSuffix}`}
-            </p>
-          </div>
-          <Link className="button secondary" href={`/tracker-farms/${farm.id}`}>
-            {c.trackerEdit}
-          </Link>
-        </div>
-      </section>
+        </Tabs.Panel>
+      </Tabs>
 
       {dialog && (
         <ConfirmationDialog

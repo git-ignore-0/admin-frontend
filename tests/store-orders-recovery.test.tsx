@@ -56,7 +56,7 @@ it("pending delivery never polls an inactive expiry and blocks refresh during de
   });
   expect(api).toHaveBeenCalledTimes(2);
   await act(async () => resolveMutation({ ...initial, status: "delivered" }));
-  expect(screen.getByText("Đã giao", { selector: ".status" })).toBeVisible();
+  expect(screen.getByText("Đã giao", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(api).toHaveBeenCalledTimes(2);
 });
 
@@ -151,7 +151,14 @@ it.each([0, 1])(
   },
 );
 
-it("keeps exact unresolved restock intent when a manual refresh updates its ledger", async () => {
+it.each([
+  ["a connectivity failure", () => Promise.reject(new Error("network_error"))],
+  [
+    "an invalid HTTP 200 response",
+    () => Promise.reject(Object.assign(new Error("invalid_response"), { status: 200 })),
+  ],
+  ["an incomplete order", () => Promise.resolve({ id: "id" })],
+])("keeps the unresolved restock intent after %s and a ledger refresh", async (_label, fail) => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
   const initial = {
@@ -167,7 +174,7 @@ it("keeps exact unresolved restock intent when a manual refresh updates its ledg
   };
   vi.mocked(api)
     .mockResolvedValueOnce(initial)
-    .mockRejectedValueOnce(new Error("network_error"))
+    .mockImplementationOnce(fail)
     .mockResolvedValueOnce(reconciled)
     .mockResolvedValueOnce(reconciled);
   renderOrder();

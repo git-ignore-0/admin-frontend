@@ -1,0 +1,15 @@
+.priceCard {
+  container-type: inline-size;
+}
+
+@media (min-width: 681px) {
+  @container (max-width: 38rem) {
+    .priceGrid:global(.price-option-grid) {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+    }
+
+    .priceGrid :global(.price-option-monthly-price-field) {
+      grid-column: 2 / -1;
+    }
+  }
+}

@@ -1,6 +1,5 @@
+import { selectOption } from "@/tests/select-option";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -87,26 +86,13 @@ describe("CSA coupon administration", () => {
       </AdminI18nProvider>,
     );
     expect(await screen.findByText(coupon.code)).toBeVisible();
-    expect(screen.getByLabelText("Filter status")).toHaveClass("nfv-control");
-    expect(screen.getByRole("link", { name: "Edit" })).toHaveClass("nfv-button");
+    expect(screen.getByLabelText("Filter status")).toHaveClass("mantine-Input-input");
+    expect(screen.getByRole("link", { name: "Edit" })).toHaveClass("mantine-Button-root");
     expect(screen.getByText("01/09/2026 – 30/09/2026")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Filter status"), { target: { value: "inactive" } });
+    selectOption(screen.getByLabelText("Filter status"), "inactive");
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("status=inactive"),
     );
-    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
-    expect(css).toContain(".csa-coupon-editor");
-    expect(css).toMatch(/\.csa-coupon-offer-rows\s*\{[^}]*display:\s*grid;[^}]*gap:\s*14px;/u);
-    expect(css).toMatch(
-      /\.csa-coupon-form-row\s*\{[^}]*grid-template-columns:\s*minmax\(220px, 260px\) minmax\(0, 1fr\);/u,
-    );
-    expect(css).not.toContain(".csa-coupon-section");
-    expect(css).not.toContain(".csa-coupon-offer-fields");
-    expect(css).not.toContain(".csa-coupon-preview");
-    expect(css).not.toContain(".csa-coupon-summary");
-    expect(css).not.toContain(".csa-coupon-specific-scope");
-    expect(css).toContain('.csa-coupon-date-grid .nfv-control[type="datetime-local"]');
-    expect(css).toMatch(/@media \(max-width: 680px\)[\s\S]*?\.csa-coupon-date-grid/u);
   });
 
   it("renders the basic create form without conditions or preview", async () => {
@@ -121,12 +107,12 @@ describe("CSA coupon administration", () => {
     ).toBeNull();
     expect(screen.queryByText("Coupons can be used once by default.")).toBeNull();
     const type = screen.getByRole("combobox", { name: "Discount type *" });
-    expect(type).toHaveValue("percent");
+    expect(type).toHaveValue("Percent discount");
     expect(screen.getByLabelText("Maximum discount")).toBeVisible();
     expect(screen.getByLabelText("Maximum uses *")).toHaveValue("1");
-    expect(screen.getByLabelText("Starts on *")).toHaveClass("nfv-control");
-    expect(screen.getByLabelText("Ends on *")).toHaveClass("nfv-control");
-    expect(screen.getByRole("button", { name: "Save coupon" })).toHaveClass("nfv-button");
+    expect(screen.getByLabelText("Starts on *")).toHaveClass("mantine-Input-input");
+    expect(screen.getByLabelText("Ends on *")).toHaveClass("mantine-Input-input");
+    expect(screen.getByRole("button", { name: "Save coupon" })).toHaveClass("mantine-Button-root");
     expect(screen.getByLabelText("Starts on *")).toHaveAttribute("type", "datetime-local");
     expect(screen.getByLabelText("Ends on *")).toHaveAttribute("type", "datetime-local");
     expect(document.querySelectorAll('input[type="datetime-local"]')).toHaveLength(2);
@@ -193,9 +179,9 @@ describe("CSA coupon administration", () => {
     expect(value).toHaveValue("12.5");
     const cap = screen.getByLabelText("Maximum discount");
     fireEvent.change(cap, { target: { value: "200000" } });
-    fireEvent.change(type, { target: { value: "fixed" } });
+    selectOption(type, "fixed");
     expect(value).toHaveValue("");
-    expect(value.parentElement).toHaveTextContent("₫");
+    expect(value.closest(".csa-coupon-number-wrap")).toHaveTextContent("₫");
     expect(screen.queryByLabelText("Maximum discount")).toBeNull();
     fireEvent.focus(value);
     fireEvent.change(value, { target: { value: "1000000" } });
@@ -309,7 +295,7 @@ describe("CSA coupon administration", () => {
     showEditor();
     await screen.findByLabelText("Coupon code *");
     fireEvent.change(screen.getByLabelText("Coupon code *"), { target: { value: "  autumn  " } });
-    fireEvent.change(screen.getByLabelText("Discount type *"), { target: { value: "fixed" } });
+    selectOption(screen.getByLabelText("Discount type *"), "fixed");
     const value = screen.getByLabelText("Discount value *");
     fireEvent.change(value, { target: { value: "1000000" } });
     fireEvent.change(screen.getByLabelText("Minimum order amount"), {

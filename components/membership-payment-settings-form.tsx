@@ -1,5 +1,8 @@
 "use client";
 
+import { Alert, Button, Checkbox, Select } from "@mantine/core";
+import { FormInput } from "@/components/nfv-controls";
+
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -90,48 +93,42 @@ export function MembershipPaymentSettingsForm() {
 
   if (!data || !banks) {
     return (
-      <div className={loadError ? "error-box" : "panel"}>
+      <Alert
+        color={loadError ? "red" : "gray"}
+        variant={loadError ? "light" : "transparent"}
+        role={loadError ? "alert" : "status"}
+      >
         {loadError || t.paymentSettings.loading}
-      </div>
+      </Alert>
     );
   }
 
   return (
     <form className="payment-settings-form" noValidate onSubmit={submit}>
       <section className="panel vertical-form-section">
-        <label className="field" htmlFor="payment-bank">
-          <span>{t.paymentSettings.bank}</span>
-          <select
-            aria-describedby={errors.bank ? "payment-bank-error" : undefined}
-            aria-invalid={Boolean(errors.bank)}
-            className="input"
-            id="payment-bank"
-            onChange={(event) => {
-              const bank = banks.find((item) => item.bin === event.target.value);
-              setData({ ...data, bank_bin: bank?.bin ?? "", bank_name: bank?.name ?? "" });
-              setErrors((current) => ({ ...current, bank: undefined }));
-            }}
-            value={data.bank_bin}
-          >
-            <option value="">{t.paymentSettings.chooseBank}</option>
-            {banks.map((bank) => (
-              <option key={bank.bin} value={bank.bin}>
-                {bank.short_name} — {bank.name}
-              </option>
-            ))}
-          </select>
-          {errors.bank && (
-            <small className="field-error" id="payment-bank-error">
-              {errors.bank}
-            </small>
-          )}
-        </label>
+        <Select
+          id="payment-bank"
+          role="combobox"
+          className="field"
+          label={t.paymentSettings.bank}
+          error={errors.bank}
+          onChange={(selectedValue) => {
+            const bank = banks.find((item) => item.bin === (selectedValue ?? ""));
+            setData({ ...data, bank_bin: bank?.bin ?? "", bank_name: bank?.name ?? "" });
+            setErrors((current) => ({ ...current, bank: undefined }));
+          }}
+          value={data.bank_bin}
+          data={[
+            { value: "", label: t.paymentSettings.chooseBank },
+            ...banks.map((bank) => ({ value: bank.bin, label: bank.short_name + "—" + bank.name })),
+          ]}
+        />
         <label className="field" htmlFor="payment-account-number">
           <span>{t.paymentSettings.accountNumber}</span>
-          <input
+          <FormInput
             aria-describedby={errors.accountNumber ? "payment-account-number-error" : undefined}
             aria-invalid={Boolean(errors.accountNumber)}
-            className="input"
+
             id="payment-account-number"
             inputMode="numeric"
             onChange={(event) => setData({ ...data, account_number: event.target.value })}
@@ -145,10 +142,10 @@ export function MembershipPaymentSettingsForm() {
         </label>
         <label className="field" htmlFor="payment-account-name">
           <span>{t.paymentSettings.accountName}</span>
-          <input
+          <FormInput
             aria-describedby={errors.accountName ? "payment-account-name-error" : undefined}
             aria-invalid={Boolean(errors.accountName)}
-            className="input"
+
             id="payment-account-name"
             onChange={(event) => setData({ ...data, account_name: event.target.value })}
             value={data.account_name}
@@ -159,21 +156,20 @@ export function MembershipPaymentSettingsForm() {
             </small>
           )}
         </label>
-        <label className="checkbox">
-          <input
+        <div>
+          <Checkbox
             checked={data.direct_transfer_enabled}
             onChange={(event) =>
               setData({ ...data, direct_transfer_enabled: event.target.checked })
             }
-            type="checkbox"
+            label={<>{t.paymentSettings.directTransfer}</>}
           />
-          {t.paymentSettings.directTransfer}
-        </label>
+        </div>
       </section>
       <div className="form-actions">
-        <button className="button" disabled={saving} type="submit">
+        <Button disabled={saving} type="submit">
           {saving ? t.paymentSettings.saving : t.paymentSettings.save}
-        </button>
+        </Button>
       </div>
     </form>
   );

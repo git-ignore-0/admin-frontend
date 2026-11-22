@@ -1,18 +1,35 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  SimpleGrid,
+  Skeleton,
+  Stack,
+  Table,
+  Text,
+  Title,
+  VisuallyHidden,
+} from "@mantine/core";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DetailPageHeading } from "@/components/detail-page-heading";
+import { Status as UiStatus } from "@/components/nfv-controls";
+import { PageHeading } from "@/components/page-heading";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
+import { formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
-import { formatAdminDateTime } from "@/lib/admin-date";
-import { formatMembershipMoney } from "@/lib/membership-format";
 import { legacyPackageItemView } from "@/lib/membership-catalog-adapter";
+import { catalogHref, readCatalogListContext } from "@/lib/membership-catalog-navigation";
+import { formatMembershipMoney } from "@/lib/membership-format";
 import {
   hasCompleteCatalogTranslations,
   localizedCatalogTranslation,
@@ -22,23 +39,35 @@ import type { MembershipPackage, MembershipProduct } from "@/lib/types";
 function LoadError({ error, retry }: { error: unknown; retry: () => void }) {
   const { t } = useAdminI18n();
   return (
-    <div className="panel load-error-state">
-      <p className="error-box" role="alert">
-        {requestErrorMessage(error, t)}
-      </p>
-      <button className="button secondary" onClick={retry} type="button">
-        {t.common.retry}
-      </button>
-    </div>
+    <RecoveryAlert
+      message={requestErrorMessage(error, t)}
+      retryLabel={t.common.retry}
+      onRetry={retry}
+    />
+  );
+}
+
+function CatalogDetailLoading({ label }: { label: string }) {
+  return (
+    <Paper component="section" p="md" aria-busy="true" withBorder>
+      <VisuallyHidden role="status">{label}</VisuallyHidden>
+      <Stack gap="sm" aria-hidden="true">
+        <Skeleton height={20} width="40%" />
+        <Skeleton height={42} />
+        <Skeleton height={42} />
+      </Stack>
+    </Paper>
   );
 }
 
 function Status({ active }: { active: boolean }) {
   const { t } = useAdminI18n();
   return (
-    <span className={`badge ${active ? "" : "warm"}`}>
-      {active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
-    </span>
+    <UiStatus
+      domain="availability"
+      status={active ? "active" : "inactive"}
+      label={active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
+    />
   );
 }
 
@@ -53,26 +82,36 @@ function BilingualReview({
 }) {
   const { t } = useAdminI18n();
   return (
-    <section className="catalog-bilingual-review">
-      <div className="panel-head">
-        <h3>{t.membershipCatalog.bilingualContent}</h3>
-        {!hasCompleteCatalogTranslations(translations) && (
-          <span className="badge warm">{t.membershipCatalog.translationNeedsReview}</span>
-        )}
-      </div>
-      <div className="catalog-bilingual-grid">
-        {(["vi", "en"] as const).map((locale) => {
-          const translation = translations.find((item) => item.locale === locale);
-          return (
-            <article key={locale}>
-              <h4>{locale === "vi" ? t.common.vietnamese : t.common.english}</h4>
-              <strong>{translation?.name || t.membershipCatalog.incomplete}</strong>
-              <p>{translation?.description || "—"}</p>
-            </article>
-          );
-        })}
-      </div>
-    </section>
+    <Paper component="section" p="md" withBorder>
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Title order={2} size="md">
+            {t.membershipCatalog.bilingualContent}
+          </Title>
+          {!hasCompleteCatalogTranslations(translations) && (
+            <Badge color="warning">{t.membershipCatalog.translationNeedsReview}</Badge>
+          )}
+        </Group>
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+          {(["vi", "en"] as const).map((locale) => {
+            const translation = translations.find((item) => item.locale === locale);
+            return (
+              <Paper component="article" key={locale} withBorder p="sm">
+                <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
+                  <Title order={3} size="sm">
+                    {locale === "vi" ? t.common.vietnamese : t.common.english}
+                  </Title>
+                  <Text fw={600}>{translation?.name || t.membershipCatalog.incomplete}</Text>
+                  <Text size="sm" c="dimmed">
+                    {translation?.description || "—"}
+                  </Text>
+                </Stack>
+              </Paper>
+            );
+          })}
+        </SimpleGrid>
+      </Stack>
+    </Paper>
   );
 }
 
@@ -102,7 +141,7 @@ function DeleteDialog({
       onConfirm={onConfirm}
       title={t.membershipCatalog.deleteTitle}
     >
-      <p>{t.membershipCatalog.deleteBody.replace("{name}", name)}</p>
+      <Text>{t.membershipCatalog.deleteBody.replace("{name}", name)}</Text>
     </ConfirmationDialog>
   );
 }
@@ -110,6 +149,8 @@ function DeleteDialog({
 export function MembershipProductDetail({ productId }: { productId: string }) {
   const { locale, t } = useAdminI18n();
   const router = useRouter();
+  const listContext = readCatalogListContext(useSearchParams());
+  const backHref = catalogHref("products", listContext);
   const toast = useToast();
   const deletingRef = useRef(false);
   const [item, setItem] = useState<MembershipProduct | null>(null);
@@ -134,10 +175,14 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
     setDeleteError("");
     let navigating = false;
     try {
-      await api(`admin/membership-products/${item.id}`, { method: "DELETE" });
+      await api(
+        `admin/membership-products/${item.id}`,
+        { method: "DELETE" },
+        { response: "no-content" },
+      );
       toast(t.membershipCatalog.deleted);
       navigating = true;
-      router.replace("/membership-catalog/products");
+      router.replace(backHref);
     } catch (caught) {
       setDeleteError(requestErrorMessage(caught, t));
     } finally {
@@ -149,66 +194,71 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
   }
 
   if (error && !item) return <LoadError error={error} retry={() => setAttempt((v) => v + 1)} />;
-  if (!item) return <div className="panel">{t.membershipCatalog.loadingProduct}</div>;
+  if (!item) return <CatalogDetailLoading label={t.membershipCatalog.loadingProduct} />;
   const selected = localizedCatalogTranslation(item.translations, locale);
 
   return (
     <>
-      <DetailPageHeading
-        backHref="/membership-catalog/products"
-        backLabel={t.membershipCatalog.backToProducts}
-        title={selected?.name || item.name}
-      />
-      <section className="panel catalog-detail">
-        <div className="panel-head">
-          <h2>{t.membershipCatalog.productDetails}</h2>
-          <div className="row-actions">
-            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">
-              {t.membershipCatalog.delete}
-            </button>
-            <Link className="button" href={`/membership-catalog/products/${item.id}/edit`}>
-              {t.membershipCatalog.editProduct}
-            </Link>
-          </div>
-        </div>
-        <dl className="detail-list">
-          <div>
-            <dt>{t.membershipCatalog.unitConversion}</dt>
-            <dd>
-              {formatUnitConversion(
-                t.membershipCatalog.unitConversionValue,
-                item.unit_size,
-                locale === "vi" ? item.unit_label_vi : item.unit_label_en,
+      <Stack gap="md" inert={deleteOpen || undefined}>
+        <PageHeading
+          backHref={backHref}
+          backLabel={t.membershipCatalog.backToProducts}
+          title={selected?.name || item.name}
+          bottomSpacing={0}
+          action={
+            <>
+              <Button
+                color="danger"
+                variant="subtle"
+                onClick={() => setDeleteOpen(true)}
+                type="button"
+              >
+                {t.membershipCatalog.delete}
+              </Button>
+              <Button
+                component={AdminNavigationLink}
+                href={catalogHref("products", listContext, item.id, "edit")}
+              >
+                {t.membershipCatalog.editProduct}
+              </Button>
+            </>
+          }
+        />
+        <Paper component="section" p="md" withBorder>
+          <Stack gap="sm">
+            <Title order={2} size="md">
+              {t.membershipCatalog.productDetails}
+            </Title>
+            <RecordDetailFields>
+              <RecordDetailField label={t.membershipCatalog.unitConversion}>
+                {formatUnitConversion(
+                  t.membershipCatalog.unitConversionValue,
+                  item.unit_size,
+                  locale === "vi" ? item.unit_label_vi : item.unit_label_en,
+                )}
+              </RecordDetailField>
+              <RecordDetailField label={t.membershipCatalog.unitVi}>
+                {item.unit_label_vi}
+              </RecordDetailField>
+              <RecordDetailField label={t.membershipCatalog.unitEn}>
+                {item.unit_label_en}
+              </RecordDetailField>
+              <RecordDetailField label={t.membershipCatalog.status}>
+                <Status active={item.is_active} />
+              </RecordDetailField>
+              {item.created_at && (
+                <RecordDetailField label={t.membershipCatalog.createdAt}>
+                  {formatAdminDateTime(item.created_at)}
+                </RecordDetailField>
               )}
-            </dd>
-          </div>
-          <div>
-            <dt>{t.membershipCatalog.unitVi}</dt>
-            <dd>{item.unit_label_vi}</dd>
-          </div>
-          <div>
-            <dt>{t.membershipCatalog.unitEn}</dt>
-            <dd>{item.unit_label_en}</dd>
-          </div>
-          <div>
-            <dt>{t.membershipCatalog.status}</dt>
-            <dd>
-              <Status active={item.is_active} />
-            </dd>
-          </div>
-          {item.created_at && (
-            <div>
-              <dt>{t.membershipCatalog.createdAt}</dt>
-              <dd>{formatAdminDateTime(item.created_at)}</dd>
-            </div>
-          )}
-          {item.updated_at && (
-            <div>
-              <dt>{t.membershipCatalog.updatedAt}</dt>
-              <dd>{formatAdminDateTime(item.updated_at)}</dd>
-            </div>
-          )}
-        </dl>
+              {item.updated_at && (
+                <RecordDetailField label={t.membershipCatalog.updatedAt}>
+                  {formatAdminDateTime(item.updated_at)}
+                </RecordDetailField>
+              )}
+            </RecordDetailFields>
+          </Stack>
+        </Paper>
         <BilingualReview
           translations={item.translations.map((translation) => ({
             locale: translation.locale,
@@ -216,7 +266,7 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
             description: translation.short_description,
           }))}
         />
-      </section>
+      </Stack>
       {deleteOpen && (
         <DeleteDialog
           busy={deleteBusy}
@@ -236,6 +286,8 @@ export function MembershipProductDetail({ productId }: { productId: string }) {
 export function MembershipPackageDetail({ packageId }: { packageId: string }) {
   const { locale, t } = useAdminI18n();
   const router = useRouter();
+  const listContext = readCatalogListContext(useSearchParams());
+  const backHref = catalogHref("packages", listContext);
   const toast = useToast();
   const deletingRef = useRef(false);
   const [item, setItem] = useState<MembershipPackage | null>(null);
@@ -262,10 +314,14 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
     setDeleteError("");
     let navigating = false;
     try {
-      await api(`admin/membership-packages/${item.id}`, { method: "DELETE" });
+      await api(
+        `admin/membership-packages/${item.id}`,
+        { method: "DELETE" },
+        { response: "no-content" },
+      );
       toast(t.membershipCatalog.deleted);
       navigating = true;
-      router.replace("/membership-catalog/packages");
+      router.replace(backHref);
     } catch (caught) {
       setDeleteError(requestErrorMessage(caught, t));
     } finally {
@@ -277,135 +333,170 @@ export function MembershipPackageDetail({ packageId }: { packageId: string }) {
   }
 
   if (error && !item) return <LoadError error={error} retry={() => setAttempt((v) => v + 1)} />;
-  if (!item) return <div className="panel">{t.membershipCatalog.loadingPackage}</div>;
+  if (!item) return <CatalogDetailLoading label={t.membershipCatalog.loadingPackage} />;
   const selected = localizedCatalogTranslation(item.translations, locale);
 
   return (
     <>
-      <DetailPageHeading
-        backHref="/membership-catalog/packages"
-        backLabel={t.membershipCatalog.backToPackages}
-        title={selected?.name || item.name}
-      />
-      <section className="panel catalog-detail">
-        <div className="panel-head">
-          <h2>{t.membershipCatalog.packageDetails}</h2>
-          <div className="row-actions">
-            <button className="button danger" onClick={() => setDeleteOpen(true)} type="button">
-              {t.membershipCatalog.delete}
-            </button>
-            <Link className="button" href={`/membership-catalog/packages/${item.id}/edit`}>
-              {t.membershipCatalog.editPackage}
-            </Link>
-          </div>
-        </div>
-        <dl className="detail-list catalog-package-summary">
-          <div>
-            <dt>{t.membershipCatalog.policy}</dt>
-            <dd>
-              {item.quota_policy === "expire"
-                ? t.membershipCatalog.expire
-                : t.membershipCatalog.rollover}
-            </dd>
-          </div>
-          <div>
-            <dt>{t.membershipCatalog.status}</dt>
-            <dd>
-              <Status active={item.is_active} />
-            </dd>
-          </div>
-          {item.created_at && (
-            <div>
-              <dt>{t.membershipCatalog.createdAt}</dt>
-              <dd>{formatAdminDateTime(item.created_at)}</dd>
-            </div>
-          )}
-          {item.updated_at && (
-            <div>
-              <dt>{t.membershipCatalog.updatedAt}</dt>
-              <dd>{formatAdminDateTime(item.updated_at)}</dd>
-            </div>
-          )}
-        </dl>
-        <section className="catalog-price-options">
-          <h3>{t.membershipCatalog.priceOptions}</h3>
-          {([true, false] as const).map((active) => {
-            const options = item.price_options.filter((option) => option.is_active === active);
-            if (!options.length) return null;
-            return (
-              <div className="price-option-group" key={String(active)}>
-                <h4>
-                  {active ? t.membershipCatalog.activeOptions : t.membershipCatalog.inactiveOptions}
-                </h4>
-                <div className="table-wrap">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>{t.membershipCatalog.duration}</th>
-                        <th>{t.membershipCatalog.monthlyPrice}</th>
-                        <th>{t.membershipCatalog.totalPreview}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {options.map((option) => (
-                        <tr key={option.id}>
-                          <td>{option.duration_months}</td>
-                          <td>{formatMembershipMoney(option.monthly_price_vnd, locale)}</td>
-                          <td>{formatMembershipMoney(option.total_price_vnd, locale)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-          })}
-        </section>
+      <Stack gap="md" inert={deleteOpen || undefined}>
+        <PageHeading
+          backHref={backHref}
+          backLabel={t.membershipCatalog.backToPackages}
+          title={selected?.name || item.name}
+          bottomSpacing={0}
+          action={
+            <>
+              <Button
+                color="danger"
+                variant="subtle"
+                onClick={() => setDeleteOpen(true)}
+                type="button"
+              >
+                {t.membershipCatalog.delete}
+              </Button>
+              <Button
+                component={AdminNavigationLink}
+                href={catalogHref("packages", listContext, item.id, "edit")}
+              >
+                {t.membershipCatalog.editPackage}
+              </Button>
+            </>
+          }
+        />
+        <Paper component="section" p="md" withBorder>
+          <Stack gap="sm">
+            <Title order={2} size="md">
+              {t.membershipCatalog.packageDetails}
+            </Title>
+            <RecordDetailFields>
+              <RecordDetailField label={t.membershipCatalog.policy}>
+                {item.quota_policy === "expire"
+                  ? t.membershipCatalog.expire
+                  : t.membershipCatalog.rollover}
+              </RecordDetailField>
+              <RecordDetailField label={t.membershipCatalog.status}>
+                <Status active={item.is_active} />
+              </RecordDetailField>
+              {item.created_at && (
+                <RecordDetailField label={t.membershipCatalog.createdAt}>
+                  {formatAdminDateTime(item.created_at)}
+                </RecordDetailField>
+              )}
+              {item.updated_at && (
+                <RecordDetailField label={t.membershipCatalog.updatedAt}>
+                  {formatAdminDateTime(item.updated_at)}
+                </RecordDetailField>
+              )}
+            </RecordDetailFields>
+          </Stack>
+        </Paper>
+        <Paper component="section" p="md" withBorder>
+          <Stack gap="sm">
+            <Title order={2} size="md">
+              {t.membershipCatalog.priceOptions}
+            </Title>
+            {([true, false] as const).map((active) => {
+              const options = item.price_options.filter((option) => option.is_active === active);
+              if (!options.length) return null;
+              const label = active
+                ? t.membershipCatalog.activeOptions
+                : t.membershipCatalog.inactiveOptions;
+              return (
+                <Stack gap="xs" key={String(active)}>
+                  <Title order={3} size="sm">
+                    {label}
+                  </Title>
+                  <Paper withBorder style={{ overflow: "hidden" }}>
+                    <Table.ScrollContainer
+                      type="native"
+                      minWidth={460}
+                      tabIndex={0}
+                      role="region"
+                      aria-label={label}
+                    >
+                      <Table withRowBorders>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th scope="col">{t.membershipCatalog.duration}</Table.Th>
+                            <Table.Th scope="col">{t.membershipCatalog.monthlyPrice}</Table.Th>
+                            <Table.Th scope="col">{t.membershipCatalog.totalPreview}</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {options.map((option) => (
+                            <Table.Tr key={option.id}>
+                              <Table.Td>{option.duration_months}</Table.Td>
+                              <Table.Td>
+                                {formatMembershipMoney(option.monthly_price_vnd, locale)}
+                              </Table.Td>
+                              <Table.Td>
+                                {formatMembershipMoney(option.total_price_vnd, locale)}
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    </Table.ScrollContainer>
+                  </Paper>
+                </Stack>
+              );
+            })}
+          </Stack>
+        </Paper>
         <BilingualReview translations={item.translations} />
-        <div className="catalog-package-products">
-          <h3>{t.membershipCatalog.packageProducts}</h3>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t.membershipCatalog.product}</th>
-                  <th>{t.membershipCatalog.quotaUnits}</th>
-                  <th>{t.membershipCatalog.unitConversion}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {item.items.map((raw) => {
-                  const line = legacyPackageItemView(raw);
-                  return (
-                    <tr key={line.quotaGroupId}>
-                      <td>
-                        <strong>
-                          {localizedCatalogTranslation(line.translations, locale)?.name ||
-                            line.name}
-                        </strong>
-                        <small className="table-secondary">
-                          {localizedCatalogTranslation(line.translations, locale)
-                            ?.short_description ||
-                            line.shortDescription ||
-                            "—"}
-                        </small>
-                      </td>
-                      <td>{line.quotaUnits}</td>
-                      <td>
-                        {formatUnitConversion(
-                          t.membershipCatalog.unitConversionValue,
-                          line.unitSize,
-                          locale === "vi" ? line.unitLabelVi : line.unitLabelEn,
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+        <Paper component="section" p="md" withBorder>
+          <Stack gap="sm">
+            <Title order={2} size="md">
+              {t.membershipCatalog.packageProducts}
+            </Title>
+            <Paper withBorder style={{ overflow: "hidden" }}>
+              <Table.ScrollContainer
+                type="native"
+                minWidth={460}
+                tabIndex={0}
+                role="region"
+                aria-label={t.membershipCatalog.packageProducts}
+              >
+                <Table withRowBorders styles={{ td: { overflowWrap: "anywhere" } }}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th scope="col">{t.membershipCatalog.product}</Table.Th>
+                      <Table.Th scope="col">{t.membershipCatalog.quotaUnits}</Table.Th>
+                      <Table.Th scope="col">{t.membershipCatalog.unitConversion}</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {item.items.map((raw) => {
+                      const line = legacyPackageItemView(raw);
+                      const translated = localizedCatalogTranslation(line.translations, locale);
+                      return (
+                        <Table.Tr key={line.quotaGroupId}>
+                          <Table.Td>
+                            <Stack gap={4}>
+                              <Text fw={600}>{translated?.name || line.name}</Text>
+                              <Text size="sm" c="dimmed">
+                                {translated?.short_description || line.shortDescription || "—"}
+                              </Text>
+                            </Stack>
+                          </Table.Td>
+                          <Table.Td>{line.quotaUnits}</Table.Td>
+                          <Table.Td>
+                            {formatUnitConversion(
+                              t.membershipCatalog.unitConversionValue,
+                              line.unitSize,
+                              locale === "vi" ? line.unitLabelVi : line.unitLabelEn,
+                            )}
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            </Paper>
+          </Stack>
+        </Paper>
+      </Stack>
       {deleteOpen && (
         <DeleteDialog
           busy={deleteBusy}

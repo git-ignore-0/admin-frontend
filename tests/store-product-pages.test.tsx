@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,6 +33,7 @@ vi.mock("@/lib/commerce-api", () => ({
 }));
 vi.mock("@/lib/membership-catalog-adapter", () => ({ listActiveQuotaGroups: mocks.groups }));
 vi.mock("@/components/admin-i18n-provider", () => ({
+  useOptionalAdminI18n: () => undefined,
   useAdminI18n: () => ({ locale: mocks.locale, t: adminDictionaries[mocks.locale] }),
 }));
 vi.mock("@/components/toast-provider", () => ({ useToast: () => mocks.toast }));
@@ -135,7 +137,7 @@ async function fillBase() {
   fireEvent.change(screen.getByLabelText(/Mã quản lý sản phẩm/), {
     target: { value: "rau-01" },
   });
-  fireEvent.change(screen.getByLabelText(/Danh mục sản phẩm/), { target: { value: "leaf" } });
+  selectOption(screen.getByLabelText(/Danh mục sản phẩm/), "leaf");
   fireEvent.change(screen.getByLabelText(/Khối lượng \/ số lượng/), {
     target: { value: "0.500" },
   });
@@ -205,6 +207,7 @@ describe("store product editor", () => {
     ]);
     mocks.product.mockResolvedValue(storedProduct);
     render(<StoreProductEditor productId="product-1" />);
+    fireEvent.click(await screen.findByLabelText(/Danh mục sản phẩm/));
     expect(await screen.findByRole("option", { name: "Rau lá" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
@@ -213,7 +216,7 @@ describe("store product editor", () => {
   it("shows names as optional for drafts and required for published products", async () => {
     render(<StoreProductEditor />);
     expect(await screen.findByLabelText("Tên sản phẩm")).not.toBeRequired();
-    fireEvent.change(screen.getByLabelText("Xuất bản"), { target: { value: "true" } });
+    selectOption(screen.getByLabelText("Xuất bản"), "true");
     expect(screen.getByLabelText("Tên sản phẩm *")).toBeRequired();
   });
 
@@ -234,7 +237,10 @@ describe("store product editor", () => {
       meta: { page: 1, page_size: 30, total: 1 },
     });
     render(<StoreProductEditor />);
-    fireEvent.change(await screen.findByLabelText("Sale type"), { target: { value: "yes" } });
+    selectOption(await screen.findByLabelText("Sale type"), "yes");
+    const quotaGroup = await screen.findByLabelText(/CSA benefit group/);
+    await waitFor(() => expect(quotaGroup).toBeEnabled());
+    fireEvent.click(quotaGroup);
     expect(await screen.findByRole("option", { name: "Vegetables" })).toBeInTheDocument();
   });
   it("explains SKU and selling-unit fields with examples", async () => {
@@ -258,6 +264,7 @@ describe("store product editor", () => {
 
   it("shows only selectable categories with their full hierarchy", async () => {
     render(<StoreProductEditor />);
+    fireEvent.click(await screen.findByLabelText(/Danh mục sản phẩm/));
     expect(
       await screen.findByRole("option", { name: "Thực phẩm → Rau → Rau lá" }),
     ).toBeInTheDocument();
@@ -270,7 +277,8 @@ describe("store product editor", () => {
   it("keeps the full description inside the matching language tab", async () => {
     render(<StoreProductEditor />);
     await screen.findByRole("heading", { name: "Nội dung song ngữ" });
-    expect(screen.getByLabelText(/Tên sản phẩm/).closest("label")).toHaveClass("full");
+    expect(screen.getByLabelText(/Tên sản phẩm/)).not.toBeRequired();
+    expect(screen.getByLabelText(/Tên sản phẩm/)).toHaveAttribute("maxlength", "200");
 
     act(() =>
       (
@@ -405,10 +413,8 @@ describe("store product editor", () => {
   it("saves a CSA-eligible draft with a fractional point cost", async () => {
     render(<StoreProductEditor />);
     await fillBase();
-    fireEvent.change(screen.getByLabelText("Hình thức bán"), { target: { value: "yes" } });
-    fireEvent.change(await screen.findByLabelText(/Nhóm quyền lợi CSA/), {
-      target: { value: "quota" },
-    });
+    selectOption(screen.getByLabelText("Hình thức bán"), "yes");
+    selectOption(await screen.findByLabelText(/Nhóm quyền lợi CSA/), "quota");
     fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: ".25" } });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
@@ -423,10 +429,8 @@ describe("store product editor", () => {
     async (cost) => {
       render(<StoreProductEditor />);
       await fillBase();
-      fireEvent.change(screen.getByLabelText("Hình thức bán"), { target: { value: "yes" } });
-      fireEvent.change(await screen.findByLabelText(/Nhóm quyền lợi CSA/), {
-        target: { value: "quota" },
-      });
+      selectOption(screen.getByLabelText("Hình thức bán"), "yes");
+      selectOption(await screen.findByLabelText(/Nhóm quyền lợi CSA/), "quota");
       fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: cost } });
       fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
       expect(await screen.findByRole("alert")).toBeVisible();
@@ -460,7 +464,7 @@ describe("store product editor", () => {
   it("does not publish without translations and an image", async () => {
     render(<StoreProductEditor />);
     await fillBase();
-    fireEvent.change(screen.getByLabelText("Xuất bản"), { target: { value: "true" } });
+    selectOption(screen.getByLabelText("Xuất bản"), "true");
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/tiếng Việt và tiếng Anh/);
     expect(mocks.save).not.toHaveBeenCalled();
@@ -756,4 +760,17 @@ describe("store product detail", () => {
 
     expect(await screen.findByRole("heading", { name: "Rau muống" })).toBeVisible();
   });
+});
+
+it("focuses the visible category select when its required selection is missing", async () => {
+  render(<StoreProductEditor />);
+  await fillBase();
+  const category = screen.getByRole("combobox", { name: /Danh mục sản phẩm/ });
+  expect(new FormData(category.closest("form")!).get("category_id")).toBe("leaf");
+  selectOption(category, "");
+  expect(new FormData(category.closest("form")!).get("category_id")).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  await waitFor(() => expect(category).toHaveFocus());
+  expect(mocks.save).not.toHaveBeenCalled();
 });

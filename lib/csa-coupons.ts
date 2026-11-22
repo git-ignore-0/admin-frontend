@@ -1,5 +1,6 @@
 import type { AdminDictionary, AdminLocale } from "@/lib/admin-i18n";
 import { adminDateInputToIso, formatAdminDate } from "@/lib/admin-date";
+import { requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 
 export type CouponStatus = "active" | "inactive" | "scheduled" | "expired" | "exhausted";
@@ -68,10 +69,7 @@ export function couponErrorMessage(error: unknown, t: AdminDictionary): string {
   if (Object.prototype.hasOwnProperty.call(t.csaCoupons.errors, error.message)) {
     return t.csaCoupons.errors[error.message as keyof typeof t.csaCoupons.errors];
   }
-  if (["network_error", "upstream_timeout", "upstream_unavailable"].includes(error.message))
-    return t.common.networkError;
-  if (["forbidden", "csrf_rejected"].includes(error.message)) return t.common.forbidden;
-  return t.common.requestFailed;
+  return requestErrorMessage(error, t);
 }
 
 export function couponDateInput(value: string, { end = false }: { end?: boolean } = {}): string {

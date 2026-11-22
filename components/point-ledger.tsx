@@ -1,4 +1,9 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { FormInput, FormTextarea, FormSelect, FormField } from "@/components/nfv-controls";
+
+import { Button, Table, Alert } from "@mantine/core";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
@@ -8,6 +13,7 @@ import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   numericInputErrorMessage,
@@ -49,8 +55,9 @@ export function PointLedger({
     setItems(null);
     apiEnvelope<PointTransaction[], PointHistoryMeta>(`admin/users/${userId}/points?page=${page}`)
       .then((payload) => {
-        setItems(payload.data);
-        setMeta(payload.meta ?? null);
+        const { data, meta } = requirePaginatedList(payload, requireResponseEntity);
+        setItems(data);
+        setMeta(meta);
       })
       .catch((caught) => setError(requestErrorMessage(caught, t)));
   }, [page, t, userId]);
@@ -122,22 +129,20 @@ export function PointLedger({
           </div>
         </div>
         <form className="form-grid one" noValidate onSubmit={submit}>
-          <label className="field">
-            <span>{t.points.direction}</span>
-            <select
-              className="input"
+          <FormField className="field" label={t.points.direction}>
+            <FormSelect
               value={direction}
-              onChange={(event) => setDirection(event.target.value as PointDirection)}
-            >
-              <option value="credit">{t.points.credit}</option>
-              <option value="debit">{t.points.debit}</option>
-            </select>
-          </label>
+              onChange={(value) => setDirection((value ?? "credit") as PointDirection)}
+              data={[
+                { value: "credit", label: t.points.credit },
+                { value: "debit", label: t.points.debit },
+              ]}
+            />
+          </FormField>
           <label className="field">
             <span>{t.points.amount}</span>
-            <input
+            <FormInput
               aria-invalid={Boolean(amountError)}
-              className="input"
               inputMode="numeric"
               onChange={(event) => {
                 setAmount(sanitizeIntegerInput(event.target.value));
@@ -155,21 +160,20 @@ export function PointLedger({
           </label>
           <label className="field">
             <span>{t.points.message} *</span>
-            <textarea
-              className="textarea"
+            <FormTextarea
               required
               value={message}
               onChange={(event) => setMessage(event.target.value)}
             />
           </label>
           {error && (
-            <p className="error-box" role="alert">
+            <Alert color="red" role="alert">
               {error}
-            </p>
+            </Alert>
           )}
-          <button className="button" disabled={saving} type="submit">
+          <Button disabled={saving} type="submit">
             {t.points.create}
-          </button>
+          </Button>
         </form>
       </div>
       <div className="panel ledger-history">
@@ -177,35 +181,38 @@ export function PointLedger({
           <h2>{t.points.history}</h2>
         </div>
         {!items ? (
-          <p>{t.users.loading}</p>
+          <DataState kind="loading" title={t.users.loading} />
         ) : items.length === 0 ? (
-          <div className="empty">{t.points.empty}</div>
+          <DataState kind="empty" title={t.points.empty} />
         ) : (
-          <div className="table-wrap">
-            <table className="table point-table">
-              <thead>
-                <tr>
-                  <th>{t.points.message}</th>
-                  <th>{t.points.amount}</th>
-                  <th>{t.points.actor}</th>
-                  <th>{t.points.date}</th>
-                </tr>
-              </thead>
-              <tbody>
+          <Table.ScrollContainer type="native" minWidth={700} className="table-wrap">
+            <Table aria-label={t.points.history} tabularNums>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t.points.message}</Table.Th>
+                  <Table.Th ta="right">{t.points.amount}</Table.Th>
+                  <Table.Th>{t.points.actor}</Table.Th>
+                  <Table.Th>{t.points.date}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.message}</td>
-                    <td className={item.direction === "credit" ? "credit-value" : "debit-value"}>
+                  <Table.Tr key={item.id}>
+                    <Table.Td>{item.message}</Table.Td>
+                    <Table.Td
+                      ta="right"
+                      className={item.direction === "credit" ? "credit-value" : "debit-value"}
+                    >
                       {item.direction === "credit" ? "+" : "−"}
                       {item.amount}
-                    </td>
-                    <td>{item.actor?.name ?? "—"}</td>
-                    <td>{formatAdminDateTime(item.created_at)}</td>
-                  </tr>
+                    </Table.Td>
+                    <Table.Td>{item.actor?.name ?? "—"}</Table.Td>
+                    <Table.Td>{formatAdminDateTime(item.created_at)}</Table.Td>
+                  </Table.Tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         )}
         {meta && (
           <Pagination

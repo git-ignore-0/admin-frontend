@@ -1,18 +1,10 @@
-import { DetailPageHeading } from "@/components/detail-page-heading";
 import { MembershipProductEditor } from "@/components/membership-catalog-editors";
-import { adminDictionaries } from "@/lib/admin-i18n";
-import { getAdminLocale } from "@/lib/admin-locale";
+import { MembershipCatalogEditorHeading } from "@/components/membership-catalog-route-navigation";
 
-export default async function NewProductPage() {
-  const t = adminDictionaries[await getAdminLocale()];
+export default function NewProductPage() {
   return (
     <>
-      <DetailPageHeading
-        backHref="/membership-catalog/products"
-        backLabel={t.membershipCatalog.backToProducts}
-        description={t.membershipCatalog.newProductDescription}
-        title={t.membershipCatalog.newProduct}
-      />
+      <MembershipCatalogEditorHeading resource="products" />
       <MembershipProductEditor />
     </>
   );

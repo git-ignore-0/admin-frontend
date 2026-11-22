@@ -1,5 +1,8 @@
 "use client";
 
+import { Button, TextInput, Alert } from "@mantine/core";
+import { FormInput, FormSelect, FormField } from "@/components/nfv-controls";
+
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -138,20 +141,20 @@ export function CSACustomerForm() {
   return (
     <form aria-busy={saving} className="customer-onboarding" noValidate onSubmit={submit}>
       {error && (
-        <p className="error-box customer-form-error" role="alert">
+        <Alert color="red" className="customer-form-error" role="alert">
           {error}
-        </p>
+        </Alert>
       )}
       <section className="panel customer-form-step">
         <div className="customer-details-fields">
           <div className="form-grid customer-contact-fields">
             <label className="field">
               <span>{t.csaCustomers.name} *</span>
-              <input
+              <FormInput
                 aria-describedby={fieldErrors.name ? "customer-name-error" : undefined}
                 aria-invalid={Boolean(fieldErrors.name)}
                 autoComplete="name"
-                className="input"
+
                 maxLength={150}
                 value={fields.name}
                 onChange={(event) => updateField("name", event.target.value)}
@@ -164,11 +167,17 @@ export function CSACustomerForm() {
             </label>
             <label className="field">
               <span>{t.csaCustomers.phone} *</span>
-              <input
+              <TextInput
+                error={Boolean(fieldErrors.phone)}
+                attributes={{
+                  input: {
+                    "aria-describedby": fieldErrors.phone ? CUSTOMER_PHONE_ERROR_ID : undefined,
+                  },
+                }}
                 aria-describedby={fieldErrors.phone ? CUSTOMER_PHONE_ERROR_ID : undefined}
                 aria-invalid={Boolean(fieldErrors.phone)}
                 autoComplete="tel"
-                className="input"
+
                 inputMode="tel"
                 maxLength={13}
                 ref={phoneRef}
@@ -187,68 +196,59 @@ export function CSACustomerForm() {
             </label>
           </div>
           <div className="form-grid customer-address-fields">
-            <label className="field">
-              <span>{t.csaCustomers.province} *</span>
-              <select
+            <FormField label={t.csaCustomers.province + " *"} className="field">
+              <FormSelect
                 aria-describedby={fieldErrors.province ? "customer-province-error" : undefined}
                 aria-invalid={Boolean(fieldErrors.province)}
                 autoComplete="address-level1"
-                className="input"
                 disabled={shippingAreasLoading}
                 value={fields.province}
-                onChange={(event) => {
-                  updateField("province", event.target.value);
+                onChange={(selectedValue) => {
+                  updateField("province", selectedValue ?? "");
                   updateField("ward", "");
                 }}
-              >
-                <option value="">
-                  {shippingAreasLoading
-                    ? t.csaCustomers.loadingProvinces
-                    : t.csaCustomers.chooseProvince}
-                </option>
-                {provinces.map((item) => (
-                  <option key={item.code} value={item.code}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+                data={[
+                  {
+                    value: "",
+                    label: shippingAreasLoading
+                      ? t.csaCustomers.loadingProvinces
+                      : t.csaCustomers.chooseProvince,
+                  },
+                  ...(provinces.map((item) => ({ value: item.code, label: item.name })) ?? []),
+                ]}
+              />
               {fieldErrors.province && (
                 <small className="field-error" id="customer-province-error">
                   {fieldErrors.province}
                 </small>
               )}
-            </label>
-            <label className="field">
-              <span>{t.csaCustomers.ward} *</span>
-              <select
+            </FormField>
+            <FormField label={t.csaCustomers.ward + " *"} className="field">
+              <FormSelect
                 aria-describedby={fieldErrors.ward ? "customer-ward-error" : undefined}
                 aria-invalid={Boolean(fieldErrors.ward)}
                 autoComplete="address-level2"
-                className="input"
                 disabled={!fields.province || Boolean(addressError)}
                 value={fields.ward}
-                onChange={(event) => updateField("ward", event.target.value)}
-              >
-                <option value="">{t.csaCustomers.chooseWard}</option>
-                {wards.map((item) => (
-                  <option key={item.code} value={item.code}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(selectedValue) => updateField("ward", selectedValue ?? "")}
+                data={[
+                  { value: "", label: t.csaCustomers.chooseWard },
+                  ...(wards.map((item) => ({ value: item.code, label: item.name })) ?? []),
+                ]}
+              />
               {fieldErrors.ward && (
                 <small className="field-error" id="customer-ward-error">
                   {fieldErrors.ward}
                 </small>
               )}
-            </label>
+            </FormField>
             <label className="field form-grid-full">
               <span>{t.csaCustomers.deliveryAddress} *</span>
-              <input
+              <FormInput
                 aria-describedby={fieldErrors.address ? "customer-address-error" : undefined}
                 aria-invalid={Boolean(fieldErrors.address)}
                 autoComplete="address-line1"
-                className="input"
+
                 maxLength={500}
                 placeholder={t.csaCustomers.addressPlaceholder}
                 value={fields.address}
@@ -269,12 +269,13 @@ export function CSACustomerForm() {
         </div>
       </section>
       <div className="customer-sticky-actions">
-        <button
-          className="button"
+        <Button
+          type="submit"
+
           disabled={saving || shippingAreasLoading || Boolean(addressError)}
         >
           {saving ? t.csaCustomers.saving : t.csaCustomers.create}
-        </button>
+        </Button>
       </div>
     </form>
   );

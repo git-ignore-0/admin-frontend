@@ -1,12 +1,18 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSATermsEditor } from "@/components/csa-terms-editor";
 import { CSATermsList } from "@/components/csa-terms-list";
-import { ActionLink, DataState, Icon, Section, Status, Tabs } from "@/components/nfv-controls";
+import {
+  ActionLink,
+  Button,
+  DataState,
+  Icon,
+  Section,
+  Status,
+  Tabs,
+} from "@/components/nfv-controls";
 import { parseCSATermsDocument } from "@/lib/csa-terms";
 import { api } from "@/lib/client-api";
 
@@ -77,19 +83,27 @@ describe("shared NFV controls", () => {
       </>,
     );
 
-    expect(screen.getByRole("link", { name: "Create" })).toHaveClass("nfv-button");
-    expect(screen.getByText("Published")).toHaveClass("status");
-    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(screen.getByRole("link", { name: "Create" })).toHaveClass("mantine-Button-root");
+    expect(screen.getByText("Published").closest(".mantine-Badge-root")).toBeVisible();
+    fireEvent.click(screen.getByRole("radio", { name: "English" }));
     expect(onChange).toHaveBeenCalledWith("en");
     expect(screen.getByRole("status")).toHaveTextContent("No terms");
     expect(screen.getByRole("heading", { name: "Terms" })).toBeInTheDocument();
   });
 
-  it("centers icon and text inside the shared FEv1 button content wrapper", () => {
-    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
-    expect(css).toMatch(
-      /\.nfv-button-content\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*gap:\s*7px;/u,
+  it("prevents repeating a pending action and preserves explicit submit semantics", () => {
+    const action = vi.fn();
+    render(
+      <Button loading onClick={action} type="submit" form="save-form">
+        Save
+      </Button>,
     );
+    const button = screen.getByRole("button", { name: "Save" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("type", "submit");
+    expect(button).toHaveAttribute("form", "save-form");
+    fireEvent.click(button);
+    expect(action).not.toHaveBeenCalled();
   });
 });
 
@@ -122,30 +136,19 @@ describe("CSA terms administration", () => {
 
     expect(await screen.findAllByText("CSA_TERMS_V3")).toHaveLength(3);
     expect(document.querySelector(".csa-terms-list-shell")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create draft" })).toHaveClass("btn-small");
+    expect(screen.getByRole("link", { name: "Create draft" })).toHaveAttribute("data-size", "xs");
     expect(screen.getByRole("link", { name: "Create draft" })).toHaveAttribute(
       "href",
       "/csa-terms/new",
     );
     const editLink = screen.getAllByRole("link", { name: "Edit" })[0];
     const viewLinks = screen.getAllByRole("link", { name: "View" });
-    expect(editLink).toHaveClass("btn-outline");
+    expect(editLink).toHaveAttribute("data-variant", "default");
     expect(editLink.querySelector("svg")).toBeInTheDocument();
     expect(viewLinks).toHaveLength(2);
-    expect(viewLinks.every((link) => link.classList.contains("btn-outline"))).toBe(true);
+    expect(viewLinks.every((link) => link.getAttribute("data-variant") === "default")).toBe(true);
     expect(viewLinks.every((link) => link.querySelector("svg") === null)).toBe(true);
     expect(document.querySelectorAll("time")).toHaveLength(3);
-  });
-
-  it("keeps the CSA terms list compact with the same Medusa-like hierarchy", () => {
-    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
-    expect(css).toMatch(/\.csa-terms-list-shell\s*\{[^}]*max-width:\s*980px;[^}]*gap:\s*16px;/u);
-    expect(css).toMatch(
-      /\.csa-terms-list-shell \.page-heading h1\s*\{[^}]*font-size:\s*1\.25rem;/u,
-    );
-    expect(css).toMatch(
-      /\.csa-terms-table th,\s*\.csa-terms-table td\s*\{[^}]*padding:\s*11px 16px;/u,
-    );
   });
 
   it("edits both languages, orders clauses and saves the backend payload", async () => {
@@ -159,7 +162,11 @@ describe("CSA terms administration", () => {
     expect(await screen.findByDisplayValue("Delivery")).toBeVisible();
     expect(document.querySelector(".csa-terms-editor-shell")).toBeInTheDocument();
     expect(document.querySelectorAll(".csa-terms-edit-clause")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Tiếng Việt" }));
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      screen.getByRole("tab", { name: "English" }).id,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Tiếng Việt" }));
     expect(screen.getByDisplayValue("Giao hàng")).toBeVisible();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Move down" })[0]);
@@ -278,27 +285,6 @@ describe("CSA terms administration", () => {
     );
   });
 
-  it("keeps the CSA terms editor compact with a Medusa-like type and spacing scale", () => {
-    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
-    expect(css).toMatch(/\.csa-terms-editor-shell\s*\{[^}]*max-width:\s*880px;[^}]*gap:\s*16px;/u);
-    expect(css).toMatch(/\.csa-terms-editor \.page-heading h1\s*\{[^}]*font-size:\s*1\.25rem;/u);
-    expect(css).toMatch(
-      /\.csa-terms-edit-clause\s*\{[^}]*padding:\s*12px 16px;[^}]*border:\s*1px solid var\(--border\);/u,
-    );
-    expect(css).toMatch(
-      /\.csa-terms-footer-actions\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0;/u,
-    );
-    expect(css).toMatch(
-      /\.csa-terms-read-document > header\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);[^}]*align-items:\s*baseline;/u,
-    );
-    expect(css).toMatch(
-      /\.csa-terms-meta-version\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*baseline;/u,
-    );
-    expect(css).toMatch(
-      /\.csa-terms-language-tabs\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*justify-content:\s*flex-end;/u,
-    );
-  });
-
   it("deletes a draft only after confirmation", async () => {
     vi.mocked(api).mockResolvedValueOnce(rawTerms).mockResolvedValueOnce(undefined);
     render(
@@ -310,7 +296,11 @@ describe("CSA terms administration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
     fireEvent.click(screen.getByRole("dialog").querySelector("button:last-child")!);
     await waitFor(() =>
-      expect(api).toHaveBeenLastCalledWith(`admin/csa-terms/${rawTerms.id}`, { method: "DELETE" }),
+      expect(api).toHaveBeenLastCalledWith(
+        `admin/csa-terms/${rawTerms.id}`,
+        { method: "DELETE" },
+        { response: "no-content" },
+      ),
     );
     expect(navigation.push).toHaveBeenCalledWith("/csa-terms");
   });

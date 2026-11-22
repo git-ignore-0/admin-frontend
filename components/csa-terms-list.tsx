@@ -1,4 +1,5 @@
 "use client";
+import { Table } from "@mantine/core";
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -31,6 +32,7 @@ export function CSATermsList() {
   return (
     <div className="csa-terms-screen csa-terms-list-shell">
       <PageHeading
+        bottomSpacing={0}
         action={
           <ActionLink href="/csa-terms/new" small>
             <Icon name="plus" />
@@ -51,46 +53,50 @@ export function CSATermsList() {
       ) : items.length === 0 ? (
         <DataState kind="empty" title={copy.empty} />
       ) : (
-        <div className="csa-terms-table-wrap">
-          <table className="csa-terms-table">
-            <thead>
-              <tr>
-                <th>{copy.version}</th>
-                <th>{copy.status}</th>
-                <th>{copy.updatedAt}</th>
-                <th>{copy.action}</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Table.ScrollContainer type="native" minWidth={0} className="csa-terms-table-wrap">
+          <Table role="table" className="csa-terms-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{copy.version}</Table.Th>
+                <Table.Th role="columnheader">{copy.status}</Table.Th>
+                <Table.Th role="columnheader">{copy.updatedAt}</Table.Th>
+                <Table.Th role="columnheader">{copy.action}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => {
                 const isDraft = item.status === "draft";
                 return (
-                  <tr key={item.id}>
-                    <td data-label={copy.version}>
+                  <Table.Tr role="row" key={item.id}>
+                    <Table.Td role="cell" data-label={copy.version}>
                       <strong>{item.version}</strong>
-                    </td>
-                    <td data-label={copy.status}>
-                      <Status status={item.status} label={copy.statuses[item.status]} />
-                    </td>
-                    <td data-label={copy.updatedAt}>
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.status}>
+                      <Status
+                        domain="csa-terms"
+                        status={item.status}
+                        label={copy.statuses[item.status]}
+                      />
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.updatedAt}>
                       <time dateTime={item.updatedAt}>
                         {new Intl.DateTimeFormat(locale === "vi" ? "vi-VN" : "en-GB", {
                           dateStyle: "medium",
                         }).format(new Date(item.updatedAt))}
                       </time>
-                    </td>
-                    <td data-label={copy.action}>
+                    </Table.Td>
+                    <Table.Td role="cell" data-label={copy.action}>
                       <ActionLink href={`/csa-terms/${item.id}`} small variant="outline">
                         {isDraft ? <Icon name="edit" /> : null}
                         {isDraft ? copy.edit : copy.view}
                       </ActionLink>
-                    </td>
-                  </tr>
+                    </Table.Td>
+                  </Table.Tr>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </div>
   );

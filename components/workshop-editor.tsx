@@ -1,13 +1,18 @@
 "use client";
 
+import { Alert, Button, Stack, Tabs, Text } from "@mantine/core";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { normalizeTiptapLinks, RichTextEditor } from "@/components/rich-text-editor";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
+import { DataState, FormInput, FormTextarea, Status } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
+import { requireResponseEntity } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
+import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import {
   emptyTranslation,
   type Locale,
@@ -15,6 +20,22 @@ import {
   type WorkshopTranslation,
 } from "@/lib/types";
 import { formatZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/zoned-date-time";
+
+const workshopLocales = ["vi", "en"] as const;
+type ConfirmationAction = "publish" | "unpublish" | "delete" | "archive";
+type WorkshopAction = ConfirmationAction | "save";
+
+function requireWorkshopResponse(data: Workshop) {
+  requireResponseEntity(data);
+  if (
+    typeof data.revision_id !== "string" ||
+    !Number.isSafeInteger(data.version) ||
+    !Array.isArray(data.translations)
+  ) {
+    throw invalidApiResponse();
+  }
+  return data;
+}
 
 function initialWorkshop(): Workshop {
   const eventTimezone = "Asia/Ho_Chi_Minh";
@@ -65,17 +86,46 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
   const [data, setData] = useState<Workshop>(initialWorkshop());
   const [activeLocale, setActiveLocale] = useState<Locale>("vi");
   const [loading, setLoading] = useState(Boolean(workshopId));
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [publishing, setPublishing] = useState(false);
-  const publishingRef = useRef(false);
-  const [deleting, setDeleting] = useState(false);
-  const deletingRef = useRef(false);
   const [loadError, setLoadError] = useState("");
+  const [dialog, setDialog] = useState<ConfirmationAction | null>(null);
+  const [pendingAction, setPendingAction] = useState<WorkshopAction | null>(null);
+  const pendingMutation = useRef<symbol | null>(null);
+  const dialogTrigger = useRef<HTMLButtonElement>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const busy = pendingAction !== null;
   const localeNames: Record<Locale, string> = {
     vi: t.common.vietnamese,
     en: t.common.english,
   };
+  const copy = t.editor;
+  const confirmationCopy = {
+    publish: { label: copy.publish, busyLabel: copy.publishing, message: copy.confirmPublish },
+    unpublish: {
+      label: copy.unpublish,
+      busyLabel: copy.unpublishing,
+      message: copy.confirmUnpublish,
+    },
+    delete: { label: copy.delete, busyLabel: copy.deleting, message: copy.confirmDelete },
+    archive: { label: copy.archive, busyLabel: copy.archiving, message: copy.confirmArchive },
+  };
+  const removalAction = data.has_published_revision ? "archive" : "delete";
+  const translationStates = workshopLocales.map((locale) => {
+    const item = data.translations.find((entry) => entry.locale === locale);
+    return { locale, added: Boolean(item), state: item ? completeness(item) : "empty" } as const;
+  });
+  const readyLanguages = translationStates
+    .filter(({ state }) => state === "ready")
+    .map(({ locale }) => localeNames[locale]);
+  const skippedLanguages = translationStates
+    .filter(({ state }) => state !== "ready")
+    .map(({ locale }) => localeNames[locale]);
+
+  useLayoutEffect(() => {
+    // The protected shell unmounts this editor on session changes.
+    return () => {
+      pendingMutation.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!workshopId) return;
@@ -119,14 +169,6 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
     setActiveLocale(locale);
   }
 
-  function moveLocaleTab(event: React.KeyboardEvent<HTMLButtonElement>, locale: Locale) {
-    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    event.preventDefault();
-    const nextLocale: Locale = locale === "vi" ? "en" : "vi";
-    selectLocale(nextLocale);
-    document.getElementById(`workshop-locale-${nextLocale}`)?.focus();
-  }
-
   function payload() {
     return {
       ...(workshopId ? { version: data.version } : {}),
@@ -143,24 +185,25 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
     };
   }
 
-  async function save(notify = true) {
-    if (savingRef.current) return null;
+  async function save(isCurrent: () => boolean, notify: boolean) {
     if (!data.translations.some((item) => item.title.trim())) {
       showToast(t.editor.titleRequired, "error");
       return null;
     }
-    savingRef.current = true;
-    setSaving(true);
     try {
       const saved = await api<Workshop>(
         workshopId ? `admin/workshops/${workshopId}/` : "admin/workshops/",
         { method: workshopId ? "PATCH" : "POST", body: JSON.stringify(payload()) },
+        { shouldRedirectToLogin: isCurrent },
       );
+      if (!isCurrent()) return null;
+      requireWorkshopResponse(saved);
       setData(saved);
       if (notify) showToast(t.editor.draftSaved);
       if (!workshopId) router.replace(`/workshops/${saved.id}`);
       return saved;
     } catch (caught) {
+      if (!isCurrent()) return null;
       const error = caught as Error & { status?: number };
       showToast(
         error.status === 409
@@ -177,85 +220,80 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
         "error",
       );
       return null;
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
     }
   }
 
-  async function publish() {
-    if (publishingRef.current) return;
-    const readyLocales = (["vi", "en"] as Locale[]).filter((locale) => {
-      const item = data.translations.find((entry) => entry.locale === locale);
-      return item && completeness(item) === "ready";
-    });
-    if (!readyLocales.length) {
+  function openDialog(action: ConfirmationAction, trigger: HTMLButtonElement) {
+    if (dialog || pendingMutation.current) return;
+    if (action === "publish" && readyLanguages.length === 0) {
       showToast(t.editor.noReadyTranslation, "error");
       return;
     }
-    const skippedLocales = (["vi", "en"] as Locale[]).filter(
-      (locale) => !readyLocales.includes(locale),
-    );
-    const confirmation = [
-      t.editor.confirmPublish,
-      `${t.editor.publishReady}: ${readyLocales.map((locale) => localeNames[locale]).join(", ")}`,
-      `${t.editor.publishSkipped}: ${skippedLocales.map((locale) => localeNames[locale]).join(", ")}`,
-    ].join("\n\n");
-    if (!window.confirm(confirmation)) return;
-    publishingRef.current = true;
-    setPublishing(true);
+    dialogTrigger.current = trigger;
+    setDialog(action);
+  }
+
+  async function mutate(action: WorkshopAction) {
+    if (pendingMutation.current) return;
+    const mutation = Symbol();
+    const isCurrent = () => pendingMutation.current === mutation;
+    const options = { shouldRedirectToLogin: isCurrent };
+    pendingMutation.current = mutation;
+    setPendingAction(action);
     try {
-      const saved = await save(false);
-      if (!saved) return;
-      const result = await api<{ draft: Workshop }>(`admin/workshops/${saved.id}/publish/`, {
-        method: "POST",
-        body: JSON.stringify({ revision_id: saved.revision_id, version: saved.version }),
-      });
-      setData(result.draft);
-      showToast(t.editor.published);
+      if (action === "save" || action === "publish") {
+        const saved = await save(isCurrent, action === "save");
+        if (action === "save" || !saved || !isCurrent()) return;
+        const result = await api<{ draft: Workshop }>(
+          `admin/workshops/${saved.id}/publish/`,
+          {
+            method: "POST",
+            body: JSON.stringify({ revision_id: saved.revision_id, version: saved.version }),
+          },
+          options,
+        );
+        if (!isCurrent()) return;
+        if (!isApiObject(result)) throw invalidApiResponse();
+        setData(requireWorkshopResponse(result.draft));
+        showToast(copy.published);
+      } else if (action === "unpublish") {
+        const result = await api<{ unpublished: boolean }>(
+          `admin/workshops/${data.id}/unpublish/`,
+          { method: "POST" },
+          options,
+        );
+        if (!isCurrent()) return;
+        if (!isApiObject(result) || result.unpublished !== true) throw invalidApiResponse();
+        update({ has_published_revision: false });
+        showToast(copy.unpublished);
+      } else {
+        await api(
+          `admin/workshops/${data.id}/`,
+          { method: "DELETE" },
+          { ...options, response: "no-content" },
+        );
+        if (!isCurrent()) return;
+        showToast(action === "archive" ? copy.archived : copy.deleted);
+        router.replace("/workshops");
+      }
     } catch (caught) {
+      if (!isCurrent()) return;
       const message = requestErrorMessage(caught, t);
-      showToast(message === t.common.requestFailed ? t.editor.publishFailed : message, "error");
+      showToast(
+        action === "publish" && message === t.common.requestFailed ? copy.publishFailed : message,
+        "error",
+      );
     } finally {
-      publishingRef.current = false;
-      setPublishing(false);
+      if (isCurrent()) {
+        pendingMutation.current = null;
+        setPendingAction(null);
+        setDialog(null);
+      }
     }
   }
 
-  async function unpublish() {
-    if (!window.confirm(t.editor.confirmUnpublish)) return;
-    try {
-      await api(`admin/workshops/${data.id}/unpublish/`, { method: "POST" });
-      setData({ ...data, has_published_revision: false });
-      showToast(t.editor.unpublished);
-    } catch (caught) {
-      showToast(requestErrorMessage(caught, t), "error");
-    }
-  }
-
-  async function deleteWorkshop() {
-    if (!workshopId || deletingRef.current) return;
-    const archivesPublishedWorkshop = data.has_published_revision;
-    const confirmation = archivesPublishedWorkshop
-      ? t.editor.confirmArchive
-      : t.editor.confirmDelete;
-    if (!window.confirm(confirmation)) return;
-    deletingRef.current = true;
-    setDeleting(true);
-    try {
-      await api(`admin/workshops/${data.id}/`, { method: "DELETE" });
-      showToast(archivesPublishedWorkshop ? t.editor.archived : t.editor.deleted);
-      router.replace("/workshops");
-    } catch (caught) {
-      showToast(requestErrorMessage(caught, t), "error");
-    } finally {
-      deletingRef.current = false;
-      setDeleting(false);
-    }
-  }
-
-  if (loading) return <div className="panel">{t.editor.loading}</div>;
-  if (loadError) return <p className="error-box">{loadError}</p>;
+  if (loading) return <DataState kind="loading" title={t.editor.loading} />;
+  if (loadError) return <Alert color="red">{loadError}</Alert>;
 
   return (
     <>
@@ -265,87 +303,77 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
             <p className="eyebrow editor-step">{t.editor.step1}</p>
             <h2>{t.editor.localizedContent}</h2>
           </div>
-          {data.has_published_revision && <span className="badge">{t.editor.publicBadge}</span>}
+          {data.has_published_revision && (
+            <Status domain="publication" status="published" label={t.editor.publicBadge} />
+          )}
         </div>
 
         <div className="workshop-language-picker">
           <p className="label">{t.editor.contentLanguage}</p>
-          <div className="tabs" role="tablist" aria-label={t.editor.contentLanguage}>
-            {(["vi", "en"] as Locale[]).map((locale) => {
-              const item = data.translations.find((entry) => entry.locale === locale);
-              const state = item ? completeness(item) : "empty";
-              const stateLabel =
-                state === "ready"
-                  ? t.editor.ready
-                  : state === "partial"
-                    ? t.editor.partial
-                    : t.editor.empty;
-              return (
-                <button
-                  id={`workshop-locale-${locale}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeLocale === locale}
-                  aria-controls={`workshop-translation-${locale}`}
-                  tabIndex={activeLocale === locale ? 0 : -1}
-                  className={`tab ${activeLocale === locale ? "active" : ""}`}
-                  onClick={() => selectLocale(locale)}
-                  onKeyDown={(event) => moveLocaleTab(event, locale)}
-                  key={locale}
-                >
-                  <span className="locale-code" aria-hidden="true">
-                    {locale.toUpperCase()}
-                  </span>
-                  <span className="locale-copy">
-                    <strong>{localeNames[locale]}</strong>
-                    <small className={`locale-status ${state}`}>{stateLabel}</small>
-                  </span>
-                  {locale === "en" && !item && (
-                    <span className="locale-add" aria-hidden="true">
-                      +
+          <Tabs
+            value={activeLocale}
+            onChange={(locale) => {
+              if (locale) selectLocale(locale as Locale);
+            }}
+            keepMounted={false}
+          >
+            <Tabs.List aria-label={t.editor.contentLanguage}>
+              {translationStates.map(({ locale, added, state }) => {
+                const stateLabel =
+                  state === "ready"
+                    ? t.editor.ready
+                    : state === "partial"
+                      ? t.editor.partial
+                      : t.editor.empty;
+                return (
+                  <Tabs.Tab value={locale} key={locale}>
+                    <span className="locale-code" aria-hidden="true">
+                      {locale.toUpperCase()}
                     </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                    <span className="locale-copy">
+                      <strong>{localeNames[locale]}</strong>
+                      <small className={`locale-status ${state}`}>{stateLabel}</small>
+                    </span>
+                    {locale === "en" && !added && (
+                      <span className="locale-add" aria-hidden="true">
+                        +
+                      </span>
+                    )}
+                  </Tabs.Tab>
+                );
+              })}
+            </Tabs.List>
 
-        <div
-          id={`workshop-translation-${activeLocale}`}
-          className="form-grid"
-          role="tabpanel"
-          aria-labelledby={`workshop-locale-${activeLocale}`}
-        >
-          <div className="field full">
-            <label htmlFor={`workshop-title-${activeLocale}`}>{t.editor.title}</label>
-            <input
-              id={`workshop-title-${activeLocale}`}
-              className="input"
-              type="text"
-              maxLength={240}
-              value={translation.title}
-              onChange={(event) => updateTranslation({ title: event.target.value })}
-            />
-          </div>
-          <div className="field full">
-            <label htmlFor={`workshop-summary-${activeLocale}`}>{t.editor.summary}</label>
-            <textarea
-              id={`workshop-summary-${activeLocale}`}
-              className="textarea"
-              maxLength={800}
-              value={translation.summary}
-              onChange={(event) => updateTranslation({ summary: event.target.value })}
-            />
-          </div>
-          <div className="field full">
-            <label>{t.editor.body}</label>
-            <RichTextEditor
-              value={translation.body}
-              imageAlt={translation.title}
-              onChange={(body) => updateTranslation({ body })}
-            />
-          </div>
+            <Tabs.Panel value={activeLocale} className="form-grid">
+              <div className="field full">
+                <label htmlFor={`workshop-title-${activeLocale}`}>{t.editor.title}</label>
+                <FormInput
+                  id={`workshop-title-${activeLocale}`}
+                  type="text"
+                  maxLength={240}
+                  value={translation.title}
+                  onChange={(event) => updateTranslation({ title: event.target.value })}
+                />
+              </div>
+              <div className="field full">
+                <label htmlFor={`workshop-summary-${activeLocale}`}>{t.editor.summary}</label>
+                <FormTextarea
+                  id={`workshop-summary-${activeLocale}`}
+                  maxLength={800}
+                  value={translation.summary}
+                  onChange={(event) => updateTranslation({ summary: event.target.value })}
+                />
+              </div>
+              <div className="field full">
+                <label>{t.editor.body}</label>
+                <LazyRichTextEditor
+                  value={translation.body}
+                  imageAlt={translation.title}
+                  onChange={(body) => updateTranslation({ body })}
+                />
+              </div>
+            </Tabs.Panel>
+          </Tabs>
         </div>
       </section>
 
@@ -359,9 +387,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
         <div className="form-grid">
           <div className="field">
             <label htmlFor="workshop-start">{t.editor.start}</label>
-            <input
+            <FormInput
               id="workshop-start"
-              className="input"
               type="datetime-local"
               required
               value={formatZonedDateTimeInput(data.start_at, data.event_timezone)}
@@ -374,9 +401,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           </div>
           <div className="field">
             <label htmlFor="workshop-end">{t.editor.end}</label>
-            <input
+            <FormInput
               id="workshop-end"
-              className="input"
               type="datetime-local"
               required
               value={formatZonedDateTimeInput(data.end_at, data.event_timezone)}
@@ -387,9 +413,8 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
           </div>
           <div className="field full">
             <label htmlFor="workshop-registration-url">{t.editor.registrationUrl}</label>
-            <input
+            <FormInput
               id="workshop-registration-url"
-              className="input"
               type="url"
               inputMode="url"
               maxLength={500}
@@ -403,50 +428,83 @@ export function WorkshopEditor({ workshopId }: { workshopId?: string }) {
 
       <div className="form-actions">
         {workshopId && (
-          <button
+          <Button
             type="button"
-            className="button danger destructive-action"
-            disabled={saving || publishing || deleting}
-            onClick={() => void deleteWorkshop()}
+            className="destructive-action"
+            color="red"
+            disabled={busy}
+            onClick={(event) => openDialog(removalAction, event.currentTarget)}
           >
-            {deleting
-              ? data.has_published_revision
-                ? t.editor.archiving
-                : t.editor.deleting
-              : data.has_published_revision
-                ? t.editor.archive
-                : t.editor.delete}
-          </button>
+            {confirmationCopy[removalAction].label}
+          </Button>
         )}
         {data.has_published_revision && (
-          <button
+          <Button
             type="button"
-            className="button danger"
-            disabled={saving || publishing || deleting}
-            onClick={() => void unpublish()}
+            color="red"
+            disabled={busy}
+            onClick={(event) => openDialog("unpublish", event.currentTarget)}
           >
-            {t.editor.unpublish}
-          </button>
+            {copy.unpublish}
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className="button secondary"
-          disabled={saving || publishing || deleting}
-          onClick={() => void save()}
+          variant="default"
+          disabled={busy}
+          ref={saveButton}
+          onClick={() => void mutate("save")}
         >
-          {saving ? t.editor.saving : t.editor.saveDraft}
-        </button>
+          {pendingAction === "save" ? copy.saving : copy.saveDraft}
+        </Button>
         {workshopId && (
-          <button
+          <Button
             type="button"
-            className="button"
-            disabled={saving || publishing || deleting}
-            onClick={() => void publish()}
+            disabled={busy}
+            onClick={(event) => openDialog("publish", event.currentTarget)}
           >
-            {publishing ? t.editor.publishing : t.editor.publish}
-          </button>
+            {copy.publish}
+          </Button>
         )}
       </div>
+      {dialog && (
+        <ConfirmationDialog
+          title={confirmationCopy[dialog].label}
+          busy={busy}
+          busyLabel={confirmationCopy[dialog].busyLabel}
+          cancelLabel={copy.cancel}
+          confirmLabel={confirmationCopy[dialog].label}
+          danger={dialog !== "publish"}
+          fallbackFocusRef={saveButton}
+          returnFocusRef={dialogTrigger}
+          onCancel={() => {
+            if (!pendingMutation.current) setDialog(null);
+          }}
+          onConfirm={() => void mutate(dialog)}
+        >
+          <Text size="sm">{confirmationCopy[dialog].message}</Text>
+          {dialog === "publish" && (
+            <Stack component="dl" gap="xs" m={0}>
+              <div>
+                <Text component="dt" size="sm" fw={600}>
+                  {copy.publishReady}
+                </Text>
+                <Text component="dd" size="sm" m={0}>
+                  {readyLanguages.join(", ")}
+                </Text>
+              </div>
+              <div>
+                <Text component="dt" size="sm" fw={600}>
+                  {copy.publishSkipped}
+                </Text>
+                <Text component="dd" size="sm" m={0}>
+                  {skippedLanguages.join(", ") || copy.noSkippedTranslations}
+                </Text>
+              </div>
+            </Stack>
+          )}
+        </ConfirmationDialog>
+      )}
     </>
   );
 }

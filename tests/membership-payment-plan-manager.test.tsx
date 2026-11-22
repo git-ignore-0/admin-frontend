@@ -79,11 +79,11 @@ describe("membership payment-plan manager", () => {
     expect(within(group).queryByRole("combobox")).toBeNull();
     expect(full).toHaveAttribute("aria-checked", "true");
     expect(installment).toHaveAttribute("aria-checked", "false");
-    expect(full.closest("label")).toHaveClass("selected");
+    expect(full.closest(".payment-plan-type-option")).toHaveClass("selected");
     fireEvent.click(installment);
     expect(full).not.toBeChecked();
     expect(installment).toBeChecked();
-    expect(installment.closest("label")).toHaveClass("selected");
+    expect(installment.closest(".payment-plan-type-option")).toHaveClass("selected");
     expect(screen.getAllByRole("textbox", { name: /^Months covered/ })).toHaveLength(2);
     expect(
       screen
@@ -125,7 +125,7 @@ describe("membership payment-plan manager", () => {
 
   it("removes only the divider above the Payment Plan header", () => {
     const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
-    const managerRule = css.match(/\.payment-plan-manager \{([\s\S]*?)\n\}/u)?.[1] ?? "";
+    const managerRule = css.match(/\.payment-plan-manager \{([^}]*?)\}/u)?.[1] ?? "";
 
     expect(managerRule).not.toContain("border-top");
     expect(css).toMatch(
@@ -160,7 +160,10 @@ describe("membership payment-plan manager", () => {
       /\.payment-plan-type-row \{\s*display: grid;\s*grid-template-columns: max-content minmax\(0, 1fr\);/u,
     );
     expect(css).toMatch(/\.payment-plan-type-choices \{\s*display: flex;/u);
-    expect(css).toMatch(/\.payment-plan-months-field \.input \{\s*width: min\(96px, 100%\);/u);
+    const monthsInput = within(row).getByRole("textbox", { name: "Months covered" });
+    expect(monthsInput.closest(".mantine-TextInput-root")).toHaveStyle({
+      width: "min(96px, 100%)",
+    });
     expect(css).toContain('grid-template-areas: "title amount months total remove";');
     expect(css).toContain('"title title remove"');
     expect(css).toContain('"title remove"');

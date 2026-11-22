@@ -1,7 +1,29 @@
 "use client";
 
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  FileButton,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  UnstyledButton,
+  VisuallyHidden,
+} from "@mantine/core";
+import { useClickOutside } from "@mantine/hooks";
+import {
+  IconArrowLeft,
+  IconArrowRight,
+  IconPlus,
+  IconStarFilled,
+  IconTrash,
+} from "@tabler/icons-react";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+
+import classes from "./admin-image-picker.module.css";
 
 export type ImagePickerItem = {
   id: string;
@@ -36,28 +58,6 @@ type Props = {
   onSetCover?: (index: number) => void;
 };
 
-function PickerIcon({ kind }: { kind: "plus" | "left" | "right" | "trash" }) {
-  const path = {
-    plus: <path d="M12 5v14M5 12h14" />,
-    left: <path d="m14 6-6 6 6 6M9 12h11" />,
-    right: <path d="m10 6 6 6-6 6M15 12H4" />,
-    trash: <path d="M4 7h16M10 3h4m-8 4 .7 13h10.6L18 7M10 11v5m4-5v5" />,
-  }[kind];
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {path}
-    </svg>
-  );
-}
-
 export function AdminImagePicker({
   items,
   maxItems,
@@ -71,190 +71,236 @@ export function AdminImagePicker({
   onMove,
   onSetCover,
 }: Props) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const clearSelection = useCallback(() => setSelectedId(null), []);
+  const rootRef = useClickOutside<HTMLDivElement>(clearSelection, ["pointerdown", "focusin"]);
+  const selectedTileRef = useRef<HTMLButtonElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const resetFileInput = useRef<() => void>(null);
+  const coverId = useId();
+
   const gallery = maxItems > 1;
-  const selectedIndex = gallery
-    ? items.findIndex((item) => item.id === selectedId)
-    : items.length > 0
-      ? 0
-      : -1;
-  const selected = selectedIndex >= 0 ? items[selectedIndex] : null;
+  const selectedIndex = gallery ? items.findIndex((item) => item.id === selectedId) : 0;
+  const selected = items[selectedIndex];
+  const canAdd = items.length < maxItems;
+  const filePickerDisabled = busy || (gallery && !canAdd);
+  const selectLabel = labels.select || labels.choose;
 
   useEffect(() => {
     if (!gallery || !selectedId) return;
 
-    function closeOnOutside(event: PointerEvent | FocusEvent) {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setSelectedId(null);
-      }
-    }
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setSelectedId(null);
+      if (event.key !== "Escape") return;
+      if (actionsRef.current?.contains(document.activeElement)) {
+        selectedTileRef.current?.focus();
+      }
+      clearSelection();
     }
 
-    document.addEventListener("pointerdown", closeOnOutside);
-    document.addEventListener("focusin", closeOnOutside);
     document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutside);
-      document.removeEventListener("focusin", closeOnOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [gallery, selectedId]);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [gallery, selectedId, clearSelection]);
 
-  function choose() {
-    inputRef.current?.click();
+  function chooseFiles(value: File | File[] | null) {
+    resetFileInput.current?.();
+    if (!value) return;
+    const files = Array.isArray(value) ? value : [value];
+    if (files.length) onChooseFiles(files);
   }
 
   return (
-    <div
-      ref={rootRef}
-      className={`admin-image-picker ${gallery ? "admin-image-picker-gallery" : "admin-image-picker-single"}`}
+    <FileButton
+      accept="image/jpeg,image/png,image/webp"
+      multiple={gallery}
+      disabled={filePickerDisabled}
+      inputProps={{ "aria-label": labels.choose, disabled: filePickerDisabled }}
+      resetRef={resetFileInput}
+      onChange={chooseFiles}
     >
-      <input
-        ref={inputRef}
-        aria-label={labels.choose}
-        className="admin-image-picker-input"
-        type="file"
-        tabIndex={-1}
-        accept="image/jpeg,image/png,image/webp"
-        multiple={gallery}
-        disabled={busy || (gallery && items.length >= maxItems)}
-        onChange={(event) => {
-          const files = Array.from(event.currentTarget.files ?? []);
-          event.currentTarget.value = "";
-          if (files.length) onChooseFiles(files);
-        }}
-      />
-      <div
-        className="admin-image-picker-strip"
-        role="group"
-        aria-label={labels.select || labels.choose}
-      >
-        {items.map((item, index) => {
-          const contents = (
-            <>
-              <Image src={item.src} alt={item.alt} width={80} height={80} unoptimized />
-              {gallery && index === 0 && labels.cover && (
-                <span className="admin-image-picker-cover" aria-label={labels.cover}>
-                  ★
-                </span>
+      {({ onClick: openFilePicker }) => {
+        const thumbnails = (
+          <Group
+            className={gallery ? classes.strip : undefined}
+            gap={7}
+            wrap="nowrap"
+            maw="100%"
+            role="group"
+            aria-label={selectLabel}
+          >
+            {items.map((item, index) => {
+              const image = (
+                <Image src={item.src} alt={item.alt} width={80} height={80} unoptimized />
+              );
+              if (!gallery) {
+                return (
+                  <div key={item.id} className={classes.tile}>
+                    {image}
+                  </div>
+                );
+              }
+
+              const isCover = index === 0 && Boolean(labels.cover);
+              const isSelected = selectedId === item.id;
+              return (
+                <UnstyledButton
+                  key={item.id}
+                  ref={isSelected ? selectedTileRef : undefined}
+                  type="button"
+                  className={classes.tile}
+                  aria-label={`${selectLabel} ${index + 1}`}
+                  aria-describedby={isCover ? coverId : undefined}
+                  aria-pressed={isSelected}
+                  disabled={busy}
+                  onClick={() => setSelectedId(isSelected ? null : item.id)}
+                >
+                  {image}
+                  {isCover && (
+                    <Badge
+                      component="span"
+                      aria-hidden
+                      circle
+                      size="xs"
+                      variant="white"
+                      pos="absolute"
+                      top={4}
+                      left={4}
+                      styles={{ label: { display: "flex" } }}
+                    >
+                      <IconStarFilled size={10} aria-hidden />
+                    </Badge>
+                  )}
+                </UnstyledButton>
+              );
+            })}
+            {canAdd && (
+              <UnstyledButton
+                className={`${classes.tile} ${classes.add}`}
+                type="button"
+                disabled={busy}
+                onClick={openFilePicker}
+                aria-label={`${labels.choose}…`}
+              >
+                <IconPlus size={17} aria-hidden />
+                {items.length === 0 && (
+                  <Text component="small" size="xs" lh={1.2} px={3}>
+                    {labels.choose}
+                  </Text>
+                )}
+              </UnstyledButton>
+            )}
+          </Group>
+        );
+
+        const actions = selected && (
+          <Paper ref={actionsRef} radius="sm" p={2} w="fit-content" maw="100%">
+            <Group gap={2}>
+              {gallery && (
+                <Text component="span" className={classes.position} size="sm" c="dimmed" px={7}>
+                  {selectedIndex + 1}/{items.length}
+                </Text>
               )}
-            </>
-          );
-          return gallery ? (
-            <button
-              key={item.id}
-              type="button"
-              className="admin-image-picker-tile"
-              aria-label={`${labels.select || labels.choose} ${index + 1}`}
-              aria-pressed={selectedId === item.id}
-              disabled={busy}
-              onClick={() => setSelectedId((current) => (current === item.id ? null : item.id))}
-            >
-              {contents}
-            </button>
-          ) : (
-            <div key={item.id} className="admin-image-picker-tile">
-              {contents}
-            </div>
-          );
-        })}
-        {items.length < maxItems && (
-          <button
-            className="admin-image-picker-add"
-            type="button"
-            disabled={busy}
-            onClick={choose}
-            aria-label={`${labels.choose}…`}
-          >
-            <PickerIcon kind="plus" />
-            {items.length === 0 && <small>{labels.choose}</small>}
-          </button>
-        )}
-      </div>
-      {items.length === 0 && <span className="admin-image-picker-note">{labels.empty}</span>}
-      {fileName && <span className="admin-image-picker-note">{fileName}</span>}
-      {help && <p className="admin-image-picker-help">{help}</p>}
-      {busy && labels.uploading && (
-        <p className="admin-image-picker-help" role="status">
-          {labels.uploading}
-        </p>
-      )}
-      {error && (
-        <p className="field-error" role="alert">
-          {error}
-        </p>
-      )}
-      {selected && (
-        <div className="admin-image-picker-actions">
-          {gallery && (
-            <span className="admin-image-picker-position">
-              {selectedIndex + 1}/{items.length}
-            </span>
-          )}
-          {gallery && onMove && (
-            <>
-              <button
-                className="admin-image-picker-action"
+              {gallery && onMove && (
+                <>
+                  <ActionIcon
+                    variant="default"
+                    type="button"
+                    disabled={busy || selectedIndex === 0}
+                    aria-label={`${labels.moveEarlier} ${selectedIndex + 1}`}
+                    title={labels.moveEarlier}
+                    onClick={() => onMove(selectedIndex, -1)}
+                  >
+                    <IconArrowLeft size={16} aria-hidden />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="default"
+                    type="button"
+                    disabled={busy || selectedIndex === items.length - 1}
+                    aria-label={`${labels.moveLater} ${selectedIndex + 1}`}
+                    title={labels.moveLater}
+                    onClick={() => onMove(selectedIndex, 1)}
+                  >
+                    <IconArrowRight size={16} aria-hidden />
+                  </ActionIcon>
+                </>
+              )}
+              {gallery && onSetCover && selectedIndex > 0 && (
+                <Button
+                  variant="default"
+                  type="button"
+                  disabled={busy}
+                  title={labels.setCover}
+                  onClick={() => onSetCover(selectedIndex)}
+                >
+                  {labels.setCover}
+                </Button>
+              )}
+              {!gallery && (
+                <Button variant="default" type="button" disabled={busy} onClick={openFilePicker}>
+                  {labels.replace}
+                </Button>
+              )}
+              <ActionIcon
+                variant="light"
+                color="red"
                 type="button"
-                disabled={busy || selectedIndex === 0}
-                aria-label={`${labels.moveEarlier} ${selectedIndex + 1}`}
-                title={labels.moveEarlier}
-                onClick={() => onMove(selectedIndex, -1)}
+                disabled={busy}
+                aria-label={labels.remove}
+                title={labels.remove}
+                onClick={() => {
+                  onRemove(selected.id);
+                  clearSelection();
+                }}
               >
-                <PickerIcon kind="left" />
-              </button>
-              <button
-                className="admin-image-picker-action"
-                type="button"
-                disabled={busy || selectedIndex === items.length - 1}
-                aria-label={`${labels.moveLater} ${selectedIndex + 1}`}
-                title={labels.moveLater}
-                onClick={() => onMove(selectedIndex, 1)}
-              >
-                <PickerIcon kind="right" />
-              </button>
-            </>
-          )}
-          {gallery && onSetCover && selectedIndex > 0 && (
-            <button
-              className="admin-image-picker-action admin-image-picker-text-action"
-              type="button"
-              disabled={busy}
-              title={labels.setCover}
-              onClick={() => onSetCover(selectedIndex)}
-            >
-              {labels.setCover}
-            </button>
-          )}
-          {!gallery && (
-            <button
-              className="admin-image-picker-action admin-image-picker-text-action"
-              type="button"
-              disabled={busy}
-              onClick={choose}
-            >
-              {labels.replace}
-            </button>
-          )}
-          <button
-            className="admin-image-picker-action admin-image-picker-remove"
-            type="button"
-            disabled={busy}
-            aria-label={labels.remove}
-            title={labels.remove}
-            onClick={() => {
-              onRemove(selected.id);
-              setSelectedId(null);
-            }}
-          >
-            <PickerIcon kind="trash" />
-          </button>
-        </div>
-      )}
-    </div>
+                <IconTrash size={16} aria-hidden />
+              </ActionIcon>
+            </Group>
+          </Paper>
+        );
+
+        return (
+          <Stack ref={rootRef} gap={3} miw={0}>
+            {gallery && labels.cover && (
+              <VisuallyHidden component="span" id={coverId}>
+                {labels.cover}
+              </VisuallyHidden>
+            )}
+            {gallery ? (
+              thumbnails
+            ) : (
+              <Group gap={8} wrap="nowrap">
+                {thumbnails}
+                {actions}
+              </Group>
+            )}
+            {items.length === 0 && (
+              <Text size="sm" c="dimmed">
+                {labels.empty}
+              </Text>
+            )}
+            {fileName && (
+              <Text className={classes.note} size="sm" c="dimmed">
+                {fileName}
+              </Text>
+            )}
+            {help && (
+              <Text className={classes.note} size="sm" c="dimmed">
+                {help}
+              </Text>
+            )}
+            {busy && labels.uploading && (
+              <Text size="sm" c="dimmed" role="status">
+                {labels.uploading}
+              </Text>
+            )}
+            {error && (
+              <Text c="var(--danger)" fw={650} role="alert">
+                {error}
+              </Text>
+            )}
+            {gallery && actions}
+          </Stack>
+        );
+      }}
+    </FileButton>
   );
 }

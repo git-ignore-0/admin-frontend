@@ -1,9 +1,13 @@
 "use client";
+import { Alert, Button, Fieldset, Group, Paper, SimpleGrid, Stack, TextInput } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { roundPageHref } from "@/app/(admin)/csa-rounds/round-navigation";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { CSARoundBreadcrumbs } from "@/components/csa-round-breadcrumbs";
 import { DetailPageHeading } from "@/components/detail-page-heading";
-import { Button, DataState, FormField, FormInput } from "@/components/nfv-controls";
+import { DataState } from "@/components/nfv-controls";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   getRound,
@@ -11,11 +15,19 @@ import {
   roundDateToApi,
   saveRound,
   validateRoundDates,
+  type CSARoundStatus,
 } from "@/lib/csa-rounds";
 import { csaRoundError, csaRoundsCopy } from "@/lib/csa-rounds-copy";
-import styles from "./csa-rounds.module.css";
 
-export function CSARoundEditor({ roundId }: { roundId?: string }) {
+export function CSARoundEditor({
+  roundId,
+  listPage = 1,
+  listStatus,
+}: {
+  roundId?: string;
+  listPage?: number;
+  listStatus?: CSARoundStatus | "";
+}) {
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
   const router = useRouter();
@@ -82,7 +94,10 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
     setError(null);
     try {
       const saved = await saveRound({ name: form.name.trim(), ...dates }, roundId);
-      if (version === loadVersion.current) router.push(`/csa-rounds/${saved.id}`);
+      if (version === loadVersion.current)
+        router.push(
+          roundPageHref(`/csa-rounds/${encodeURIComponent(saved.id)}`, listPage, listStatus),
+        );
     } catch (e) {
       if (version === loadVersion.current) setError(e);
     } finally {
@@ -91,86 +106,91 @@ export function CSARoundEditor({ roundId }: { roundId?: string }) {
     }
   }
   return (
-    <div className={styles.screen}>
+    <Stack gap="md" miw={0}>
+      <CSARoundBreadcrumbs roundId={roundId} editing listPage={listPage} listStatus={listStatus} />
       <DetailPageHeading
-        backHref={roundId ? `/csa-rounds/${roundId}` : "/csa-rounds"}
+        bottomSpacing={0}
+        backHref={roundPageHref(
+          roundId ? `/csa-rounds/${encodeURIComponent(roundId)}` : "/csa-rounds",
+          listPage,
+          listStatus,
+        )}
         backLabel={c.back}
         title={roundId ? c.edit : c.create}
       />
-      {loading ? (
-        <DataState kind="loading" title={c.loading} />
-      ) : loadError ? (
-        <DataState
-          kind="error"
-          title={requestErrorMessage(loadError, t)}
-          action={{ label: t.common.retry, onClick: () => void load() }}
-        />
-      ) : !editable ? (
-        <DataState kind="error" title={c.immutable} />
-      ) : (
-        <form className={styles.form} onSubmit={submit}>
-          <FormField label={c.name}>
-            <FormInput
+      <Paper component="section" withBorder p="md">
+        {loading ? (
+          <DataState kind="loading" title={c.loading} />
+        ) : loadError ? (
+          <RecoveryAlert
+            message={requestErrorMessage(loadError, t)}
+            retryLabel={t.common.retry}
+            onRetry={() => void load()}
+          />
+        ) : !editable ? (
+          <DataState kind="error" title={c.immutable} />
+        ) : (
+          <Stack component="form" gap="md" maw={760} onSubmit={submit}>
+            <TextInput
+              label={c.name}
               required
               maxLength={200}
               value={form.name}
               disabled={busy}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onChange={(e) => setForm({ ...form, name: e.currentTarget.value })}
             />
-          </FormField>
-          <fieldset className={styles.scheduleFields} disabled={busy}>
-            <legend>{c.scheduleTitle}</legend>
-
-            <div className={styles.dateFields}>
-              {(
-                [
-                  ["opens_at", c.opens],
-                  ["closes_at", c.closes],
-                  ["delivery_date", c.delivery],
-                ] as const
-              ).map(([key, label]) => (
-                <FormField
-                  key={key}
-                  label={label}
-                  className={key === "delivery_date" ? styles.deliveryField : undefined}
-                >
-                  <FormInput
+            <Fieldset legend={c.scheduleTitle} disabled={busy}>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                {(
+                  [
+                    ["opens_at", c.opens],
+                    ["closes_at", c.closes],
+                    ["delivery_date", c.delivery],
+                  ] as const
+                ).map(([key, label]) => (
+                  <TextInput
+                    key={key}
+                    label={label}
                     type={key === "delivery_date" ? "date" : "datetime-local"}
                     required
                     step={key === "delivery_date" ? undefined : 60}
                     value={form[key]}
                     disabled={busy}
-                    onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                    miw={0}
+                    onChange={(e) => setForm({ ...form, [key]: e.currentTarget.value })}
                   />
-                </FormField>
-              ))}
-            </div>
-          </fieldset>
-          {Boolean(error) && (
-            <p className="error-box" role="alert">
-              {error === "nameRequired" || error === "schedule"
-                ? c[error]
-                : csaRoundError(error, locale, requestErrorMessage(error, t))}
-            </p>
-          )}
-          <Button
-            type="submit"
-            loading={busy}
-            disabled={
-              !form.name.trim() ||
-              Boolean(
-                validateRoundDates({
-                  opens_at: roundDateToApi(form.opens_at) ?? "",
-                  closes_at: roundDateToApi(form.closes_at) ?? "",
-                  delivery_date: form.delivery_date,
-                }),
-              )
-            }
-          >
-            {roundId ? c.saveChanges : c.save}
-          </Button>
-        </form>
-      )}
-    </div>
+                ))}
+              </SimpleGrid>
+            </Fieldset>
+            {Boolean(error) && (
+              <Alert color="red" role="alert">
+                {error === "nameRequired" || error === "schedule"
+                  ? c[error]
+                  : csaRoundError(error, locale, requestErrorMessage(error, t))}
+              </Alert>
+            )}
+            <Group justify="flex-end">
+              <Button
+                type="submit"
+                loading={busy}
+                disabled={
+                  busy ||
+                  !form.name.trim() ||
+                  Boolean(
+                    validateRoundDates({
+                      opens_at: roundDateToApi(form.opens_at) ?? "",
+                      closes_at: roundDateToApi(form.closes_at) ?? "",
+                      delivery_date: form.delivery_date,
+                    }),
+                  )
+                }
+              >
+                {roundId ? c.saveChanges : c.save}
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Paper>
+    </Stack>
   );
 }

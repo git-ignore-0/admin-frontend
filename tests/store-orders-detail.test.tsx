@@ -87,7 +87,7 @@ describe("Store order detail", () => {
     view();
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/Không kết nối được/);
+    expect(alert).toHaveTextContent(/Không thể kết nối/);
     expect(within(alert).getByRole("button", { name: "Thử lại" })).toBeVisible();
   });
 
@@ -107,13 +107,15 @@ describe("Store order detail", () => {
     expect(screen.getByText("Đơn này giữ 3 · đơn khác giữ 2")).toBeVisible();
     expect(screen.queryByText("Xem lịch sử")).not.toBeInTheDocument();
     expect(screen.getByText("Khách báo chuyển", { selector: "dt" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toHaveClass("nfv-button");
+    expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toHaveClass(
+      "mantine-Button-root",
+    );
     const editor = screen.getByRole("region", { name: "Phân bổ nguồn Farm / batch" });
     for (const control of [
       ...within(editor).getAllByRole("combobox"),
       ...within(editor).getAllByRole("spinbutton"),
     ]) {
-      expect(control).toHaveClass("nfv-control");
+      expect(control).toHaveClass("mantine-Input-input");
     }
   });
 
@@ -164,8 +166,14 @@ describe("Store order detail", () => {
     );
     view();
 
-    expect(await screen.findByText("Chờ duyệt", { selector: ".store-order-status" })).toBeVisible();
-    expect(document.querySelectorAll(".store-order-state-line .status")).toHaveLength(1);
+    expect(
+      await screen.findByText("Chờ duyệt", {
+        selector: ".store-order-status .mantine-Badge-label",
+      }),
+    ).toBeVisible();
+    expect(document.querySelectorAll(".store-order-state-line .mantine-Badge-root")).toHaveLength(
+      1,
+    );
     expect(screen.queryByText("Dùng điểm CSA")).not.toBeInTheDocument();
     expect(document.querySelector(".store-order-total-due dd")).toHaveTextContent(/^0\s*₫$/u);
     expect(
@@ -195,7 +203,9 @@ describe("Store order detail", () => {
     view();
 
     expect(await screen.findByText("Hạn báo chuyển khoản")).toBeVisible();
-    expect(screen.getByText("Chờ thanh toán", { selector: ".store-order-status" })).toBeVisible();
+    expect(
+      screen.getByText("Chờ thanh toán", { selector: ".store-order-status .mantine-Badge-label" }),
+    ).toBeVisible();
     expect(screen.getByText("Còn 5 phút")).toBeVisible();
   });
 
@@ -292,7 +302,7 @@ describe("Store order detail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/Không kết nối được/);
+    expect(alert).toHaveTextContent(/Không thể kết nối/);
     expect(alert).toHaveTextContent(/chưa được làm mới/i);
     expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue(1);
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
@@ -319,11 +329,11 @@ describe("Store order detail", () => {
 
     const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
     const source = within(editor).getAllByRole("combobox")[0];
-    expect(source).toHaveValue("batch-a");
+    expect(source).toHaveValue("Vườn A · 2026-10-29–2026-11-01 · còn 2");
     fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
 
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(source).toHaveValue("batch-a");
+    expect(source).toHaveValue("Nguồn không còn khả dụng");
     expect(within(editor).getByText("Nguồn đã chọn không còn khả dụng.")).toBeVisible();
     expect(source).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
@@ -364,12 +374,11 @@ describe("Store order detail", () => {
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
     first.unmount();
 
-    vi.mocked(api).mockResolvedValueOnce(detailOrder());
+    const duplicate = detailOrder();
+    duplicate.allocation_suggestion[0].batch_id = "batch-b";
+    vi.mocked(api).mockResolvedValueOnce(duplicate);
     view();
     const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    fireEvent.change(within(editor).getAllByRole("combobox")[0], {
-      target: { value: "batch-b" },
-    });
     expect(within(editor).getAllByText("Nguồn này đã được chọn cho sản phẩm.")).toHaveLength(2);
     fireEvent.change(within(editor).getByLabelText("Số lượng nguồn 1"), {
       target: { value: "0" },

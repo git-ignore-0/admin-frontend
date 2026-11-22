@@ -5,7 +5,10 @@ import { CSARoundDetail } from "@/components/csa-round-detail";
 import { api, apiEnvelope } from "@/lib/client-api";
 vi.mock("@/components/csa-companion-delivery", () => ({ CSACompanionDelivery: () => null }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
@@ -64,12 +67,12 @@ it("requires a reason for cancellation and keeps it after a rejected cancellatio
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Enter a cancellation reason.");
   expect(api).toHaveBeenCalledTimes(1);
-  fireEvent.change(screen.getByLabelText("Cancellation reason"), {
+  fireEvent.change(screen.getByRole("textbox", { name: "Cancellation reason" }), {
     target: { value: "No harvest" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/already allocated/);
-  expect(screen.getByLabelText("Cancellation reason")).toHaveValue("No harvest");
+  expect(screen.getByRole("textbox", { name: "Cancellation reason" })).toHaveValue("No harvest");
 });
 it("shows demand, member selections, history and the existing order link", async () => {
   vi.mocked(api).mockResolvedValue({ ...round, status: "closed" });
@@ -109,10 +112,14 @@ it("shows demand, member selections, history and the existing order link", async
   } as never);
   render(
     <AdminI18nProvider initialLocale="en">
-      <CSARoundDetail roundId={id} />
+      <CSARoundDetail roundId={id} listPage={2} listStatus="closed" />
     </AdminI18nProvider>,
   );
   expect(await screen.findByText("Member A")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Back to rounds" })).toHaveAttribute(
+    "href",
+    "/csa-rounds?status=closed&page=2",
+  );
   expect(screen.getByRole("link", { name: "View order" })).toHaveAttribute(
     "href",
     `/store-orders/${id}`,
@@ -181,7 +188,13 @@ it("pages participants without fetching history or losing full demand labels", a
     reopen_until: null,
   };
   const demand = [
-    { product_id: "not-on-this-page", name: "Full demand tomato", unit_label: "kg", quantity: 8 },
+    {
+      product_id: "not-on-this-page",
+      name: "Full demand tomato",
+      unit_size: "1",
+      unit_label: "kg",
+      quantity: 8,
+    },
   ];
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce({

@@ -1,18 +1,42 @@
 "use client";
 
+import { Status } from "@/components/nfv-controls";
+
+import { Button, Table, Alert } from "@mantine/core";
+
 import Image from "next/image";
 import Link from "next/link";
 import { DragEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import {
+  requirePaginatedList,
+  requireResponseEntity,
+  requireResponseList,
+} from "@/lib/api-response";
 import { ListState } from "@/components/list-state";
 import { ListResultSummary } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import type { PaginationMeta, Reward } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
+
+function validateRewardRecord(reward: Reward) {
+  requireResponseEntity(reward);
+  if (!isApiObject(reward.image) || typeof reward.image.url !== "string") {
+    throw invalidApiResponse();
+  }
+  requireResponseList(reward.image.variants, (variant) => {
+    if (!isApiObject(variant)) throw invalidApiResponse();
+  });
+  requireResponseList(reward.translations, (translation) => {
+    if (!isApiObject(translation) || typeof translation.name !== "string") {
+      throw invalidApiResponse();
+    }
+  });
+}
 
 export function RewardList() {
   const { locale, t } = useAdminI18n();
@@ -26,6 +50,7 @@ export function RewardList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, replaceData, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validateRewardRecord,
     getErrorMessage,
   });
   const busy = loading || reordering;
@@ -48,7 +73,8 @@ export function RewardList() {
         method: "POST",
         body: JSON.stringify({ page, reward_ids: ordered.map((item) => item.id) }),
       });
-      replaceData(payload.data, payload.meta ?? null);
+      const { data, meta } = requirePaginatedList(payload);
+      replaceData(data, meta);
     } catch (caught) {
       replaceData(previous);
       setReorderError(
@@ -116,28 +142,29 @@ export function RewardList() {
             )}
           </div>
           {reorderError && (
-            <p className="error-box" role="alert">
+            <Alert color="red" role="alert">
               {reorderError}
-            </p>
+            </Alert>
           )}
-          <div className="table-wrap admin-list-wrap">
-            <table className="table admin-list-table reward-list-table">
-              <thead>
-                <tr>
-                  <th aria-label={t.rewards.order} />
-                  <th>{t.rewards.reward}</th>
-                  <th>{t.rewards.pointCost}</th>
-                  <th>{t.rewards.statusLabel}</th>
-                </tr>
-              </thead>
-              <tbody>
+          <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+            <Table role="table" className="admin-list-table reward-list-table">
+              <Table.Thead role="rowgroup">
+                <Table.Tr role="row">
+                  <Table.Th role="columnheader" aria-label={t.rewards.order} />
+                  <Table.Th role="columnheader">{t.rewards.reward}</Table.Th>
+                  <Table.Th role="columnheader">{t.rewards.pointCost}</Table.Th>
+                  <Table.Th role="columnheader">{t.rewards.statusLabel}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody role="rowgroup">
                 {items.map((reward, index) => {
                   const translation =
                     reward.translations.find((item) => item.locale === locale) ??
                     reward.translations[0];
                   const name = translation?.name || t.rewards.untitled;
                   return (
-                    <tr
+                    <Table.Tr
+                      role="row"
                       className={draggedId === reward.id ? "is-dragging" : undefined}
                       key={reward.id}
                       onDragOver={(event) => {
@@ -152,9 +179,10 @@ export function RewardList() {
                         void moveReward(sourceId, reward.id);
                       }}
                     >
-                      <td data-label={t.rewards.order}>
+                      <Table.Td role="cell" data-label={t.rewards.order}>
                         <div className="reward-order-controls">
-                          <button
+                          <Button
+                            variant="default"
                             aria-label={t.rewards.drag.replace("{name}", name)}
                             className="reward-drag-handle"
                             disabled={busy}
@@ -164,28 +192,30 @@ export function RewardList() {
                             type="button"
                           >
                             <span aria-hidden="true">⠿</span>
-                          </button>
+                          </Button>
                           <div className="reward-order-buttons">
-                            <button
+                            <Button
+                              variant="default"
                               aria-label={t.rewards.moveUp.replace("{name}", name)}
                               disabled={busy || index === 0}
                               onClick={() => void moveReward(reward.id, items[index - 1]?.id)}
                               type="button"
                             >
                               <span aria-hidden="true">↑</span>
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              variant="default"
                               aria-label={t.rewards.moveDown.replace("{name}", name)}
                               disabled={busy || index === items.length - 1}
                               onClick={() => void moveReward(reward.id, items[index + 1]?.id)}
                               type="button"
                             >
                               <span aria-hidden="true">↓</span>
-                            </button>
+                            </Button>
                           </div>
                         </div>
-                      </td>
-                      <td data-label={t.rewards.reward}>
+                      </Table.Td>
+                      <Table.Td role="cell" data-label={t.rewards.reward}>
                         <div className="reward-cell">
                           <Image
                             alt=""
@@ -208,21 +238,23 @@ export function RewardList() {
                             </small>
                           </div>
                         </div>
-                      </td>
-                      <td data-label={t.rewards.pointCost}>
+                      </Table.Td>
+                      <Table.Td role="cell" data-label={t.rewards.pointCost}>
                         <strong>{reward.point_cost}</strong>
-                      </td>
-                      <td data-label={t.rewards.statusLabel}>
-                        <span className={`badge ${reward.is_active ? "" : "warm"}`}>
-                          {reward.is_active ? t.rewards.active : t.rewards.inactive}
-                        </span>
-                      </td>
-                    </tr>
+                      </Table.Td>
+                      <Table.Td role="cell" data-label={t.rewards.statusLabel}>
+                        <Status
+                          domain="availability"
+                          status={reward.is_active ? "active" : "inactive"}
+                          label={reward.is_active ? t.rewards.active : t.rewards.inactive}
+                        />
+                      </Table.Td>
+                    </Table.Tr>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         </>
       )}
       {meta && (

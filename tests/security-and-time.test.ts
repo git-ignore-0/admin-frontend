@@ -11,6 +11,7 @@ import {
 } from "@/lib/admin-date";
 import { requestErrorMessage } from "@/lib/client-error";
 import { firstValidationField } from "@/lib/client-api";
+import { couponErrorMessage } from "@/lib/csa-coupons";
 import { isTrustedAdminRequest } from "@/lib/csrf";
 import { formatZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/zoned-date-time";
 
@@ -80,11 +81,31 @@ describe("admin date display", () => {
 });
 
 describe("localized API errors", () => {
-  it("explains backend availability and validation errors in the active language", () => {
-    expect(requestErrorMessage(new Error("upstream_unavailable"), adminDictionaries.vi)).toContain(
-      "backend",
-    );
+  it("explains transport, response and permission failures in both languages", () => {
+    for (const t of Object.values(adminDictionaries)) {
+      expect(requestErrorMessage(new Error("network_error"), t)).toBe(t.common.networkError);
+      expect(requestErrorMessage(new Error("request_timeout"), t)).toBe(t.common.requestTimeout);
+      expect(requestErrorMessage(new Error("upstream_timeout"), t)).toBe(t.common.requestTimeout);
+      expect(requestErrorMessage(new Error("upstream_unavailable"), t)).toBe(t.common.serverError);
+      expect(requestErrorMessage(new Error("invalid_response"), t)).toBe(t.common.invalidResponse);
+      expect(requestErrorMessage(new Error("forbidden"), t)).toBe(t.common.forbidden);
+      expect(requestErrorMessage(new Error("validation_error"), t)).toBe(t.common.invalidData);
+      expect(
+        new Set([
+          t.common.networkError,
+          t.common.requestTimeout,
+          t.common.serverError,
+          t.common.invalidResponse,
+          t.common.forbidden,
+          t.common.invalidData,
+        ]).size,
+      ).toBe(6);
+      expect(t.common.serverError).not.toMatch(/terminal|Django/i);
+      expect(t.common.networkError).not.toMatch(/terminal|Django/i);
+    }
+  });
 
+  it("preserves localized validation field labels", () => {
     const validationError = Object.assign(new Error("validation_error"), {
       field: "links",
       status: 400,
@@ -94,6 +115,13 @@ describe("localized API errors", () => {
         links: "Links",
       }),
     ).toContain("Links");
+  });
+
+  it("shares transport messages with voucher screens while keeping voucher-specific errors", () => {
+    const t = adminDictionaries.vi;
+    expect(couponErrorMessage(new Error("upstream_timeout"), t)).toBe(t.common.requestTimeout);
+    const code = Object.keys(t.csaCoupons.errors)[0] as keyof typeof t.csaCoupons.errors;
+    expect(couponErrorMessage(new Error(code), t)).toBe(t.csaCoupons.errors[code]);
   });
 
   it("reports the nested translation field instead of the translations wrapper", () => {

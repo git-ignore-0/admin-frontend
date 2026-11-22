@@ -1,8 +1,8 @@
 "use client";
 
-import { ReactNode, RefObject, useEffect, useId, useRef } from "react";
-
-import { Button } from "@/components/nfv-controls";
+import { Alert, Button, Group, Modal, Stack, type ModalProps } from "@mantine/core";
+import { ReactNode, RefObject, useCallback, useEffect, useRef } from "react";
+import layout from "./overlay-layout.module.css";
 
 type Props = {
   title: string;
@@ -11,6 +11,7 @@ type Props = {
   confirmLabel: string;
   busyLabel: string;
   busy: boolean;
+  size?: ModalProps["size"];
   danger?: boolean;
   confirmDisabled?: boolean;
   alternateLabel?: string;
@@ -21,9 +22,7 @@ type Props = {
   onCancel: () => void;
 } & ({ formId: string; onConfirm?: never } | { formId?: never; onConfirm: () => void });
 
-const focusableSelector =
-  "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href]";
-
+/** Compatibility boundary for existing mutation dialogs; Mantine owns the portal and focus trap. */
 export function ConfirmationDialog({
   title,
   children,
@@ -31,6 +30,7 @@ export function ConfirmationDialog({
   confirmLabel,
   busyLabel,
   busy,
+  size = "lg",
   danger = false,
   confirmDisabled = false,
   alternateLabel,
@@ -42,100 +42,85 @@ export function ConfirmationDialog({
   onConfirm,
   formId,
 }: Props) {
-  const titleId = useId();
-  const dialogRef = useRef<HTMLElement>(null);
-  const cancelRef = useRef(onCancel);
-  const busyRef = useRef(busy);
-  cancelRef.current = onCancel;
-  busyRef.current = busy;
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const fallbackFocus = fallbackFocusRef?.current;
-    const returnFocus = returnFocusRef?.current;
-    const dialog = dialogRef.current;
-    const focusables = () =>
-      Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
-    focusables()[0]?.focus();
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        if (!busyRef.current) cancelRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusables();
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+  const originalFocus = useRef<HTMLElement | null>(
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
+  const restoreFocus = useCallback(() => {
+    const active = document.activeElement as HTMLElement | null;
+    // A consumer can deliberately focus a validation field as it closes. Do not
+    // replace that decision with a generic return target.
+    if (active?.isConnected && active !== document.body) return;
+    for (const target of [
+      returnFocusRef?.current,
+      originalFocus.current,
+      fallbackFocusRef?.current,
+    ]) {
+      if (!target?.isConnected || target === document.body || target.closest("[inert]")) continue;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
     }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (returnFocus?.isConnected) returnFocus.focus();
-      else if (previouslyFocused?.isConnected) previouslyFocused.focus();
-      else fallbackFocus?.focus();
-    };
   }, [fallbackFocusRef, returnFocusRef]);
+  useEffect(() => {
+    // Existing consumers mount/unmount rather than toggling `opened`. Resolve refs
+    // after portal removal; Mantine owns the focus trap inside the open dialog.
+    return () => queueMicrotask(restoreFocus);
+  }, [restoreFocus]);
 
   return (
-    <div
-      className="confirmation-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onCancel();
+    <Modal.Root
+      opened
+      onClose={() => {
+        if (!busy) onCancel();
       }}
-      role="presentation"
+      centered
+      closeOnEscape={!busy}
+      closeOnClickOutside={!busy}
+      returnFocus={false}
+      size={size}
+      classNames={{ content: layout.content, body: layout.body }}
     >
-      <section
-        aria-busy={busy}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="confirmation-dialog"
-        ref={dialogRef}
-        role="dialog"
-      >
-        <h2 id={titleId}>{title}</h2>
-        {children}
-        {error && (
-          <p className="error-box" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="confirmation-actions">
-          <Button className="button secondary" variant="outline" disabled={busy} onClick={onCancel}>
+      <Modal.Overlay />
+      <Modal.Content aria-busy={busy}>
+        <Modal.Header>
+          <Modal.Title>{title}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Stack gap="md">
+            {children}
+            {error && (
+              <Alert color="danger" role="alert">
+                {error}
+              </Alert>
+            )}
+          </Stack>
+        </Modal.Body>
+        <Group component="footer" className={layout.footer} justify="flex-end" gap="xs" p="md">
+          <Button
+            data-autofocus={(danger && !formId && !busy) || undefined}
+            variant="default"
+            disabled={busy}
+            onClick={onCancel}
+            type="button"
+          >
             {cancelLabel}
           </Button>
-          {alternateLabel && onAlternate ? (
-            <Button
-              className="button secondary"
-              variant="outline"
-              disabled={busy}
-              onClick={onAlternate}
-            >
+          {alternateLabel && onAlternate && (
+            <Button variant="default" disabled={busy} onClick={onAlternate} type="button">
               {alternateLabel}
             </Button>
-          ) : null}
+          )}
           <Button
-            className={`button ${danger ? "danger" : ""}`.trim()}
+            color={danger ? "red" : undefined}
             disabled={busy || confirmDisabled}
             form={formId}
             loading={busy}
             onClick={onConfirm}
             type={formId ? "submit" : "button"}
-            variant={danger ? "danger" : "primary"}
           >
             {busy ? busyLabel : confirmLabel}
           </Button>
-        </div>
-      </section>
-    </div>
+        </Group>
+      </Modal.Content>
+    </Modal.Root>
   );
 }

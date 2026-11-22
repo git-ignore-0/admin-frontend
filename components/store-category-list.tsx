@@ -1,4 +1,6 @@
 "use client";
+import { Paper, Table } from "@mantine/core";
+import { FormField, FormSelect, Status } from "@/components/nfv-controls";
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
@@ -59,18 +61,17 @@ export function StoreCategoryList() {
         busy={loading}
         clearLabel={t.common.clearFilters}
         filter={
-          <label className="field">
-            <span>{copy.status}</span>
-            <select
-              className="input"
+          <FormField label={copy.status} className="field">
+            <FormSelect
               value={active}
-              onChange={(event) => setActive(event.target.value)}
-            >
-              <option value="">{copy.all}</option>
-              <option value="true">{copy.active}</option>
-              <option value="false">{copy.inactive}</option>
-            </select>
-          </label>
+              onChange={(selection) => setActive(selection ?? "")}
+              data={[
+                { value: "", label: copy.all },
+                { value: "true", label: copy.active },
+                { value: "false", label: copy.inactive },
+              ]}
+            />
+          </FormField>
         }
         hasFilters={Boolean(search || query || active)}
         onClear={() => {
@@ -99,20 +100,20 @@ export function StoreCategoryList() {
         retryLabel={t.common.retry}
       />
       {rows.length > 0 && (
-        <div className="table-wrap">
-          <table className="table store-category-table">
-            <thead>
-              <tr>
-                <th>{copy.categoryName}</th>
-                <th>{copy.levelHeading}</th>
-                <th>{copy.order}</th>
-                <th>{copy.status}</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Paper withBorder radius="md">
+          <Table className="store-category-table" styles={{ td: { overflowWrap: "anywhere" } }}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{copy.categoryName}</Table.Th>
+                <Table.Th>{copy.levelHeading}</Table.Th>
+                <Table.Th>{copy.order}</Table.Th>
+                <Table.Th>{copy.status}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {rows.map(({ category, depth }) => (
-                <tr key={category.id}>
-                  <td data-label={copy.categoryName}>
+                <Table.Tr key={category.id}>
+                  <Table.Td data-label={copy.categoryName}>
                     <Link
                       className="csa-list-primary-link"
                       href={`/store-catalog/categories/${category.id}`}
@@ -121,21 +122,23 @@ export function StoreCategoryList() {
                       {categoryName(category, locale)}
                     </Link>
                     <small className="table-secondary">/{category.slug}</small>
-                  </td>
-                  <td data-label={copy.levelHeading}>
+                  </Table.Td>
+                  <Table.Td data-label={copy.levelHeading}>
                     {copy.level.replace("{level}", String(depth))}
-                  </td>
-                  <td data-label={copy.order}>{category.sort_order}</td>
-                  <td data-label={copy.status}>
-                    <span className={`badge ${category.is_active ? "" : "warm"}`}>
-                      {category.is_active ? copy.active : copy.inactive}
-                    </span>
-                  </td>
-                </tr>
+                  </Table.Td>
+                  <Table.Td data-label={copy.order}>{category.sort_order}</Table.Td>
+                  <Table.Td data-label={copy.status}>
+                    <Status
+                      domain="availability"
+                      status={category.is_active ? "active" : "inactive"}
+                      label={category.is_active ? copy.active : copy.inactive}
+                    />
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Paper>
       )}
     </section>
   );

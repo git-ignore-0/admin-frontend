@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildBackendTarget,
   isAllowedBackendRequest,
+  PROVINCE_CODE,
   UUID_PATH_SEGMENT,
 } from "@/lib/backend-target";
 import { adminOrigin, authOrigin } from "@/lib/config";
@@ -20,22 +21,40 @@ function jsonError(error: string, status: number) {
   );
 }
 
+function clientClosed() {
+  return new NextResponse(null, {
+    status: 499,
+    headers: { "Cache-Control": "private, no-store" },
+  });
+}
+
+function invalidLocale(params: URLSearchParams, required = false) {
+  const locales = params.getAll("locale");
+  if (locales.length === 0) return required;
+  return locales.length !== 1 || !["vi", "en"].includes(locales[0]);
+}
+
+function hasDuplicateQuery(params: URLSearchParams, ...keys: string[]) {
+  return keys.some((key) => params.getAll(key).length > 1);
+}
+
 function invalidBackendQuery(request: NextRequest, path: string[]) {
+  const params = request.nextUrl.searchParams;
   if (path[0] === "public" && path[1] === "shipping-areas") {
-    const params = request.nextUrl.searchParams;
-    const locales = params.getAll("locale");
-    return (
-      locales.length !== 1 ||
-      !["vi", "en"].includes(locales[0]) ||
-      [...params.keys()].some((key) => key !== "locale")
-    );
+    return invalidLocale(params, true) || [...params.keys()].some((key) => key !== "locale");
+  }
+  if (path[0] === "administrative-units" && path[1] === "wards") {
+    const codes = params.getAll("province");
+    return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
   const [, resource, id, action, extra] = path;
-  if (resource === "users" && request.method === "POST" && action !== "points") {
-    return request.nextUrl.searchParams.size > 0;
+  if (resource === "users") {
+    if (request.method === "POST") return action !== "points" && params.size > 0;
+    if (action === "points") return hasDuplicateQuery(params, "page");
+    if (id !== undefined) return hasDuplicateQuery(params, "invited_page");
+    return hasDuplicateQuery(params, "page", "search", "status");
   }
   if (resource === "store-orders") {
-    const params = request.nextUrl.searchParams;
     if (id !== undefined) return params.size > 0;
     const allowed = new Set(["page", "page_size", "search", "status", "payment_status", "sort"]);
     const statuses = new Set([
@@ -69,7 +88,6 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     );
   }
   if (resource === "vouchers" || resource === "csa-coupons") {
-    const params = request.nextUrl.searchParams;
     if (id !== undefined) return params.size > 0;
     const allowed = new Set(["page", "status", "discount_type", "application_scope"]);
     return (
@@ -86,23 +104,39 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     );
   }
   if (resource === "csa-purchase-requests" && action === "payments") {
-    return request.nextUrl.searchParams.size > 0;
+    return params.size > 0;
   }
   if (resource === "membership-price-options" && action === "payment-plans") {
-    return request.nextUrl.searchParams.size > 0;
+    return params.size > 0;
   }
-  if (resource !== "memberships" || !id || action !== "contract") return false;
-  const parameters = request.nextUrl.searchParams;
-  if (extra === undefined) return parameters.size > 0;
-  if (extra !== "pdf") return true;
-  const locales = parameters.getAll("locale");
-  const versions = parameters.getAll("version_id");
+  if (request.method === "GET") {
+    if (resource === "csa-rounds" && id === undefined) {
+      return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size", "status");
+    }
+    if (
+      (resource === "csa-rounds" && action === "selections") ||
+      (resource === "csa-selections" && action === "events")
+    ) {
+      return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size");
+    }
+    if (id === undefined && resource === "store-products") {
+      return hasDuplicateQuery(params, "page", "category_id");
+    }
+    if (id === undefined && resource === "testimonials") {
+      return hasDuplicateQuery(params, "page", "page_size", "search", "status", "type");
+    }
+  }
+  if (resource !== "memberships" && resource !== "membership-usage") return false;
+  if (action !== "contract") {
+    return invalidLocale(params) || (action === "history" && hasDuplicateQuery(params, "page"));
+  }
+  if (extra === undefined) return params.size > 0;
+  const versions = params.getAll("version_id");
   return (
-    locales.length !== 1 ||
-    !["vi", "en"].includes(locales[0]) ||
+    invalidLocale(params, true) ||
     versions.length > 1 ||
     (versions.length === 1 && !UUID_PATH_SEGMENT.test(versions[0])) ||
-    [...parameters.keys()].some((key) => key !== "locale" && key !== "version_id")
+    [...params.keys()].some((key) => key !== "locale" && key !== "version_id")
   );
 }
 
@@ -126,6 +160,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (!isAllowedBackendRequest(request.method, path) || invalidBackendQuery(request, path)) {
     return jsonError("backend_route_not_allowed", 404);
   }
+  if (request.signal.aborted) return clientClosed();
   if (session.expiresAt < Date.now() + 30_000) {
     try {
       session = await refreshAccessToken(session);
@@ -138,6 +173,22 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       return jsonError("session_expired", 401);
     }
   }
+  // Refresh is shared between requests. Check for obsolescence once it settles.
+  if (request.signal.aborted) return clientClosed();
+
+  const method = request.method;
+  const isRead = method === "GET";
+  let body: ArrayBuffer | undefined;
+  if (!isRead) {
+    try {
+      body = await request.arrayBuffer();
+    } catch (error) {
+      if (request.signal.aborted && Object.is(error, request.signal.reason)) return clientClosed();
+      return jsonError("invalid_request_body", 400);
+    }
+    if (request.signal.aborted) return clientClosed();
+  }
+
   const target = buildBackendTarget(authOrigin(), path, request.nextUrl.search);
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${session.accessToken}`);
@@ -145,30 +196,37 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (acceptLanguage) headers.set("Accept-Language", acceptLanguage);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
-  const method = request.method;
+  const deadline = AbortSignal.timeout(10_000);
+  // Only upstream reads inherit client cancellation after dispatch.
+  const signal =
+    isRead && typeof AbortSignal.any === "function"
+      ? AbortSignal.any([request.signal, deadline])
+      : deadline;
   let response: Response;
   try {
+    signal.throwIfAborted();
     response = await fetch(target, {
       method,
       headers,
-      body: method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer(),
+      body,
       cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
+      redirect: "error",
+      signal,
     });
   } catch (error) {
-    const timedOut =
-      error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name);
+    const aborted = signal.aborted && Object.is(error, signal.reason);
+    if (aborted && isRead && request.signal.aborted && Object.is(error, request.signal.reason))
+      return clientClosed();
+    const timedOut = aborted && deadline.aborted && Object.is(error, deadline.reason);
     return jsonError(timedOut ? "upstream_timeout" : "upstream_unavailable", timedOut ? 504 : 502);
   }
   if (response.status === 401) await clearSession(session);
-  const responseHeaders = new Headers({
-    "Content-Type": response.headers.get("content-type") || "application/json",
-    "Cache-Control": "private, no-store",
-  });
-  for (const name of ["content-disposition", "pragma", "x-content-type-options"]) {
+  const responseHeaders = new Headers({ "Cache-Control": "private, no-store" });
+  for (const name of ["content-type", "content-disposition", "pragma", "x-content-type-options"]) {
     const value = response.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
+  // Forward the readable body directly. A later stream error reaches the consumer.
   return new NextResponse(response.body, {
     status: response.status,
     headers: responseHeaders,

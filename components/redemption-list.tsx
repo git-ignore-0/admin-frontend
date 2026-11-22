@@ -1,5 +1,9 @@
 "use client";
 
+import { FormSelect, Status, FormField } from "@/components/nfv-controls";
+
+import { Table } from "@mantine/core";
+
 import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 
@@ -7,11 +11,17 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
+import { requireResponseEntity } from "@/lib/api-response";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import type { PaginationMeta, RedemptionListItem, RedemptionStatus } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
+
+function validateRedemptionRecord(item: RedemptionListItem) {
+  requireResponseEntity(item);
+  if (!isApiObject(item.user) || typeof item.user.name !== "string") throw invalidApiResponse();
+}
 
 export function RedemptionList() {
   const { locale, t } = useAdminI18n();
@@ -28,6 +38,7 @@ export function RedemptionList() {
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
     fetchPage,
+    validateRecord: validateRedemptionRecord,
     getErrorMessage,
   });
 
@@ -63,25 +74,23 @@ export function RedemptionList() {
         busy={loading}
         clearLabel={t.common.clearFilters}
         filter={
-          <label className="field">
-            <span>{t.redemptions.filterStatus}</span>
-            <select
-              className="input"
+          <FormField className="field" label={t.redemptions.filterStatus}>
+            <FormSelect
               disabled={loading}
-              onChange={(event) => {
-                setStatus(event.target.value as RedemptionStatus | "");
+              value={status}
+              onChange={(value) => {
+                setStatus((value ?? "") as RedemptionStatus | "");
                 setPage(1);
               }}
-              value={status}
-            >
-              <option value="">{t.redemptions.allStatuses}</option>
-              {(Object.keys(statusLabels) as RedemptionStatus[]).map((value) => (
-                <option key={value} value={value}>
-                  {statusLabels[value]}
-                </option>
-              ))}
-            </select>
-          </label>
+              data={[
+                { value: "", label: t.redemptions.allStatuses },
+                ...(Object.keys(statusLabels) as RedemptionStatus[]).map((value) => ({
+                  value,
+                  label: statusLabels[value],
+                })),
+              ]}
+            />
+          </FormField>
         }
         hasFilters={Boolean(query || search || status)}
         onClear={clearFilters}
@@ -107,21 +116,21 @@ export function RedemptionList() {
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (
-        <div className="table-wrap admin-list-wrap">
-          <table className="table admin-list-table redemption-list-table">
-            <thead>
-              <tr>
-                <th>{t.redemptions.member}</th>
-                <th>{t.redemptions.reward}</th>
-                <th>{t.redemptions.points}</th>
-                <th>{t.redemptions.requestedAt}</th>
-                <th>{t.redemptions.status}</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap admin-list-wrap">
+          <Table role="table" className="admin-list-table redemption-list-table">
+            <Table.Thead role="rowgroup">
+              <Table.Tr role="row">
+                <Table.Th role="columnheader">{t.redemptions.member}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.reward}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.points}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.requestedAt}</Table.Th>
+                <Table.Th role="columnheader">{t.redemptions.status}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody role="rowgroup">
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td data-label={t.redemptions.member}>
+                <Table.Tr role="row" key={item.id}>
+                  <Table.Td role="cell" data-label={t.redemptions.member}>
                     <Link
                       aria-label={`${t.redemptions.view}: ${item.user.name}`}
                       className="admin-list-primary-link"
@@ -131,24 +140,28 @@ export function RedemptionList() {
                     </Link>
                     <small className="table-secondary">{item.user.email}</small>
                     <small className="table-secondary">{item.user.phone || "—"}</small>
-                  </td>
-                  <td data-label={t.redemptions.reward}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={t.redemptions.reward}>
                     {locale === "en" ? item.reward_name_en_snapshot : item.reward_name_vi_snapshot}
-                  </td>
-                  <td data-label={t.redemptions.points}>{item.point_cost_snapshot}</td>
-                  <td data-label={t.redemptions.requestedAt}>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={t.redemptions.points}>
+                    {item.point_cost_snapshot}
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={t.redemptions.requestedAt}>
                     {formatAdminDateTime(item.created_at)}
-                  </td>
-                  <td data-label={t.redemptions.status}>
-                    <span className={`badge redemption-status ${item.status}`}>
-                      {statusLabels[item.status]}
-                    </span>
-                  </td>
-                </tr>
+                  </Table.Td>
+                  <Table.Td role="cell" data-label={t.redemptions.status}>
+                    <Status
+                      domain="redemption"
+                      status={item.status}
+                      label={statusLabels[item.status]}
+                    />
+                  </Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
       {meta && (
         <Pagination

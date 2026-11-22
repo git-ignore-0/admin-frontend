@@ -1,6 +1,104 @@
 import type { AdminDictionary, AdminLocale } from "@/lib/admin-i18n";
-import { apiErrorFields, type ClientApiError, requestErrorMessage } from "@/lib/client-error";
-import type { AdminUserListItem } from "@/lib/types";
+import { requireResponseEntity } from "@/lib/api-response";
+import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
+import {
+  apiErrorFields,
+  type ClientApiError,
+  invalidApiResponse,
+  isApiObject,
+  requestErrorMessage,
+} from "@/lib/client-error";
+import type {
+  AdminAccountSummary,
+  AdminUserDetail,
+  AdminUserListItem,
+  InvitedAdminUser,
+} from "@/lib/types";
+
+const statusAfterAction = {
+  create: "pending_activation",
+  activate: "active",
+  suspend: "suspended",
+  reactivate: "active",
+} as const;
+
+type AccountAction = keyof typeof statusAfterAction | "reset-password";
+
+export function requireAccountActionResult(
+  data: Pick<AdminAccountSummary, "id" | "status">,
+  action: AccountAction,
+  userId?: string,
+) {
+  const { id, status } = requireResponseEntity(data);
+  const expected =
+    action === "reset-password"
+      ? ["pending_activation", "active", "suspended"].includes(status)
+      : status === statusAfterAction[action];
+  if (!UUID_PATH_SEGMENT.test(id) || (userId !== undefined && id !== userId) || !expected) {
+    throw invalidApiResponse();
+  }
+  return id;
+}
+
+function requireAccountIdentity(user: AdminUserListItem) {
+  requireResponseEntity(user);
+  if (
+    typeof user.name !== "string" ||
+    (user.email !== null && typeof user.email !== "string") ||
+    (user.login_phone_number !== null && typeof user.login_phone_number !== "string")
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+export function requireAdminUserRecord(user: AdminUserListItem) {
+  requireAccountIdentity(user);
+  if (
+    typeof user.status !== "string" ||
+    typeof user.date_joined !== "string" ||
+    typeof user.email_verified !== "boolean" ||
+    !Number.isFinite(user.points_balance) ||
+    typeof user.has_csa_customer !== "boolean"
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+export function requireInvitedUserRecord(invitee: InvitedAdminUser) {
+  requireResponseEntity(invitee);
+  if (
+    typeof invitee.name !== "string" ||
+    typeof invitee.status !== "string" ||
+    (invitee.email !== null && typeof invitee.email !== "string") ||
+    (invitee.referred_at != null && typeof invitee.referred_at !== "string")
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+export function requireAdminUserDetail(user: AdminUserDetail, id: string) {
+  requireAdminUserRecord(user);
+  const textFields = [user.phone, user.address, user.province_code, user.ward_code];
+  if (
+    user.id !== id ||
+    textFields.some((value) => value != null && typeof value !== "string") ||
+    typeof user.referral_code !== "string" ||
+    (user.source !== "organic" && user.source !== "referred") ||
+    !Number.isSafeInteger(user.invited_count) ||
+    user.invited_count < 0 ||
+    (user.referrer !== null &&
+      (!isApiObject(user.referrer) || typeof user.referrer.name !== "string"))
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+export function requireAccountSearchRecord(user: AdminUserListItem) {
+  requireAccountIdentity(user);
+  if (typeof user.has_csa_customer !== "boolean" || typeof user.phone !== "string") {
+    throw invalidApiResponse();
+  }
+}
 
 export const accountFields = [
   "name",
@@ -14,6 +112,7 @@ type AccountFailure = {
   message: string;
   fields: Partial<Record<AccountField, string>>;
   stateConflict?: boolean;
+  recheckAccess?: boolean;
 };
 
 function validationText(value: unknown): string {
@@ -75,7 +174,13 @@ export function accountFailure(
     case "account_state_conflict":
       return { message: copy.stateConflict, fields: {}, stateConflict: error.status === 409 };
   }
-  if (error?.status === 403) return { message: t.common.forbidden, fields: {} };
+  if (error?.status === 403) {
+    return {
+      message: t.common.forbidden,
+      fields: {},
+      recheckAccess: error.message !== "csrf_rejected",
+    };
+  }
   if (error?.status === 400) {
     const payload: unknown = error.payload;
     const details = payload && typeof payload === "object" ? payload : {};

@@ -1,0 +1,92 @@
+.container {
+  container: list-toolbar / inline-size;
+  min-inline-size: 0;
+}
+
+.search,
+.legacySearch {
+  flex: 1 1 100%;
+  min-inline-size: 0;
+}
+
+.searchWithClear::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.searchDescription {
+  margin-block-start: calc(var(--mantine-spacing-xs) / 2);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.primaryAction {
+  margin-inline-start: auto;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.primaryAction > :is(button, a) {
+  max-inline-size: 100%;
+}
+
+.filterTrigger {
+  max-inline-size: min(40cqi, 12rem);
+  padding-inline: var(--mantine-spacing-sm);
+}
+
+.filterLabel {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-sm);
+  max-inline-size: calc(100vw - 2 * var(--mantine-spacing-xs));
+  max-block-size: calc(100dvh - 2 * var(--mantine-spacing-xs));
+}
+
+.filterFields {
+  min-inline-size: 0;
+  min-block-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow-y: auto;
+}
+
+/* The shell sidebar and a narrow preview both change the available toolbar width. */
+@container list-toolbar (min-width: 38rem) {
+  .search {
+    flex: 0 1 clamp(15rem, 42cqi, 24rem);
+  }
+
+  .legacySearch {
+    flex-basis: 15rem;
+  }
+}
+
+/* Retain room for a refresh and a longer primary action beside an active filter. */
+@container list-toolbar (max-width: 26rem) {
+  .filterTrigger {
+    max-inline-size: none;
+  }
+
+  .filterLabel {
+    display: none;
+  }
+
+  .primaryAction :global(.mantine-Button-label) {
+    display: block;
+    height: auto;
+    min-inline-size: 0;
+    text-overflow: ellipsis;
+  }
+}

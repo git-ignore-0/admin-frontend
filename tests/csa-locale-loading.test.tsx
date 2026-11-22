@@ -7,7 +7,10 @@ import { CSASelectionHistory } from "@/components/csa-selection-history";
 import { api, apiEnvelope } from "@/lib/client-api";
 vi.mock("@/components/csa-companion-delivery", () => ({ CSACompanionDelivery: () => null }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();

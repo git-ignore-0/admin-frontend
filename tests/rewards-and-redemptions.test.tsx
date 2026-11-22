@@ -1,3 +1,4 @@
+import { selectOption } from "./select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -198,7 +199,7 @@ describe("rewards", () => {
     expect(screen.getByRole("button", { name: "Move Seasonal vegetables down" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByRole("navigation", { name: "Page {page}/{pages}" })).toHaveAttribute(
+    expect(screen.getByRole("navigation", { name: "Page 1/2" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
@@ -434,21 +435,31 @@ describe("rewards", () => {
     expect(screen.queryByText("Saving order…")).toBeNull();
   });
 
-  it("rolls back the exact previous order when reorder fails", async () => {
-    vi.mocked(apiEnvelope)
-      .mockResolvedValueOnce({
+  it.each(["network", "invalid record"] as const)(
+    "rolls back the exact previous order after a %s reorder failure",
+    async (failure) => {
+      const fetchPage = vi.mocked(apiEnvelope).mockResolvedValueOnce({
         data: [reward, secondReward],
         meta: { page: 1, page_size: 30, total: 2 },
-      })
-      .mockRejectedValueOnce(new Error("network_error"));
-    providers(<RewardList />);
+      });
+      if (failure === "network") fetchPage.mockRejectedValueOnce(new Error("network_error"));
+      else
+        fetchPage.mockResolvedValueOnce({
+          data: [{ ...reward, translations: null }],
+          meta: { page: 1, page_size: 30, total: 2 },
+        });
+      providers(<RewardList />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
-    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not connect");
-    expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seasonal vegetables");
-    expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
-  });
+      fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
+      expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seed box");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        failure === "network" ? "Could not connect" : "unreadable response",
+      );
+      expect(screen.getAllByRole("row")[1]).toHaveTextContent("Seasonal vegetables");
+      expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
+      expect(fetchPage).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("rolls back and shows the dedicated conflict message", async () => {
     vi.mocked(apiEnvelope)
@@ -478,7 +489,7 @@ describe("rewards", () => {
 
     const englishName = (await screen.findAllByLabelText("Reward name *"))[1];
     fireEvent.change(englishName, { target: { value: "Unsaved reward name" } });
-    fireEvent.click(screen.getByRole("button", { name: "VI" }));
+    fireEvent.click(screen.getByRole("radio", { name: "VI" }));
 
     await waitFor(() => expect(document.documentElement.lang).toBe("vi"));
     expect(englishName).toHaveValue("Unsaved reward name");
@@ -518,7 +529,9 @@ describe("redemptions", () => {
       }),
     );
 
-    expect(await screen.findByText("Pending", { selector: ".badge" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Pending", { selector: ".mantine-Badge-label" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Seasonal vegetables")).toBeInTheDocument();
     expect(screen.queryByText("Private fulfillment note")).not.toBeInTheDocument();
     expect(
@@ -559,7 +572,7 @@ describe("redemptions", () => {
       ),
     );
     await waitFor(() => expect(screen.getByLabelText("Filter by status")).toBeEnabled());
-    fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "pending" } });
+    selectOption(screen.getByLabelText("Filter by status"), "pending");
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith(
         "admin/redemptions?page=1&search=green%40example.com&status=pending",
@@ -572,7 +585,7 @@ describe("redemptions", () => {
       expect(apiEnvelope).toHaveBeenLastCalledWith("admin/redemptions?page=1&search=&status="),
     );
     expect(screen.getByRole("searchbox")).toHaveValue("");
-    expect(screen.getByLabelText("Filter by status")).toHaveValue("");
+    expect(screen.getByLabelText("Filter by status")).toHaveValue("All statuses");
     expect(await screen.findByText("31 results")).toBeVisible();
   });
 
@@ -595,7 +608,7 @@ describe("redemptions", () => {
       name: "Search by email or phone number",
     });
     const statusFilter = screen.getByRole("combobox", { name: "Filter by status" });
-    fireEvent.change(statusFilter, { target: { value: "contacted" } });
+    selectOption(statusFilter, "contacted");
 
     await waitFor(() => expect(statusFilter).toBeDisabled());
     expect(detailLink).toBeVisible();
@@ -604,7 +617,7 @@ describe("redemptions", () => {
     expect(screen.getByRole("button", { name: "Clear filters" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByRole("navigation", { name: "Page {page}/{pages}" })).toHaveAttribute(
+    expect(screen.getByRole("navigation", { name: "Page 1/2" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
@@ -743,9 +756,9 @@ describe("redemptions", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "points were deducted when the request was submitted",
     );
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(contactButton).toHaveFocus();
+    await waitFor(() => expect(contactButton).toHaveFocus());
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm completion" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("will not be deducted again");
@@ -767,7 +780,7 @@ describe("redemptions", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/reject"))).toHaveLength(1);
 

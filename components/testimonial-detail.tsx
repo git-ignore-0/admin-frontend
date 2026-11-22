@@ -1,5 +1,9 @@
 "use client";
 
+import { Status } from "@/components/nfv-controls";
+
+import { Button, Alert, Group } from "@mantine/core";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -125,12 +129,12 @@ export function TestimonialDetail({ testimonialId }: { testimonialId: string }) 
   if (loadError && !item)
     return (
       <div className="panel load-error-state">
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {requestErrorMessage(loadError, t)}
-        </p>
-        <button className="button secondary" disabled={loading} onClick={() => void load()}>
+        </Alert>
+        <Button variant="default" disabled={loading} onClick={() => void load()}>
           {t.common.retry}
-        </button>
+        </Button>
       </div>
     );
   if (!item) return <div className="panel">{t.testimonials.loadingDetail}</div>;
@@ -150,12 +154,14 @@ export function TestimonialDetail({ testimonialId }: { testimonialId: string }) 
         title={t.testimonials.detailTitle}
       />
       {loadError && (
-        <div className="error-box retry-error" role="alert">
-          <span>{requestErrorMessage(loadError, t)}</span>
-          <button className="button secondary" disabled={loading} onClick={() => void load()}>
-            {t.common.retry}
-          </button>
-        </div>
+        <Alert color="red" className="retry-error" role="alert">
+          <Group gap="sm">
+            <span>{requestErrorMessage(loadError, t)}</span>
+            <Button variant="default" disabled={loading} onClick={() => void load()}>
+              {t.common.retry}
+            </Button>
+          </Group>
+        </Alert>
       )}
 
       <section className="testimonial-hero" aria-labelledby="testimonial-detail-name">
@@ -175,9 +181,7 @@ export function TestimonialDetail({ testimonialId }: { testimonialId: string }) 
             </span>
           )}
           <div>
-            <span className={`badge testimonial-status ${item.status}`}>
-              {statusLabels[item.status]}
-            </span>
+            <Status domain="testimonial" status={item.status} label={statusLabels[item.status]} />
             <h2 id="testimonial-detail-name" ref={headingRef} tabIndex={-1}>
               {item.display_name}
             </h2>
@@ -188,46 +192,45 @@ export function TestimonialDetail({ testimonialId }: { testimonialId: string }) 
           </div>
         </div>
         <div className="testimonial-detail-actions" aria-label={t.testimonials.statusLabel}>
-          <Link className="button secondary" href={`/testimonials/${item.id}/edit`}>
+          <Button component={Link} variant="default" href={`/testimonials/${item.id}/edit`}>
             {t.testimonials.edit}
-          </Link>
+          </Button>
           {item.status !== "published" && (
-            <button
+            <Button
               aria-describedby={!publishReady ? "testimonial-publish-help" : undefined}
-              className="button"
               disabled={saving || !publishReady}
               onClick={(event) => openAction("publish", event.currentTarget)}
               type="button"
             >
               {t.testimonials.publish}
-            </button>
+            </Button>
           )}
           {item.status !== "hidden" && (
-            <button
-              className="button danger"
+            <Button
+              color="red"
               disabled={saving}
               onClick={(event) => openAction("hide", event.currentTarget)}
               type="button"
             >
               {t.testimonials.hide}
-            </button>
+            </Button>
           )}
           {item.status !== "draft" && (
-            <button
-              className="button secondary"
+            <Button
+              variant="default"
               disabled={saving}
               onClick={(event) => openAction("unpublish", event.currentTarget)}
               type="button"
             >
               {t.testimonials.moveToDraft}
-            </button>
+            </Button>
           )}
         </div>
       </section>
       {!publishReady && item.status !== "published" && (
-        <p className="notice-box" id="testimonial-publish-help">
+        <Alert color="yellow" id="testimonial-publish-help">
           {t.testimonials.publishUnavailable}
-        </p>
+        </Alert>
       )}
 
       <div className="testimonial-detail-grid">
@@ -323,9 +326,11 @@ function TranslationDetail({
           <h2>{label}</h2>
           <span className="locale-code">{locale.toUpperCase()}</span>
         </div>
-        <span className={`badge ${translation?.is_complete ? "" : "warm"}`}>
-          {translation?.is_complete ? t.testimonials.complete : t.testimonials.incomplete}
-        </span>
+        <Status
+          domain="completion"
+          status={translation?.is_complete ? "complete" : "incomplete"}
+          label={translation?.is_complete ? t.testimonials.complete : t.testimonials.incomplete}
+        />
       </div>
       <dl className="detail-list testimonial-content-list">
         <DetailRow label={t.testimonials.role} value={translation?.role || "—"} />

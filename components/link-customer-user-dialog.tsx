@@ -1,9 +1,15 @@
 "use client";
+import { DataState } from "@/components/nfv-controls";
+
+import { Button, Radio, Alert } from "@mantine/core";
+import { FormInput } from "@/components/nfv-controls";
 
 import { FormEvent, RefObject, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { requireAccountSearchRecord } from "@/lib/admin-users";
+import { requireResponseList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserListItem, CSACustomer, PaginationMeta } from "@/lib/types";
@@ -11,13 +17,15 @@ import type { AdminUserListItem, CSACustomer, PaginationMeta } from "@/lib/types
 export function LinkCustomerUserDialog({
   customerId,
   fallbackFocusRef,
+  returnFocusRef,
   onCancel,
   onLinked,
 }: {
   customerId: string;
   fallbackFocusRef: RefObject<HTMLElement | null>;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   onCancel: () => void;
-  onLinked: (customer: CSACustomer) => void;
+  onLinked: (customer: CSACustomer) => void | Promise<void>;
 }) {
   const { t } = useAdminI18n();
   const submitRef = useRef(false);
@@ -42,7 +50,9 @@ export function LinkCustomerUserDialog({
       const result = await apiEnvelope<AdminUserListItem[], PaginationMeta>(
         `admin/users?page=1&search=${encodeURIComponent(query.trim())}`,
       );
-      if (request === pendingSearch.current) setUsers(result.data);
+      if (request === pendingSearch.current) {
+        setUsers(requireResponseList(result.data, requireAccountSearchRecord));
+      }
     } catch (caught) {
       if (request === pendingSearch.current) setError(requestErrorMessage(caught, t));
     } finally {
@@ -63,7 +73,7 @@ export function LinkCustomerUserDialog({
         method: "POST",
         body: JSON.stringify({ user_id: selectedUser.id }),
       });
-      onLinked(customer);
+      await onLinked(customer);
     } catch (caught) {
       const code = caught instanceof Error ? caught.message : "";
       setError(
@@ -88,28 +98,31 @@ export function LinkCustomerUserDialog({
       confirmDisabled={!selectedUser}
       error={error}
       fallbackFocusRef={fallbackFocusRef}
+      returnFocusRef={returnFocusRef}
       onCancel={() => !busy && onCancel()}
       onConfirm={linkUser}
       title={t.csaCustomers.linkTitle}
     >
-      <p className="notice-box">{t.csaCustomers.linkWarning}</p>
+      <Alert color="yellow" role="note">
+        {t.csaCustomers.linkWarning}
+      </Alert>
       <form aria-label={t.csaCustomers.findUser} className="dialog-search" onSubmit={search}>
         <label className="field">
           <span>{t.csaCustomers.findUser}</span>
-          <input
+          <FormInput
             autoComplete="email"
-            className="input"
+
             placeholder={t.csaCustomers.userPlaceholder}
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        <button className="button secondary" disabled={busy || !query.trim()}>
+        <Button type="submit" variant="default" disabled={busy || !query.trim()}>
           {t.csaCustomers.search}
-        </button>
+        </Button>
       </form>
-      {users?.length === 0 && <p className="empty compact">{t.csaCustomers.noUsers}</p>}
+      {users?.length === 0 && <DataState kind="empty" title={t.csaCustomers.noUsers} compact />}
       {users && (
         <div
           aria-label={t.csaCustomers.selectedUser}
@@ -121,28 +134,31 @@ export function LinkCustomerUserDialog({
               className={`assignment-user ${selectedUser?.id === user.id ? "selected" : ""} ${user.has_csa_customer ? "disabled" : ""}`}
               key={user.id}
             >
-              <input
+              <Radio
                 checked={selectedUser?.id === user.id}
                 disabled={busy || user.has_csa_customer}
                 name="link-user"
                 onChange={() => setSelectedId(user.id)}
-                type="radio"
               />
-              <span>
-                <strong>{user.name}</strong>
-                <small>
-                  {[user.email, user.login_phone_number].filter(Boolean).join(" · ") ||
-                    t.users.emailMissing}
-                </small>
-                {user.phone && (
-                  <small>
-                    {t.users.phone}: {user.phone}
-                  </small>
-                )}
-                {user.has_csa_customer && (
-                  <small className="field-error">{t.csaCustomers.userExists}</small>
-                )}
-              </span>
+              {
+                <>
+                  <span>
+                    <strong>{user.name}</strong>
+                    <small>
+                      {[user.email, user.login_phone_number].filter(Boolean).join(" · ") ||
+                        t.users.emailMissing}
+                    </small>
+                    {user.phone && (
+                      <small>
+                        {t.users.phone}: {user.phone}
+                      </small>
+                    )}
+                    {user.has_csa_customer && (
+                      <small className="field-error">{t.csaCustomers.userExists}</small>
+                    )}
+                  </span>
+                </>
+              }
             </label>
           ))}
         </div>

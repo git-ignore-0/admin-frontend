@@ -1,10 +1,14 @@
 "use client";
+import { IconChevronRight } from "@tabler/icons-react";
+import { DataState } from "@/components/nfv-controls";
+
+import { Button, Checkbox } from "@mantine/core";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
-import { Button, FormInput } from "@/components/nfv-controls";
+import { FormInput } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
 import {
   administrativeWardSortName,
@@ -253,7 +257,7 @@ export function ShippingAreaManager() {
   }
 
   if (provinces.length === 0) {
-    return <div className="empty">{copy.noProvinces}</div>;
+    return <DataState kind="empty" title={copy.noProvinces} />;
   }
 
   return (
@@ -270,41 +274,42 @@ export function ShippingAreaManager() {
               role="treeitem"
             >
               <div className="shipping-province-header">
-                <button
+                <Button
                   aria-label={(expanded ? copy.collapseProvince : copy.expandProvince).replace(
                     "{province}",
                     province.name,
                   )}
+                  variant="subtle"
+                  justify="flex-start"
+                  leftSection={
+                    <IconChevronRight
+                      aria-hidden="true"
+                      className="shipping-tree-chevron"
+                      size={16}
+                      stroke={1.5}
+                    />
+                  }
                   className="shipping-province-toggle"
                   onClick={() => toggleProvince(province.code)}
                   type="button"
                 >
-                  <svg
-                    aria-hidden="true"
-                    className="shipping-tree-chevron"
-                    fill="none"
-                    viewBox="0 0 20 20"
-                  >
-                    <path d="m7.5 5.5 4.5 4.5-4.5 4.5" />
-                  </svg>
                   <span>{province.name}</span>
-                </button>
+                </Button>
                 {expanded && settings && !loadingSettings && !settingsError && (
                   <>
-                    <label className="shipping-rule-check shipping-province-default">
-                      <input
-                        aria-label={copy.defaultSupport}
-                        checked={settings.is_active}
-                        onChange={(event) =>
-                          editSettings((current) => ({
-                            ...current,
-                            is_active: event.target.checked,
-                          }))
-                        }
-                        type="checkbox"
-                      />
-                      <span>{copy.wholeProvince}</span>
-                    </label>
+                    <Checkbox
+                      className="shipping-rule-check shipping-province-default"
+                      classNames={{ label: "shipping-province-default-label" }}
+                      aria-label={copy.defaultSupport}
+                      checked={settings.is_active}
+                      onChange={(event) =>
+                        editSettings((current) => ({
+                          ...current,
+                          is_active: event.target.checked,
+                        }))
+                      }
+                      label={copy.wholeProvince}
+                    />
                     <div className="shipping-fee-control shipping-province-fee">
                       <FormInput
                         aria-label={copy.defaultFee}
@@ -320,7 +325,7 @@ export function ShippingAreaManager() {
                       />
                       <span>VND</span>
                     </div>
-                    <Button loading={saving} onClick={save} small>
+                    <Button loading={saving} onClick={save} size="xs">
                       {copy.saveAll}
                     </Button>
                   </>
@@ -359,16 +364,14 @@ export function ShippingAreaManager() {
                                 >
                                   <span className="shipping-ward-name">{ward.name}</span>
                                   <div className="shipping-ward-controls">
-                                    <label className="shipping-ward-toggle">
-                                      <input
-                                        aria-label={copy.supportFor.replace("{ward}", ward.name)}
-                                        checked={supported}
-                                        onChange={(event) =>
-                                          toggleWard(ward.code, event.target.checked)
-                                        }
-                                        type="checkbox"
-                                      />
-                                    </label>
+                                    <Checkbox
+                                      className="shipping-ward-toggle"
+                                      aria-label={copy.supportFor.replace("{ward}", ward.name)}
+                                      checked={supported}
+                                      onChange={(event) =>
+                                        toggleWard(ward.code, event.target.checked)
+                                      }
+                                    />
                                     <div className="shipping-fee-control">
                                       <FormInput
                                         aria-label={copy.feeFor.replace("{ward}", ward.name)}

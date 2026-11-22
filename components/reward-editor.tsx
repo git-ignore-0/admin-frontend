@@ -1,5 +1,9 @@
 "use client";
 
+import { FormInput, FormTextarea } from "@/components/nfv-controls";
+
+import { Button, Checkbox, Alert } from "@mantine/core";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -186,21 +190,21 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
   if (loadError)
     return (
       <div className="panel load-error-state">
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {requestErrorMessage(loadError, t)}
-        </p>
-        <button className="button secondary" onClick={() => setLoadAttempt((value) => value + 1)}>
+        </Alert>
+        <Button variant="default" onClick={() => setLoadAttempt((value) => value + 1)}>
           {t.common.retry}
-        </button>
+        </Button>
       </div>
     );
 
   return (
     <form className="reward-editor" noValidate onSubmit={submit}>
       {error && (
-        <p className="error-box" role="alert">
+        <Alert color="red" role="alert">
           {error}
-        </p>
+        </Alert>
       )}
       <section className="panel reward-basics" aria-labelledby="reward-basics-title">
         <div className="panel-head">
@@ -224,7 +228,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
             )}
           </div>
           <div>
-            <label className="button secondary reward-upload-button">
+            <Button component="label" className="reward-upload-button" variant="default">
               <span>
                 {uploading ? t.rewards.uploading : selectedImage?.name || t.rewards.chooseImage}
               </span>
@@ -234,16 +238,15 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
                 onChange={selectImage}
                 type="file"
               />
-            </label>
+            </Button>
             <small className="muted-copy">{t.rewards.imageHelp}</small>
           </div>
         </div>
         <div className="form-grid reward-number-fields">
           <label className="field">
             <span>{t.rewards.pointCost} *</span>
-            <input
+            <FormInput
               aria-invalid={Boolean(pointCostError)}
-              className="input"
               disabled={saving}
               inputMode="numeric"
               onChange={(event) => {
@@ -260,15 +263,13 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
               </small>
             ) : null}
           </label>
-          <label className="checkbox field full">
-            <input
-              checked={isActive}
-              disabled={saving}
-              onChange={(event) => setIsActive(event.target.checked)}
-              type="checkbox"
-            />
-            <span>{t.rewards.activeHelp}</span>
-          </label>
+          <Checkbox
+            className="field full"
+            checked={isActive}
+            disabled={saving}
+            onChange={(event) => setIsActive(event.target.checked)}
+            label={t.rewards.activeHelp}
+          />
         </div>
       </section>
 
@@ -282,8 +283,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
             <div className="form-grid one">
               <label className="field">
                 <span>{t.rewards.name} *</span>
-                <input
-                  className="input"
+                <FormInput
                   disabled={saving}
                   maxLength={240}
                   onChange={(event) => updateTranslation(locale, "name", event.target.value)}
@@ -293,8 +293,7 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
               </label>
               <label className="field">
                 <span>{t.rewards.shortDescription}</span>
-                <textarea
-                  className="textarea"
+                <FormTextarea
                   disabled={saving}
                   maxLength={800}
                   onChange={(event) =>
@@ -309,19 +308,20 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
       </section>
 
       <div className="form-actions">
-        <Link
+        <Button
+          component={Link}
           aria-disabled={saving || uploading}
-          className="button secondary"
+          variant="default"
           href="/rewards"
           onClick={(event) => {
             if (saving || uploading) event.preventDefault();
           }}
         >
           {t.rewards.cancel}
-        </Link>
-        <button className="button" disabled={saving || uploading} type="submit">
+        </Button>
+        <Button disabled={saving || uploading} type="submit">
           {saving ? t.rewards.saving : t.rewards.save}
-        </button>
+        </Button>
       </div>
     </form>
   );

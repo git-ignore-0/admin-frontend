@@ -29,7 +29,9 @@ export function CSAOrderPanel({
     <Section
       title={c.title}
       description={round.name}
-      actions={<Status status={selection.state} label={c.states[selection.state]} />}
+      actions={
+        <Status domain="csa-selection" status={selection.state} label={c.states[selection.state]} />
+      }
       className="store-order-csa-panel"
     >
       <dl className="store-order-csa-meta">
