@@ -79,9 +79,10 @@ async function signIn(browser: Jar, name: string, expired = false) {
 
 const base = "https://admin.example.test";
 const context = { params: Promise.resolve({ path: ["admin", "users"] }) };
-const page = (binding: string) =>
+const page = (binding: string, signal?: AbortSignal) =>
   new NextRequest(`${base}/api/backend/admin/users`, {
     headers: { "x-nfv-admin-session": binding },
+    signal,
   });
 
 beforeEach(() => {
@@ -98,6 +99,42 @@ afterEach(() => {
 });
 
 describe("admin requests scoped to the rendered session", () => {
+  it("lets a concurrent read use the coalesced refresh after the other client cancels", async () => {
+    const browser: Jar = new Map();
+    const binding = await signIn(browser, "A", true);
+    const client = new AbortController();
+    let finishRefresh!: (response: Response) => void;
+    const refresh = new Promise<Response>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const upstream = vi.fn(async (url: string | URL, init: RequestInit) => {
+      if (String(url).endsWith("/oauth/token")) return refresh;
+      expect(new Headers(init.headers).get("authorization")).toBe("Bearer rotated-access");
+      return Response.json({ data: [] });
+    });
+    vi.stubGlobal("fetch", upstream);
+
+    const obsolete = request(browser, () => GET(page(binding, client.signal), context));
+    const current = request(browser, () => GET(page(binding), context));
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledOnce());
+    const refreshSignal = upstream.mock.calls[0][1].signal;
+    client.abort();
+    expect(refreshSignal?.aborted).toBe(false);
+    finishRefresh(
+      Response.json({
+        access_token: "rotated-access",
+        refresh_token: "rotated-refresh",
+        expires_in: 120,
+        token_type: "Bearer",
+      }),
+    );
+    const [canceled, finished] = await Promise.all([obsolete, current]);
+    expect(canceled.status).toBe(499);
+    expect(finished.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    expect((await request(browser, readSession))?.accessToken).toBe("rotated-access");
+  });
+
   it("keeps a legacy page binding when its tokens refresh", async () => {
     const browser = new Map([[SESSION_COOKIE, seal(session("Legacy", true))]]);
     const binding = await request(browser, async () => adminSessionBinding((await readSession())!));

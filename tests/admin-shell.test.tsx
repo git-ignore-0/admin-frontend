@@ -187,7 +187,7 @@ describe("shared detail back navigation", () => {
 
 describe("admin account identity", () => {
   it("binds JSON and file requests to the rendered session and asks for a reload", async () => {
-    const fetcher = vi.fn(() =>
+    const fetcher = vi.fn<typeof fetch>(() =>
       Promise.resolve(Response.json({ error: "session_changed" }, { status: 409 })),
     );
     vi.stubGlobal("fetch", fetcher);
@@ -201,21 +201,15 @@ describe("admin account identity", () => {
         "session_changed",
       );
     });
-    expect(fetcher).toHaveBeenNthCalledWith(
-      1,
-      "/api/backend/admin/users",
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          "x-nfv-admin-session": "test-session",
-          "X-NFV-Admin-Request": "1",
-        }),
-      }),
-    );
-    expect(fetcher).toHaveBeenNthCalledWith(
-      2,
-      "/api/backend/admin/memberships/fixture/contract/pdf?locale=en",
-      expect.objectContaining({ headers: { "x-nfv-admin-session": "test-session" } }),
-    );
+    const [[jsonPath, jsonInit], [filePath, fileInit]] = fetcher.mock.calls;
+    expect(jsonPath).toBe("/api/backend/admin/users");
+    const jsonHeaders = new Headers(jsonInit?.headers);
+    expect(jsonHeaders.get("x-nfv-admin-session")).toBe("test-session");
+    expect(jsonHeaders.get("x-nfv-admin-request")).toBe("1");
+    expect(filePath).toBe("/api/backend/admin/memberships/fixture/contract/pdf?locale=en");
+    expect(Object.fromEntries(new Headers(fileInit?.headers))).toEqual({
+      "x-nfv-admin-session": "test-session",
+    });
     const feedback = screen.getByRole("alert");
     expect(feedback).toHaveTextContent("The admin session changed");
     expect(within(feedback).getByRole("button", { name: "Reload page" })).toBeVisible();
@@ -235,15 +229,12 @@ describe("admin account identity", () => {
     rerender(shell("b"));
     expect(screen.getByRole("alert")).toHaveTextContent("The admin session changed");
 
-    const fetcher = vi.fn(async () => Response.json({ data: [] }));
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [] }));
     vi.stubGlobal("fetch", fetcher);
     await api("admin/users");
-    expect(fetcher).toHaveBeenCalledWith(
-      "/api/backend/admin/users",
-      expect.objectContaining({
-        headers: expect.objectContaining({ "x-nfv-admin-session": "a" }),
-      }),
-    );
+    const [path, init] = fetcher.mock.calls[0];
+    expect(path).toBe("/api/backend/admin/users");
+    expect(new Headers(init?.headers).get("x-nfv-admin-session")).toBe("a");
   });
 
   it("displays the login phone when the account has no email", () => {

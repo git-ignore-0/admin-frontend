@@ -1005,19 +1005,99 @@ describe("admin backend proxy", () => {
   });
 
   it("returns a bounded timeout with no-store caching", async () => {
+    const client = new AbortController();
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal);
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockRejectedValue(new DOMException("timed out", "TimeoutError")),
+      vi.fn(async (_target: URL, { signal }: RequestInit) => {
+        deadline.abort(new DOMException("timed out", "TimeoutError"));
+        client.abort();
+        throw signal?.reason;
+      }),
     );
 
-    const response = await GET(
-      pageRequest("https://admin.example.test/api/backend/admin/redemptions"),
+    try {
+      const response = await GET(
+        pageRequest("https://admin.example.test/api/backend/admin/redemptions", {
+          signal: client.signal,
+        }),
+        { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+      );
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000);
+      expect(response.status).toBe(504);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(await response.json()).toEqual({ error: "upstream_timeout" });
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("propagates an incoming read cancellation without returning an upstream timeout", async () => {
+    const client = new AbortController();
+    const upstream = vi.fn(
+      (_target: URL, { signal }: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    vi.stubGlobal("fetch", upstream);
+    const pending = GET(
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions", {
+        signal: client.signal,
+      }),
       { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
     );
-
-    expect(response.status).toBe(504);
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledOnce());
+    client.abort(new Error("client disconnected"));
+    const signal = upstream.mock.calls[0][1].signal;
+    expect(signal?.reason).toBe(client.signal.reason);
+    const response = await pending;
+    expect(response.status).toBe(499);
+    expect(response.body).toBeNull();
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(await response.json()).toEqual({ error: "upstream_timeout" });
+    expect(clearSession).not.toHaveBeenCalled();
+  });
+
+  it("still reports a real transport failure when the client aborts while the failure settles", async () => {
+    const client = new AbortController();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementationOnce(async () => {
+        client.abort();
+        throw new TypeError("transport failure");
+      }),
+    );
+    const response = await GET(
+      pageRequest("https://admin.example.test/api/backend/admin/redemptions", {
+        signal: client.signal,
+      }),
+      { params: Promise.resolve({ path: ["admin", "redemptions"] }) },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "upstream_unavailable" });
+  });
+
+  it("does not cancel or retry a dispatched mutation when the client disconnects", async () => {
+    const client = new AbortController();
+    const upstream = vi.fn(async (_target: URL, { signal }: RequestInit) => {
+      client.abort();
+      expect(signal?.aborted).toBe(false);
+      return Response.json({ data: { ok: true } }, { status: 201 });
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await POST(
+      pageRequest("https://admin.example.test/api/backend/admin/users", {
+        method: "POST",
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        body: "{}",
+        signal: client.signal,
+      }),
+      { params: Promise.resolve({ path: ["admin", "users"] }) },
+    );
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ data: { ok: true } });
+    expect(upstream).toHaveBeenCalledOnce();
   });
 
   it("forwards exact Testimonial routes and blocks hard delete", async () => {

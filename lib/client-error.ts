@@ -1,5 +1,16 @@
 import type { AdminDictionary } from "@/lib/admin-i18n";
 
+/** Recognize native aborts and caller-supplied abort reasons without hiding concurrent failures. */
+export function isRequestCanceled(error: unknown, signal?: AbortSignal | null): boolean {
+  return (
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      error.name === "AbortError") ||
+    (signal?.aborted === true && Object.is(signal.reason, error))
+  );
+}
+
 export type ClientApiError = Error & {
   field?: string;
   status?: number;

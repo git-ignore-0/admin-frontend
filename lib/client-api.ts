@@ -1,3 +1,4 @@
+import { isRequestCanceled } from "@/lib/client-error";
 import { ADMIN_PAGE_SESSION_HEADER } from "@/lib/csrf";
 
 export const ADMIN_SESSION_CHANGED_EVENT = "nfv-admin-session-changed";
@@ -20,8 +21,38 @@ export function pageSessionBinding(marker = renderedSessionBinding()) {
   return document.documentElement.dataset.adminPageSession;
 }
 
-function pageSessionHeader(binding: string | undefined): Record<string, string> {
-  return binding ? { [ADMIN_PAGE_SESSION_HEADER]: binding } : {};
+function applySessionHeader(headers: Headers, binding: string | undefined) {
+  if (binding) headers.set(ADMIN_PAGE_SESSION_HEADER, binding);
+  else headers.delete(ADMIN_PAGE_SESSION_HEADER);
+}
+
+async function fetchBackend(path: string, init: RequestInit) {
+  init.signal?.throwIfAborted();
+  try {
+    return await fetch(`/api/backend/${path.replace(/^\//, "")}`, init);
+  } catch (error) {
+    if (isRequestCanceled(error, init.signal)) throw error;
+    throw new Error("network_error");
+  }
+}
+
+async function readJsonPayload(response: Response, signal?: AbortSignal | null) {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (isRequestCanceled(error, signal)) throw error;
+    // Keep the empty/invalid JSON fallback and the status fallback for HTTP errors.
+    if (error instanceof SyntaxError || !response.ok) return {};
+    throw error;
+  }
+}
+
+function enforceSession(response: Response, binding: string | undefined, options?: ApiOptions) {
+  if (response.status !== 401) return;
+  if (renderedSessionBinding() === binding && (options?.shouldRedirectToLogin?.() ?? true)) {
+    window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
+  }
+  throw new Error("session_expired");
 }
 
 export function firstValidationField(value: unknown): string | undefined {
@@ -52,27 +83,15 @@ export async function apiEnvelope<T, M = Record<string, unknown>>(
   const method = (init?.method || "GET").toUpperCase();
   const mutatesData = !["GET", "HEAD", "OPTIONS"].includes(method);
   const binding = pageSessionBinding();
-  let response: Response;
-  try {
-    response = await fetch(`/api/backend/${path.replace(/^\//, "")}`, {
-      ...init,
-      headers: {
-        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-        ...(mutatesData ? { "X-NFV-Admin-Request": "1" } : {}),
-        ...init?.headers,
-        ...pageSessionHeader(binding),
-      },
-    });
-  } catch {
-    throw new Error("network_error");
+  const headers = new Headers(init?.headers);
+  if (!headers.has("content-type") && !(init?.body instanceof FormData)) {
+    headers.set("content-type", "application/json");
   }
-  if (response.status === 401) {
-    if (renderedSessionBinding() === binding && (options?.shouldRedirectToLogin?.() ?? true)) {
-      window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
-    }
-    throw new Error("session_expired");
-  }
-  const payload = await response.json().catch(() => ({}));
+  if (mutatesData) headers.set("x-nfv-admin-request", "1");
+  applySessionHeader(headers, binding);
+  const response = await fetchBackend(path, { ...init, headers });
+  enforceSession(response, binding, options);
+  const payload = await readJsonPayload(response, init?.signal);
   if (!response.ok) {
     const field = firstValidationField(payload);
     const code =
@@ -94,25 +113,14 @@ export async function api<T>(path: string, init?: RequestInit, options?: ApiOpti
   return (await apiEnvelope<T>(path, init, options)).data;
 }
 
-export async function apiFile(path: string) {
+export async function apiFile(path: string, { signal }: Pick<RequestInit, "signal"> = {}) {
   const binding = pageSessionBinding();
-  let response: Response;
-  try {
-    response = await fetch(`/api/backend/${path.replace(/^\//, "")}`, {
-      cache: "no-store",
-      headers: pageSessionHeader(binding),
-    });
-  } catch {
-    throw new Error("network_error");
-  }
-  if (response.status === 401) {
-    if (renderedSessionBinding() === binding) {
-      window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
-    }
-    throw new Error("session_expired");
-  }
+  const headers = new Headers();
+  applySessionHeader(headers, binding);
+  const response = await fetchBackend(path, { cache: "no-store", headers, signal });
+  enforceSession(response, binding);
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
+    const payload = await readJsonPayload(response, signal);
     const code = payload?.errors?.[0]?.code || payload?.error || "request_failed";
     notifySessionChanged(code, binding);
     const error = new Error(code);

@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ApiEnvelope } from "@/lib/client-api";
+import { isRequestCanceled } from "@/lib/client-error";
 import type { PaginationMeta } from "@/lib/types";
 
 type PaginatedListOptions<T> = {
-  fetchPage: (page: number) => Promise<ApiEnvelope<T[], PaginationMeta>>;
+  fetchPage: (page: number, signal: AbortSignal) => Promise<ApiEnvelope<T[], PaginationMeta>>;
   getErrorMessage: (error: unknown) => string;
   initialPage?: number;
   controlledPage?: number;
@@ -28,39 +29,57 @@ export function usePaginatedList<T>({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadVersion, setReloadVersion] = useState(0);
-  const requestId = useRef(0);
+  const activeRequest = useRef<AbortController | null>(null);
+  const cancelActiveRequest = useCallback(() => {
+    const previous = activeRequest.current;
+    activeRequest.current = null;
+    previous?.abort();
+  }, []);
 
   useEffect(() => {
-    const currentRequest = ++requestId.current;
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setLoading(true);
     setError("");
 
-    void fetchPage(page)
-      .then((payload) => {
-        if (currentRequest !== requestId.current) return;
+    async function loadPage() {
+      try {
+        const payload = await fetchPage(page, controller.signal);
+        if (activeRequest.current !== controller) return;
         setItems(payload.data);
         setMeta(payload.meta ?? null);
-      })
-      .catch((caught: unknown) => {
-        if (currentRequest === requestId.current) setError(getErrorMessage(caught));
-      })
-      .finally(() => {
-        if (currentRequest === requestId.current) setLoading(false);
-      });
+      } catch (error) {
+        if (activeRequest.current === controller && !isRequestCanceled(error, controller.signal)) {
+          setError(getErrorMessage(error));
+        }
+      } finally {
+        if (activeRequest.current === controller) {
+          activeRequest.current = null;
+          setLoading(false);
+        }
+      }
+    }
 
+    void loadPage();
     return () => {
-      if (currentRequest === requestId.current) requestId.current += 1;
+      if (activeRequest.current === controller) cancelActiveRequest();
     };
-  }, [fetchPage, getErrorMessage, page, reloadVersion]);
+  }, [cancelActiveRequest, fetchPage, getErrorMessage, page, reloadVersion]);
 
-  const reload = useCallback(() => setReloadVersion((current) => current + 1), []);
-  const replaceData = useCallback((nextItems: T[], nextMeta?: PaginationMeta | null) => {
-    requestId.current += 1;
-    setItems(nextItems);
-    if (nextMeta !== undefined) setMeta(nextMeta);
-    setError("");
-    setLoading(false);
-  }, []);
+  const reload = useCallback(() => {
+    cancelActiveRequest();
+    setReloadVersion((current) => current + 1);
+  }, [cancelActiveRequest]);
+  const replaceData = useCallback(
+    (nextItems: T[], nextMeta?: PaginationMeta | null) => {
+      cancelActiveRequest();
+      setItems(nextItems);
+      if (nextMeta !== undefined) setMeta(nextMeta);
+      setError("");
+      setLoading(false);
+    },
+    [cancelActiveRequest],
+  );
 
   return { error, items, loading, meta, page, reload, replaceData, setPage };
 }

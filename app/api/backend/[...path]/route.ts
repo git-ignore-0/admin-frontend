@@ -146,16 +146,38 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
   const method = request.method;
+  const isRead = method === "GET" || method === "HEAD";
+  let signal: AbortSignal | undefined;
   let response: Response;
   try {
+    const body = isRead ? undefined : await request.arrayBuffer();
+    const timeout = AbortSignal.timeout(10_000);
+    // The incoming signal applies to upstream reads only, after shared session refresh.
+    signal =
+      isRead && typeof AbortSignal.any === "function"
+        ? AbortSignal.any([request.signal, timeout])
+        : timeout;
+    signal.throwIfAborted();
     response = await fetch(target, {
       method,
       headers,
-      body: method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer(),
+      body,
       cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
+      signal,
     });
   } catch (error) {
+    if (
+      isRead &&
+      signal?.aborted &&
+      request.signal.aborted &&
+      Object.is(error, signal.reason) &&
+      Object.is(signal.reason, request.signal.reason)
+    ) {
+      return new NextResponse(null, {
+        status: 499,
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
     const timedOut =
       error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name);
     return jsonError(timedOut ? "upstream_timeout" : "upstream_unavailable", timedOut ? 504 : 502);
