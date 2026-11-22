@@ -7,7 +7,15 @@ import { formatMembershipUnits } from "@/lib/membership-format";
 import type { AdminLocale } from "@/lib/admin-i18n";
 import { couponDateTimeInput, couponDateTimeToApi } from "@/lib/csa-coupons";
 
-export type CSARoundStatus = "draft" | "scheduled" | "open" | "closed" | "delivery" | "cancelled";
+export const csaRoundStatuses = [
+  "draft",
+  "scheduled",
+  "open",
+  "closed",
+  "delivery",
+  "cancelled",
+] as const;
+export type CSARoundStatus = (typeof csaRoundStatuses)[number];
 export type CSASelectionState =
   "selecting" | "locked" | "reselecting" | "confirmed" | "cancelled" | "delivered";
 export type CSARound = {
@@ -94,10 +102,10 @@ export function validateReopenDeadline(deadline: string, deliveryDate: string, s
   const end = Date.parse(deadline);
   return Number.isFinite(end) && serverNow < end && end < csaDeliveryStartMs(deliveryDate);
 }
-export async function getRounds(page = 1, pageSize = 20) {
-  const payload = await apiEnvelope<CSARound[], PaginationMeta>(
-    `admin/csa-rounds?page=${page}&page_size=${pageSize}`,
-  );
+export async function getRounds(page = 1, pageSize = 20, status?: CSARoundStatus) {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (status) query.set("status", status);
+  const payload = await apiEnvelope<CSARound[], PaginationMeta>(`admin/csa-rounds?${query}`);
   return requirePaginatedList(payload, requireResponseEntity);
 }
 export function getRound(id: string) {

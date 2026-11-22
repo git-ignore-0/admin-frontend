@@ -1,181 +1,292 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Status as UiStatus } from "@/components/nfv-controls";
 
-import { Button, Alert, Group } from "@mantine/core";
+import {
+  Anchor,
+  Button,
+  Drawer,
+  Group,
+  Paper,
+  Skeleton,
+  Stack,
+  Title,
+  VisuallyHidden,
+  getDefaultZIndex,
+} from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
+import { IconArrowLeft } from "@tabler/icons-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-
+import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { CustomerMembershipCard } from "@/components/customer-membership-card";
-import { DetailBackLink } from "@/components/detail-back-link";
 import { LinkCustomerUserDialog } from "@/components/link-customer-user-dialog";
+import { DataState, Status } from "@/components/nfv-controls";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
+import { recordDetailDrawer } from "@/components/record-detail-drawer";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import {
+  csaCustomerAssignmentHref,
+  csaCustomerDetailKey,
+  csaCustomerHref,
+  csaCustomerListKey,
+  csaCustomerPath,
+  readCsaCustomerListContext,
+} from "@/lib/csa-customers-query";
 import type { CSACustomer } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
-export function CSACustomerDetail({ customerId }: { customerId: string }) {
+const drawerZIndex = getDefaultZIndex("modal") - 1;
+const longText = { overflowWrap: "anywhere" } as const;
+
+export function CSACustomerDetail({
+  customerId,
+  intercepted = false,
+}: {
+  customerId: string;
+  intercepted?: boolean;
+}) {
+  return <CustomerDetailView key={customerId} customerId={customerId} intercepted={intercepted} />;
+}
+
+function CustomerDetailView({
+  customerId,
+  intercepted,
+}: {
+  customerId: string;
+  intercepted: boolean;
+}) {
   const { locale, t } = useAdminI18n();
+  const copy = t.csaCustomers;
   const toast = useToast();
+  const client = useQueryClient();
+  const isQueryScopeCurrent = useIsAdminQueryScopeCurrent();
+  const router = useRouter();
+  const params = useSearchParams();
+  const listContext = readCsaCustomerListContext(params ?? new URLSearchParams());
+  const backHref = csaCustomerHref(listContext);
+  const mobile = useMediaQuery("(max-width: 47.99em)");
+  const drawer = intercepted && !mobile;
+  const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const requestId = useRef(0);
-  const [item, setItem] = useState<CSACustomer | null>(null);
-  const [error, setError] = useState("");
+  const drawerCloseRef = useRef<HTMLButtonElement>(null);
+  const linkButtonRef = useRef<HTMLButtonElement>(null);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const detailKey = csaCustomerDetailKey(customerId);
+  const detail = useQuery<CSACustomer, ClientApiError>({
+    queryKey: detailKey,
+    queryFn: ({ signal }) =>
+      api<CSACustomer>(`admin/csa-customers/${encodeURIComponent(customerId)}`, { signal }),
+  });
+  const detailUnavailable = Boolean(
+    detail.error &&
+    (detail.error.status === 401 ||
+      detail.error.status === 403 ||
+      detail.error.status === 404 ||
+      detail.error.message === "forbidden" ||
+      detail.error.message === "csrf_rejected"),
+  );
+  const item = detailUnavailable ? undefined : detail.data;
+  const linkDialogActive = linkDialogOpen && item !== undefined && !item.user;
   const { provinceName, wardName } = useAdministrativeUnitNames(
     item?.province_code ?? null,
     item?.ward_code ?? null,
     locale,
   );
-
-  const load = useCallback(() => {
-    const current = ++requestId.current;
-    setError("");
-    return api<CSACustomer>(`admin/csa-customers/${customerId}`)
-      .then((customer) => {
-        if (current === requestId.current) setItem(customer);
-      })
-      .catch((caught) => {
-        if (current === requestId.current) setError(requestErrorMessage(caught, t));
-      });
-  }, [customerId, t]);
+  const breadcrumbs = useMemo(
+    () => [{ label: copy.title, href: backHref }, { label: item?.name || copy.profile }],
+    [backHref, copy.profile, copy.title, item?.name],
+  );
 
   useEffect(() => {
-    void load();
-    return () => {
-      requestId.current += 1;
-    };
-  }, [load]);
+    if (!drawer) headingRef.current?.focus({ preventScroll: !intercepted });
+  }, [drawer, intercepted]);
+  useEffect(() => {
+    if (detailUnavailable) setLinkDialogOpen(false);
+  }, [detailUnavailable]);
 
-  if (error) {
-    return (
-      <Alert color="red" role="alert">
-        <Group gap="sm" justify="space-between" align="center">
-          <p>{error}</p>
-          <Button variant="default" onClick={() => void load()} type="button">
-            {t.common.retry}
-          </Button>
-        </Group>
-      </Alert>
-    );
+  function closeDetail() {
+    if (!linkDialogActive) router.back();
   }
-  if (!item)
-    return <div className="panel customer-detail-loading">{t.csaCustomers.detailLoading}</div>;
 
-  const memberships = (item.memberships ?? [])
-    .map((membership, index) => ({
-      index,
-      membership,
-      startTime: Date.parse(membership.start_date ?? ""),
-    }))
-    .sort((left, right) => {
-      const leftHasValidDate = Number.isFinite(left.startTime);
-      const rightHasValidDate = Number.isFinite(right.startTime);
-      if (leftHasValidDate && rightHasValidDate) {
-        return right.startTime - left.startTime || left.index - right.index;
-      }
-      if (leftHasValidDate) return -1;
-      if (rightHasValidDate) return 1;
-      return left.index - right.index;
-    })
-    .map(({ membership }) => membership);
+  const title = item?.name || copy.profile;
+  const recovery = detail.error && (
+    <RecoveryAlert
+      message={requestErrorMessage(detail.error, t)}
+      retryLabel={t.common.retry}
+      onRetry={() => void detail.refetch({ cancelRefetch: false })}
+      loading={detail.isFetching}
+    />
+  );
+  const content = item ? (
+    <Stack gap="md">
+      {recovery}
+      <Paper component="section" p="md" withBorder>
+        <Stack gap="sm">
+          <Group justify="space-between">
+            <Title order={2} size="md" fw={600}>
+              {copy.accountInformation}
+            </Title>
+            {!item.user && (
+              <Button ref={linkButtonRef} variant="default" onClick={() => setLinkDialogOpen(true)}>
+                {copy.linkUser}
+              </Button>
+            )}
+          </Group>
+          <RecordDetailFields>
+            <RecordDetailField label={copy.name}>{item.user?.name || item.name}</RecordDetailField>
+            <RecordDetailField label="Email">{item.user?.email}</RecordDetailField>
+            <RecordDetailField label={copy.phone}>{item.phone}</RecordDetailField>
+            <RecordDetailField label={copy.websiteAccount}>
+              <Status
+                domain="account-link"
+                status={item.user ? "linked" : "managed"}
+                label={item.user ? copy.linkedAccount : copy.unlinkedAccount}
+              />
+            </RecordDetailField>
+            <RecordDetailField label={copy.province}>{provinceName}</RecordDetailField>
+            <RecordDetailField label={copy.ward}>{wardName}</RecordDetailField>
+            <RecordDetailField label={copy.deliveryAddress}>{item.address}</RecordDetailField>
+          </RecordDetailFields>
+        </Stack>
+      </Paper>
+      <Paper component="section" p="md" withBorder>
+        <Stack gap="sm">
+          <Group justify="space-between">
+            <Title order={2} size="md" fw={600}>
+              {copy.membershipHistory}
+            </Title>
+            <Button
+              component={AdminNavigationLink}
+              href={csaCustomerAssignmentHref(listContext, item.id)}
+            >
+              {copy.assignPackage}
+            </Button>
+          </Group>
+          {item.memberships?.length ? (
+            <Stack gap="xs">
+              {[...item.memberships]
+                .sort((left, right) => {
+                  const leftDate = Date.parse(left.start_date);
+                  const rightDate = Date.parse(right.start_date);
+                  return (
+                    (Number.isFinite(rightDate) ? rightDate : -Infinity) -
+                    (Number.isFinite(leftDate) ? leftDate : -Infinity)
+                  );
+                })
+                .map((membership) => (
+                  <CustomerMembershipCard key={membership.id} item={membership} t={t} />
+                ))}
+            </Stack>
+          ) : (
+            <DataState kind="empty" title={copy.noHistory} />
+          )}
+        </Stack>
+      </Paper>
+    </Stack>
+  ) : recovery ? (
+    recovery
+  ) : (
+    <Paper component="section" p="md" aria-busy="true">
+      <VisuallyHidden role="status">{copy.detailLoading}</VisuallyHidden>
+      <Stack gap="sm" aria-hidden="true">
+        <Skeleton height={18} width="45%" />
+        <Skeleton height={40} />
+        <Skeleton height={40} />
+      </Stack>
+    </Paper>
+  );
 
   return (
     <>
-      <div className="detail-page-heading customer-detail-navigation">
-        <DetailBackLink href="/csa-customers" label={t.csaCustomers.back} />
-      </div>
-
-      <section className="panel customer-account-section" aria-labelledby="customer-account-title">
-        <div className="panel-head customer-account-heading">
-          <div>
-            <h1 id="customer-account-title" ref={headingRef} tabIndex={-1}>
-              {t.csaCustomers.accountInformation}
-            </h1>
-            <p>{item.user?.name || item.name}</p>
-          </div>
-          {!item.user && (
-            <Button variant="default" onClick={() => setLinkDialogOpen(true)} type="button">
-              {t.csaCustomers.linkUser}
-            </Button>
-          )}
-        </div>
-        <dl className="detail-list customer-account-list">
-          <div>
-            <dt>{t.csaCustomers.name}</dt>
-            <dd>{item.user?.name || item.name || "—"}</dd>
-          </div>
-          <div>
-            <dt>Email</dt>
-            <dd>{item.user?.email || "—"}</dd>
-          </div>
-          <div>
-            <dt>{t.csaCustomers.phone}</dt>
-            <dd>{item.phone || "—"}</dd>
-          </div>
-          <div>
-            <dt>{t.csaCustomers.websiteAccount}</dt>
-            <dd>
-              <UiStatus
-                domain="account-link"
-                status={item.user ? "linked" : "managed"}
-                label={item.user ? t.csaCustomers.linkedAccount : t.csaCustomers.unlinkedAccount}
-              />
-            </dd>
-          </div>
-          <div>
-            <dt>{t.csaCustomers.province}</dt>
-            <dd>{provinceName || "—"}</dd>
-          </div>
-          <div>
-            <dt>{t.csaCustomers.ward}</dt>
-            <dd>{wardName || "—"}</dd>
-          </div>
-          <div>
-            <dt>{t.csaCustomers.deliveryAddress}</dt>
-            <dd>{item.address || "—"}</dd>
-          </div>
-        </dl>
-        {!item.user && <p className="muted-copy">{t.csaCustomers.noLinkedAccountHelp}</p>}
-      </section>
-
-      <section
-        className="panel customer-membership-history"
-        aria-labelledby="customer-history-title"
-      >
-        <div className="panel-head customer-history-heading">
-          <h2 id="customer-history-title">{t.csaCustomers.membershipHistory}</h2>
-          <Button
-            component={Link}
-
-            href={`/memberships/assign?customerId=${encodeURIComponent(item.id)}`}
+      <AdminBreadcrumbForRoute
+        pathname={`${csaCustomerPath}/${encodeURIComponent(customerId)}`}
+        search={params?.toString()}
+        items={breadcrumbs}
+      />
+      {drawer ? (
+        <Drawer.Root
+          {...recordDetailDrawer.root}
+          opened
+          onClose={closeDetail}
+          zIndex={drawerZIndex}
+          returnFocus={false}
+          trapFocus={!linkDialogActive}
+          closeOnEscape={!linkDialogActive}
+          closeOnClickOutside={!linkDialogActive}
+        >
+          <Drawer.Overlay />
+          <Drawer.Content
+            inert={linkDialogActive || undefined}
+            aria-hidden={linkDialogActive || undefined}
           >
-            {t.csaCustomers.assignPackage}
-          </Button>
-        </div>
-        {memberships.length ? (
-          <div className="customer-membership-list">
-            {memberships.map((membership) => (
-              <CustomerMembershipCard item={membership} key={membership.id} t={t} />
-            ))}
-          </div>
-        ) : (
-          <DataState kind="empty" title={t.csaCustomers.noHistory} />
-        )}
-      </section>
-
-      {linkDialogOpen && (
+            <Drawer.Header>
+              <Drawer.Title style={longText}>{title}</Drawer.Title>
+              <Drawer.CloseButton
+                {...recordDetailDrawer.closeButton}
+                aria-label={t.common.close}
+                ref={drawerCloseRef}
+                data-autofocus
+                disabled={linkDialogActive}
+              />
+            </Drawer.Header>
+            <Drawer.Body>{content}</Drawer.Body>
+          </Drawer.Content>
+        </Drawer.Root>
+      ) : (
+        <Stack
+          component="article"
+          gap="md"
+          inert={linkDialogActive || undefined}
+          aria-labelledby={headingId}
+        >
+          <Anchor
+            component={AdminNavigationLink}
+            href={backHref}
+            size="sm"
+            w="fit-content"
+            onNavigate={(event) => {
+              if (intercepted) {
+                event.preventDefault();
+                closeDetail();
+              }
+            }}
+          >
+            <Group component="span" gap={6}>
+              <IconArrowLeft size={16} aria-hidden />
+              <span>{copy.back}</span>
+            </Group>
+          </Anchor>
+          <Title order={1} id={headingId} ref={headingRef} tabIndex={-1} style={longText}>
+            {title}
+          </Title>
+          {content}
+        </Stack>
+      )}
+      {linkDialogActive && (
         <LinkCustomerUserDialog
-          customerId={item.id}
-          fallbackFocusRef={headingRef}
+          customerId={customerId}
+          fallbackFocusRef={drawer ? drawerCloseRef : headingRef}
+          returnFocusRef={linkButtonRef}
           onCancel={() => setLinkDialogOpen(false)}
-          onLinked={(customer) => {
-            setItem(customer);
+          onLinked={async (customer) => {
+            if (!isQueryScopeCurrent()) return;
+            // A detail refresh started before the link can still return a managed customer.
+            await client.cancelQueries({ queryKey: detailKey, exact: true });
+            if (!isQueryScopeCurrent()) return;
+            client.setQueryData<CSACustomer>(detailKey, (record) => ({
+              ...customer,
+              memberships: customer.memberships ?? record?.memberships,
+            }));
+            void client.invalidateQueries({ queryKey: csaCustomerListKey });
             setLinkDialogOpen(false);
-            toast(t.csaCustomers.linkedSuccess);
+            toast(copy.linkedSuccess);
           }}
         />
       )}

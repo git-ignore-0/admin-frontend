@@ -17,13 +17,15 @@ import type { AdminUserListItem, CSACustomer, PaginationMeta } from "@/lib/types
 export function LinkCustomerUserDialog({
   customerId,
   fallbackFocusRef,
+  returnFocusRef,
   onCancel,
   onLinked,
 }: {
   customerId: string;
   fallbackFocusRef: RefObject<HTMLElement | null>;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   onCancel: () => void;
-  onLinked: (customer: CSACustomer) => void;
+  onLinked: (customer: CSACustomer) => void | Promise<void>;
 }) {
   const { t } = useAdminI18n();
   const submitRef = useRef(false);
@@ -71,7 +73,7 @@ export function LinkCustomerUserDialog({
         method: "POST",
         body: JSON.stringify({ user_id: selectedUser.id }),
       });
-      onLinked(customer);
+      await onLinked(customer);
     } catch (caught) {
       const code = caught instanceof Error ? caught.message : "";
       setError(
@@ -96,6 +98,7 @@ export function LinkCustomerUserDialog({
       confirmDisabled={!selectedUser}
       error={error}
       fallbackFocusRef={fallbackFocusRef}
+      returnFocusRef={returnFocusRef}
       onCancel={() => !busy && onCancel()}
       onConfirm={linkUser}
       title={t.csaCustomers.linkTitle}

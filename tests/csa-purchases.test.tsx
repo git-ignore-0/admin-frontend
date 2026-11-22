@@ -1,7 +1,13 @@
+import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
+import type { NextRouter } from "next/router";
 import { selectOption } from "./select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSAPurchaseRequestDetail } from "@/components/csa-purchase-request-detail";
 import { CSAPurchaseRequestList } from "@/components/csa-purchase-request-list";
@@ -10,16 +16,38 @@ import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type { CSAPurchaseRequest, MembershipPaymentSettings, PaginationMeta } from "@/lib/types";
 
-const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), prefetch: vi.fn() }));
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: navigation.push, refresh: vi.fn() }),
-  usePathname: () => "/csa-purchase-requests",
-}));
+vi.mock("next/navigation", async () => {
+  const { useMemo, useSyncExternalStore } = await import("react");
+  const subscribe = (notify: () => void) => {
+    window.addEventListener("popstate", notify);
+    return () => window.removeEventListener("popstate", notify);
+  };
+  return {
+    useRouter: () => ({ push: navigation.push, refresh: vi.fn() }),
+    usePathname: () => "/csa-purchase-requests",
+    useSearchParams: () => {
+      const search = useSyncExternalStore(subscribe, () => window.location.search);
+      return useMemo(() => new URLSearchParams(search), [search]);
+    },
+  };
+});
+
+beforeEach(() => {
+  window.history.replaceState(null, "", "/csa-purchase-requests");
+  navigation.prefetch.mockResolvedValue(undefined);
+  const replaceState = window.history.replaceState.bind(window.history);
+  vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
+    replaceState(data, unused, url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+});
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -136,9 +164,11 @@ const installmentRequest: CSAPurchaseRequest = {
 
 function renderWithProviders(node: React.ReactNode, locale: "vi" | "en" = "vi") {
   return render(
-    <AdminI18nProvider initialLocale={locale}>
-      <ToastProvider>{node}</ToastProvider>
-    </AdminI18nProvider>,
+    <RouterContext.Provider value={navigation as unknown as NextRouter}>
+      <AdminI18nProvider initialLocale={locale}>
+        <ToastProvider>{node}</ToastProvider>
+      </AdminI18nProvider>
+    </RouterContext.Provider>,
   );
 }
 
@@ -154,6 +184,31 @@ function mockDetailApi(item = request) {
 }
 
 describe("CSA purchase request admin", () => {
+  it("returns from the detail breadcrumb to the filtered purchase list", async () => {
+    const list = "/csa-purchase-requests";
+    const detail = `${list}/${request.id}`;
+    const search = "?search=Lan&status=payment_confirmed&page=2";
+    window.history.replaceState(null, "", detail + search);
+    mockDetailApi();
+
+    function BreadcrumbLink() {
+      const [item] = useAdminBreadcrumbs([{ label: "Purchase list", href: list }]);
+      return <a href={item.href}>Purchase list</a>;
+    }
+
+    renderWithProviders(
+      <AdminBreadcrumbProvider pathname={detail} search={search}>
+        <BreadcrumbLink />
+        <CSAPurchaseRequestDetail requestId={request.id} backHref={list + search} />
+      </AdminBreadcrumbProvider>,
+    );
+    expect(screen.getByRole("link", { name: "Purchase list" })).toHaveAttribute(
+      "href",
+      list + search,
+    );
+    await screen.findByText(request.request_code);
+  });
+
   it("shows full payment without adding a list column or installment actions", async () => {
     const fullRequest: CSAPurchaseRequest = {
       ...request,
@@ -194,14 +249,15 @@ describe("CSA purchase request admin", () => {
 
   it("renders an ordered responsive installment schedule with backend totals and states", async () => {
     mockDetailApi(installmentRequest);
-    const { container } = renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
+    renderWithProviders(<CSAPurchaseRequestDetail requestId={request.id} />);
     expect(await screen.findByText("Lịch thanh toán")).toBeVisible();
     expect(screen.getByText("Trả góp 3 lần")).toBeVisible();
     expect(screen.getByText(/800\.000/)).toBeVisible();
     expect(screen.getAllByText("1/3")).toHaveLength(2);
-    const rows = Array.from(container.querySelectorAll(".csa-installment-table tbody tr"));
+    const schedule = screen.getByRole("table", { name: "Lịch thanh toán" });
+    const rows = within(schedule).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(3);
-    expect(rows.map((row) => row.querySelector("th")?.textContent)).toEqual([
+    expect(rows.map((row) => within(row).getByRole("rowheader").textContent)).toEqual([
       "Lần thanh toán 1",
       "Lần thanh toán 2",
       "Lần thanh toán 3",
@@ -217,7 +273,7 @@ describe("CSA purchase request admin", () => {
     expect(within(rows[0] as HTMLElement).queryByRole("button")).toBeNull();
     expect(within(rows[1] as HTMLElement).getAllByRole("button")).toHaveLength(2);
     expect(within(rows[2] as HTMLElement).queryByRole("button")).toBeNull();
-    expect(container.querySelectorAll(".csa-installment-wrap")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Lịch thanh toán" })).toContainElement(schedule);
   });
 
   it("confirms only a reported approved payment, prevents duplicate submit and reloads detail", async () => {
@@ -437,35 +493,75 @@ describe("CSA purchase request admin", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a keyboard-accessible row without amount or action columns", async () => {
+  it("renders a native detail link and opens it from the row", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [request],
       meta: { page: 1, page_size: 30, total: 31 } satisfies PaginationMeta,
     });
     renderWithProviders(<CSAPurchaseRequestList />);
 
-    const requestCode = await screen.findByText(request.request_code);
-    expect(requestCode).toHaveClass("csa-purchase-request-code");
-    expect(requestCode).toHaveTextContent(request.request_code);
-    expect(requestCode.closest("td")).toHaveClass("csa-purchase-request-cell");
-    expect(screen.getByText("Gói rau mùa")).toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: "Số tiền" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: "Thao tác" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Xem chi tiết")).not.toBeInTheDocument();
-    expect(screen.queryByText("1.200.000 ₫")).not.toBeInTheDocument();
-
-    const row = screen.getByRole("link", {
+    const link = await screen.findByRole("link", {
       name: `${request.request_code}: ${request.name}`,
     });
-    expect(row).toHaveClass("admin-list-clickable-row");
-    expect(row).toHaveAttribute("tabindex", "0");
-    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", `/csa-purchase-requests/${request.id}`);
+    expect(screen.getByText(request.phone)).toBeVisible();
+    expect(screen.queryByRole("columnheader", { name: "Số tiền" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Thao tác" })).not.toBeInTheDocument();
+    expect(screen.queryByText("1.200.000 ₫")).not.toBeInTheDocument();
+
+    const row = link.closest("tr")!;
     fireEvent.click(row);
-    expect(navigation.push).toHaveBeenLastCalledWith(`/csa-purchase-requests/${request.id}`);
-    fireEvent.keyDown(row, { key: "Enter" });
-    expect(navigation.push).toHaveBeenCalledTimes(2);
-    fireEvent.keyDown(row, { key: " " });
-    expect(navigation.push).toHaveBeenCalledTimes(3);
+    expect(navigation.push.mock.lastCall?.[0]).toBe(`/csa-purchase-requests/${request.id}`);
+  });
+
+  it("hides purchase requests from the previous filter until matching results arrive", async () => {
+    const meta = { page: 1, page_size: 30, total: 1 };
+    let finish!: (result: { data: CSAPurchaseRequest[]; meta: PaginationMeta }) => void;
+    const filtered = new Promise<{ data: CSAPurchaseRequest[]; meta: PaginationMeta }>(
+      (resolve) => {
+        finish = resolve;
+      },
+    );
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [request], meta })
+      .mockReturnValueOnce(filtered);
+    renderWithProviders(<CSAPurchaseRequestList />, "en");
+
+    const name = `${request.request_code}: ${request.name}`;
+    await screen.findByRole("link", { name });
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const filters = within(screen.getByRole("dialog"));
+    selectOption(filters.getByRole("textbox", { name: "Status" }), "approved");
+    fireEvent.click(filters.getByRole("button", { name: "Apply" }));
+
+    expect(window.location.search).toBe("?status=approved");
+    expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading CSA purchase requests");
+    finish({ data: [{ ...request, name: "Approved buyer", status: "approved" }], meta });
+    expect(
+      await screen.findByRole("link", { name: `${request.request_code}: Approved buyer` }),
+    ).toBeVisible();
+  });
+
+  it("refreshes the request list without losing the URL filters", async () => {
+    window.history.replaceState(null, "", "/csa-purchase-requests?search=ABC&status=approved");
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [request],
+      meta: { page: 1, page_size: 30, total: 1 },
+    });
+    renderWithProviders(<CSAPurchaseRequestList />, "en");
+
+    const link = await screen.findByRole("link", {
+      name: `${request.request_code}: ${request.name}`,
+    });
+    expect(link).toHaveAttribute(
+      "href",
+      `/csa-purchase-requests/${request.id}?search=ABC&status=approved`,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh CSA purchase requests" }));
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("search=ABC&status=approved");
   });
 
   it("renders the request code once and spaces the available detail actions", async () => {
@@ -476,9 +572,9 @@ describe("CSA purchase request admin", () => {
     expect(screen.getAllByText(request.request_code)).toHaveLength(1);
     const approve = screen.getByRole("button", { name: "Duyệt" });
     const reject = screen.getByRole("button", { name: "Từ chối" });
-    expect(approve.parentElement).toBe(reject.parentElement);
-    expect(approve.parentElement).toHaveClass("detail-actions");
-    expect(approve.parentElement).toHaveAttribute("aria-label", "Thao tác");
+    const actions = screen.getByRole("group", { name: "Thao tác" });
+    expect(actions).toContainElement(approve);
+    expect(actions).toContainElement(reject);
     expect(screen.getByText("10/09/2026 08:00")).toBeInTheDocument();
     expect(screen.queryByText(request.created_at)).not.toBeInTheDocument();
   });
@@ -547,18 +643,30 @@ describe("CSA purchase request admin", () => {
     renderWithProviders(<CSAPurchaseRequestList />);
     await screen.findByText(request.request_code);
 
-    fireEvent.change(screen.getByLabelText("Tìm theo mã yêu cầu, tên hoặc số điện thoại"), {
-      target: { value: "ABC" },
-    });
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Tìm theo mã yêu cầu, tên hoặc số điện thoại" }),
+      {
+        target: { value: "ABC" },
+      },
+    );
     fireEvent.submit(screen.getByRole("button", { name: "Tìm kiếm" }).closest("form")!);
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("search=ABC"),
     );
-    selectOption(screen.getByLabelText("Trạng thái"), "approved");
+    const filter = screen.getByRole("button", { name: "Bộ lọc" });
+    await waitFor(() => expect(filter).toBeEnabled());
+    fireEvent.click(filter);
+    selectOption(
+      within(screen.getByRole("dialog")).getByRole("textbox", { name: "Trạng thái" }),
+      "approved",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Áp dụng" }));
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=approved"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Sau" }));
+    const next = screen.getByRole("button", { name: "Sau" });
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
     await waitFor(() => expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("page=2"));
   });
 
@@ -578,13 +686,21 @@ describe("CSA purchase request admin", () => {
     const row = await screen.findByRole("link", {
       name: `${expiredRequest.request_code}: ${expiredRequest.name}`,
     });
-    expect(within(row).getByText("Đã hết hạn")).toBeVisible();
-    selectOption(screen.getByLabelText("Trạng thái"), "expired");
+    expect(within(row.closest("tr")!).getByText("Đã hết hạn")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
+    selectOption(
+      within(screen.getByRole("dialog")).getByRole("textbox", { name: "Trạng thái" }),
+      "expired",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Áp dụng" }));
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=expired"),
     );
-    fireEvent.click(row);
-    expect(navigation.push).toHaveBeenLastCalledWith(`/csa-purchase-requests/${expiredRequest.id}`);
+    expect(
+      await screen.findByRole("link", {
+        name: `${expiredRequest.request_code}: ${expiredRequest.name}`,
+      }),
+    ).toHaveAttribute("href", `/csa-purchase-requests/${expiredRequest.id}?status=expired`);
   });
 
   it("renders immutable detail sections and hides actions for terminal requests", async () => {

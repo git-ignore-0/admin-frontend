@@ -1,22 +1,19 @@
 "use client";
-import { Table } from "@mantine/core";
+import { Button, Divider, Group, Paper, Stack, Table, Text, Textarea, Title } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { roundPageHref } from "@/app/(admin)/csa-rounds/round-navigation";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { CSACompanionDelivery } from "@/components/csa-companion-delivery";
 import { CSAReopenDialog } from "@/components/csa-reopen-dialog";
+import { CSARoundBreadcrumbs } from "@/components/csa-round-breadcrumbs";
 import { CSASelectionHistory } from "@/components/csa-selection-history";
 import { Pagination } from "@/components/pagination";
 import { DetailPageHeading } from "@/components/detail-page-heading";
-import {
-  ActionLink,
-  Button,
-  DataState,
-  FormField,
-  FormTextarea,
-  Section,
-  Status,
-} from "@/components/nfv-controls";
+import { DataState, Section, Status } from "@/components/nfv-controls";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -25,13 +22,22 @@ import {
   getRound,
   getRoundParticipants,
   type CSARound,
+  type CSARoundStatus,
   type CSASelection,
   type RoundParticipants,
 } from "@/lib/csa-rounds";
 import { csaRoundError, csaRoundsCopy } from "@/lib/csa-rounds-copy";
 import styles from "./csa-rounds.module.css";
 
-export function CSARoundDetail({ roundId }: { roundId: string }) {
+export function CSARoundDetail({
+  roundId,
+  listPage = 1,
+  listStatus,
+}: {
+  roundId: string;
+  listPage?: number;
+  listStatus?: CSARoundStatus | "";
+}) {
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
   const [round, setRound] = useState<CSARound | null>(null);
@@ -138,87 +144,104 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       if (mounted.current) setBusy(false);
     }
   }
+  const breadcrumbs = (
+    <CSARoundBreadcrumbs roundId={roundId} listPage={listPage} listStatus={listStatus} />
+  );
   if (!round || round.id !== roundId)
     return (
-      <div className={styles.screen}>
+      <Stack gap="md" miw={0}>
+        {breadcrumbs}
         <DetailPageHeading
           bottomSpacing={0}
-          backHref="/csa-rounds"
+          backHref={roundPageHref("/csa-rounds", listPage, listStatus)}
           backLabel={c.back}
           title={c.title}
         />
         {error ? (
-          <DataState
-            kind="error"
-            title={requestErrorMessage(error, t)}
-            action={{ label: t.common.retry, onClick: () => void load() }}
+          <RecoveryAlert
+            message={requestErrorMessage(error, t)}
+            retryLabel={t.common.retry}
+            onRetry={() => void load()}
           />
         ) : (
           <DataState kind="loading" title={c.loading} />
         )}
-      </div>
+      </Stack>
     );
   const disabled = loading || Boolean(error) || busy || companionBusy;
   return (
-    <div className={styles.screen}>
+    <Stack gap="md" miw={0}>
+      {breadcrumbs}
       <DetailPageHeading
         bottomSpacing={0}
-        backHref="/csa-rounds"
+        backHref={roundPageHref("/csa-rounds", listPage, listStatus)}
         backLabel={c.back}
         title={round.name}
       />
       {Boolean(error) && (
-        <DataState
-          kind="error"
-          title={requestErrorMessage(error, t)}
-          action={{ label: t.common.retry, onClick: () => void load() }}
+        <RecoveryAlert
+          message={requestErrorMessage(error, t)}
+          retryLabel={t.common.retry}
+          onRetry={() => void load()}
         />
       )}
-      <section className={styles.overview} aria-label={c.scheduleTitle}>
-        <div className={styles.overviewHeader}>
-          <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
-          <div className={styles.actions}>
-            <Button
-              variant="outline"
-              disabled={loading || busy || companionBusy}
-              onClick={() => void load()}
-            >
-              {c.refresh}
-            </Button>
-            {!disabled && round.status !== "cancelled" && participants.meta.total === 0 && (
-              <ActionLink variant="outline" href={`/csa-rounds/${round.id}/edit`}>
-                {c.edit}
-              </ActionLink>
-            )}
-            {round.status === "draft" && (
+      <Paper component="section" withBorder p="md" aria-label={c.scheduleTitle}>
+        <Stack gap="md">
+          <Group justify="space-between" gap="sm">
+            <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
+            <Group gap="xs">
               <Button
-                disabled={disabled}
-                onClick={() => {
-                  setActionError(null);
-                  setAction("publish");
-                }}
+                variant="default"
+                disabled={loading || busy || companionBusy}
+                onClick={() => void load()}
               >
-                {c.publish}
+                {c.refresh}
               </Button>
-            )}
-          </div>
-        </div>
-        <dl className={styles.dates}>
-          {[
-            [c.opens, round.opens_at],
-            [c.closes, round.closes_at],
-            [c.delivery, round.delivery_date],
-          ].map(([label, value]) => (
-            <div key={label}>
-              <dt>{label}</dt>
-              <dd>{label === c.delivery ? formatAdminDate(value) : formatAdminDateTime(value)}</dd>
-            </div>
-          ))}
-        </dl>
-      </section>
+              {!disabled && round.status !== "cancelled" && participants.meta.total === 0 && (
+                <Button
+                  component={AdminNavigationLink}
+                  variant="default"
+                  href={roundPageHref(
+                    `/csa-rounds/${encodeURIComponent(round.id)}/edit`,
+                    listPage,
+                    listStatus,
+                  )}
+                >
+                  {c.edit}
+                </Button>
+              )}
+              {round.status === "draft" && (
+                <Button
+                  disabled={disabled}
+                  onClick={() => {
+                    setActionError(null);
+                    setAction("publish");
+                  }}
+                >
+                  {c.publish}
+                </Button>
+              )}
+            </Group>
+          </Group>
+          <Divider />
+          <RecordDetailFields>
+            <RecordDetailField label={c.opens}>
+              <time dateTime={round.opens_at}>{formatAdminDateTime(round.opens_at)}</time>
+            </RecordDetailField>
+            <RecordDetailField label={c.closes}>
+              <time dateTime={round.closes_at}>{formatAdminDateTime(round.closes_at)}</time>
+            </RecordDetailField>
+            <RecordDetailField label={c.delivery}>
+              <time dateTime={round.delivery_date}>{formatAdminDate(round.delivery_date)}</time>
+            </RecordDetailField>
+          </RecordDetailFields>
+        </Stack>
+      </Paper>
       {round.status === "cancelled" && round.cancellation_reason && (
         <Section title={c.reason}>
-          <p>{round.cancellation_reason}</p>
+          <Text size="sm" style={{ overflowWrap: "anywhere" }}>
+            {round.cancellation_reason}
+          </Text>
         </Section>
       )}
       <CSACompanionDelivery
@@ -230,37 +253,51 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
       />
       <Section title={c.demand}>
         {participants.demand.length ? (
-          <Table role="table" className={styles.table}>
-            <Table.Thead role="rowgroup">
-              <Table.Tr role="row">
-                <Table.Th role="columnheader">{c.product}</Table.Th>
-                <Table.Th role="columnheader">{c.quantity}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody role="rowgroup">
-              {participants.demand.map((row) => (
-                <Table.Tr role="row" key={row.product_id}>
-                  <Table.Td role="cell" data-label={c.product}>
-                    {row.name}
-                  </Table.Td>
-                  <Table.Td role="cell" data-label={c.quantity}>
-                    {formatCsaQuantity(row, locale)}
-                  </Table.Td>
+          <Table.ScrollContainer
+            minWidth={360}
+            type="native"
+            role="region"
+            aria-label={c.demand}
+            tabIndex={0}
+          >
+            <Table withRowBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th scope="col">{c.product}</Table.Th>
+                  <Table.Th scope="col" ta="right">
+                    {c.quantity}
+                  </Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {participants.demand.map((row) => (
+                  <Table.Tr key={row.product_id}>
+                    <Table.Td>{row.name}</Table.Td>
+                    <Table.Td ta="right">{formatCsaQuantity(row, locale)}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         ) : (
           <DataState kind="empty" title={c.emptyDemand} />
         )}
       </Section>
       <Section title={c.participants}>
         {participants.data.length ? (
-          <div className={styles.people}>
+          <Stack gap="sm">
             {participants.data.map((person) => (
-              <article className={styles.person} key={person.id}>
+              <Paper
+                component="article"
+                withBorder
+                p="md"
+                className={styles.person}
+                key={person.id}
+              >
                 <div className={styles.personHeader}>
-                  <h3>{person.customer_name || c.customer}</h3>
+                  <Title order={3} size="sm">
+                    {person.customer_name || c.customer}
+                  </Title>
                   <Status
                     domain="csa-selection"
                     status={person.state}
@@ -288,18 +325,20 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
                 )}
                 {person.order_id && (
                   <div className={styles.personActions}>
-                    {person.order_id && (
-                      <ActionLink small variant="plain" href={`/store-orders/${person.order_id}`}>
-                        {c.order}
-                      </ActionLink>
-                    )}
-                    {person.order_id &&
-                      ["locked", "confirmed", "reselecting"].includes(person.state) &&
+                    <Button
+                      component={AdminNavigationLink}
+                      size="xs"
+                      variant="subtle"
+                      href={`/store-orders/${encodeURIComponent(person.order_id)}`}
+                    >
+                      {c.order}
+                    </Button>
+                    {["locked", "confirmed", "reselecting"].includes(person.state) &&
                       round.status !== "cancelled" && (
                         <Button
-                          small
+                          size="xs"
                           disabled={disabled}
-                          variant="outline"
+                          variant="default"
                           onClick={() => setReopen(person)}
                         >
                           {c.reopen}
@@ -312,9 +351,9 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
                   selectionId={person.id}
                   refreshToken={`${person.revision}:${person.state}`}
                 />
-              </article>
+              </Paper>
             ))}
-          </div>
+          </Stack>
         ) : (
           <DataState kind="empty" title={c.emptyParticipants} />
         )}
@@ -331,9 +370,10 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
         summary={t.common.pagination}
       />
       {round.status !== "cancelled" && (
-        <div className={styles.cancelAction}>
+        <Group className={styles.cancelAction} justify="flex-end">
           <Button
-            variant="plain"
+            color="red"
+            variant="subtle"
             disabled={disabled}
             onClick={() => {
               setActionError(null);
@@ -343,7 +383,7 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
           >
             {c.cancelRound}
           </Button>
-        </div>
+        </Group>
       )}
       {action && (
         <ConfirmationDialog
@@ -363,17 +403,16 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
           onCancel={() => setAction(null)}
           onConfirm={() => void mutate()}
         >
-          <p>{action === "publish" ? c.publishBody : c.cancelBody}</p>
+          <Text size="sm">{action === "publish" ? c.publishBody : c.cancelBody}</Text>
           {action === "cancel" && (
-            <FormField label={c.reason}>
-              <FormTextarea
-                required
-                maxLength={1000}
-                disabled={busy}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-            </FormField>
+            <Textarea
+              label={c.reason}
+              required
+              maxLength={1000}
+              disabled={busy}
+              value={reason}
+              onChange={(e) => setReason(e.currentTarget.value)}
+            />
           )}
         </ConfirmationDialog>
       )}
@@ -389,6 +428,6 @@ export function CSARoundDetail({ roundId }: { roundId: string }) {
           }}
         />
       )}
-    </div>
+    </Stack>
   );
 }

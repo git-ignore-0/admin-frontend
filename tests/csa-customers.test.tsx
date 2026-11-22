@@ -1,6 +1,13 @@
 import { selectOption } from "./select-option";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { focusManager } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import AssignMembershipPage from "@/app/(admin)/memberships/assign/page";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSACustomerDetail } from "@/components/csa-customer-detail";
 import { CSACustomerForm } from "@/components/csa-customer-form";
@@ -10,15 +17,36 @@ import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type { AdminMembership, CSACustomer, MembershipStatus, PaginationMeta } from "@/lib/types";
 
-const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn() }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: navigation.replace, refresh: vi.fn() }),
-  usePathname: () => "/csa-customers",
-  useSearchParams: () => new URLSearchParams(),
-}));
+vi.mock("@/lib/admin-locale", () => ({ getAdminLocale: async () => "en" }));
+vi.mock("next/navigation", async () => {
+  const { useMemo, useSyncExternalStore } = await import("react");
+  const subscribe = (notify: () => void) => {
+    window.addEventListener("popstate", notify);
+    return () => window.removeEventListener("popstate", notify);
+  };
+  return {
+    useRouter: () => ({ ...navigation, refresh: vi.fn() }),
+    usePathname: () => useSyncExternalStore(subscribe, () => window.location.pathname),
+    useSearchParams: () => {
+      const search = useSyncExternalStore(subscribe, () => window.location.search);
+      return useMemo(() => new URLSearchParams(search), [search]);
+    },
+  };
+});
+beforeEach(() => {
+  window.history.replaceState(null, "", "/csa-customers");
+  const replaceState = window.history.replaceState.bind(window.history);
+  vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
+    replaceState(data, unused, url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+});
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 const meta: PaginationMeta = { page: 1, page_size: 30, total: 1 };
@@ -80,9 +108,21 @@ function membership(
 function providers(child: React.ReactNode, initialLocale: "en" | "vi" = "en") {
   return render(
     <AdminI18nProvider initialLocale={initialLocale}>
-      <ToastProvider>{child}</ToastProvider>
+      <ToastProvider>
+        <AdminQueryProvider>{child}</AdminQueryProvider>
+      </ToastProvider>
     </AdminI18nProvider>,
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((finish, fail) => {
+    resolve = finish;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("CSA customer administration", () => {
@@ -99,69 +139,194 @@ describe("CSA customer administration", () => {
     expect(await screen.findByRole("button", { name: "Create CSA customer" })).toBeVisible();
   });
 
-  it("renders only the supported customer columns and one row action", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({ data: [customer], meta });
-    const view = providers(<CSACustomerList />);
-
-    expect(await screen.findByText(customer.name)).toBeVisible();
-    const detailLink = screen.getByRole("link", { name: "View details" });
-    expect(detailLink).toHaveAttribute("href", `/csa-customers/${customer.id}`);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
-    expect(apiEnvelope).toHaveBeenCalledWith(expect.stringContaining("linked=all"));
-    expect(screen.getAllByText("Managed manually").length).toBeGreaterThan(0);
-    expect(screen.getByRole("columnheader", { name: "Customer" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Phone number" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Website account" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Status" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "Actions" })).toBeVisible();
-    expect(screen.queryByRole("columnheader", { name: "Latest CSA package" })).toBeNull();
-    expect(screen.queryByRole("columnheader", { name: "Last collection date" })).toBeNull();
-    expect(view.container).not.toHaveTextContent("No data yet");
-    const cells = within(screen.getByRole("row", { name: /Lan Nguyen/ })).getAllByRole("cell");
-    expect(cells).toHaveLength(5);
-    expect(cells.map((cell) => cell.getAttribute("data-label"))).toEqual([
-      "Customer",
-      "Phone number",
-      "Website account",
-      "Status",
-      "Actions",
-    ]);
-    expect(screen.queryByRole("button", { name: "Filters" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
-    expect(screen.getByRole("table").closest(".admin-list-wrap")).toHaveStyle({
-      "--table-overflow": "auto",
-      "--table-min-width": "0rem",
+  it("links the customer name to a detail URL with the current filters and page", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/csa-customers?search=Lan&linked=managed&membership_status=active&page=2",
+    );
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [customer],
+      meta: { ...meta, page: 2, total: 31 },
     });
+    providers(<CSACustomerList />);
+
+    const link = await screen.findByRole("link", { name: "View details: Lan Nguyen" });
+    expect(link).toHaveAttribute(
+      "href",
+      `/csa-customers/${customer.id}?search=Lan&linked=managed&membership_status=active&page=2`,
+    );
+    const row = screen.getByRole("row", { name: /Lan Nguyen/ });
+    expect(within(row).getByText(customer.phone!)).toBeVisible();
+    expect(within(row).getAllByRole("cell")).toHaveLength(3);
+    expect(screen.getByRole("link", { name: "Create CSA customer" })).toHaveAttribute(
+      "href",
+      "/csa-customers/new",
+    );
   });
 
-  it("applies account and package-status filters and only shows reset while active", async () => {
+  it("applies both filters from the popover and clears them without changing the search", async () => {
+    window.history.replaceState(null, "", "/csa-customers?search=Lan");
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [customer], meta });
     providers(<CSACustomerList />);
     await screen.findByText(customer.name);
 
-    selectOption(screen.getByLabelText("Website account"), "linked");
-    await waitFor(() => expect(screen.getByLabelText("CSA package status")).toBeEnabled());
-    selectOption(screen.getByLabelText("CSA package status"), "active");
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const filters = within(screen.getByRole("dialog"));
+    selectOption(filters.getByRole("textbox", { name: "Website account" }), "linked");
+    selectOption(filters.getByRole("textbox", { name: "CSA package status" }), "active");
+    expect(window.location.search).toBe("?search=Lan");
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenCalledWith(
-        expect.stringMatching(/linked=linked.*membership_status=active/),
-      ),
-    );
-    const reset = screen.getByRole("button", { name: "Clear filters" });
-    fireEvent.click(reset);
-    await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith(
-        expect.stringMatching(/page=1.*page_size=30.*linked=all$/),
+        expect.stringMatching(/linked=linked.*membership_status=active/),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(window.location.search).toBe("?search=Lan&linked=linked&membership_status=active");
+
+    const filterButton = screen.getByRole("button", { name: "Filter (2)" });
+    await waitFor(() => expect(filterButton).toBeEnabled());
+    fireEvent.click(filterButton);
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Clear filters" }),
+    );
+    await waitFor(() => expect(window.location.search).toBe("?search=Lan"));
   });
+
+  it("opens intercepted customer details in a drawer and closes via browser history", async () => {
+    vi.mocked(api).mockResolvedValue(customer);
+    providers(<CSACustomerDetail customerId={customer.id} intercepted />);
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: customer.name })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    expect(navigation.back).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus on the list when a refresh removes the opener after closing detail", async () => {
+    const path = "/csa-customers?linked=managed";
+    window.history.replaceState(null, "", path);
+    const refresh = deferred<{ data: CSACustomer[]; meta: PaginationMeta }>();
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [customer], meta })
+      .mockReturnValueOnce(refresh.promise);
+    providers(<CSACustomerList />);
+    const opener = await screen.findByRole("link", { name: "View details: Lan Nguyen" });
+
+    act(() => {
+      window.history.replaceState(null, "", `/csa-customers/${customer.id}?linked=managed`);
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
+    act(() => window.history.replaceState(null, "", path));
+    await waitFor(() => expect(opener).toHaveFocus());
+
+    refresh.resolve({ data: [], meta: { ...meta, total: 0 } });
+    await screen.findByText("No matching CSA customers.");
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toContainElement(
+      screen.getByRole("link", { name: "Create CSA customer" }),
+    );
+  });
+
+  it("keeps the linked account and package history after an older detail refresh completes", async () => {
+    const user = {
+      id: "58cbea40-4749-4400-9fa3-188de573abaf",
+      name: "Web User",
+      email: "web@example.com",
+      email_verified: true,
+      login_phone_number: "0909000000",
+      phone: "",
+      has_csa_customer: false,
+      status: "active",
+      date_joined: "2026-09-01T00:00:00Z",
+      points_balance: 0,
+    };
+    const existing = membership(
+      "package-1",
+      "Seasonal package",
+      "active",
+      "2026-10-01",
+      "2027-01-01",
+    );
+    const staleDetail = deferred<CSACustomer>();
+    const initialDetail = { ...customer, memberships: [existing] };
+    let detailRequests = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [user], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith("/link-user")) return { ...customer, user, memberships: undefined };
+      if (path === `admin/csa-customers/${customer.id}`)
+        return detailRequests++ === 0 ? initialDetail : staleDetail.promise;
+      return [];
+    });
+
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(detailRequests).toBe(2));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: "web@example.com" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+
+    expect(await screen.findByText("Website account linked")).toBeVisible();
+    await act(async () => {
+      staleDetail.resolve(initialDetail);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.getByText(user.email)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Link account" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Seasonal package" })).toBeVisible();
+  });
+
+  it.each([
+    { status: 503, code: "upstream_unavailable", keepsDraft: true },
+    { status: 403, code: "forbidden", keepsDraft: false },
+  ])(
+    "handles a background customer detail refresh failing with HTTP $status",
+    async ({ status, code, keepsDraft }) => {
+      const refresh = deferred<CSACustomer>();
+      let detailRequests = 0;
+      vi.mocked(api).mockImplementation(async (path) => {
+        if (path === `admin/csa-customers/${customer.id}`)
+          return detailRequests++ === 0 ? customer : refresh.promise;
+        return [];
+      });
+      providers(<CSACustomerDetail customerId={customer.id} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+      const dialog = screen.getByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("searchbox"), {
+        target: { value: "web@example.com" },
+      });
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await waitFor(() => expect(detailRequests).toBe(2));
+
+      refresh.reject(Object.assign(new Error(code), { status }));
+      if (keepsDraft) {
+        await screen.findByText("The service is currently unavailable. Try again later.");
+        expect(within(dialog).getByRole("searchbox")).toHaveValue("web@example.com");
+        expect(screen.getByRole("dialog")).toBe(dialog);
+      } else {
+        await screen.findByRole("button", { name: "Try again" });
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.queryByText(customer.phone!)).toBeNull();
+      }
+    },
+  );
 
   it("uses the common back link and presents a read-only account with one assignment action", async () => {
     vi.mocked(api).mockResolvedValue(customer);
-    const view = providers(<CSACustomerDetail customerId={customer.id} />);
+    providers(<CSACustomerDetail customerId={customer.id} />);
 
     expect(screen.getByText("Loading customer details…")).toBeVisible();
     const account = await screen.findByRole("heading", { name: "Account information" });
@@ -183,8 +348,7 @@ describe("CSA customer administration", () => {
     expect(screen.getByText("Customer without an account")).toBeVisible();
     expect(screen.getByText("This customer has not purchased a CSA package.")).toBeVisible();
     expect(screen.queryByRole("link", { name: "View details" })).toBeNull();
-    expect(view.container.querySelector(".customer-membership-list")).toBeNull();
-    const accountList = view.container.querySelector(".customer-account-list");
+    const accountList = account.closest("section")?.querySelector("dl");
     expect(accountList).toBeInTheDocument();
     expect([...accountList!.querySelectorAll("dt")].map((label) => label.textContent)).toEqual([
       "Name",
@@ -195,6 +359,22 @@ describe("CSA customer administration", () => {
       "Ward/commune",
       "Delivery address",
     ]);
+  });
+
+  it("carries the customer list filters into the assignment link", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      `/csa-customers/${customer.id}?search=Lan&linked=managed&page=2`,
+    );
+    vi.mocked(api).mockResolvedValue(customer);
+    providers(<CSACustomerDetail customerId={customer.id} />);
+
+    const link = await screen.findByRole("link", { name: "Assign CSA package" });
+    expect(link).toHaveAttribute(
+      "href",
+      `/memberships/assign?customerId=${customer.id}&search=Lan&linked=managed&page=2`,
+    );
   });
 
   it("shows localized administrative-unit names on the customer detail without exposing codes", async () => {
@@ -264,10 +444,10 @@ describe("CSA customer administration", () => {
       },
       memberships,
     });
-    const view = providers(<CSACustomerDetail customerId={customer.id} />, "vi");
+    providers(<CSACustomerDetail customerId={customer.id} />, "vi");
 
-    await screen.findByRole("heading", { name: "Lịch sử các gói đã mua" });
-    const items = [...view.container.querySelectorAll<HTMLElement>(".customer-membership-item")];
+    const history = await screen.findByRole("heading", { name: "Lịch sử các gói đã mua" });
+    const items = within(history.closest("section")!).getAllByRole("article");
     expect(items).toHaveLength(6);
     expect(items.map((item) => within(item).getByRole("heading").textContent)).toEqual([
       "Future package",
@@ -277,8 +457,6 @@ describe("CSA customer administration", () => {
       "Invalid date package",
       "Missing date package",
     ]);
-    expect(view.container.querySelector(".customer-membership-list")).toBeInTheDocument();
-    expect(view.container.querySelector(".customer-package-grid")).toBeNull();
     expect(screen.getAllByText("Ngày bắt đầu")).toHaveLength(6);
     expect(screen.getAllByText("Ngày nhận sản phẩm cuối")).toHaveLength(6);
     expect(screen.getByText("Đã kết thúc")).toBeVisible();
@@ -525,15 +703,37 @@ describe("CSA customer administration", () => {
 
   it("does not render or enable assignment when the customer fetch fails", async () => {
     vi.mocked(api).mockRejectedValue(new Error("Customer not found"));
-
-    providers(<MembershipAssignmentForm customerId={customer.id} />);
+    const path = "/memberships/assign";
+    const search = {
+      customerId: customer.id,
+      search: "Lan",
+      linked: "managed",
+      membership_status: "active",
+      page: "2",
+    };
+    const query = new URLSearchParams(search).toString();
+    window.history.replaceState(null, "", `${path}?${query}`);
+    function Breadcrumb() {
+      const [list] = useAdminBreadcrumbs([]);
+      return list && <a href={list.href}>{list.label}</a>;
+    }
+    providers(
+      <AdminBreadcrumbProvider pathname={path} search={query}>
+        <Breadcrumb />
+        {await AssignMembershipPage({ searchParams: Promise.resolve(search) })}
+      </AdminBreadcrumbProvider>,
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The request failed. Please try again.",
     );
     expect(screen.getByRole("link", { name: "Back to CSA customers" })).toHaveAttribute(
       "href",
-      "/csa-customers",
+      "/csa-customers?search=Lan&linked=managed&membership_status=active&page=2",
+    );
+    expect(screen.getByRole("link", { name: "CSA customers" })).toHaveAttribute(
+      "href",
+      "/csa-customers?search=Lan&linked=managed&membership_status=active&page=2",
     );
     expect(screen.queryByRole("button", { name: "Assign CSA package" })).toBeNull();
     expect(apiEnvelope).not.toHaveBeenCalled();
@@ -656,7 +856,7 @@ describe("CSA customer administration", () => {
       expect(await screen.findByRole("radio", { name: new RegExp(expectedName) })).toBeEnabled();
       expect(screen.getByText(expectedDescription)).toBeVisible();
       expect(
-        screen.getByLabelText(locale === "vi" ? "Mã đơn hàng" : "Order reference"),
+        screen.getByRole("textbox", { name: locale === "vi" ? "Mã đơn hàng" : "Order reference" }),
       ).toBeRequired();
       expect(screen.queryByText("Mã đơn hàng Farmbrite *")).toBeNull();
       expect(screen.queryByText("Farmbrite order reference *")).toBeNull();
@@ -718,8 +918,8 @@ describe("CSA customer administration", () => {
     expect(screen.queryByRole("searchbox", { name: /customer/i })).toBeNull();
     expect(screen.queryByRole("search")).toBeNull();
     expect(screen.queryByText("Search active CSA packages")).toBeNull();
-    expect(screen.getByLabelText("Price option *")).toBeVisible();
-    const orderReferenceInput = screen.getByLabelText("Order reference");
+    expect(screen.getByRole("textbox", { name: "Price option" })).toBeVisible();
+    const orderReferenceInput = screen.getByRole("textbox", { name: "Order reference" });
     expect(orderReferenceInput).toBeRequired();
     expect(screen.queryByText("Farmbrite order reference *")).toBeNull();
     expect(
@@ -737,7 +937,7 @@ describe("CSA customer administration", () => {
     expect(assignButton).toBeDisabled();
     fireEvent.click(await screen.findByRole("radio", { name: /English three-month package/ }));
     expect(assignButton).toBeDisabled();
-    selectOption(screen.getByLabelText("Price option *"), price.id);
+    selectOption(screen.getByRole("textbox", { name: "Price option" }), price.id);
     expect(startDateInput).toBeEnabled();
     expect(pickerButton).toBeEnabled();
     fireEvent.change(startDateInput, { target: { value: "29042099" } });
@@ -756,6 +956,8 @@ describe("CSA customer administration", () => {
     fireEvent.click(assignButton);
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("English three-month package")).toBeVisible();
+    expect(within(dialog).getByText("FB-100")).toBeVisible();
+    expect(within(dialog).getByText("31/07/2099")).toBeVisible();
     expect(within(dialog).queryByText("Gói mặc định")).toBeNull();
     const confirmButton = within(dialog).getByRole("button", {
       name: "Assign CSA package",
@@ -794,6 +996,64 @@ describe("CSA customer administration", () => {
     expect(navigation.replace).toHaveBeenCalledWith(`/csa-customers/${customer.id}`);
   });
 
+  it("keeps the assignment draft editable when a package refresh fails during confirmation", async () => {
+    const price = {
+      id: "available-price",
+      duration_months: 3,
+      monthly_price_vnd: "500000",
+      total_price_vnd: "1500000",
+      is_active: true,
+      sort_order: 0,
+      created_at: "",
+      updated_at: "",
+    };
+    const packages = {
+      data: [
+        {
+          id: "available-package",
+          name: "Available package",
+          description: "",
+          translations: [],
+          price_options: [price],
+          quota_policy: "expire",
+          items: [],
+          is_active: true,
+          created_at: "",
+          updated_at: "",
+        },
+      ],
+      meta,
+    };
+    vi.mocked(api).mockResolvedValue(customer);
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce(packages)
+      .mockRejectedValueOnce(Object.assign(new Error("upstream_unavailable"), { status: 503 }))
+      .mockResolvedValueOnce(packages);
+    providers(<MembershipAssignmentForm customerId={customer.id} />);
+
+    fireEvent.click(await screen.findByRole("radio", { name: /Available package/ }));
+    selectOption(screen.getByRole("textbox", { name: "Price option" }), price.id);
+    const orderInput = screen.getByRole("textbox", { name: "Order reference" });
+    fireEvent.change(orderInput, { target: { value: "FB-RETRY" } });
+    fireEvent.change(screen.getByLabelText(/Start date/), { target: { value: "01/05/2099" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assign CSA package" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    const retryButton = await screen.findByRole("button", { name: "Try again" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(retryButton.closest("[inert]")).toBeNull();
+    expect(orderInput).toHaveValue("FB-RETRY");
+    fireEvent.click(retryButton);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeEnabled(),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("shows a duplicate order reference as an inline accessible field error", async () => {
     const price = {
       id: "duplicate-price",
@@ -827,14 +1087,14 @@ describe("CSA customer administration", () => {
     });
     const view = providers(<MembershipAssignmentForm customerId={customer.id} />, "vi");
 
-    const orderReferenceInput = await screen.findByLabelText("Mã đơn hàng");
+    const orderReferenceInput = await screen.findByRole("textbox", { name: "Mã đơn hàng" });
     expect(view.container).not.toHaveTextContent(/Farmbrite/i);
     fireEvent.blur(orderReferenceInput);
     expect(await screen.findByText("Vui lòng nhập mã đơn hàng.")).toBeVisible();
     expect(orderReferenceInput).toHaveAttribute("aria-invalid", "true");
 
     fireEvent.click(screen.getByRole("radio", { name: /Gói ba tháng/ }));
-    selectOption(screen.getByLabelText("Lựa chọn giá *"), price.id);
+    selectOption(screen.getByRole("textbox", { name: "Lựa chọn giá" }), price.id);
     fireEvent.change(orderReferenceInput, { target: { value: "ORDER-100" } });
     fireEvent.change(screen.getByLabelText(/Ngày bắt đầu/), { target: { value: "01/05/2099" } });
     fireEvent.click(screen.getByRole("button", { name: "Gán gói CSA" }));
@@ -843,10 +1103,9 @@ describe("CSA customer administration", () => {
     );
 
     const duplicateError = await screen.findByText("Mã đơn hàng này đã được sử dụng.");
-    expect(duplicateError).toHaveClass("field-error");
-    expect(orderReferenceInput.closest("label")).toContainElement(duplicateError);
+    expect(duplicateError).toBeVisible();
     expect(orderReferenceInput).toHaveAttribute("aria-invalid", "true");
-    expect(orderReferenceInput).toHaveAttribute("aria-describedby", duplicateError.id);
+    expect(orderReferenceInput).toHaveAccessibleDescription("Mã đơn hàng này đã được sử dụng.");
     await waitFor(() => expect(orderReferenceInput).toHaveFocus());
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
@@ -944,7 +1203,7 @@ describe("CSA customer administration", () => {
     expect(screen.queryByText("Inactive package")).toBeNull();
 
     fireEvent.click(screen.getByRole("radio", { name: /First active package/ }));
-    const optionSelect = screen.getByLabelText("Price option *");
+    const optionSelect = screen.getByRole("textbox", { name: "Price option" });
     expect(optionSelect).toBeEnabled();
     fireEvent.click(optionSelect);
     expect(
@@ -957,7 +1216,8 @@ describe("CSA customer administration", () => {
     expect(optionSelect).toHaveValue("3 months · ₫500,000/month");
 
     fireEvent.click(screen.getByRole("radio", { name: /Second active package/ }));
-    expect(optionSelect).toHaveValue("Choose an active duration and price");
+    expect(optionSelect).toHaveValue("");
+    expect(optionSelect).toHaveAttribute("placeholder", "Choose an active duration and price");
     expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeDisabled();
   });
 
@@ -995,19 +1255,19 @@ describe("CSA customer administration", () => {
     providers(<MembershipAssignmentForm customerId={customer.id} />);
 
     fireEvent.click(await screen.findByRole("radio", { name: /CSA overlap package/ }));
-    selectOption(screen.getByLabelText("Price option *"), price.id);
-    fireEvent.change(screen.getByLabelText("Order reference"), {
+    selectOption(screen.getByRole("textbox", { name: "Price option" }), price.id);
+    fireEvent.change(screen.getByRole("textbox", { name: "Order reference" }), {
       target: { value: "FB-OVERLAP" },
     });
     const startDateInput = screen.getByLabelText(/Start date/);
     fireEvent.change(startDateInput, { target: { value: "01/01/2020" } });
     expect(startDateInput).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByText(/start date must be/i)).toHaveClass("field-error");
+    expect(startDateInput).toHaveAccessibleDescription(/start date must be/i);
     expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeDisabled();
     fireEvent.change(startDateInput, { target: { value: "01/02/2099" } });
 
-    expect(screen.getByRole("status")).toHaveClass("invalid");
-    expect(screen.getByText(/must be .* or later/i)).toHaveClass("field-error");
+    expect(screen.getByRole("status")).toHaveTextContent(/overlap|conflict/i);
+    expect(startDateInput).toHaveAccessibleDescription(/must be .* or later/i);
     expect(screen.getByRole("button", { name: "Assign CSA package" })).toBeDisabled();
     expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith("admin/memberships"))).toBe(
       false,
@@ -1046,8 +1306,8 @@ describe("CSA customer administration", () => {
     providers(<MembershipAssignmentForm customerId={customer.id} />);
     expect(await screen.findByText(customer.name)).toBeVisible();
     fireEvent.click(await screen.findByRole("radio", { name: /CSA 3 months/ }));
-    selectOption(screen.getByLabelText("Price option *"), price.id);
-    fireEvent.change(screen.getByLabelText("Order reference"), {
+    selectOption(screen.getByRole("textbox", { name: "Price option" }), price.id);
+    fireEvent.change(screen.getByRole("textbox", { name: "Order reference" }), {
       target: { value: "FB-INCOMPLETE" },
     });
     fireEvent.change(screen.getByLabelText(/Start date/), { target: { value: "01/05/2099" } });

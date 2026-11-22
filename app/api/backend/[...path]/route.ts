@@ -110,8 +110,11 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return params.size > 0;
   }
   if (request.method === "GET") {
+    if (resource === "csa-rounds" && id === undefined) {
+      return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size", "status");
+    }
     if (
-      (resource === "csa-rounds" && (id === undefined || action === "selections")) ||
+      (resource === "csa-rounds" && action === "selections") ||
       (resource === "csa-selections" && action === "events")
     ) {
       return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size");

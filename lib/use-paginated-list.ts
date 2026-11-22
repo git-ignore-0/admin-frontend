@@ -7,8 +7,8 @@ import type { ApiEnvelope } from "@/lib/client-api";
 import { isRequestCanceled } from "@/lib/client-error";
 import type { PaginationMeta } from "@/lib/types";
 
-type PaginatedListOptions<T> = {
-  fetchPage: (page: number, signal: AbortSignal) => Promise<ApiEnvelope<T[], PaginationMeta>>;
+type PaginatedListOptions<T, M extends PaginationMeta> = {
+  fetchPage: (page: number, signal: AbortSignal) => Promise<ApiEnvelope<T[], M>>;
   getErrorMessage: (error: unknown) => string;
   validateRecord?: (record: T) => void;
   initialPage?: number;
@@ -16,16 +16,16 @@ type PaginatedListOptions<T> = {
   onPage?: (page: number) => void;
 };
 
-export function usePaginatedList<T>({
+export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   fetchPage,
   getErrorMessage,
   validateRecord,
   initialPage = 1,
   controlledPage,
   onPage,
-}: PaginatedListOptions<T>) {
+}: PaginatedListOptions<T, M>) {
   const [items, setItems] = useState<T[] | null>(null);
-  const [meta, setMeta] = useState<PaginationMeta | null>(null);
+  const [meta, setMeta] = useState<M | null>(null);
   const [localPage, setLocalPage] = useState(initialPage);
   const page = controlledPage ?? localPage;
   const setPage = onPage ?? setLocalPage;
@@ -75,7 +75,7 @@ export function usePaginatedList<T>({
     setReloadVersion((current) => current + 1);
   }, [cancelActiveRequest]);
   const replaceData = useCallback(
-    (nextItems: T[], nextMeta?: PaginationMeta | null) => {
+    (nextItems: T[], nextMeta?: M | null) => {
       requireResponseList(nextItems, validateRecord);
       cancelActiveRequest();
       setItems(nextItems);

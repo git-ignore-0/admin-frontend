@@ -1,29 +1,47 @@
 "use client";
 
-import { Table, Badge } from "@mantine/core";
-import { FormSelect, Status as UiStatus, FormField } from "@/components/nfv-controls";
-
-import Link from "next/link";
-import { FormEvent, useCallback, useState } from "react";
+import {
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Divider,
+  Paper,
+  Select,
+  Skeleton,
+  Stack,
+  Table,
+  Text,
+} from "@mantine/core";
+import { IconPlus } from "@tabler/icons-react";
+import { useSearchParams } from "next/navigation";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
+import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
+import { openRecordFromRow } from "@/components/record-row-navigation";
+import type { AdminDictionary, AdminLocale } from "@/lib/admin-i18n";
 import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
-import { formatMembershipMoney } from "@/lib/membership-format";
 import { legacyPackageItemView } from "@/lib/membership-catalog-adapter";
-import { formatDecimalInput } from "@/lib/numeric-input";
+import {
+  catalogHref,
+  readCatalogListContext,
+  type CatalogResource,
+} from "@/lib/membership-catalog-navigation";
+import { formatMembershipMoney } from "@/lib/membership-format";
 import {
   hasCompleteCatalogTranslations,
   localizedCatalogTranslation,
 } from "@/lib/membership-translations";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import type { MembershipPackage, MembershipProduct, PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
-
-type ActiveFilter = "" | "true" | "false";
 
 function validateNamedTranslation(translation: unknown) {
   if (!isApiObject(translation) || typeof translation.name !== "string") {
@@ -49,294 +67,308 @@ function validateMembershipPackage(item: MembershipPackage) {
   requireResponseList(item.price_options, requireResponseEntity);
 }
 
-function Status({ active }: { active: boolean }) {
-  const { t } = useAdminI18n();
+type CatalogItem = MembershipProduct | MembershipPackage;
+type CatalogRow = { subtitle: string; value: ReactNode };
+type Props<T extends CatalogItem> = {
+  resource: CatalogResource;
+  validate: (record: T) => void;
+  renderRow: (record: T, locale: AdminLocale, t: AdminDictionary) => CatalogRow;
+};
+
+function CatalogList<T extends CatalogItem>({ resource, validate, renderRow }: Props<T>) {
+  const { locale, t } = useAdminI18n();
+  const copy = t.membershipCatalog;
+  const context = readCatalogListContext(useSearchParams());
+  const { search, active, page } = context;
+  const [draftSearch, setDraftSearch] = useState(search);
+  const [draftActive, setDraftActive] = useState(active);
+  const products = resource === "products";
+  const title = products ? copy.products : copy.packages;
+  const labels = [
+    products ? copy.product : copy.package,
+    products ? copy.unitConversion : copy.priceOptions,
+    copy.status,
+  ];
+  const empty = products ? copy.emptyProducts : copy.emptyPackages;
+
+  const fetchPage = useCallback(
+    (nextPage: number, signal: AbortSignal) => {
+      const query = new URLSearchParams({ page: String(nextPage) });
+      if (search) query.set("search", search);
+      if (active) query.set("active", active);
+      return apiEnvelope<T[], PaginationMeta>(`admin/membership-${resource}?${query}`, { signal });
+    },
+    [active, resource, search],
+  );
+  const getErrorMessage = useCallback((error: unknown) => requestErrorMessage(error, t), [t]);
+  const { items, meta, error, loading, reload } = usePaginatedList({
+    controlledPage: page,
+    fetchPage,
+    validateRecord: validate,
+    getErrorMessage,
+  });
+  const initialLoading = items === null && loading;
+
+  useEffect(() => setDraftSearch(search), [search]);
+  useEffect(() => {
+    if (!meta || loading || error) return;
+    const lastPage = Math.max(1, Math.ceil(meta.total / meta.page_size));
+    if (page > lastPage) {
+      window.history.replaceState(
+        null,
+        "",
+        catalogHref(resource, { search, active, page: lastPage }),
+      );
+    }
+  }, [active, error, loading, meta, page, resource, search]);
+
+  function navigateList(next: typeof context) {
+    const href = catalogHref(resource, next);
+    if (href !== window.location.pathname + window.location.search) {
+      window.history.replaceState(null, "", href);
+    }
+  }
+
+  function updateStatus(value: typeof active) {
+    setDraftActive(value);
+    navigateList({ search, active: value, page: 1 });
+  }
+
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={520}
+      aria-label={title}
+      aria-hidden={initialLoading || undefined}
+      role="region"
+      tabIndex={initialLoading ? undefined : 0}
+      style={{ outlineOffset: -2 }}
+    >
+      <Table aria-label={title} aria-busy={loading || undefined} withRowBorders>
+        <Table.Thead>
+          <Table.Tr>
+            {labels.map((label) => (
+              <Table.Th key={label} scope="col">
+                {label}
+              </Table.Th>
+            ))}
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading
+            ? Array.from({ length: 5 }, (_, row) => (
+                <Table.Tr key={row}>
+                  <Table.Td>
+                    <Skeleton height={34} width="80%" />
+                  </Table.Td>
+                  <Table.Td>
+                    <Skeleton height={12} width="65%" />
+                  </Table.Td>
+                  <Table.Td>
+                    <Skeleton height={12} width="65%" />
+                  </Table.Td>
+                </Table.Tr>
+              ))
+            : items?.map((item) => {
+                const translation = localizedCatalogTranslation<{
+                  locale: AdminLocale;
+                  name: string;
+                }>(item.translations, locale);
+                const { subtitle, value } = renderRow(item, locale, t);
+                return (
+                  <Table.Tr key={item.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
+                    <Table.Td>
+                      <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
+                        <Anchor
+                          component={AdminNavigationLink}
+                          href={catalogHref(resource, context, item.id)}
+                          c="inherit"
+                          fw={600}
+                          underline="never"
+                          data-record-link
+                        >
+                          {translation?.name || item.name}
+                        </Anchor>
+                        {!hasCompleteCatalogTranslations(item.translations) && (
+                          <Badge color="warning" w="fit-content">
+                            {copy.translationNeedsReview}
+                          </Badge>
+                        )}
+                        <Text size="sm" c="dimmed">
+                          {subtitle || "—"}
+                        </Text>
+                      </Stack>
+                    </Table.Td>
+                    <Table.Td>{value}</Table.Td>
+                    <Table.Td>
+                      <Status
+                        domain="availability"
+                        status={item.is_active ? "active" : "inactive"}
+                        label={item.is_active ? copy.active : copy.inactive}
+                      />
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
-    <UiStatus
-      domain="availability"
-      status={active ? "active" : "inactive"}
-      label={active ? t.membershipCatalog.active : t.membershipCatalog.inactive}
-    />
+    <Stack gap="md" miw={0}>
+      <ListToolbar
+        busy={loading}
+        search={{
+          label: products ? copy.searchLabel : copy.packageSearchLabel,
+          placeholder: products ? copy.searchPlaceholder : copy.packageSearchPlaceholder,
+          value: draftSearch,
+          appliedValue: search,
+          formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
+          onChange: setDraftSearch,
+          onSubmit: (value) => {
+            const trimmed = value.trim();
+            if (trimmed === search && page === 1) reload();
+            else navigateList({ search: trimmed, active, page: 1 });
+          },
+          submitLabel: copy.search,
+          clearLabel: t.common.clearFilters,
+          onClear: () => {
+            setDraftSearch("");
+            navigateList({ search: "", active, page: 1 });
+          },
+        }}
+        filterPopover={{
+          label: t.users.filter,
+          activeCount: Number(Boolean(active)),
+          onOpen: () => setDraftActive(active),
+          onDismiss: () => setDraftActive(active),
+          clearLabel: t.common.clearFilters,
+          clearDisabled: !draftActive && !active,
+          onClear: () => updateStatus(""),
+          apply: {
+            label: t.users.applyFilters,
+            disabled: draftActive === active,
+            onApply: () => updateStatus(draftActive),
+          },
+          children: (
+            <Select
+              label={copy.filterStatus}
+              placeholder={copy.allStatuses}
+              value={draftActive || null}
+              onChange={(value) =>
+                setDraftActive(value === "true" || value === "false" ? value : "")
+              }
+              data={[
+                { value: "true", label: copy.active },
+                { value: "false", label: copy.inactive },
+              ]}
+              comboboxProps={{ withinPortal: false, floatingStrategy: "fixed" }}
+              clearable
+            />
+          ),
+        }}
+        refresh={{
+          label: products ? copy.refreshProducts : copy.refreshPackages,
+          onRefresh: reload,
+        }}
+        primaryAction={
+          <Button
+            component={AdminNavigationLink}
+            href={catalogHref(resource, context, "new")}
+            leftSection={<IconPlus size={16} aria-hidden />}
+          >
+            {products ? copy.addProduct : copy.addPackage}
+          </Button>
+        }
+      />
+      <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+        {Boolean(items?.length) && table}
+        <Box p={error ? "md" : undefined}>
+          <ListState
+            embedded
+            empty={empty}
+            noResults={search || active ? copy.noMatches : undefined}
+            error={error}
+            hasData={items !== null}
+            isEmpty={items?.length === 0}
+            loading={initialLoading}
+            loadingLabel={products ? copy.loadingProductList : copy.loadingPackageList}
+            loadingPlaceholder={table}
+            onRetry={reload}
+            retryLabel={t.common.retry}
+          />
+        </Box>
+        {meta && (
+          <>
+            <Divider />
+            <Box px="md" py="sm">
+              <Pagination
+                disabled={loading}
+                nextLabel={t.common.next}
+                onPage={(next) => navigateList({ ...context, page: next })}
+                page={meta.page}
+                pageSize={meta.page_size}
+                previousLabel={t.common.previous}
+                resultCountLabel={t.common.resultCount}
+                resultCountSingularLabel={t.common.resultCountSingular}
+                summary={t.common.pagination}
+                total={meta.total}
+              />
+            </Box>
+          </>
+        )}
+      </Paper>
+    </Stack>
   );
 }
 
 export function MembershipProductList() {
-  const { locale, t } = useAdminI18n();
-  const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
-  const [active, setActive] = useState<ActiveFilter>("");
-  const fetchPage = useCallback(
-    (page: number) => {
-      const params = new URLSearchParams({ page: String(page) });
-      if (search) params.set("search", search);
-      if (active) params.set("active", active);
-      return apiEnvelope<MembershipProduct[], PaginationMeta>(
-        `admin/membership-products?${params.toString()}`,
-      );
-    },
-    [active, search],
-  );
-  const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
-  const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
-    fetchPage,
-    validateRecord: validateMembershipProduct,
-    getErrorMessage,
-  });
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (loading) return;
-    const nextSearch = query.trim();
-    setPage(1);
-    if (nextSearch === search && page === 1) reload();
-    else setSearch(nextSearch);
-  }
-
-  function clearFilters() {
-    setQuery("");
-    setSearch("");
-    setActive("");
-    setPage(1);
-  }
-
   return (
-    <section aria-busy={loading} className="csa-list-section">
-      <ListToolbar
-        busy={loading}
-        clearLabel={t.common.clearFilters}
-        filter={
-          <FormField label={t.membershipCatalog.filterStatus} className="field">
-            <FormSelect
-              disabled={loading}
-              onChange={(selectedValue) => {
-                setActive((selectedValue ?? "") as ActiveFilter);
-                setPage(1);
-              }}
-              value={active}
-              data={[
-                { value: "", label: t.membershipCatalog.allStatuses },
-                { value: "true", label: t.membershipCatalog.active },
-                { value: "false", label: t.membershipCatalog.inactive },
-              ]}
-            />
-          </FormField>
-        }
-        hasFilters={Boolean(query || search || active)}
-        onClear={clearFilters}
-        onQueryChange={setQuery}
-        onSubmit={submit}
-        placeholder={t.membershipCatalog.searchPlaceholder}
-        query={query}
-        resultCount={meta?.total}
-        resultCountLabel={t.common.resultCount}
-        resultCountSingularLabel={t.common.resultCountSingular}
-        searchLabel={t.membershipCatalog.searchLabel}
-        searchSubmitLabel={loading ? t.membershipCatalog.searching : t.membershipCatalog.search}
-      />
-      <ListState
-        empty={t.membershipCatalog.emptyProducts}
-        error={error}
-        hasData={items !== null}
-        isEmpty={items?.length === 0}
-        loading={loading}
-        loadingLabel={t.membershipCatalog.loadingProductList}
-        onRetry={reload}
-        retryLabel={t.common.retry}
-      />
-      {items && items.length > 0 && (
-        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap csa-list-wrap">
-          <Table role="table" className="csa-list-table csa-product-list">
-            <Table.Thead role="rowgroup">
-              <Table.Tr role="row">
-                <Table.Th role="columnheader">{t.membershipCatalog.product}</Table.Th>
-                <Table.Th role="columnheader">{t.membershipCatalog.unitConversion}</Table.Th>
-                <Table.Th role="columnheader">{t.membershipCatalog.status}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody role="rowgroup">
-              {items.map((item) => {
-                const translation = localizedCatalogTranslation(item.translations, locale);
-                return (
-                  <Table.Tr role="row" key={item.id}>
-                    <Table.Td role="cell" data-label={t.membershipCatalog.product}>
-                      <Link
-                        className="csa-list-primary-link"
-                        href={`/membership-catalog/products/${item.id}`}
-                      >
-                        {translation?.name || item.name}
-                      </Link>
-                      {!hasCompleteCatalogTranslations(item.translations) && (
-                        <Badge color="orange" className="catalog-translation-warning">
-                          {t.membershipCatalog.translationNeedsReview}
-                        </Badge>
-                      )}
-                      <small className="table-secondary">
-                        {translation?.short_description || item.short_description || "—"}
-                      </small>
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={t.membershipCatalog.unitConversion}>
-                      {formatDecimalInput(item.unit_size)} {item.unit_label_vi} /{" "}
-                      {item.unit_label_en}
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={t.membershipCatalog.status}>
-                      <Status active={item.is_active} />
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-      {meta && (
-        <Pagination
-          disabled={loading}
-          nextLabel={t.common.next}
-          onPage={setPage}
-          page={meta.page}
-          pageSize={meta.page_size}
-          previousLabel={t.common.previous}
-          summary={t.common.pagination}
-          total={meta.total}
-        />
-      )}
-    </section>
+    <CatalogList
+      resource="products"
+      validate={validateMembershipProduct}
+      renderRow={(item, locale) => ({
+        subtitle:
+          localizedCatalogTranslation(item.translations, locale)?.short_description ||
+          item.short_description,
+        value: `${formatDecimalInput(item.unit_size)} ${item.unit_label_vi} / ${item.unit_label_en}`,
+      })}
+    />
   );
 }
 
 export function MembershipPackageList() {
-  const { locale, t } = useAdminI18n();
-  const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
-  const fetchPage = useCallback(
-    (page: number) => {
-      const params = new URLSearchParams({ page: String(page) });
-      if (search) params.set("search", search);
-      return apiEnvelope<MembershipPackage[], PaginationMeta>(
-        `admin/membership-packages?${params.toString()}`,
-      );
-    },
-    [search],
-  );
-  const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
-  const { error, items, loading, meta, page, reload, setPage } = usePaginatedList({
-    fetchPage,
-    validateRecord: validateMembershipPackage,
-    getErrorMessage,
-  });
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (loading) return;
-    const nextSearch = query.trim();
-    setPage(1);
-    if (nextSearch === search && page === 1) reload();
-    else setSearch(nextSearch);
-  }
-
   return (
-    <section aria-busy={loading} className="csa-list-section">
-      <ListToolbar
-        busy={loading}
-        clearLabel={t.common.clearFilters}
-        hasFilters={Boolean(query || search)}
-        onClear={() => {
-          setQuery("");
-          setSearch("");
-          setPage(1);
-        }}
-        onQueryChange={setQuery}
-        onSubmit={submit}
-        placeholder={t.membershipCatalog.packageSearchPlaceholder}
-        query={query}
-        resultCount={meta?.total}
-        resultCountLabel={t.common.resultCount}
-        resultCountSingularLabel={t.common.resultCountSingular}
-        searchLabel={t.membershipCatalog.packageSearchLabel}
-        searchSubmitLabel={loading ? t.membershipCatalog.searching : t.membershipCatalog.search}
-      />
-      <ListState
-        empty={t.membershipCatalog.emptyPackages}
-        error={error}
-        hasData={items !== null}
-        isEmpty={items?.length === 0}
-        loading={loading}
-        loadingLabel={t.membershipCatalog.loadingPackageList}
-        onRetry={reload}
-        retryLabel={t.common.retry}
-      />
-      {items && items.length > 0 && (
-        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap csa-list-wrap">
-          <Table role="table" className="csa-list-table csa-package-list">
-            <Table.Thead role="rowgroup">
-              <Table.Tr role="row">
-                <Table.Th role="columnheader">{t.membershipCatalog.package}</Table.Th>
-                <Table.Th role="columnheader">{t.membershipCatalog.priceOptions}</Table.Th>
-                <Table.Th role="columnheader">{t.membershipCatalog.status}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody role="rowgroup">
-              {items.map((item) => {
-                const translation = localizedCatalogTranslation(item.translations, locale);
-                return (
-                  <Table.Tr role="row" key={item.id}>
-                    <Table.Td role="cell" data-label={t.membershipCatalog.package}>
-                      <Link
-                        className="csa-list-primary-link"
-                        href={`/membership-catalog/packages/${item.id}`}
-                      >
-                        {translation?.name || item.name}
-                      </Link>
-                      {!hasCompleteCatalogTranslations(item.translations) && (
-                        <Badge color="orange" className="catalog-translation-warning">
-                          {t.membershipCatalog.translationNeedsReview}
-                        </Badge>
-                      )}
-                      <small className="table-secondary">
-                        {item.items
-                          .map((raw) => {
-                            const line = legacyPackageItemView(raw);
-                            return `${localizedCatalogTranslation(line.translations, locale)?.name || line.name}: ${line.quotaUnits}`;
-                          })
-                          .join(" · ") || "—"}
-                      </small>
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={t.membershipCatalog.priceOptions}>
-                      {item.price_options
-                        .filter((option) => option.is_active)
-                        .map((option) => (
-                          <small className="table-secondary" key={option.id}>
-                            {t.membershipCatalog.priceOptionSummary
-                              .replace("{months}", String(option.duration_months))
-                              .replace(
-                                "{price}",
-                                formatMembershipMoney(option.monthly_price_vnd, locale),
-                              )}
-                          </small>
-                        ))}
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={t.membershipCatalog.status}>
-                      <Status active={item.is_active} />
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-      {meta && (
-        <Pagination
-          disabled={loading}
-          nextLabel={t.common.next}
-          onPage={setPage}
-          page={meta.page}
-          pageSize={meta.page_size}
-          previousLabel={t.common.previous}
-          summary={t.common.pagination}
-          total={meta.total}
-        />
-      )}
-    </section>
+    <CatalogList
+      resource="packages"
+      validate={validateMembershipPackage}
+      renderRow={(item, locale, t) => {
+        const activeOptions = item.price_options.filter((option) => option.is_active);
+        return {
+          subtitle: item.items
+            .map((raw) => {
+              const line = legacyPackageItemView(raw);
+              const name =
+                localizedCatalogTranslation(line.translations, locale)?.name || line.name;
+              return `${name}: ${line.quotaUnits}`;
+            })
+            .join(" · "),
+          value: activeOptions.length ? (
+            <Stack gap={4}>
+              {activeOptions.map((option) => (
+                <Text size="sm" key={option.id}>
+                  {t.membershipCatalog.priceOptionSummary
+                    .replace("{months}", String(option.duration_months))
+                    .replace("{price}", formatMembershipMoney(option.monthly_price_vnd, locale))}
+                </Text>
+              ))}
+            </Stack>
+          ) : (
+            "—"
+          ),
+        };
+      }}
+    />
   );
 }

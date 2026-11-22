@@ -293,13 +293,8 @@ const vi = {
     testimonialsDescription:
       "Quản lý câu chuyện phỏng vấn khách hàng và nông dân trước khi hiển thị công khai.",
     redemptionsDescription: "Theo dõi và xử lý từng yêu cầu đổi quà của thành viên.",
-    membershipProductsDescription:
-      "Quản lý nhóm quota, đơn vị quy đổi và trạng thái sử dụng trong CSA.",
-    membershipPackagesDescription: "Quản lý gói CSA và hạn mức của từng nhóm quota.",
     csaCustomersDescription:
       "Quản lý hồ sơ khách hàng CSA độc lập với tài khoản website và lịch sử gói đã mua.",
-    csaPurchaseRequestsDescription:
-      "Theo dõi chuyển khoản và duyệt yêu cầu mua gói CSA trực tuyến.",
     membershipPaymentSettingsDescription:
       "Quản lý tài khoản ngân hàng nhận chuyển khoản cho yêu cầu mua CSA.",
     trackerFarmsDescription:
@@ -879,14 +874,8 @@ const vi = {
     deleted: "Đã xóa.",
   },
   membershipCatalog: {
-    catalogTitle: "Danh mục CSA",
-    catalogDescription: "Quản lý nhóm quota và gói CSA theo một luồng rõ ràng.",
     products: "Nhóm quota CSA",
     packages: "Gói CSA",
-    productsOverview: "Quản lý nhóm quota, đơn vị quy đổi và trạng thái sử dụng trong các gói CSA.",
-    packagesOverview: "Quản lý giá, thời hạn và hạn mức nhóm quota của từng gói CSA.",
-    manageProducts: "Quản lý nhóm quota",
-    managePackages: "Quản lý gói",
     loading: "Đang tải dữ liệu…",
     loadingProduct: "Đang tải nhóm quota…",
     loadingPackage: "Đang tải gói CSA…",
@@ -908,8 +897,11 @@ const vi = {
     newPackageDescription: "Thiết lập thông tin gói và hạn mức cho từng nhóm quota.",
     editProductDescription: "Cập nhật nhóm quota, đơn vị quy đổi và trạng thái.",
     editPackageDescription: "Cập nhật thông tin gói và hạn mức từng nhóm quota.",
-    addProduct: "+ Tạo nhóm quota",
-    addPackage: "+ Tạo gói",
+    addProduct: "Tạo nhóm quota",
+    addPackage: "Tạo gói",
+    refreshProducts: "Làm mới danh sách nhóm quota",
+    refreshPackages: "Làm mới danh sách gói CSA",
+    noMatches: "Không có kết quả khớp bộ lọc.",
     searchLabel: "Tìm nhóm quota",
     searchPlaceholder: "Tên hoặc mô tả nhóm quota",
     packageSearchLabel: "Tìm gói CSA",
@@ -1076,7 +1068,9 @@ const vi = {
     historyOnly: "Đã hết hạn",
     newStatus: "Chưa có gói",
     loading: "Đang tải khách hàng…",
-    empty: "Không tìm thấy khách hàng CSA.",
+    refresh: "Làm mới danh sách khách hàng CSA",
+    empty: "Chưa có khách hàng CSA.",
+    noMatches: "Không có khách hàng CSA khớp điều kiện.",
     name: "Họ tên",
     phone: "Số điện thoại",
     websiteAccount: "Tài khoản website",
@@ -1202,6 +1196,7 @@ const vi = {
     filterStatus: "Trạng thái",
     allStatuses: "Tất cả trạng thái",
     loading: "Đang tải yêu cầu mua CSA…",
+    refresh: "Làm mới danh sách yêu cầu mua CSA",
     loadingDetail: "Đang tải chi tiết yêu cầu…",
     empty: "Không tìm thấy yêu cầu mua CSA.",
     requestCode: "Mã yêu cầu",
@@ -1815,14 +1810,8 @@ const en: AdminDictionary = {
     testimonialsDescription:
       "Manage customer and farmer interview stories before they become public.",
     redemptionsDescription: "Review and process each member reward request.",
-    membershipProductsDescription:
-      "Manage quota groups, conversion units, and their availability in CSA.",
-    membershipPackagesDescription:
-      "Manage CSA packages and allowances attached to each quota group.",
     csaCustomersDescription:
       "Manage CSA customer records independently from website accounts and package history.",
-    csaPurchaseRequestsDescription:
-      "Track bank transfers and approve online CSA package purchase requests.",
     membershipPaymentSettingsDescription:
       "Manage the bank account used to receive CSA purchase transfers.",
     trackerFarmsDescription:
@@ -2403,14 +2392,8 @@ const en: AdminDictionary = {
     deleted: "Deleted.",
   },
   membershipCatalog: {
-    catalogTitle: "CSA catalog",
-    catalogDescription: "Manage CSA quota groups and packages in one clear workflow.",
     products: "CSA quota groups",
     packages: "CSA packages",
-    productsOverview: "Manage quota groups, unit conversions, and availability in CSA packages.",
-    packagesOverview: "Manage pricing, duration, and quota-group allowances for each CSA package.",
-    manageProducts: "Manage quota groups",
-    managePackages: "Manage packages",
     loading: "Loading data…",
     loadingProduct: "Loading quota group…",
     loadingPackage: "Loading CSA package…",
@@ -2432,8 +2415,11 @@ const en: AdminDictionary = {
     newPackageDescription: "Set package information and quota-group allowances.",
     editProductDescription: "Update the quota group, unit conversion, and status.",
     editPackageDescription: "Update package information and quota-group allowances.",
-    addProduct: "+ Create quota group",
-    addPackage: "+ Create package",
+    addProduct: "Create quota group",
+    addPackage: "Create package",
+    refreshProducts: "Refresh quota groups",
+    refreshPackages: "Refresh CSA packages",
+    noMatches: "No matching records.",
     searchLabel: "Search quota groups",
     searchPlaceholder: "Quota-group name or description",
     packageSearchLabel: "Search CSA packages",
@@ -2600,7 +2586,9 @@ const en: AdminDictionary = {
     historyOnly: "Expired",
     newStatus: "No package",
     loading: "Loading customers…",
-    empty: "No CSA customers found.",
+    refresh: "Refresh CSA customers",
+    empty: "No CSA customers yet.",
+    noMatches: "No matching CSA customers.",
     name: "Name",
     phone: "Phone number",
     websiteAccount: "Website account",
@@ -2725,6 +2713,7 @@ const en: AdminDictionary = {
     filterStatus: "Status",
     allStatuses: "All statuses",
     loading: "Loading CSA purchase requests…",
+    refresh: "Refresh CSA purchase requests",
     loadingDetail: "Loading request details…",
     empty: "No CSA purchase requests found.",
     requestCode: "Request code",

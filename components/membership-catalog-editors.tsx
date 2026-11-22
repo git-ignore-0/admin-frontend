@@ -1,10 +1,27 @@
 "use client";
 
 import { IconTrash } from "@tabler/icons-react";
-import { ActionIcon, Button, Checkbox, Alert, Group } from "@mantine/core";
-import { FormInput, FormSelect, FormField } from "@/components/nfv-controls";
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Checkbox,
+  Grid,
+  Group,
+  Paper,
+  Select,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 
-import { useRouter } from "next/navigation";
+import { DataState, FormInput, Section } from "@/components/nfv-controls";
+import { RecoveryAlert } from "@/components/recovery-alert";
+import styles from "./membership-catalog-editors.module.css";
+
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -28,6 +45,7 @@ import {
   listActiveQuotaGroups,
   toLegacyPackageItems,
 } from "@/lib/membership-catalog-adapter";
+import { catalogHref, readCatalogListContext } from "@/lib/membership-catalog-navigation";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import {
   MAX_POSITIVE_BIG_INTEGER,
@@ -53,14 +71,14 @@ function mergeProductOptions(current: ProductOption[], incoming: ProductOption[]
 function EditorActions({ busy, onCancel }: { busy: boolean; onCancel: () => void }) {
   const { t } = useAdminI18n();
   return (
-    <div className="catalog-editor-actions">
+    <Group justify="flex-end" gap="xs">
       <Button variant="default" disabled={busy} onClick={onCancel} type="button">
         {t.membershipCatalog.cancel}
       </Button>
       <Button disabled={busy} type="submit">
         {busy ? t.membershipCatalog.saving : t.membershipCatalog.save}
       </Button>
-    </div>
+    </Group>
   );
 }
 
@@ -75,14 +93,13 @@ function preventSingleLineEnterSubmit(event: KeyboardEvent<HTMLFormElement>) {
 function LoadFailure({ error, retry }: { error: unknown; retry: () => void }) {
   const { t } = useAdminI18n();
   return (
-    <div className="panel load-error-state">
-      <Alert color="red" role="alert">
-        {requestErrorMessage(error, t)}
-      </Alert>
-      <Button variant="default" onClick={retry} type="button">
-        {t.common.retry}
-      </Button>
-    </div>
+    <Paper withBorder p="md">
+      <RecoveryAlert
+        message={requestErrorMessage(error, t)}
+        onRetry={retry}
+        retryLabel={t.common.retry}
+      />
+    </Paper>
   );
 }
 
@@ -123,6 +140,7 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
   const { locale, t } = useAdminI18n();
   const toast = useToast();
   const router = useRouter();
+  const listContext = readCatalogListContext(useSearchParams());
   const savingRef = useRef(false);
   const [form, setForm] = useState<ProductForm>({ ...emptyProduct });
   const [loaded, setLoaded] = useState(!productId);
@@ -187,7 +205,7 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
       );
       toast(productId ? t.membershipCatalog.updated : t.membershipCatalog.created);
       navigating = true;
-      router.replace(`/membership-catalog/products/${item.id}`);
+      router.replace(catalogHref("products", listContext, item.id));
     } catch (caught) {
       setError(
         caught instanceof Error && caught.message === "csa_quota_group_in_use"
@@ -205,12 +223,12 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
   if (loadError && !loaded) {
     return <LoadFailure error={loadError} retry={() => setLoadAttempt((value) => value + 1)} />;
   }
-  if (!loaded) return <div className="panel">{t.membershipCatalog.loadingProduct}</div>;
+  if (!loaded) return <DataState kind="loading" title={t.membershipCatalog.loadingProduct} />;
 
   return (
-    <form className="catalog-editor" noValidate onSubmit={save}>
+    <Stack gap="md" pb="md" renderRoot={(props) => <form {...props} noValidate onSubmit={save} />}>
       {error && (
-        <Alert color="red" className="full" role="alert">
+        <Alert color="red" role="alert">
           {error}
         </Alert>
       )}
@@ -228,76 +246,52 @@ export function MembershipProductEditor({ productId }: { productId?: string }) {
         title={t.membershipCatalog.displayContent}
         value={form.content}
       />
-      <section className="catalog-editor-section">
-        <h2>{t.membershipCatalog.unitsAndStatus}</h2>
-        <p className="catalog-section-help">{t.membershipCatalog.unitHelp}</p>
-        <div className="form-grid">
-          <label className="field">
-            <span>{t.membershipCatalog.unitSize} *</span>
-            <FormInput
-              aria-invalid={Boolean(unitSizeError)}
-
-              disabled={busy}
-              inputMode="decimal"
-              onChange={(event) => {
-                update("unitSize", sanitizeDecimalInput(event.target.value));
-                setUnitSizeError("");
-              }}
-              required
-              type="text"
-              value={form.unitSize}
-            />
-            {unitSizeError && (
-              <small className="field-error" role="alert">
-                {unitSizeError}
-              </small>
-            )}
-          </label>
-          <label className="field">
-            <span>{t.membershipCatalog.unitVi} *</span>
-            <FormInput
-              disabled={busy}
-              maxLength={40}
-              onChange={(event) => update("unitVi", event.target.value)}
-              required
-              value={form.unitVi}
-            />
-          </label>
-          <label className="field">
-            <span>{t.membershipCatalog.unitEn} *</span>
-            <FormInput
-              disabled={busy}
-              maxLength={40}
-              onChange={(event) => update("unitEn", event.target.value)}
-              required
-              value={form.unitEn}
-            />
-          </label>
-          <div className="field">
-            <Checkbox
-              checked={form.isActive}
-              disabled={busy}
-              onChange={(event) => update("isActive", event.target.checked)}
-              label={
-                <>
-                  <span>{t.membershipCatalog.active}</span>
-                </>
-              }
-            />
-          </div>
-        </div>
-      </section>
+      <Section
+        title={t.membershipCatalog.unitsAndStatus}
+        description={t.membershipCatalog.unitHelp}
+      >
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+          <TextInput
+            disabled={busy}
+            error={unitSizeError && <span role="alert">{unitSizeError}</span>}
+            inputMode="decimal"
+            label={t.membershipCatalog.unitSize}
+            onChange={(event) => {
+              update("unitSize", sanitizeDecimalInput(event.currentTarget.value));
+              setUnitSizeError("");
+            }}
+            required
+            value={form.unitSize}
+          />
+          <TextInput
+            disabled={busy}
+            label={t.membershipCatalog.unitVi}
+            maxLength={40}
+            onChange={(event) => update("unitVi", event.currentTarget.value)}
+            required
+            value={form.unitVi}
+          />
+          <TextInput
+            disabled={busy}
+            label={t.membershipCatalog.unitEn}
+            maxLength={40}
+            onChange={(event) => update("unitEn", event.currentTarget.value)}
+            required
+            value={form.unitEn}
+          />
+        </SimpleGrid>
+        <Checkbox
+          checked={form.isActive}
+          disabled={busy}
+          label={t.membershipCatalog.active}
+          onChange={(event) => update("isActive", event.currentTarget.checked)}
+        />
+      </Section>
       <EditorActions
         busy={busy}
-        onCancel={() =>
-          router.push(
-            productId
-              ? `/membership-catalog/products/${productId}`
-              : "/membership-catalog/products",
-          )
-        }
+        onCancel={() => router.push(catalogHref("products", listContext, productId))}
       />
-    </form>
+    </Stack>
   );
 }
 
@@ -358,6 +352,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
   const { locale, t } = useAdminI18n();
   const toast = useToast();
   const router = useRouter();
+  const listContext = readCatalogListContext(useSearchParams());
   const savingRef = useRef(false);
   const [form, setForm] = useState<PackageForm>(structuredClone(emptyPackage));
   const [loadedPackage, setLoadedPackage] = useState<MembershipPackage | null>(null);
@@ -567,7 +562,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
       );
       toast(packageId ? t.membershipCatalog.updated : t.membershipCatalog.created);
       navigating = true;
-      router.replace(`/membership-catalog/packages/${item.id}`);
+      router.replace(catalogHref("packages", listContext, item.id));
     } catch (caught) {
       const apiError = caught as Error & { field?: string; status?: number };
       setError(
@@ -586,18 +581,19 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
   if (loadError && !loaded) {
     return <LoadFailure error={loadError} retry={() => setLoadAttempt((value) => value + 1)} />;
   }
-  if (!loaded) return <div className="panel">{t.membershipCatalog.loadingPackage}</div>;
+  if (!loaded) return <DataState kind="loading" title={t.membershipCatalog.loadingPackage} />;
 
   const selected = new Set(form.lines.map((line) => line.quotaGroupId).filter(Boolean));
   const visibleProducts = products.filter(
     (item) => visibleProductIds.has(item.id) || selected.has(item.id),
   );
   return (
-    <form
-      className="catalog-editor package-editor"
-      noValidate
-      onKeyDown={preventSingleLineEnterSubmit}
-      onSubmit={save}
+    <Stack
+      gap="md"
+      pb="md"
+      renderRoot={(props) => (
+        <form {...props} noValidate onKeyDown={preventSingleLineEnterSubmit} onSubmit={save} />
+      )}
     >
       {error && (
         <Alert color="red" role="alert">
@@ -618,47 +614,39 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
         title={t.membershipCatalog.displayContent}
         value={form.content}
       />
-      <section className="catalog-editor-section">
-        <h2>{t.membershipCatalog.packageInformation}</h2>
-        <div className="form-grid">
-          <FormField label={t.membershipCatalog.policy + " *"} className="field">
-            <FormSelect
-              disabled={busy}
-              onChange={(selectedValue) =>
-                setForm((value) => ({
-                  ...value,
-                  policy: (selectedValue ?? "") as PackageForm["policy"],
-                }))
+      <Section title={t.membershipCatalog.packageInformation}>
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+          <Select
+            allowDeselect={false}
+            data={[
+              { value: "expire", label: t.membershipCatalog.expire },
+              { value: "rollover", label: t.membershipCatalog.rollover },
+            ]}
+            disabled={busy}
+            label={t.membershipCatalog.policy}
+            onChange={(policy) => {
+              if (policy === "expire" || policy === "rollover") {
+                setForm((current) => ({ ...current, policy }));
               }
-              value={form.policy}
-              data={[
-                { value: "expire", label: t.membershipCatalog.expire },
-                { value: "rollover", label: t.membershipCatalog.rollover },
-              ]}
-            />
-          </FormField>
-          <div className="field">
-            <Checkbox
-              checked={form.isActive}
-              disabled={busy}
-              onChange={(event) =>
-                setForm((value) => ({ ...value, isActive: event.target.checked }))
-              }
-              label={
-                <>
-                  <span>{t.membershipCatalog.active}</span>
-                </>
-              }
-            />
-          </div>
-        </div>
-      </section>
-      <section className="catalog-editor-section price-options-section">
-        <div className="panel-head">
-          <div>
-            <h2>{t.membershipCatalog.priceOptions}</h2>
-            <p className="catalog-section-help">{t.membershipCatalog.priceOptionsHelp}</p>
-          </div>
+            }}
+            required
+            value={form.policy}
+          />
+        </SimpleGrid>
+        <Checkbox
+          checked={form.isActive}
+          disabled={busy}
+          label={t.membershipCatalog.active}
+          onChange={(event) => {
+            const isActive = event.currentTarget.checked;
+            setForm((current) => ({ ...current, isActive }));
+          }}
+        />
+      </Section>
+      <Section
+        title={t.membershipCatalog.priceOptions}
+        description={t.membershipCatalog.priceOptionsHelp}
+        actions={
           <Button
             variant="default"
             disabled={busy}
@@ -667,11 +655,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                 ...current,
                 priceOptions: [
                   ...current.priceOptions,
-                  {
-                    durationMonths: "",
-                    monthlyPriceVnd: "",
-                    isActive: true,
-                  },
+                  { durationMonths: "", monthlyPriceVnd: "", isActive: true },
                 ],
               }))
             }
@@ -679,18 +663,19 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
           >
             {t.membershipCatalog.addPriceOption}
           </Button>
-        </div>
+        }
+      >
         {([true, false] as const).map((active) => {
           const options = form.priceOptions
             .map((option, index) => ({ option, index }))
             .filter(({ option }) => option.isActive === active);
           if (!options.length) return null;
           return (
-            <div className="price-option-group" key={String(active)}>
-              <h3>
+            <Stack gap="sm" key={String(active)}>
+              <Title order={3} size="sm">
                 {active ? t.membershipCatalog.activeOptions : t.membershipCatalog.inactiveOptions}
-              </h3>
-              <div className="price-option-list">
+              </Title>
+              <Stack gap="sm">
                 {options.map(({ option, index }) => {
                   const duration = /^\d+$/.test(option.durationMonths)
                     ? BigInt(option.durationMonths)
@@ -717,7 +702,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                   );
                   return (
                     <fieldset
-                      className="price-option-card"
+                      className={`price-option-card ${styles.priceCard}`}
                       disabled={busy}
                       key={option.id ?? index}
                     >
@@ -727,7 +712,7 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                           String(index + 1),
                         )}
                       </legend>
-                      <div className="price-option-grid">
+                      <div className={`price-option-grid ${styles.priceGrid}`}>
                         <label className="field price-option-duration-field">
                           <span>{t.membershipCatalog.duration} *</span>
                           <FormInput
@@ -846,37 +831,27 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
                           onReload={reloadPaymentPlans}
                         />
                       ) : duration > 1n ? (
-                        <p className="catalog-section-help">
+                        <Text c="dimmed" mt="xs" size="sm">
                           {t.membershipCatalog.paymentPlans.savePriceFirst}
-                        </p>
+                        </Text>
                       ) : null}
                     </fieldset>
                   );
                 })}
-              </div>
-            </div>
+              </Stack>
+            </Stack>
           );
         })}
-      </section>
-      <section className="catalog-editor-section package-products-section">
-        <h2>{t.membershipCatalog.packageProducts}</h2>
+      </Section>
+      <Section title={t.membershipCatalog.packageProducts}>
         {productsLoading ? (
-          <p className="muted-copy" aria-live="polite">
-            {t.membershipCatalog.loadingProducts}
-          </p>
+          <DataState compact kind="loading" title={t.membershipCatalog.loadingProducts} />
         ) : productsError ? (
-          <Alert color="red" role="alert">
-            <Group gap="sm" justify="space-between" align="center">
-              <span>{productsError}</span>
-              <Button
-                variant="default"
-                onClick={() => setProductsAttempt((value) => value + 1)}
-                type="button"
-              >
-                {t.common.retry}
-              </Button>
-            </Group>
-          </Alert>
+          <RecoveryAlert
+            message={productsError}
+            onRetry={() => setProductsAttempt((value) => value + 1)}
+            retryLabel={t.common.retry}
+          />
         ) : productMeta ? (
           <Pagination
             page={productMeta.page}
@@ -889,73 +864,80 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
             summary={t.common.pagination}
           />
         ) : null}
-        <div className="package-lines">
+        <Stack gap="sm">
           {form.lines.map((line, index) => (
-            <div className="package-line" key={index}>
-              <FormField label={t.membershipCatalog.product + " *"} className="field">
-                <FormSelect
-                  aria-label={`${t.membershipCatalog.product} ${index + 1}`}
-                  disabled={busy || productsLoading || Boolean(productsError)}
-                  onChange={(selectedValue) =>
-                    updateLine(index, { quotaGroupId: selectedValue ?? "" })
-                  }
-                  required
-                  value={line.quotaGroupId}
-                  data={[
-                    { value: "", label: t.membershipCatalog.chooseProduct },
-                    ...(visibleProducts
-                      .filter((item) => !selected.has(item.id) || item.id === line.quotaGroupId)
-                      .map((item) => {
-                        const translated = localizedCatalogTranslation(item.translations, locale);
-                        return { value: item.id, label: translated?.name || item.name };
-                      }) ?? []),
-                  ]}
-                />
-              </FormField>
-              <label className="field">
-                <span>{t.membershipCatalog.quotaUnits} *</span>
-                <FormInput
-                  aria-label={`${t.membershipCatalog.quotaUnits} ${index + 1}`}
-                  aria-invalid={Boolean(inputErrors.quotaUnits[index])}
-
-                  disabled={busy}
-                  inputMode="numeric"
-                  onChange={(event) => {
-                    updateLine(index, { quotaUnits: sanitizeIntegerInput(event.target.value) });
-                    setInputErrors((current) => ({
-                      ...current,
-                      quotaUnits: { ...current.quotaUnits, [index]: "" },
-                    }));
-                  }}
-                  required
-                  type="text"
-                  value={line.quotaUnits}
-                />
-                {inputErrors.quotaUnits[index] && (
-                  <small className="field-error" role="alert">
-                    {inputErrors.quotaUnits[index]}
-                  </small>
-                )}
-              </label>
-              <Button
-                variant="default"
-                disabled={busy || form.lines.length === 1}
-                onClick={() =>
-                  setForm((value) => ({
-                    ...value,
-                    lines: value.lines.filter((_, lineIndex) => lineIndex !== index),
-                  }))
-                }
-                type="button"
-              >
-                {t.membershipCatalog.removeProduct}
-              </Button>
-            </div>
+            <Paper key={index} p="sm" withBorder>
+              <Grid align="flex-start" gutter="xs">
+                <Grid.Col span={{ base: 12, sm: "auto" }}>
+                  <Select
+                    allowDeselect={false}
+                    aria-label={`${t.membershipCatalog.product} ${index + 1}`}
+                    data={[
+                      { value: "", label: t.membershipCatalog.chooseProduct },
+                      ...visibleProducts
+                        .filter((item) => !selected.has(item.id) || item.id === line.quotaGroupId)
+                        .map((item) => {
+                          const translated = localizedCatalogTranslation(item.translations, locale);
+                          return { value: item.id, label: translated?.name || item.name };
+                        }),
+                    ]}
+                    disabled={busy || productsLoading || Boolean(productsError)}
+                    label={t.membershipCatalog.product}
+                    onChange={(selectedValue) =>
+                      updateLine(index, { quotaGroupId: selectedValue ?? "" })
+                    }
+                    required
+                    role="combobox"
+                    value={line.quotaGroupId}
+                  />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 4 }}>
+                  <TextInput
+                    aria-label={`${t.membershipCatalog.quotaUnits} ${index + 1}`}
+                    disabled={busy}
+                    error={
+                      inputErrors.quotaUnits[index] && (
+                        <span role="alert">{inputErrors.quotaUnits[index]}</span>
+                      )
+                    }
+                    inputMode="numeric"
+                    label={t.membershipCatalog.quotaUnits}
+                    onChange={(event) => {
+                      updateLine(index, {
+                        quotaUnits: sanitizeIntegerInput(event.currentTarget.value),
+                      });
+                      setInputErrors((current) => ({
+                        ...current,
+                        quotaUnits: { ...current.quotaUnits, [index]: "" },
+                      }));
+                    }}
+                    required
+                    value={line.quotaUnits}
+                  />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: "content" }}>
+                  <Button
+                    variant="default"
+                    disabled={busy || form.lines.length === 1}
+                    mt={{ base: 0, sm: 21 }}
+                    onClick={() =>
+                      setForm((value) => ({
+                        ...value,
+                        lines: value.lines.filter((_, lineIndex) => lineIndex !== index),
+                      }))
+                    }
+                    type="button"
+                  >
+                    {t.membershipCatalog.removeProduct}
+                  </Button>
+                </Grid.Col>
+              </Grid>
+            </Paper>
           ))}
-        </div>
+        </Stack>
         <Button
-          className="add-product-line"
           variant="default"
+          w="fit-content"
           disabled={busy || productsLoading || Boolean(productsError)}
           onClick={() =>
             setForm((value) => ({
@@ -967,17 +949,11 @@ export function MembershipPackageEditor({ packageId }: { packageId?: string }) {
         >
           {t.membershipCatalog.addProductLine}
         </Button>
-      </section>
+      </Section>
       <EditorActions
         busy={busy}
-        onCancel={() =>
-          router.push(
-            packageId
-              ? `/membership-catalog/packages/${packageId}`
-              : "/membership-catalog/packages",
-          )
-        }
+        onCancel={() => router.push(catalogHref("packages", listContext, packageId))}
       />
-    </form>
+    </Stack>
   );
 }

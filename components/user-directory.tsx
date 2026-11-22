@@ -17,7 +17,7 @@ import {
 import { useMediaQuery } from "@mantine/hooks";
 import { IconCheck, IconPlus } from "@tabler/icons-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
@@ -26,6 +26,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
+import { openRecordFromRow } from "@/components/record-row-navigation";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { UserAccountDialog } from "@/components/user-account-dialog";
 import { UserEmail } from "@/components/user-email";
@@ -41,27 +42,6 @@ import {
 } from "@/lib/admin-users-query";
 import { requestErrorMessage } from "@/lib/client-error";
 import type { AdminUserListItem } from "@/lib/types";
-
-function openFromRow(event: MouseEvent<HTMLTableRowElement>) {
-  if (
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.altKey ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.shiftKey ||
-    !(event.target instanceof Element)
-  )
-    return;
-  if (
-    event.target.closest(
-      "a, button, input, select, textarea, label, summary, [role=button], [role=checkbox], [contenteditable]",
-    ) ||
-    window.getSelection()?.type === "Range"
-  )
-    return;
-  event.currentTarget.querySelector<HTMLAnchorElement>("[data-record-link]")?.click();
-}
 
 function UserRow({
   user,
@@ -80,7 +60,7 @@ function UserRow({
     <Table.Tr
       data-selected={selected || undefined}
       style={{ cursor: "pointer" }}
-      onClick={openFromRow}
+      onClick={openRecordFromRow}
     >
       <Table.Td>
         <Stack gap="calc(var(--mantine-spacing-xs) / 2)" style={{ overflowWrap: "anywhere" }}>

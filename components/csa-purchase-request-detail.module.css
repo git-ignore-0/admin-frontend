@@ -1,0 +1,57 @@
+.wrapText {
+  overflow-wrap: anywhere;
+}
+
+.installmentTable {
+  min-width: 55rem;
+}
+
+.installmentTable :is(th, td) {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+@media (max-width: 47.99em) {
+  .installmentScroll {
+    --nfv-table-overflow-x: visible;
+  }
+
+  .installmentTable,
+  .installmentTable :is(tbody, tr, th, td) {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .installmentTable thead {
+    display: none;
+  }
+
+  .installmentTable tbody {
+    display: grid;
+    gap: var(--mantine-spacing-sm);
+  }
+
+  .installmentTable tbody tr {
+    border: 1px solid var(--border);
+    border-radius: var(--mantine-radius-md);
+    padding: var(--mantine-spacing-sm);
+  }
+
+  .installmentTable :is(th, td) {
+    border: 0;
+    padding: var(--mantine-spacing-xs) 0;
+  }
+
+  .installmentTable td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    font-size: var(--mantine-font-size-xs);
+  }
+
+  .installmentTable td:empty {
+    display: none;
+  }
+}

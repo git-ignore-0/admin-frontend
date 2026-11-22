@@ -9,7 +9,10 @@ import { validateReopenDeadline, validateRoundDates } from "@/lib/csa-rounds";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 const push = vi.hoisted(() => vi.fn());
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push, refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -33,14 +36,16 @@ it("saves an actual date without a fabricated delivery time", async () => {
       <CSARoundEditor />
     </AdminI18nProvider>,
   );
-  fireEvent.change(await screen.findByLabelText("Round name"), { target: { value: "Year end" } });
-  fireEvent.change(screen.getByLabelText("Selection opens"), {
+  fireEvent.change(await screen.findByRole("textbox", { name: "Round name" }), {
+    target: { value: "Year end" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Selection opens/), {
     target: { value: "2026-12-30T08:00" },
   });
-  fireEvent.change(screen.getByLabelText("Selection closes"), {
+  fireEvent.change(screen.getByLabelText(/^Selection closes/), {
     target: { value: "2026-12-31T18:00" },
   });
-  const date = screen.getByLabelText("Delivery");
+  const date = screen.getByLabelText(/^Delivery/);
   expect(date).toHaveAttribute("type", "date");
   fireEvent.change(date, { target: { value: "2027-01-01" } });
   fireEvent.click(screen.getByRole("button", { name: "Save draft" }));

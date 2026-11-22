@@ -13,13 +13,26 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import PackageEditPage from "@/app/(admin)/membership-catalog/packages/[id]/edit/page";
+import PackageDetailPage from "@/app/(admin)/membership-catalog/packages/[id]/page";
+import NewPackagePage from "@/app/(admin)/membership-catalog/packages/new/page";
+import ProductEditPage from "@/app/(admin)/membership-catalog/products/[id]/edit/page";
+import ProductDetailPage from "@/app/(admin)/membership-catalog/products/[id]/page";
+import NewProductPage from "@/app/(admin)/membership-catalog/products/new/page";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { MembershipPackageDetail } from "@/components/membership-catalog-detail";
 import {
   MembershipPackageEditor,
   MembershipProductEditor,
 } from "@/components/membership-catalog-editors";
-import { MembershipPackageList } from "@/components/membership-catalog-lists";
+import {
+  MembershipPackageList,
+  MembershipProductList,
+} from "@/components/membership-catalog-lists";
 import { MembershipDetail } from "@/components/membership-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api, apiEnvelope, apiFile } from "@/lib/client-api";
@@ -33,17 +46,18 @@ import type {
   PaginationMeta,
 } from "@/lib/types";
 
-const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), search: "" }));
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn(), apiFile: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: navigation.push, replace: navigation.replace, refresh: vi.fn() }),
   usePathname: () => "/memberships",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 afterEach(() => {
   cleanup();
+  navigation.search = "";
   vi.useRealTimers();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -227,6 +241,146 @@ function mockCatalogLookups() {
     throw new Error(`Unexpected envelope request: ${path}`);
   });
 }
+
+function CatalogBreadcrumbLinks() {
+  const items = useAdminBreadcrumbs([]);
+  return (
+    <nav aria-label="Breadcrumb">
+      {items.map(({ href, label }) =>
+        href ? (
+          <a href={href} key={label}>
+            {label}
+          </a>
+        ) : (
+          <span key={label}>{label}</span>
+        ),
+      )}
+    </nav>
+  );
+}
+
+describe.each([
+  {
+    resource: "products",
+    record: product,
+    listLabel: "CSA quota groups",
+    create: "Create quota group",
+    edit: "Edit quota group",
+    backToList: "Quota-group list",
+    backToDetail: "Quota-group details",
+    List: MembershipProductList,
+    DetailPage: ProductDetailPage,
+    EditPage: ProductEditPage,
+    NewPage: NewProductPage,
+  },
+  {
+    resource: "packages",
+    record: packageItem,
+    listLabel: "CSA packages",
+    create: "Create package",
+    edit: "Edit package",
+    backToList: "Package list",
+    backToDetail: "Package details",
+    List: MembershipPackageList,
+    DetailPage: PackageDetailPage,
+    EditPage: PackageEditPage,
+    NewPage: NewPackagePage,
+  },
+])("CSA $resource navigation", (fixture) => {
+  const { resource, record, listLabel, create, edit, backToList, backToDetail } = fixture;
+  const { List, DetailPage, EditPage, NewPage } = fixture;
+  const listPath = `/membership-catalog/${resource}`;
+  const recordPath = `${listPath}/${record.id}`;
+  const query = "?search=CSA+%26+farm&active=true&page=3";
+
+  function renderPage(pathname: string, page: React.ReactNode) {
+    return providers(
+      <AdminBreadcrumbProvider pathname={pathname} search={query}>
+        <CatalogBreadcrumbLinks />
+        {page}
+      </AdminBreadcrumbProvider>,
+    );
+  }
+
+  function breadcrumb(name: string) {
+    return within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", {
+      name,
+    });
+  }
+
+  it("preserves list context when opening the create or detail route", async () => {
+    navigation.search = query;
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [record],
+      meta: { ...meta, page: 3, total: 61 },
+    });
+    providers(<List />);
+
+    expect(await screen.findByRole("link", { name: record.name })).toHaveAttribute(
+      "href",
+      `${recordPath}${query}`,
+    );
+    expect(screen.getByRole("link", { name: create })).toHaveAttribute(
+      "href",
+      `${listPath}/new${query}`,
+    );
+    expect(apiEnvelope).toHaveBeenCalledWith(
+      `admin/membership-${resource}?page=3&search=CSA+%26+farm&active=true`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("preserves list context in detail back, edit and breadcrumb links", async () => {
+    navigation.search = query;
+    vi.mocked(api).mockResolvedValue(record);
+    renderPage(recordPath, await DetailPage({ params: Promise.resolve({ id: record.id }) }));
+
+    expect(await screen.findByRole("link", { name: backToList })).toHaveAttribute(
+      "href",
+      `${listPath}${query}`,
+    );
+    expect(screen.getByRole("link", { name: edit })).toHaveAttribute(
+      "href",
+      `${recordPath}/edit${query}`,
+    );
+    expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+  });
+
+  it("returns to the filtered list from the create heading, breadcrumb and Cancel", async () => {
+    navigation.search = query;
+    mockCatalogLookups();
+    renderPage(`${listPath}/new`, NewPage());
+
+    expect(screen.getByRole("link", { name: backToList })).toHaveAttribute(
+      "href",
+      `${listPath}${query}`,
+    );
+    expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(navigation.push).toHaveBeenCalledWith(`${listPath}${query}`);
+  });
+
+  it("retains list context in the edit heading, breadcrumbs and save or cancel destination", async () => {
+    navigation.search = query;
+    mockCatalogLookups();
+    vi.mocked(api).mockResolvedValue(record);
+    renderPage(
+      `${recordPath}/edit`,
+      await EditPage({ params: Promise.resolve({ id: record.id }) }),
+    );
+
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: backToDetail }),
+    ).toHaveAttribute("href", `${recordPath}${query}`);
+    expect(breadcrumb(backToDetail)).toHaveAttribute("href", `${recordPath}${query}`);
+    expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(navigation.push).toHaveBeenCalledWith(`${recordPath}${query}`);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith(`${recordPath}${query}`));
+  });
+});
 
 async function fillBilingualNames() {
   fireEvent.change(screen.getByLabelText("Package name *"), { target: { value: "CSA package" } });
@@ -471,6 +625,37 @@ describe("CSA package price options", () => {
       is_active: true,
     });
   });
+
+  it.each([
+    {
+      List: MembershipProductList,
+      record: product,
+      resource: "products",
+      create: "Create quota group",
+    },
+    {
+      List: MembershipPackageList,
+      record: packageItem,
+      resource: "packages",
+      create: "Create package",
+    },
+  ])(
+    "adds the Foundation create, filter and refresh actions to CSA $resource",
+    async ({ List, record, resource, create }) => {
+      vi.mocked(apiEnvelope).mockResolvedValue({ data: [record], meta });
+      providers(<List />);
+
+      const name = await screen.findByRole("link", { name: record.name });
+      expect(name).toHaveAttribute("href", `/membership-catalog/${resource}/${record.id}`);
+      expect(screen.getByRole("link", { name: create })).toHaveAttribute(
+        "href",
+        `/membership-catalog/${resource}/new`,
+      );
+      expect(screen.getByRole("button", { name: "Filter" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+      await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
+    },
+  );
 
   it("shows active and historical prices in list/detail", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [packageItem], meta });

@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSARoundEditor } from "@/components/csa-round-editor";
 import { CSARoundList } from "@/components/csa-round-list";
@@ -10,11 +10,35 @@ import { api, apiEnvelope } from "@/lib/client-api";
 import { isAllowedBackendRequest } from "@/lib/backend-target";
 import { getRoundParticipants, validateRoundDates, validateReopenDeadline } from "@/lib/csa-rounds";
 
+import { selectOption } from "./select-option";
+
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 const push = vi.hoisted(() => vi.fn());
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push, replace: push }) }));
+vi.mock("next/navigation", async () => {
+  const { useMemo, useSyncExternalStore } = await import("react");
+  const subscribe = (notify: () => void) => {
+    window.addEventListener("popstate", notify);
+    return () => window.removeEventListener("popstate", notify);
+  };
+  return {
+    useRouter: () => ({ push, replace: push }),
+    useSearchParams: () => {
+      const search = useSyncExternalStore(subscribe, () => window.location.search);
+      return useMemo(() => new URLSearchParams(search), [search]);
+    },
+  };
+});
+beforeEach(() => {
+  window.history.replaceState(null, "", "/csa-rounds");
+  const replace = window.history.replaceState.bind(window.history);
+  vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
+    replace(data, unused, url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+});
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.resetAllMocks();
 });
 const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
@@ -77,16 +101,22 @@ describe("CSA rounds", () => {
     vi.mocked(api).mockResolvedValueOnce({ id });
     render(
       <AdminI18nProvider initialLocale="en">
-        <CSARoundEditor />
+        <CSARoundEditor listPage={2} listStatus="draft" />
       </AdminI18nProvider>,
     );
-    fireEvent.change(await screen.findByLabelText("Round name"), { target: { value: "Week 1" } });
+    expect(screen.getByRole("link", { name: "Back to rounds" })).toHaveAttribute(
+      "href",
+      "/csa-rounds?status=draft&page=2",
+    );
+    fireEvent.change(await screen.findByRole("textbox", { name: "Round name" }), {
+      target: { value: "Week 1" },
+    });
     for (const [label, value] of [
       ["Selection opens", "2026-11-20T08:00"],
       ["Selection closes", "2026-11-21T18:00"],
       ["Delivery", "2026-11-22"],
     ])
-      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      fireEvent.change(screen.getByLabelText(new RegExp(`^${label}`)), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
@@ -97,6 +127,7 @@ describe("CSA rounds", () => {
         }),
       ),
     );
+    expect(push).toHaveBeenCalledWith(`/csa-rounds/${id}?status=draft&page=2`);
   });
   it("blocks reopening an allocated order", async () => {
     vi.mocked(api).mockResolvedValue({
@@ -162,7 +193,7 @@ it("locks editing when a published round already has a participant", async () =>
     </AdminI18nProvider>,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(/cannot be edited/i);
-  expect(screen.queryByLabelText("Round name")).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Round name" })).not.toBeInTheDocument();
 });
 
 it("reopens with a Vietnam deadline, blocks duplicate submissions and calls refresh", async () => {
@@ -262,7 +293,7 @@ it("uses round editability metadata without fetching participants", async () => 
       <CSARoundEditor roundId={id} />
     </AdminI18nProvider>,
   );
-  await screen.findByLabelText("Round name");
+  await screen.findByRole("textbox", { name: "Round name" });
   expect(api).toHaveBeenCalledTimes(1);
   expect(apiEnvelope).not.toHaveBeenCalled();
 });
@@ -278,11 +309,148 @@ it("translates system reasons in both languages and preserves administrator text
   expect(csaSelectionReason("reselection_expired", id, "vi")).toBe("reselection_expired");
   expect(csaSelectionReason("No harvest", id, "en")).toBe("No harvest");
 });
-it("pages the round list using server totals", async () => {
+it("opens a round through its name and refreshes the current list", async () => {
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } })
+    .mockResolvedValueOnce({
+      data: [{ ...round, name: "Week 1 updated" }],
+      meta: { page: 1, page_size: 20, total: 1 },
+    });
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundList />
+    </AdminI18nProvider>,
+  );
+
+  const name = await screen.findByRole("link", { name: "Week 1" });
+  expect(name).toHaveAttribute("href", `/csa-rounds/${id}`);
+  expect(screen.getByRole("link", { name: "Create round" })).toHaveAttribute(
+    "href",
+    "/csa-rounds/new",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+  expect(await screen.findByRole("link", { name: "Week 1 updated" })).toBeVisible();
+  expect(apiEnvelope).toHaveBeenCalledTimes(2);
+  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=1&page_size=20");
+});
+
+it("applies and clears the status filter from page one and preserves it in round links", async () => {
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce({ data: [round], meta: { page: 2, page_size: 20, total: 21 } })
+    .mockResolvedValueOnce({
+      data: [{ ...round, name: "Open round", status: "open" }],
+      meta: { page: 1, page_size: 20, total: 1 },
+    })
+    .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } });
+  window.history.replaceState(null, "", "/csa-rounds?page=2");
+  try {
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <CSARoundList />
+      </AdminI18nProvider>,
+    );
+
+    await screen.findByRole("link", { name: round.name });
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const filters = within(screen.getByRole("dialog"));
+    selectOption(filters.getByRole("textbox", { name: "Status" }), "open");
+    expect(apiEnvelope).toHaveBeenCalledTimes(1);
+    fireEvent.click(filters.getByRole("button", { name: "Apply" }));
+
+    expect(await screen.findByRole("link", { name: "Open round" })).toHaveAttribute(
+      "href",
+      `/csa-rounds/${id}?status=open`,
+    );
+    expect(screen.getByRole("link", { name: "Create round" })).toHaveAttribute(
+      "href",
+      "/csa-rounds/new?status=open",
+    );
+    expect(apiEnvelope).toHaveBeenLastCalledWith(
+      "admin/csa-rounds?page=1&page_size=20&status=open",
+    );
+    expect(window.location.pathname + window.location.search).toBe("/csa-rounds?status=open");
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter (1)" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Clear filters" }),
+    );
+    expect(await screen.findByRole("link", { name: round.name })).toHaveAttribute(
+      "href",
+      `/csa-rounds/${id}`,
+    );
+    expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=1&page_size=20");
+    expect(window.location.pathname + window.location.search).toBe("/csa-rounds");
+  } finally {
+    window.history.replaceState(null, "", "/");
+  }
+});
+
+it("hides previous results while a different status loads on the same page", async () => {
+  let resolveFiltered!: (value: Awaited<ReturnType<typeof apiEnvelope>>) => void;
+  const pending = new Promise<Awaited<ReturnType<typeof apiEnvelope>>>((resolve) => {
+    resolveFiltered = resolve;
+  });
+  window.history.replaceState(null, "", "/csa-rounds");
+  const meta = { page: 1, page_size: 20, total: 1 };
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce({ data: [round], meta })
+    .mockReturnValueOnce(pending);
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundList />
+    </AdminI18nProvider>,
+  );
+
+  await screen.findByRole("link", { name: round.name });
+  fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+  const filters = within(screen.getByRole("dialog"));
+  selectOption(filters.getByRole("textbox", { name: "Status" }), "open");
+  fireEvent.click(filters.getByRole("button", { name: "Apply" }));
+
+  expect(screen.queryByRole("link", { name: round.name })).not.toBeInTheDocument();
+  resolveFiltered({ data: [{ ...round, name: "Open round", status: "open" }], meta });
+  expect(await screen.findByRole("link", { name: "Open round" })).toBeVisible();
+  window.history.replaceState(null, "", "/");
+});
+
+it("follows the restored filter and page in the browser history", async () => {
+  window.history.pushState(null, "", "/csa-rounds?status=open&page=2");
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce({
+      data: [{ ...round, name: "Open round on page two", status: "open" }],
+      meta: { page: 2, page_size: 20, total: 21 },
+    })
+    .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } });
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundList />
+    </AdminI18nProvider>,
+  );
+
+  expect(await screen.findByRole("link", { name: "Open round on page two" })).toHaveAttribute(
+    "href",
+    `/csa-rounds/${id}?status=open&page=2`,
+  );
+  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=2&page_size=20&status=open");
+
+  act(() => {
+    window.history.pushState(null, "", "/csa-rounds");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(await screen.findByRole("link", { name: round.name })).toHaveAttribute(
+    "href",
+    `/csa-rounds/${id}`,
+  );
+  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=1&page_size=20");
+});
+
+it("pages a filtered round list using server totals and preserves the filter", async () => {
+  window.history.replaceState(null, "", "/csa-rounds?status=draft");
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 21 } })
     .mockResolvedValueOnce({
-      data: [{ ...round, id: "other", name: "Week 2" }],
+      data: [{ ...round, id: "other", name: "Week 2", status: "draft" }],
       meta: { page: 2, page_size: 20, total: 21 },
     });
   render(
@@ -291,9 +459,15 @@ it("pages the round list using server totals", async () => {
     </AdminI18nProvider>,
   );
   await screen.findByText("Week 1");
+  expect(apiEnvelope).toHaveBeenCalledWith("admin/csa-rounds?page=1&page_size=20&status=draft");
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  expect(await screen.findByText("Week 2")).toBeVisible();
-  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=2&page_size=20");
+  expect(await screen.findByRole("link", { name: "Week 2" })).toHaveAttribute(
+    "href",
+    "/csa-rounds/other?status=draft&page=2",
+  );
+  expect(window.location.pathname + window.location.search).toBe("/csa-rounds?status=draft&page=2");
+  window.history.replaceState(null, "", "/");
+  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=2&page_size=20&status=draft");
 });
 
 it.each([
@@ -331,12 +505,12 @@ it("shows the authoritative overlap error when saving a published round", async 
       <CSARoundEditor roundId={id} />
     </AdminI18nProvider>,
   );
-  await screen.findByLabelText("Round name");
+  await screen.findByRole("textbox", { name: "Round name" });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Selection windows overlap a published round.",
   );
-  expect(screen.getByLabelText("Round name")).toHaveValue("Week 1");
+  expect(screen.getByRole("textbox", { name: "Round name" })).toHaveValue("Week 1");
   expect(api).toHaveBeenLastCalledWith(`admin/csa-rounds/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ name: "Week 1", ...dates }),

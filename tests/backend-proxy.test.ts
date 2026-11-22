@@ -791,6 +791,18 @@ describe("admin backend proxy", () => {
     expect(new Headers(upstream.mock.calls[0][1].headers).get("accept-language")).toBe("en");
   });
 
+  it("forwards the status filter and pagination for the CSA round list", async () => {
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const suffix = "admin/csa-rounds?page=2&page_size=20&status=open";
+    const response = await GET(pageRequest(`https://admin.example.test/api/backend/${suffix}`), {
+      params: Promise.resolve({ path: ["admin", "csa-rounds"] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(String(upstream.mock.calls[0][0])).toBe(`https://auth.example.test/api/v1/${suffix}`);
+  });
+
   it.each([
     { path: ["administrative-units", "wards"], search: "" },
     { path: ["administrative-units", "wards"], search: "?province=1" },
@@ -799,6 +811,7 @@ describe("admin backend proxy", () => {
     { path: ["administrative-units", "wards"], search: "?province=01&province=79" },
     { path: ["admin", "users", membershipId], search: "?invited_page=1&invited_page=2" },
     { path: ["admin", "csa-rounds"], search: "?page_size=20&page_size=20" },
+    { path: ["admin", "csa-rounds"], search: "?status=draft&status=open" },
     { path: ["admin", "csa-rounds", membershipId, "selections"], search: "?locale=fr" },
     { path: ["admin", "memberships", membershipId, "history"], search: "?page=1&page=2" },
     { path: ["admin", "membership-usage", membershipId], search: "?locale=en&locale=vi" },
