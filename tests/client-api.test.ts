@@ -160,6 +160,21 @@ it("handles explicit 204 without trying to parse JSON and rejects an unexpected 
   await expect(remove()).rejects.toMatchObject({ message: "invalid_response", status: 200 });
 });
 
+it("accepts a 204 delete response when fetch exposes an empty stream", async () => {
+  const response = new Response(null, { status: 204 });
+  const emptyStream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+    start(controller) {
+      controller.close();
+    },
+  });
+  vi.spyOn(response, "body", "get").mockReturnValue(emptyStream);
+  mockFetch().mockResolvedValue(response);
+
+  await expect(
+    api("admin/csa-round-configurations/fixture", { method: "DELETE" }, { response: "no-content" }),
+  ).resolves.toBeUndefined();
+});
+
 it("rejects a malformed successful mutation response without retrying or losing request headers", async () => {
   const fetcher = mockFetch().mockResolvedValue(
     new Response("{", { status: 201, headers: { "Content-Type": "application/json" } }),
