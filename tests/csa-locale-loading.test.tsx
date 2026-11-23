@@ -33,10 +33,10 @@ it("keeps round list data when switching locale", async () => {
     meta: { page: 1, page_size: 20, total: 0 },
   });
   wrap(<CSARoundList />);
-  await screen.findByText("No CSA rounds yet.");
+  await screen.findByText("No CSA round configurations yet.");
   expect(apiEnvelope).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByText("Switch"));
-  await screen.findByText("Chưa có đợt CSA.");
+  await screen.findByText("Chưa có cấu hình đợt CSA.");
   expect(apiEnvelope).toHaveBeenCalledTimes(1);
 });
 it("keeps loaded history when switching locale", async () => {
@@ -74,7 +74,9 @@ it("refreshes only localized demand and keeps history open on locale change", as
         },
   );
   wrap(<CSARoundDetail roundId="r" />);
-  const details = (await screen.findByText("Selection history")).closest("details")!;
+  fireEvent.click(await screen.findByRole("button", { name: "Member" }));
+  const memberDrawer = await screen.findByRole("dialog", { name: "Member" });
+  const details = within(memberDrawer).getByText("Selection history").closest("details")!;
   details.open = true;
   fireEvent(details, new Event("toggle"));
   await screen.findByText("No history yet.");
@@ -85,7 +87,8 @@ it("refreshes only localized demand and keeps history open on locale change", as
       vi.mocked(apiEnvelope).mock.calls.filter(([p]) => p.includes("/selections?")),
     ).toHaveLength(2),
   );
-  const newDetails = (await screen.findByText("Lịch sử lựa chọn")).closest("details")!;
+  const translatedDrawer = await screen.findByRole("dialog", { name: "Hội viên" });
+  const newDetails = within(translatedDrawer).getByText("Lịch sử lựa chọn").closest("details")!;
   expect(newDetails.open).toBe(true);
   expect(vi.mocked(apiEnvelope).mock.calls.filter(([p]) => p.includes("/events?"))).toHaveLength(1);
   expect(
@@ -207,6 +210,7 @@ it("retains the current locale when a pending mutation completes", async () => {
   await screen.findByText("Nhu cầu Việt");
   await act(async () => finish());
   await waitFor(() => expect(screen.queryByText("English demand")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("tab", { name: "Tổng nhu cầu" }));
   expect(screen.getByText("Nhu cầu Việt")).toBeVisible();
   expect(screen.getByText("Tổng nhu cầu sản phẩm")).toBeVisible();
 });

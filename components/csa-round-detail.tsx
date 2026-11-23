@@ -1,16 +1,21 @@
 "use client";
-import { Button, Divider, Group, Paper, Stack, Table, Text, Textarea, Title } from "@mantine/core";
+import { Anchor, Button, Group, Stack, Text, Textarea } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { roundPageHref } from "@/app/(admin)/csa-rounds/round-navigation";
+import {
+  roundRecordHref,
+  type RoundNavigationContext,
+} from "@/app/(admin)/csa-rounds/round-navigation";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { CSACompanionDelivery } from "@/components/csa-companion-delivery";
 import { CSAReopenDialog } from "@/components/csa-reopen-dialog";
 import { CSARoundBreadcrumbs } from "@/components/csa-round-breadcrumbs";
-import { CSASelectionHistory } from "@/components/csa-selection-history";
-import { Pagination } from "@/components/pagination";
-import { DetailPageHeading } from "@/components/detail-page-heading";
+import { CSARoundDemand } from "@/components/csa-round-demand";
+import { CSARoundDetailTabs } from "@/components/csa-round-detail-tabs";
+import { CSARoundParticipants } from "@/components/csa-round-participants";
+import { ListToolbar } from "@/components/list-toolbar";
+import { PageHeading } from "@/components/page-heading";
 import { DataState, Section, Status } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -18,37 +23,40 @@ import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
-  formatCsaQuantity,
+  cancelRound,
   getRound,
   getRoundParticipants,
-  type CSARound,
-  type CSARoundStatus,
+  type AdminCSARound,
+  type CSAConfigurationStatus,
   type CSASelection,
   type RoundParticipants,
 } from "@/lib/csa-rounds";
 import { csaRoundError, csaRoundsCopy } from "@/lib/csa-rounds-copy";
-import styles from "./csa-rounds.module.css";
 
 export function CSARoundDetail({
-  roundId,
+  roundId: requestedRoundId,
   listPage = 1,
   listStatus,
+  listContext,
 }: {
   roundId: string;
   listPage?: number;
-  listStatus?: CSARoundStatus | "";
+  listStatus?: CSAConfigurationStatus | "";
+  listContext?: RoundNavigationContext;
 }) {
+  const roundId = requestedRoundId.toLowerCase();
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
-  const [round, setRound] = useState<CSARound | null>(null);
-  const [participants, setParticipants] = useState<RoundParticipants>({
-    data: [],
-    demand: [],
-    meta: { page: 1, page_size: 20, total: 0 },
-  });
+  const [round, setRound] = useState<AdminCSARound | null>(null);
+  const [participants, setParticipants] = useState<{
+    roundId: string;
+    data: RoundParticipants;
+  } | null>(null);
   const [page, setPage] = useState(1);
+  const membersResults = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [participantError, setParticipantError] = useState<unknown>(null);
   const [action, setAction] = useState<"publish" | "cancel" | null>(null);
   const [reason, setReason] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
@@ -62,35 +70,53 @@ export function CSARoundDetail({
   currentRoundId.current = roundId;
   const [reopen, setReopen] = useState<CSASelection | null>(null);
   const requests = useRef(0);
-  const roundSnapshot = useRef<{ round: CSARound; page: number; receivedAt: number } | null>(null);
+  const roundSnapshot = useRef<{ round: AdminCSARound; page: number; receivedAt: number } | null>(
+    null,
+  );
+  const activeRead = useRef<AbortController | null>(null);
   const load = useCallback(
     async (refreshRound = true) => {
       if (refreshRound) {
         roundSnapshot.current = null;
         setCompanionRefresh((value) => value + 1);
       }
+      activeRead.current?.abort();
+      const controller = new AbortController();
+      activeRead.current = controller;
+      const { signal } = controller;
       const current = ++requests.current;
+      const isCurrent = () => !signal.aborted && current === requests.current;
       setLoading(true);
       setError(null);
-      try {
-        const cached = roundSnapshot.current;
-        const reuseRound = !refreshRound && cached?.round.id === roundId && cached.page === page;
-        const [result, people] = await Promise.all([
-          reuseRound && cached
-            ? { item: cached.round, receivedAt: cached.receivedAt }
-            : getRound(roundId).then((item) => ({ item, receivedAt: performance.now() })),
-          getRoundParticipants(roundId, page, 20, locale),
-        ]);
-        if (current === requests.current) {
-          roundSnapshot.current = { round: result.item, page, receivedAt: result.receivedAt };
-          roundReceivedAt.current = result.receivedAt;
-          setRound(result.item);
-          setParticipants(people);
-        }
-      } catch (e) {
-        if (current === requests.current) setError(e);
-      } finally {
-        if (current === requests.current) setLoading(false);
+      setParticipantError(null);
+
+      const cached = roundSnapshot.current;
+      const reuseRound = !refreshRound && cached?.round.id === roundId && cached.page === page;
+      const roundRead = reuseRound
+        ? Promise.resolve()
+        : getRound(roundId, signal)
+            .then((item) => {
+              if (!isCurrent()) return;
+              const receivedAt = performance.now();
+              roundSnapshot.current = { round: item, page, receivedAt };
+              roundReceivedAt.current = receivedAt;
+              setRound(item);
+            })
+            .catch((caught: unknown) => {
+              if (isCurrent()) setError(caught);
+            });
+      const participantsRead = getRoundParticipants(roundId, page, 20, locale, signal)
+        .then((data) => {
+          if (isCurrent()) setParticipants({ roundId, data });
+        })
+        .catch((caught: unknown) => {
+          if (isCurrent()) setParticipantError(caught);
+        });
+
+      await Promise.all([roundRead, participantsRead]);
+      if (isCurrent()) {
+        activeRead.current = null;
+        setLoading(false);
       }
     },
     [roundId, page, locale],
@@ -100,11 +126,9 @@ export function CSARoundDetail({
     loadRef.current = load;
   }, [load]);
   useEffect(() => {
-    const counter = requests;
+    const currentRead = activeRead;
     void load(false);
-    return () => {
-      counter.current++;
-    };
+    return () => currentRead.current?.abort();
   }, [load]);
   useEffect(() => {
     mounted.current = true;
@@ -130,10 +154,8 @@ export function CSARoundDetail({
     setBusy(true);
     setActionError(null);
     try {
-      await api(`admin/csa-rounds/${round.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify(action === "cancel" ? { reason: reason.trim() } : {}),
-      });
+      if (action === "cancel") await cancelRound(round.id, reason);
+      else await api(`admin/csa-rounds/${round.id}/publish`, { method: "POST", body: "{}" });
       if (!mounted.current || identity !== currentRoundId.current) return;
       setAction(null);
       await loadRef.current();
@@ -144,19 +166,21 @@ export function CSARoundDetail({
       if (mounted.current) setBusy(false);
     }
   }
+  const recurrence = round?.id === roundId ? round.recurrence : null;
   const breadcrumbs = (
-    <CSARoundBreadcrumbs roundId={roundId} listPage={listPage} listStatus={listStatus} />
+    <CSARoundBreadcrumbs
+      roundId={requestedRoundId}
+      round={round?.id === roundId ? round : undefined}
+      listPage={listPage}
+      listStatus={listStatus}
+      listContext={listContext}
+    />
   );
   if (!round || round.id !== roundId)
     return (
       <Stack gap="md" miw={0}>
         {breadcrumbs}
-        <DetailPageHeading
-          bottomSpacing={0}
-          backHref={roundPageHref("/csa-rounds", listPage, listStatus)}
-          backLabel={c.back}
-          title={c.title}
-        />
+        <PageHeading title={t.breadcrumb.roundDetails} visuallyHiddenTitle />
         {error ? (
           <RecoveryAlert
             message={requestErrorMessage(error, t)}
@@ -168,16 +192,41 @@ export function CSARoundDetail({
         )}
       </Stack>
     );
+
+  const originalRound = recurrence?.root_round_id === round.id;
+  const linkToRound = (id: string, action?: "edit") =>
+    roundRecordHref(
+      id,
+      listContext ?? { page: listPage, status: listStatus },
+      round.configuration_id,
+      action,
+    );
   const disabled = loading || Boolean(error) || busy || companionBusy;
+  const canEdit = !disabled && round.can_edit;
+  const draft = round.status === "draft";
+  function refreshRound() {
+    // The current request owns loading even if a locale change replaces an in-flight refresh.
+    void load();
+  }
+  const refreshToolbar = (
+    <ListToolbar
+      busy={loading || busy || companionBusy}
+      refresh={{ label: c.refresh, onRefresh: refreshRound, loading }}
+    />
+  );
+  const matchingResult = participants?.roundId === roundId ? participants.data : null;
+  const currentPage = matchingResult?.meta.page === page ? matchingResult : null;
+  const participantRecovery = Boolean(participantError) && (
+    <RecoveryAlert
+      message={requestErrorMessage(participantError, t)}
+      retryLabel={t.common.retry}
+      onRetry={() => void load(false)}
+    />
+  );
   return (
-    <Stack gap="md" miw={0}>
+    <Stack gap="md" miw={0} style={{ overflowWrap: "anywhere" }}>
       {breadcrumbs}
-      <DetailPageHeading
-        bottomSpacing={0}
-        backHref={roundPageHref("/csa-rounds", listPage, listStatus)}
-        backLabel={c.back}
-        title={round.name}
-      />
+      <PageHeading title={t.breadcrumb.roundDetails} visuallyHiddenTitle />
       {Boolean(error) && (
         <RecoveryAlert
           message={requestErrorMessage(error, t)}
@@ -185,206 +234,163 @@ export function CSARoundDetail({
           onRetry={() => void load()}
         />
       )}
-      <Paper component="section" withBorder p="md" aria-label={c.scheduleTitle}>
-        <Stack gap="md">
-          <Group justify="space-between" gap="sm">
-            <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
-            <Group gap="xs">
+      <Group justify="space-between" gap="md">
+        <Group gap="md">
+          <Text size="sm" fw={600}>
+            {round.name}
+          </Text>
+          <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
+          <Text size="sm">
+            {c.deliveryDate}{" "}
+            <Text component="time" dateTime={round.delivery_date} fw={600}>
+              {formatAdminDate(round.delivery_date)}
+            </Text>
+          </Text>
+          <Text size="sm">
+            {c.closes}{" "}
+            <Text component="time" dateTime={round.closes_at} fw={600}>
+              {formatAdminDateTime(round.closes_at)}
+            </Text>
+          </Text>
+        </Group>
+        {(canEdit || draft) && (
+          <Group gap="sm" ms="auto">
+            {canEdit && (
               <Button
+                component={AdminNavigationLink}
                 variant="default"
-                disabled={loading || busy || companionBusy}
-                onClick={() => void load()}
+                href={linkToRound(round.id, "edit")}
               >
-                {c.refresh}
+                {c.edit}
               </Button>
-              {!disabled && round.status !== "cancelled" && participants.meta.total === 0 && (
-                <Button
-                  component={AdminNavigationLink}
-                  variant="default"
-                  href={roundPageHref(
-                    `/csa-rounds/${encodeURIComponent(round.id)}/edit`,
-                    listPage,
-                    listStatus,
-                  )}
-                >
-                  {c.edit}
-                </Button>
-              )}
-              {round.status === "draft" && (
-                <Button
-                  disabled={disabled}
-                  onClick={() => {
-                    setActionError(null);
-                    setAction("publish");
-                  }}
-                >
-                  {c.publish}
-                </Button>
-              )}
-            </Group>
+            )}
+            {draft && (
+              <Button
+                disabled={disabled}
+                onClick={() => {
+                  setActionError(null);
+                  setAction("publish");
+                }}
+              >
+                {c.publish}
+              </Button>
+            )}
           </Group>
-          <Divider />
-          <RecordDetailFields>
-            <RecordDetailField label={c.opens}>
-              <time dateTime={round.opens_at}>{formatAdminDateTime(round.opens_at)}</time>
-            </RecordDetailField>
-            <RecordDetailField label={c.closes}>
-              <time dateTime={round.closes_at}>{formatAdminDateTime(round.closes_at)}</time>
-            </RecordDetailField>
-            <RecordDetailField label={c.delivery}>
-              <time dateTime={round.delivery_date}>{formatAdminDate(round.delivery_date)}</time>
-            </RecordDetailField>
-          </RecordDetailFields>
-        </Stack>
-      </Paper>
+        )}
+      </Group>
       {round.status === "cancelled" && round.cancellation_reason && (
         <Section title={c.reason}>
-          <Text size="sm" style={{ overflowWrap: "anywhere" }}>
-            {round.cancellation_reason}
-          </Text>
+          <Text size="sm">{round.cancellation_reason}</Text>
         </Section>
       )}
-      <CSACompanionDelivery
-        round={round}
-        receivedAt={roundReceivedAt.current}
-        refreshKey={companionRefresh}
-        disabled={loading || Boolean(error) || busy}
-        onBusyChange={setCompanionBusy}
-      />
-      <Section title={c.demand}>
-        {participants.demand.length ? (
-          <Table.ScrollContainer
-            minWidth={360}
-            type="native"
-            role="region"
-            aria-label={c.demand}
-            tabIndex={0}
-          >
-            <Table withRowBorders>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th scope="col">{c.product}</Table.Th>
-                  <Table.Th scope="col" ta="right">
-                    {c.quantity}
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {participants.demand.map((row) => (
-                  <Table.Tr key={row.product_id}>
-                    <Table.Td>{row.name}</Table.Td>
-                    <Table.Td ta="right">{formatCsaQuantity(row, locale)}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        ) : (
-          <DataState kind="empty" title={c.emptyDemand} />
-        )}
-      </Section>
-      <Section title={c.participants}>
-        {participants.data.length ? (
-          <Stack gap="sm">
-            {participants.data.map((person) => (
-              <Paper
-                component="article"
-                withBorder
-                p="md"
-                className={styles.person}
-                key={person.id}
-              >
-                <div className={styles.personHeader}>
-                  <Title order={3} size="sm">
-                    {person.customer_name || c.customer}
-                  </Title>
-                  <Status
-                    domain="csa-selection"
-                    status={person.state}
-                    label={c.states[person.state]}
-                  />
-                </div>
-                {person.lines.length ? (
-                  <ul className={styles.personProducts}>
-                    {person.lines.map((line) => (
-                      <li key={line.product_id}>
-                        <span>{line.name}</span> <span>{formatCsaQuantity(line, locale)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className={styles.personEmpty}>{c.emptyLines}</p>
-                )}
-                {person.reopen_until && (
-                  <p className={styles.personDeadline}>
-                    <span>{c.deadline}</span>
-                    <time dateTime={person.reopen_until}>
-                      {formatAdminDateTime(person.reopen_until)}
-                    </time>
-                  </p>
-                )}
-                {person.order_id && (
-                  <div className={styles.personActions}>
-                    <Button
-                      component={AdminNavigationLink}
-                      size="xs"
-                      variant="subtle"
-                      href={`/store-orders/${encodeURIComponent(person.order_id)}`}
-                    >
-                      {c.order}
-                    </Button>
-                    {["locked", "confirmed", "reselecting"].includes(person.state) &&
-                      round.status !== "cancelled" && (
-                        <Button
-                          size="xs"
-                          disabled={disabled}
-                          variant="default"
-                          onClick={() => setReopen(person)}
-                        >
-                          {c.reopen}
-                        </Button>
-                      )}
-                  </div>
-                )}
-                <CSASelectionHistory
-                  key={person.id}
-                  selectionId={person.id}
-                  refreshToken={`${person.revision}:${person.state}`}
-                />
-              </Paper>
-            ))}
+      <CSARoundDetailTabs
+        key={round.id}
+        status={round.status}
+        participants={
+          <Stack gap="sm" ref={membersResults} role="group" aria-label={c.membersTab} tabIndex={-1}>
+            {participantRecovery}
+            {currentPage ? (
+              <CSARoundParticipants
+                key={`${round.id}:${page}`}
+                round={round}
+                result={currentPage}
+                disabled={disabled || Boolean(participantError)}
+                refreshKey={companionRefresh}
+                onPage={(next) => {
+                  membersResults.current?.focus({ preventScroll: true });
+                  setPage(next);
+                }}
+                onRefresh={refreshRound}
+                onReopen={setReopen}
+                reopenOpen={Boolean(reopen)}
+              />
+            ) : loading ? (
+              <DataState kind="loading" title={c.loading} />
+            ) : null}
           </Stack>
-        ) : (
-          <DataState kind="empty" title={c.emptyParticipants} />
-        )}
-      </Section>
-      <Pagination
-        controls="nfv"
-        page={participants.meta.page}
-        pageSize={participants.meta.page_size}
-        total={participants.meta.total}
-        onPage={setPage}
-        disabled={disabled}
-        previousLabel={t.common.previous}
-        nextLabel={t.common.next}
-        summary={t.common.pagination}
+        }
+        demand={
+          <Stack gap="sm">
+            {refreshToolbar}
+            {participantRecovery}
+            {matchingResult ? (
+              <CSARoundDemand demand={matchingResult.demand} />
+            ) : loading ? (
+              <DataState kind="loading" title={c.loading} />
+            ) : null}
+          </Stack>
+        }
+        settings={
+          <Stack gap="md">
+            {refreshToolbar}
+            <Section title={c.scheduleTitle}>
+              <RecordDetailFields>
+                <RecordDetailField label={c.opens}>
+                  <time dateTime={round.opens_at}>{formatAdminDateTime(round.opens_at)}</time>
+                </RecordDetailField>
+                <RecordDetailField label={c.closes}>
+                  <time dateTime={round.closes_at}>{formatAdminDateTime(round.closes_at)}</time>
+                </RecordDetailField>
+                <RecordDetailField label={c.delivery}>
+                  <time dateTime={round.delivery_date}>{formatAdminDate(round.delivery_date)}</time>
+                </RecordDetailField>
+                <RecordDetailField label={c.configurationTypeTitle}>
+                  {recurrence ? c.recurrence.weekly : c.standalone}
+                </RecordDetailField>
+              </RecordDetailFields>
+            </Section>
+            <CSACompanionDelivery
+              round={round}
+              receivedAt={roundReceivedAt.current}
+              refreshKey={companionRefresh}
+              disabled={Boolean(error) || busy}
+              onBusyChange={setCompanionBusy}
+            />
+            {recurrence && (
+              <Section title={c.recurrence.title}>
+                <RecordDetailFields>
+                  <RecordDetailField label={c.recurrence.source}>
+                    <Stack gap="xs">
+                      <Text size="sm">
+                        {originalRound
+                          ? c.recurrence.initialOccurrence
+                          : c.recurrence.generatedOccurrence}
+                      </Text>
+                      {!originalRound && (
+                        <Anchor
+                          component={AdminNavigationLink}
+                          href={linkToRound(recurrence.root_round_id)}
+                          size="sm"
+                        >
+                          {c.recurrence.viewRoot}
+                        </Anchor>
+                      )}
+                    </Stack>
+                  </RecordDetailField>
+                </RecordDetailFields>
+              </Section>
+            )}
+            {round.status !== "cancelled" && (
+              <Section title={c.cancelRound}>
+                <Group>
+                  <Button
+                    color="red"
+                    variant="subtle"
+                    disabled={disabled}
+                    onClick={() => {
+                      setActionError(null);
+                      setReason("");
+                      setAction("cancel");
+                    }}
+                  >
+                    {c.cancelRound}
+                  </Button>
+                </Group>
+              </Section>
+            )}
+          </Stack>
+        }
       />
-      {round.status !== "cancelled" && (
-        <Group className={styles.cancelAction} justify="flex-end">
-          <Button
-            color="red"
-            variant="subtle"
-            disabled={disabled}
-            onClick={() => {
-              setActionError(null);
-              setReason("");
-              setAction("cancel");
-            }}
-          >
-            {c.cancelRound}
-          </Button>
-        </Group>
-      )}
       {action && (
         <ConfirmationDialog
           title={action === "publish" ? c.publish : c.cancelRound}
@@ -403,6 +409,9 @@ export function CSARoundDetail({
           onCancel={() => setAction(null)}
           onConfirm={() => void mutate()}
         >
+          <Text size="sm" fw={600}>
+            {round.name} · {formatAdminDate(round.delivery_date)}
+          </Text>
           <Text size="sm">{action === "publish" ? c.publishBody : c.cancelBody}</Text>
           {action === "cancel" && (
             <Textarea

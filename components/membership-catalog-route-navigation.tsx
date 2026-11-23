@@ -19,10 +19,12 @@ export function MembershipCatalogBreadcrumbs({
   resource,
   id,
   action,
+  recordLabel,
 }: {
   resource: CatalogResource;
   id: string;
   action?: "edit";
+  recordLabel?: string;
 }) {
   const { t } = useAdminI18n();
   const search = useSearchParams()?.toString();
@@ -33,10 +35,11 @@ export function MembershipCatalogBreadcrumbs({
     const catalogItem = adminNavigation(t)
       .find((section) => section.key === "csa")
       ?.items.find((item) => item.href === listPath);
-    return resolveAdminBreadcrumbs(pathname, catalogItem, t).map((item) =>
-      item.href ? { ...item, href: withCatalogListContext(item.href, context) } : item,
-    );
-  }, [listPath, pathname, search, t]);
+    return resolveAdminBreadcrumbs(pathname, catalogItem, t).map((item, index, items) => {
+      if (item.href) return { ...item, href: withCatalogListContext(item.href, context) };
+      return recordLabel && index === items.length - 1 ? { ...item, label: recordLabel } : item;
+    });
+  }, [listPath, pathname, recordLabel, search, t]);
 
   return <AdminBreadcrumbForRoute pathname={pathname} search={search} items={items} />;
 }

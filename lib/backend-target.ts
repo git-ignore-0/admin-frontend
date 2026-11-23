@@ -42,8 +42,19 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   if (path[0] !== "admin") return false;
 
   const [, resource, id, action, extra] = path;
-  if (resource === "csa-rounds") {
+  if (resource === "csa-round-configurations") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    if (action === undefined)
+      return path.length === 3 && ["GET", "PATCH", "DELETE"].includes(normalizedMethod);
+    return (
+      path.length === 4 &&
+      ((action === "rounds" && normalizedMethod === "GET") ||
+        (["publish", "stop"].includes(action) && normalizedMethod === "POST"))
+    );
+  }
+  if (resource === "csa-rounds") {
+    if (id === undefined) return path.length === 2 && normalizedMethod === "GET";
     if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined)
       return path.length === 3 && ["GET", "PATCH"].includes(normalizedMethod);

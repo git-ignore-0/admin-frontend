@@ -72,6 +72,19 @@ describe("foundation breadcrumbs", () => {
     ]);
   });
 
+  it("shows the CSA configuration list while a record name is loading", () => {
+    expect(breadcrumbs("/csa-rounds/configurations/record-uuid", "vi")).toEqual([
+      { label: "Cấu hình đợt CSA", href: "/csa-rounds" },
+    ]);
+    expect(breadcrumbs("/csa-rounds/record-uuid", "vi")).toEqual([
+      { label: "Cấu hình đợt CSA", href: "/csa-rounds" },
+    ]);
+    expect(breadcrumbs("/csa-rounds/new", "vi")).toEqual([
+      { label: "Cấu hình đợt CSA", href: "/csa-rounds" },
+      { label: "Tạo cấu hình" },
+    ]);
+  });
+
   it("links to the real record detail from a directly entered edit screen", () => {
     expect(breadcrumbs("/store-catalog/products/record-uuid/edit", "vi")).toEqual([
       { label: "Sản phẩm", href: "/store-catalog/products" },

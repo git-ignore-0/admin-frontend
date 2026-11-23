@@ -82,6 +82,7 @@ export type CSACustomer = MembershipCustomer & {
   province_code: string | null;
   ward_code: string | null;
   address: string;
+  note?: string;
   created_at: string;
   updated_at: string;
   current_membership: CSAMembershipSummary | null;

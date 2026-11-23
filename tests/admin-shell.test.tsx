@@ -663,7 +663,10 @@ describe("admin sidebar navigation", () => {
     const users = screen.getByRole("link", { name: "Users" });
     expect(users).toHaveAttribute("href", "/users");
     expect(users.querySelector("svg")).toHaveClass("tabler-icon-users");
-    expect(screen.getByRole("link", { name: "CSA rounds" })).toHaveAttribute("href", "/csa-rounds");
+    expect(screen.getByRole("link", { name: "CSA round configurations" })).toHaveAttribute(
+      "href",
+      "/csa-rounds",
+    );
     expect(screen.getByRole("link", { name: "Payment settings" })).toHaveAttribute(
       "href",
       "/membership-payment-settings",

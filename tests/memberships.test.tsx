@@ -335,15 +335,29 @@ describe.each([
     vi.mocked(api).mockResolvedValue(record);
     renderPage(recordPath, await DetailPage({ params: Promise.resolve({ id: record.id }) }));
 
-    expect(await screen.findByRole("link", { name: backToList })).toHaveAttribute(
-      "href",
-      `${listPath}${query}`,
-    );
-    expect(screen.getByRole("link", { name: edit })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: edit })).toHaveAttribute(
       "href",
       `${recordPath}/edit${query}`,
     );
     expect(breadcrumb(listLabel)).toHaveAttribute("href", `${listPath}${query}`);
+    if (resource === "packages") {
+      const header = within(screen.getByRole("navigation", { name: "Breadcrumb" }));
+      expect(header.getByText(record.name)).toBeVisible();
+      expect(screen.queryByRole("link", { name: backToList })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: record.name, level: 1 })).toHaveClass(
+        "mantine-VisuallyHidden-root",
+      );
+      const table = screen.getByRole("table", { name: "Package components / allowances" });
+      const card = table.closest(".mantine-Paper-root");
+      expect(card).not.toBeNull();
+      expect(card?.parentElement?.closest(".mantine-Paper-root")).toBeNull();
+      expect(within(table).getByText("Vegetable basket")).toBeVisible();
+    } else {
+      expect(screen.getByRole("link", { name: backToList })).toHaveAttribute(
+        "href",
+        `${listPath}${query}`,
+      );
+    }
   });
 
   it("returns to the filtered list from the create heading, breadcrumb and Cancel", async () => {
@@ -665,8 +679,15 @@ describe("CSA package price options", () => {
     list.unmount();
     vi.mocked(api).mockResolvedValue(packageItem);
     providers(<MembershipPackageDetail packageId={packageItem.id} />);
-    expect(await screen.findByRole("heading", { name: "Inactive history" })).toBeInTheDocument();
-    expect(screen.getByText("₫4,614,000")).toBeInTheDocument();
+    const active = await screen.findByRole("table", { name: "Active options" });
+    const history = screen.getByRole("table", { name: "Inactive history" });
+    expect(within(active).getByText("₫4,500,000")).toBeVisible();
+    expect(within(history).getByText("₫4,614,000")).toBeVisible();
+    for (const table of [active, history]) {
+      const card = table.closest(".mantine-Paper-root");
+      expect(card).not.toBeNull();
+      expect(card?.parentElement?.closest(".mantine-Paper-root")).toBeNull();
+    }
   });
 
   it("keeps package detail limited to price options without payment-plan requests", async () => {

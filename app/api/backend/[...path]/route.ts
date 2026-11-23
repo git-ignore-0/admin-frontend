@@ -48,6 +48,33 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
   const [, resource, id, action, extra] = path;
+  if (resource === "csa-round-configurations") {
+    const isCollection = id === undefined;
+    if (request.method !== "GET" || (!isCollection && action !== "rounds")) return params.size > 0;
+    const allowed = new Set(["page", "page_size", "status"]);
+    if (isCollection) allowed.add("type");
+    else {
+      allowed.add("generated_only");
+      allowed.add("search");
+    }
+    const invalidPage = (key: string, maximum: number) => {
+      const value = params.get(key);
+      return value !== null && (!/^[1-9]\d*$/u.test(value) || Number(value) > maximum);
+    };
+    const statuses = isCollection
+      ? ["draft", "published", "cancelled"]
+      : ["draft", "scheduled", "open", "closed", "delivery", "cancelled"];
+    return (
+      [...params.keys()].some((key) => !allowed.has(key) || params.getAll(key).length !== 1) ||
+      invalidPage("page", 10_000) ||
+      invalidPage("page_size", 100) ||
+      (params.has("status") && !statuses.includes(params.get("status") ?? "")) ||
+      (params.has("type") && !["standalone", "weekly"].includes(params.get("type") ?? "")) ||
+      (params.has("generated_only") &&
+        !["true", "false"].includes(params.get("generated_only") ?? "")) ||
+      Array.from(params.get("search") ?? "").length > 200
+    );
+  }
   if (resource === "users") {
     if (request.method === "POST") return action !== "points" && params.size > 0;
     if (action === "points") return hasDuplicateQuery(params, "page");

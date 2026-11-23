@@ -1,6 +1,6 @@
 import { isoDateToAdminInput, membershipLastReceiptDate } from "@/lib/admin-date";
 import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
-import type { PaginationMeta } from "@/lib/types";
+import type { PaginationMeta, StoreOrder } from "@/lib/types";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import { formatMembershipUnits } from "@/lib/membership-format";
@@ -30,7 +30,38 @@ export type CSARound = {
   cancellation_reason?: string | null;
   cancelled_by_id?: string | null;
 };
-export type AdminCSARound = CSARound & { can_edit: boolean };
+export type CSARecurrenceMode = "draft" | "auto";
+export type CSARecurrenceStatus = "pending" | "active" | "stopped";
+export type CSARecurrence = {
+  root_round_id: string;
+  configuration_name?: string;
+  mode: CSARecurrenceMode;
+  status: CSARecurrenceStatus;
+  next_create_at: string | null;
+  occurrence_count: number;
+};
+export type AdminCSARound = CSARound & {
+  can_edit: boolean;
+  recurrence: CSARecurrence | null;
+  configuration_id: string;
+  configuration_name: string;
+};
+export type CSARoundConfigurationType = "standalone" | "weekly";
+export const csaConfigurationStatuses = ["draft", "published", "cancelled"] as const;
+export type CSAConfigurationStatus = (typeof csaConfigurationStatuses)[number];
+export type CSARoundConfigurationSummary = {
+  id: string;
+  name: string;
+  type: CSARoundConfigurationType;
+  status: CSAConfigurationStatus;
+  created_at: string;
+};
+export type CSARoundConfiguration = CSARoundConfigurationSummary &
+  RoundDates & {
+    recurrence_mode: CSARecurrenceMode | null;
+    published_at: string | null;
+  };
+export type CSARoundOccurrence = AdminCSARound & { participant_count: number };
 export type CSASelection = {
   id: string;
   round_id: string;
@@ -95,21 +126,116 @@ export function validateRoundDates(dates: RoundDates) {
   const a = Date.parse(dates.opens_at),
     b = Date.parse(dates.closes_at),
     c = csaDeliveryStartMs(dates.delivery_date);
-  // Cross-round scheduling is authoritative on the backend at publication.
   return ![a, b, c].every(Number.isFinite) || !(a < b && b < c) ? "schedule" : null;
 }
 export function validateReopenDeadline(deadline: string, deliveryDate: string, serverNow: number) {
   const end = Date.parse(deadline);
   return Number.isFinite(end) && serverNow < end && end < csaDeliveryStartMs(deliveryDate);
 }
-export async function getRounds(page = 1, pageSize = 20, status?: CSARoundStatus) {
+
+export function csaOrderReopenUntil(order: StoreOrder, selectionId: string, deliveryDate: string) {
+  const selected = order.csa?.selection;
+  if (
+    order.status !== "pending_review" ||
+    order.approved_at ||
+    order.csa?.round.status === "cancelled" ||
+    selected?.id !== selectionId ||
+    !["locked", "confirmed", "reselecting"].includes(selected.state)
+  ) {
+    return null;
+  }
+  const until = Math.min(
+    csaDeliveryStartMs(order.csa?.round.delivery_date ?? deliveryDate),
+    selected.state === "reselecting" ? Date.parse(selected.reopen_until ?? "") : Infinity,
+  );
+  return Date.parse(order.server_time) < until ? until : null;
+}
+export function getRound(id: string, signal?: AbortSignal) {
+  return api<AdminCSARound>(`admin/csa-rounds/${id}`, { signal });
+}
+
+export function cancelRound(id: string, reason: string) {
+  return api<AdminCSARound>(`admin/csa-rounds/${id}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason.trim() }),
+  });
+}
+
+const configurationEndpoint = "admin/csa-round-configurations";
+
+export function csaRoundConfigurationKey(id: string) {
+  return ["csa-round-configurations", id.toLowerCase()] as const;
+}
+
+export async function getRoundConfigurations(
+  page = 1,
+  pageSize = 20,
+  type?: CSARoundConfigurationType,
+  status?: CSAConfigurationStatus,
+  signal?: AbortSignal,
+) {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (type) query.set("type", type);
   if (status) query.set("status", status);
-  const payload = await apiEnvelope<CSARound[], PaginationMeta>(`admin/csa-rounds?${query}`);
+  const payload = await apiEnvelope<CSARoundConfigurationSummary[], PaginationMeta>(
+    `${configurationEndpoint}?${query}`,
+    { signal },
+  );
   return requirePaginatedList(payload, requireResponseEntity);
 }
-export function getRound(id: string) {
-  return api<AdminCSARound>(`admin/csa-rounds/${id}`);
+
+export function getRoundConfiguration(rootId: string, signal?: AbortSignal) {
+  return api<CSARoundConfiguration>(`${configurationEndpoint}/${encodeURIComponent(rootId)}`, {
+    signal,
+  }).then(requireResponseEntity);
+}
+
+export async function getRoundOccurrences(
+  rootId: string,
+  { page, status, search }: { page: number; status: CSARoundStatus | ""; search: string },
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ page: String(page), page_size: "20" });
+  if (status) query.set("status", status);
+  if (search) query.set("search", search);
+  const payload = await apiEnvelope<CSARoundOccurrence[], PaginationMeta>(
+    `${configurationEndpoint}/${encodeURIComponent(rootId)}/rounds?${query}`,
+    { signal },
+  );
+  return requirePaginatedList(payload, requireResponseEntity);
+}
+
+export function mutateRoundConfiguration(id: string, action: "publish" | "stop") {
+  return api<CSARoundConfiguration>(
+    `${configurationEndpoint}/${encodeURIComponent(id)}/${action}`,
+    {
+      method: "POST",
+      body: "{}",
+    },
+  ).then(requireResponseEntity);
+}
+
+export function deleteRoundConfiguration(id: string) {
+  return api(
+    `${configurationEndpoint}/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    {
+      response: "no-content",
+    },
+  );
+}
+
+export function saveRoundConfiguration(
+  body: RoundDates & { name: string; recurrence_mode: CSARecurrenceMode | null },
+  id?: string,
+) {
+  return api<CSARoundConfiguration>(
+    id ? `${configurationEndpoint}/${encodeURIComponent(id)}` : configurationEndpoint,
+    {
+      method: id ? "PATCH" : "POST",
+      body: JSON.stringify(body),
+    },
+  ).then(requireResponseEntity);
 }
 
 function isCsaProductQuantity(value: unknown): value is RoundParticipants["demand"][number] {
@@ -136,10 +262,12 @@ export async function getRoundParticipants(
   page = 1,
   pageSize = 20,
   locale = "vi",
+  signal?: AbortSignal,
 ): Promise<RoundParticipants> {
-  const payload = await apiEnvelope<CSASelection[], PaginationMeta>(
-    `admin/csa-rounds/${id}/selections?page=${page}&page_size=${pageSize}&locale=${locale}`,
-  );
+  const path = `admin/csa-rounds/${id}/selections?page=${page}&page_size=${pageSize}&locale=${locale}`;
+  const payload = signal
+    ? await apiEnvelope<CSASelection[], PaginationMeta>(path, { signal })
+    : await apiEnvelope<CSASelection[], PaginationMeta>(path);
   const pageResult = requirePaginatedList(payload);
   if (
     !hasRoundDemand(pageResult) ||
@@ -165,9 +293,9 @@ export async function getSelectionEvents(id: string, page = 1) {
     }
   });
 }
-export function saveRound(body: RoundDates & { name: string }, id?: string) {
-  return api<CSARound>(id ? `admin/csa-rounds/${id}` : "admin/csa-rounds", {
-    method: id ? "PATCH" : "POST",
+export function saveRound(body: RoundDates & { name: string }, id: string) {
+  return api<AdminCSARound>(`admin/csa-rounds/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     body: JSON.stringify(body),
   }).then(requireResponseEntity);
 }

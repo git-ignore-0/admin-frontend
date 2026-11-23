@@ -1,5 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
+import { AdminHeaderContent } from "@/components/admin-header";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSARoundEditor } from "@/components/csa-round-editor";
 import { CSARoundList } from "@/components/csa-round-list";
@@ -30,11 +35,15 @@ vi.mock("next/navigation", async () => {
 });
 beforeEach(() => {
   window.history.replaceState(null, "", "/csa-rounds");
-  const replace = window.history.replaceState.bind(window.history);
-  vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
-    replace(data, unused, url);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
+  for (const method of ["pushState", "replaceState"] as const) {
+    const change = window.history[method].bind(window.history);
+    vi.spyOn(window.history, method).mockImplementation(
+      (data, unused, url?: string | URL | null) => {
+        change(data, unused, url);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      },
+    );
+  }
 });
 afterEach(() => {
   cleanup();
@@ -48,13 +57,14 @@ const dates = {
   delivery_date: "2026-11-22",
 };
 
+function Header() {
+  return <AdminHeaderContent items={useAdminBreadcrumbs([])} />;
+}
+
 describe("CSA rounds", () => {
   it("allows only exact implemented BFF routes", () => {
     for (const [path, methods] of [
-      [
-        ["admin", "csa-rounds"],
-        ["GET", "POST"],
-      ],
+      [["admin", "csa-rounds"], ["GET"]],
       [
         ["admin", "csa-rounds", id],
         ["GET", "PATCH"],
@@ -73,7 +83,7 @@ describe("CSA rounds", () => {
       false,
     );
   });
-  it("validates opening, closing and the delivery day locally and leaves cross-round checks to publication", () => {
+  it("validates opening, closing and the delivery day of a single round", () => {
     expect(validateRoundDates(dates)).toBeNull();
     expect(validateRoundDates({ ...dates, closes_at: dates.opens_at })).toBe("schedule");
     expect(validateRoundDates({ ...dates, delivery_date: dates.closes_at })).toBe("schedule");
@@ -95,20 +105,26 @@ describe("CSA rounds", () => {
       </AdminI18nProvider>,
     );
     expect(await screen.findByRole("alert")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
   });
   it("saves a draft with Vietnam timestamps and no product configuration", async () => {
+    const search = "?status=draft&page=2";
+    window.history.replaceState(null, "", `/csa-rounds/new${search}`);
     vi.mocked(api).mockResolvedValueOnce({ id });
     render(
       <AdminI18nProvider initialLocale="en">
-        <CSARoundEditor listPage={2} listStatus="draft" />
+        <AdminBreadcrumbProvider pathname="/csa-rounds/new" search={search}>
+          <Header />
+          <CSARoundEditor listPage={2} listStatus="draft" />
+        </AdminBreadcrumbProvider>
       </AdminI18nProvider>,
     );
-    expect(screen.getByRole("link", { name: "Back to rounds" })).toHaveAttribute(
-      "href",
-      "/csa-rounds?status=draft&page=2",
-    );
-    fireEvent.change(await screen.findByRole("textbox", { name: "Round name" }), {
+    expect(
+      within(screen.getByRole("navigation")).getByRole("link", {
+        name: "CSA round configurations",
+      }),
+    ).toHaveAttribute("href", "/csa-rounds?status=draft&page=2");
+    fireEvent.change(await screen.findByRole("textbox", { name: "Configuration name" }), {
       target: { value: "Week 1" },
     });
     for (const [label, value] of [
@@ -120,14 +136,15 @@ describe("CSA rounds", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        "admin/csa-rounds",
+        "admin/csa-round-configurations",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ name: "Week 1", ...dates }),
+          body: JSON.stringify({ name: "Week 1", ...dates, recurrence_mode: null }),
         }),
       ),
     );
-    expect(push).toHaveBeenCalledWith(`/csa-rounds/${id}?status=draft&page=2`);
+    expect(push).toHaveBeenCalledWith(`/csa-rounds/configurations/${id}?status=draft&page=2`);
+    expect(api).toHaveBeenCalledTimes(1);
   });
   it("blocks reopening an allocated order", async () => {
     vi.mocked(api).mockResolvedValue({
@@ -158,6 +175,9 @@ const round = {
   sequence: 1,
   name: "Week 1",
   can_edit: true,
+  type: "standalone" as const,
+  created_at: dates.opens_at,
+  recurrence: null,
   ...dates,
   status: "draft" as const,
   server_time: dates.closes_at,
@@ -310,12 +330,19 @@ it("translates system reasons in both languages and preserves administrator text
   expect(csaSelectionReason("No harvest", id, "en")).toBe("No harvest");
 });
 it("opens a round through its name and refreshes the current list", async () => {
+  let finishRefresh!: () => void;
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } })
-    .mockResolvedValueOnce({
-      data: [{ ...round, name: "Week 1 updated" }],
-      meta: { page: 1, page_size: 20, total: 1 },
-    });
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = () =>
+            resolve({
+              data: [{ ...round, name: "Week 1 updated" }],
+              meta: { page: 1, page_size: 20, total: 1 },
+            });
+        }),
+    );
   render(
     <AdminI18nProvider initialLocale="en">
       <CSARoundList />
@@ -323,23 +350,36 @@ it("opens a round through its name and refreshes the current list", async () => 
   );
 
   const name = await screen.findByRole("link", { name: "Week 1" });
-  expect(name).toHaveAttribute("href", `/csa-rounds/${id}`);
-  expect(screen.getByRole("link", { name: "Create round" })).toHaveAttribute(
+  expect(name).toHaveAttribute("href", `/csa-rounds/configurations/${id}`);
+  expect(screen.getByRole("link", { name: "Create configuration" })).toHaveAttribute(
     "href",
     "/csa-rounds/new",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const refresh = screen.getByRole("button", { name: "Refresh" });
+  fireEvent.click(refresh);
+  const results = within(screen.getByRole("group", { name: "CSA round configurations" }));
+  expect(results.queryByText("Loading CSA round…")).not.toBeInTheDocument();
+  expect(results.getByRole("status")).toHaveTextContent("Refreshing CSA list…");
+  expect(results.getByRole("table")).toHaveAttribute("aria-busy", "true");
+  expect(name).toBeVisible();
+  expect(refresh).toHaveAttribute("aria-busy", "true");
 
+  await act(async () => finishRefresh());
   expect(await screen.findByRole("link", { name: "Week 1 updated" })).toBeVisible();
   expect(apiEnvelope).toHaveBeenCalledTimes(2);
-  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=1&page_size=20");
+  expect(apiEnvelope).toHaveBeenLastCalledWith(
+    "admin/csa-round-configurations?page=1&page_size=20",
+    {
+      signal: expect.any(AbortSignal),
+    },
+  );
 });
 
 it("applies and clears the status filter from page one and preserves it in round links", async () => {
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce({ data: [round], meta: { page: 2, page_size: 20, total: 21 } })
     .mockResolvedValueOnce({
-      data: [{ ...round, name: "Open round", status: "open" }],
+      data: [{ ...round, name: "Open round", status: "published" }],
       meta: { page: 1, page_size: 20, total: 1 },
     })
     .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } });
@@ -354,22 +394,28 @@ it("applies and clears the status filter from page one and preserves it in round
     await screen.findByRole("link", { name: round.name });
     fireEvent.click(screen.getByRole("button", { name: "Filter" }));
     const filters = within(screen.getByRole("dialog"));
-    selectOption(filters.getByRole("textbox", { name: "Status" }), "open");
+    selectOption(
+      filters.getByRole("textbox", {
+        name: "Configuration status",
+      }),
+      "published",
+    );
     expect(apiEnvelope).toHaveBeenCalledTimes(1);
     fireEvent.click(filters.getByRole("button", { name: "Apply" }));
 
     expect(await screen.findByRole("link", { name: "Open round" })).toHaveAttribute(
       "href",
-      `/csa-rounds/${id}?status=open`,
+      `/csa-rounds/configurations/${id}?status=published`,
     );
-    expect(screen.getByRole("link", { name: "Create round" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Create configuration" })).toHaveAttribute(
       "href",
-      "/csa-rounds/new?status=open",
+      "/csa-rounds/new?status=published",
     );
     expect(apiEnvelope).toHaveBeenLastCalledWith(
-      "admin/csa-rounds?page=1&page_size=20&status=open",
+      "admin/csa-round-configurations?page=1&page_size=20&status=published",
+      { signal: expect.any(AbortSignal) },
     );
-    expect(window.location.pathname + window.location.search).toBe("/csa-rounds?status=open");
+    expect(window.location.pathname + window.location.search).toBe("/csa-rounds?status=published");
 
     fireEvent.click(screen.getByRole("button", { name: "Filter (1)" }));
     fireEvent.click(
@@ -377,9 +423,14 @@ it("applies and clears the status filter from page one and preserves it in round
     );
     expect(await screen.findByRole("link", { name: round.name })).toHaveAttribute(
       "href",
-      `/csa-rounds/${id}`,
+      `/csa-rounds/configurations/${id}`,
     );
-    expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=1&page_size=20");
+    expect(apiEnvelope).toHaveBeenLastCalledWith(
+      "admin/csa-round-configurations?page=1&page_size=20",
+      {
+        signal: expect.any(AbortSignal),
+      },
+    );
     expect(window.location.pathname + window.location.search).toBe("/csa-rounds");
   } finally {
     window.history.replaceState(null, "", "/");
@@ -405,20 +456,20 @@ it("hides previous results while a different status loads on the same page", asy
   await screen.findByRole("link", { name: round.name });
   fireEvent.click(screen.getByRole("button", { name: "Filter" }));
   const filters = within(screen.getByRole("dialog"));
-  selectOption(filters.getByRole("textbox", { name: "Status" }), "open");
+  selectOption(filters.getByRole("textbox", { name: "Configuration status" }), "published");
   fireEvent.click(filters.getByRole("button", { name: "Apply" }));
 
   expect(screen.queryByRole("link", { name: round.name })).not.toBeInTheDocument();
-  resolveFiltered({ data: [{ ...round, name: "Open round", status: "open" }], meta });
+  resolveFiltered({ data: [{ ...round, name: "Open round", status: "published" }], meta });
   expect(await screen.findByRole("link", { name: "Open round" })).toBeVisible();
   window.history.replaceState(null, "", "/");
 });
 
 it("follows the restored filter and page in the browser history", async () => {
-  window.history.pushState(null, "", "/csa-rounds?status=open&page=2");
+  window.history.pushState(null, "", "/csa-rounds?status=published&page=2");
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce({
-      data: [{ ...round, name: "Open round on page two", status: "open" }],
+      data: [{ ...round, name: "Open round on page two", status: "published" }],
       meta: { page: 2, page_size: 20, total: 21 },
     })
     .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } });
@@ -430,9 +481,14 @@ it("follows the restored filter and page in the browser history", async () => {
 
   expect(await screen.findByRole("link", { name: "Open round on page two" })).toHaveAttribute(
     "href",
-    `/csa-rounds/${id}?status=open&page=2`,
+    `/csa-rounds/configurations/${id}?status=published&page=2`,
   );
-  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=2&page_size=20&status=open");
+  expect(apiEnvelope).toHaveBeenLastCalledWith(
+    "admin/csa-round-configurations?page=2&page_size=20&status=published",
+    {
+      signal: expect.any(AbortSignal),
+    },
+  );
 
   act(() => {
     window.history.pushState(null, "", "/csa-rounds");
@@ -440,9 +496,14 @@ it("follows the restored filter and page in the browser history", async () => {
   });
   expect(await screen.findByRole("link", { name: round.name })).toHaveAttribute(
     "href",
-    `/csa-rounds/${id}`,
+    `/csa-rounds/configurations/${id}`,
   );
-  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=1&page_size=20");
+  expect(apiEnvelope).toHaveBeenLastCalledWith(
+    "admin/csa-round-configurations?page=1&page_size=20",
+    {
+      signal: expect.any(AbortSignal),
+    },
+  );
 });
 
 it("pages a filtered round list using server totals and preserves the filter", async () => {
@@ -459,15 +520,28 @@ it("pages a filtered round list using server totals and preserves the filter", a
     </AdminI18nProvider>,
   );
   await screen.findByText("Week 1");
-  expect(apiEnvelope).toHaveBeenCalledWith("admin/csa-rounds?page=1&page_size=20&status=draft");
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(apiEnvelope).toHaveBeenCalledWith(
+    "admin/csa-round-configurations?page=1&page_size=20&status=draft",
+    {
+      signal: expect.any(AbortSignal),
+    },
+  );
+  const next = screen.getByRole("button", { name: "Next" });
+  next.focus();
+  fireEvent.click(next);
+  expect(screen.getByRole("group", { name: "CSA round configurations" })).toHaveFocus();
   expect(await screen.findByRole("link", { name: "Week 2" })).toHaveAttribute(
     "href",
-    "/csa-rounds/other?status=draft&page=2",
+    "/csa-rounds/configurations/other?status=draft&page=2",
   );
   expect(window.location.pathname + window.location.search).toBe("/csa-rounds?status=draft&page=2");
   window.history.replaceState(null, "", "/");
-  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/csa-rounds?page=2&page_size=20&status=draft");
+  expect(apiEnvelope).toHaveBeenLastCalledWith(
+    "admin/csa-round-configurations?page=2&page_size=20&status=draft",
+    {
+      signal: expect.any(AbortSignal),
+    },
+  );
 });
 
 it.each([
@@ -491,10 +565,10 @@ it("preserves full demand and zero totals when a CSA participant page is empty",
   await expect(getRoundParticipants(id)).resolves.toBe(payload);
 });
 
-it("shows the authoritative overlap error when saving a published round", async () => {
+it("shows the authoritative schedule error when saving a published round", async () => {
   vi.mocked(api)
     .mockResolvedValueOnce({ ...round, status: "scheduled" })
-    .mockRejectedValueOnce(new Error("csa_round_schedule_conflict"));
+    .mockRejectedValueOnce(new Error("csa_round_schedule_invalid"));
   vi.mocked(apiEnvelope).mockResolvedValue({
     data: [],
     meta: { page: 1, page_size: 1, total: 0 },
@@ -508,7 +582,7 @@ it("shows the authoritative overlap error when saving a published round", async 
   await screen.findByRole("textbox", { name: "Round name" });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Selection windows overlap a published round.",
+    "Selection must close after it opens and before the delivery day.",
   );
   expect(screen.getByRole("textbox", { name: "Round name" })).toHaveValue("Week 1");
   expect(api).toHaveBeenLastCalledWith(`admin/csa-rounds/${id}`, {
@@ -562,6 +636,115 @@ it("blocks extending an existing reselection after its own deadline passes", asy
   } finally {
     monotonic.mockRestore();
   }
+});
+
+it("identifies standalone configurations and links to the selected configuration", async () => {
+  const search = "?status=draft&page=2";
+  window.history.replaceState(null, "", `/csa-rounds${search}`);
+  vi.mocked(apiEnvelope).mockResolvedValue({
+    data: [round],
+    meta: { page: 2, page_size: 20, total: 21 },
+  });
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminBreadcrumbProvider pathname="/csa-rounds" search={search}>
+        <Header />
+        <CSARoundList />
+      </AdminBreadcrumbProvider>
+    </AdminI18nProvider>,
+  );
+
+  expect(
+    within(screen.getByRole("navigation")).getByText("CSA round configurations"),
+  ).toHaveAttribute("aria-current", "page");
+  const name = await screen.findByRole("link", { name: round.name });
+  expect(name).toHaveAttribute("href", `/csa-rounds/configurations/${id}${search}`);
+  const row = within(name.closest("tr")!);
+  expect(row.getByRole("cell", { name: round.name })).toContainElement(name);
+  expect(row.getByRole("cell", { name: "Draft" })).toBeVisible();
+  expect(row.getByRole("cell", { name: "One-time" })).toBeVisible();
+  expect(row.getByText("20/11/2026")).toHaveAttribute("datetime", round.created_at);
+  expect(screen.getByRole("link", { name: "Create configuration" })).toHaveAttribute(
+    "href",
+    `/csa-rounds/new${search}`,
+  );
+});
+
+it("returns from the edit form via the Admin Header to the same round and filtered list", async () => {
+  const search = "?status=draft&page=2";
+  const detailPath = `/csa-rounds/${id}`;
+  const pathname = `${detailPath}/edit`;
+  window.history.replaceState(null, "", pathname + search);
+  vi.mocked(api).mockResolvedValue(round);
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminBreadcrumbProvider pathname={pathname} search={search}>
+        <Header />
+        <main>
+          <CSARoundEditor roundId={id} listPage={2} listStatus="draft" />
+        </main>
+      </AdminBreadcrumbProvider>
+    </AdminI18nProvider>,
+  );
+
+  await screen.findByRole("textbox", { name: "Round name" });
+  const breadcrumbs = within(screen.getByRole("navigation"));
+  expect(breadcrumbs.getByRole("link", { name: "CSA round configurations" })).toHaveAttribute(
+    "href",
+    `/csa-rounds${search}`,
+  );
+  expect(breadcrumbs.getByRole("link", { name: "CSA round details" })).toHaveAttribute(
+    "href",
+    detailPath + search,
+  );
+  expect(within(screen.getByRole("main")).queryByRole("link")).not.toBeInTheDocument();
+});
+
+it("cancels an obsolete round-list transport when the URL changes", async () => {
+  vi.mocked(apiEnvelope)
+    .mockImplementationOnce(() => new Promise(() => {}))
+    .mockResolvedValueOnce({ data: [round], meta: { page: 1, page_size: 20, total: 1 } });
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundList />
+    </AdminI18nProvider>,
+  );
+  const signal = vi.mocked(apiEnvelope).mock.calls[0]?.[1]?.signal;
+  expect(signal?.aborted).toBe(false);
+  act(() => {
+    window.history.replaceState(null, "", "/csa-rounds?status=draft");
+  });
+  expect(signal?.aborted).toBe(true);
+  expect(await screen.findByRole("link", { name: round.name })).toBeVisible();
+});
+
+it("retains same-query rows on refresh failure and retries the same query", async () => {
+  const meta = { page: 2, page_size: 20, total: 21 };
+  const query = "?status=draft&page=2";
+  window.history.replaceState(null, "", `/csa-rounds${query}`);
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce({ data: [round], meta })
+    .mockRejectedValueOnce(new Error("request_failed"))
+    .mockResolvedValueOnce({ data: [{ ...round, name: "Refreshed round" }], meta });
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundList />
+    </AdminI18nProvider>,
+  );
+
+  await screen.findByRole("link", { name: round.name });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("link", { name: round.name })).toHaveAttribute(
+    "href",
+    `/csa-rounds/configurations/${id}${query}`,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("link", { name: "Refreshed round" })).toBeVisible();
+  expect(apiEnvelope).toHaveBeenLastCalledWith(
+    "admin/csa-round-configurations?page=2&page_size=20&status=draft",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
 });
 
 it("requires refreshing a stale selection before another reopen request", async () => {

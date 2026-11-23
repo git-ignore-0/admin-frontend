@@ -1,3 +1,4 @@
+import { administrativeWardSortName } from "@/lib/administrative-units";
 import { api } from "@/lib/client-api";
 import type { ShippingSettings, SupportedShippingProvince } from "@/lib/types";
 
@@ -31,15 +32,26 @@ export async function getSupportedShippingAreas(
     `public/shipping-areas?locale=${locale}`,
     { signal },
   );
-  return items.map((province) => ({
-    code: province.province_code,
-    name: province.province_name,
-    wards: province.wards.map((ward) => ({
-      code: ward.ward_code,
-      name: ward.ward_name,
-      shipping_fee_vnd: ward.shipping_fee_vnd,
-    })),
-  }));
+  const collator = new Intl.Collator(locale, { sensitivity: "base", numeric: true });
+  return items
+    .map((province) => ({
+      code: province.province_code,
+      name: province.province_name,
+      wards: province.wards
+        .map((ward) => ({
+          code: ward.ward_code,
+          name: ward.ward_name,
+          shipping_fee_vnd: ward.shipping_fee_vnd,
+        }))
+        .sort(
+          (left, right) =>
+            collator.compare(
+              administrativeWardSortName(left.name),
+              administrativeWardSortName(right.name),
+            ) || collator.compare(left.name, right.name),
+        ),
+    }))
+    .sort((left, right) => collator.compare(left.name, right.name));
 }
 
 export function getShippingSettings(provinceCode: string, signal?: AbortSignal) {
