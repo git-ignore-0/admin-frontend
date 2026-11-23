@@ -476,7 +476,25 @@ export type InvitedAdminUser = {
   referred_at: string;
 };
 
+export type AdminUserAccountAction = "activate" | "suspend" | "reactivate" | "reset-password";
+
+export type UserShippingAddress = {
+  id: string;
+  recipient_name: string;
+  phone_number: string;
+  province_code: string;
+  ward_code: string;
+  address: string;
+  is_supported: boolean;
+  shipping_fee_vnd: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AdminUserDetail = AdminUserListItem & {
+  account_actions?: AdminUserAccountAction[];
+  can_edit_shipping_address?: boolean;
+  shipping_address?: UserShippingAddress | null;
   referral_code: string;
   source: "organic" | "referred";
   referrer: { id: string; name: string } | null;

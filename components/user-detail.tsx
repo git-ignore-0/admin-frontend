@@ -39,6 +39,7 @@ import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { UserAccountDialog, type UserAccountDialogAction } from "@/components/user-account-dialog";
 import { UserEmail } from "@/components/user-email";
+import { UserShippingAddressSection } from "@/components/user-shipping-address";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { accountFailure, requireAccountActionResult, userEmailStatus } from "@/lib/admin-users";
 import {
@@ -61,17 +62,8 @@ const drawerZIndex = getDefaultZIndex("modal") - 1;
 const longText = { overflowWrap: "anywhere" } as const;
 type UserDetailSummary = Omit<AdminUserDetail, "invited_users">;
 
-function statusActionFor(status: string) {
-  switch (status) {
-    case "pending_activation":
-      return "activate";
-    case "active":
-      return "suspend";
-    case "suspended":
-      return "reactivate";
-    default:
-      return null;
-  }
+function statusActionFor(user?: UserDetailSummary) {
+  return user?.account_actions?.find((action) => action !== "reset-password");
 }
 
 export function UserDetail({
@@ -108,6 +100,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   const [invitedPage, setInvitedPage] = useState(1);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [shippingSaving, setShippingSaving] = useState(false);
   const [dialog, setDialog] = useState<{
     action: UserAccountDialogAction;
     accessRevision: number;
@@ -117,8 +110,8 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   const user = query.summary?.data;
   const exactPage = query.data;
   const referralPageMissing = Boolean(user && !exactPage);
-  const statusAction = user ? statusActionFor(user.status) : null;
-  const canReset = Boolean(user && statusAction && !user.email_verified);
+  const statusAction = statusActionFor(user);
+  const canReset = user?.account_actions?.includes("reset-password") === true;
   const activeDialog =
     canMutate &&
     dialog?.accessRevision === query.accessRevision &&
@@ -128,7 +121,8 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       : null;
   const readPending = query.isFetching || query.waitingForConnection;
   const readUnavailable = !exactPage || readPending || Boolean(query.error);
-  const navigationBlocked = busy || activeDialog !== null;
+  const accountActionInProgress = busy || activeDialog !== null;
+  const navigationBlocked = accountActionInProgress || shippingSaving;
 
   useLayoutEffect(() => {
     return () => {
@@ -165,7 +159,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       pendingSubmission.current ||
       navigationBlocked ||
       readUnavailable ||
-      action !== statusActionFor(exactPage?.data.status ?? "")
+      action !== statusActionFor(exactPage?.data)
     ) {
       return;
     }
@@ -203,13 +197,10 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   function openDialog(action: UserAccountDialogAction, event: MouseEvent<HTMLButtonElement>) {
     const target = exactPage?.data;
     if (
-      !target ||
+      !target?.account_actions?.includes(action) ||
       readUnavailable ||
       navigationBlocked ||
       pendingSubmission.current ||
-      (action === "suspend"
-        ? target.status !== "active"
-        : !statusActionFor(target.status) || target.email_verified) ||
       !captureMutationAccess()
     ) {
       return;
@@ -231,7 +222,12 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
     void query.refetch({ cancelRefetch: false });
   }
 
+  function refreshDetail() {
+    void query.refetch({ cancelRefetch: true });
+  }
+
   const title = user?.name || t.users.detailTitle;
+  const buttonsDisabled = !canMutate || readUnavailable || navigationBlocked;
   const content = (
     <Stack gap="md" aria-busy={(query.isFetching && !referralPageMissing) || undefined}>
       {loadError && !referralPageMissing && (
@@ -252,7 +248,29 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
               {actionError}
             </Alert>
           )}
-          <UserDetails user={user} navigationBlocked={navigationBlocked}>
+          <UserDetails
+            user={user}
+            navigationBlocked={navigationBlocked}
+            shippingAddressSection={
+              user.can_edit_shipping_address === true && (
+                <UserShippingAddressSection
+                  userId={userId}
+                  address={user.shipping_address ?? null}
+                  disabled={!canMutate || readUnavailable || accountActionInProgress}
+                  refresh={refreshDetail}
+                  onSavingChange={setShippingSaving}
+                  onAddressSaved={(saved, expectedVersion) => {
+                    query.applyShippingAddress(saved, expectedVersion);
+                    refreshDetail();
+                  }}
+                  onProtectedTarget={() => {
+                    setActionError(copy.protected);
+                    refreshDetail();
+                  }}
+                />
+              )
+            }
+          >
             <UserReferrals
               count={user.invited_count}
               invitees={exactPage?.data.invited_users}
@@ -269,11 +287,10 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       )}
     </Stack>
   );
-  const buttonsDisabled = !canMutate || readUnavailable || navigationBlocked;
   // Mantine restarts the Drawer focus trap when the nested dialog closes.
   const focusSuspend = !buttonsDisabled && focusAction === "suspend" && statusAction === "suspend";
   const focusReset = !buttonsDisabled && focusAction === "reset-password" && canReset;
-  const actions = statusAction && (
+  const actions = (statusAction || canReset) && (
     <Group component="footer" {...recordDetailDrawer.footer} aria-label={copy.title}>
       {statusAction === "suspend" && (
         <Button
@@ -286,7 +303,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
           {copy.suspend}
         </Button>
       )}
-      {(canReset || statusAction !== "suspend") && (
+      {(canReset || (statusAction && statusAction !== "suspend")) && (
         <Group gap="xs" justify="flex-end" ms="auto" maw="100%">
           {canReset && (
             <Button
@@ -298,7 +315,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
               {copy["reset-password"]}
             </Button>
           )}
-          {statusAction !== "suspend" && (
+          {statusAction && statusAction !== "suspend" && (
             <Button
               variant="filled"
               loading={busy}
@@ -490,10 +507,12 @@ function UserContactDetails({ user }: { user: UserDetailSummary }) {
 function UserDetails({
   user,
   navigationBlocked,
+  shippingAddressSection,
   children,
 }: {
   user: UserDetailSummary;
   navigationBlocked: boolean;
+  shippingAddressSection: ReactNode;
   children: ReactNode;
 }) {
   const { locale, t } = useAdminI18n();
@@ -512,11 +531,12 @@ function UserDetails({
           [t.users.csaProfile, user.has_csa_customer ? t.users.csaPresent : t.users.csaAbsent],
         ]}
       >
-        {statusActionFor(user.status) && user.email_verified && (
+        {statusActionFor(user) && user.email_verified && (
           <Alert color="info">{t.users.accountActions.emailRecovery}</Alert>
         )}
       </UserDetailSection>
       <UserContactDetails key={`${locale}:${user.province_code}:${user.ward_code}`} user={user} />
+      {shippingAddressSection}
       <UserDetailSection title={t.common.points} fields={[[t.users.balance, user.points_balance]]}>
         <Group gap="sm">
           <Anchor

@@ -250,6 +250,7 @@ describe("users and points", () => {
     const detailStatus = (await screen.findByText("Suspended")).closest(".mantine-Badge-root");
     expect(detailStatus).toHaveClass("mantine-Badge-root");
     expect(detailStatus?.getAttribute("style")).toBe(statusStyle);
+    expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
   });
 
   it("searches from page one, clears to all users, and updates the pluralized result count", async () => {

@@ -16,7 +16,12 @@ import {
 import { requirePaginatedList, requireResponseList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
 import type { ClientApiError } from "@/lib/client-error";
-import type { AdminUserDetail, AdminUserListItem, PaginationMeta } from "@/lib/types";
+import type {
+  AdminUserDetail,
+  AdminUserListItem,
+  PaginationMeta,
+  UserShippingAddress,
+} from "@/lib/types";
 
 export const adminUserStatuses = [
   "pending_activation",
@@ -214,6 +219,40 @@ export function useAdminUserDetail(userId: string, invitedPage: number) {
       summary.accessRevision === query.accessRevision
         ? summary.payload
         : undefined,
+    applyShippingAddress(saved: UserShippingAddress, expectedVersion: string | null) {
+      const latest = client.getQueryData<UsersCache<UserDetailSummary>>(summaryKey);
+      if (
+        !latest ||
+        !("payload" in latest) ||
+        latest.accessRevision !== query.accessRevision ||
+        latest.payload.data.can_edit_shipping_address !== true
+      )
+        return;
+
+      // A concurrent read may already have a newer address than this write response.
+      const latestVersion = latest.payload.data.shipping_address?.updated_at ?? null;
+      if (latestVersion !== expectedVersion && latestVersion !== saved.updated_at) return;
+
+      client.setQueriesData<UsersCache<UserDetailSummary>>(
+        { queryKey: userKey(userId) },
+        (cached) => {
+          if (
+            !cached ||
+            !("payload" in cached) ||
+            cached.accessRevision !== latest.accessRevision ||
+            cached.payload.data.can_edit_shipping_address !== true
+          )
+            return cached;
+          return {
+            ...cached,
+            payload: {
+              ...cached.payload,
+              data: { ...cached.payload.data, shipping_address: saved },
+            },
+          };
+        },
+      );
+    },
   };
 }
 

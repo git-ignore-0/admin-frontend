@@ -224,6 +224,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return READ.has(normalizedMethod);
     if (action === "points") return CRUD_COLLECTION.has(normalizedMethod);
+    if (action === "shipping-address") return normalizedMethod === "PUT";
     return (
       normalizedMethod === "POST" &&
       ["activate", "suspend", "reactivate", "reset-password"].includes(action)

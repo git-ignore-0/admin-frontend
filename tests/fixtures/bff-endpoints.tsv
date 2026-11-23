@@ -93,6 +93,7 @@ admin/users/{user}/activate	POST	no
 admin/users/{user}/suspend	POST	no
 admin/users/{user}/reactivate	POST	no
 admin/users/{user}/reset-password	POST	no
+admin/users/{user}/shipping-address	PUT	no
 admin/rewards	GET,POST	no
 admin/rewards/{reward}	GET,PATCH	no
 admin/rewards/reorder	POST	no

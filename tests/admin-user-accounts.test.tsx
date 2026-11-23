@@ -13,6 +13,7 @@ import { UserDetail } from "@/components/user-detail";
 import { UserDirectory } from "@/components/user-directory";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { ADMIN_SESSION_CHANGED_EVENT } from "@/lib/client-api";
+import { selectOption } from "./select-option";
 
 const router = vi.hoisted(() => ({
   push: vi.fn(),
@@ -30,10 +31,10 @@ vi.mock("next/navigation", () => ({
 const userId = "58cbea40-4749-4400-9fa3-188de573abaf";
 const otherUserId = "04d465b7-8245-4123-b1a5-4cf28e13e4d5";
 const listMeta = { page: 1, page_size: 30, total: 1 };
-const user = {
+const legacyUser = {
   id: userId,
   name: "Garden Member",
-  email: null,
+  email: null as string | null,
   login_phone_number: "+84912345678",
   email_verified: false,
   phone: "0987654321",
@@ -49,10 +50,43 @@ const user = {
     { id: "invitee", name: "Invited Member", email: null, status: "pending_activation" },
   ],
 };
+function account(status: string, fields: Partial<typeof legacyUser> = {}) {
+  const action = { pending_activation: "activate", active: "suspend", suspended: "reactivate" }[
+    status as "pending_activation" | "active" | "suspended"
+  ];
+  return {
+    ...legacyUser,
+    ...fields,
+    status,
+    account_actions: action ? [action, ...(fields.email_verified ? [] : ["reset-password"])] : [],
+    can_edit_shipping_address: false,
+    shipping_address: null,
+  };
+}
+const user = account("pending_activation");
 const otherUser = { ...user, id: otherUserId, name: "Orchard Member" };
 const referralUser = { ...user, email: "member@example.com", address: "12 Private Lane" };
 const password = "  Strong-Harvest-42!  ";
 const originalMatchMedia = window.matchMedia;
+const shippingAreas = [
+  {
+    province_code: "66",
+    province_name: "Sample Province",
+    wards: [{ ward_code: "22015", ward_name: "Sample Ward", shipping_fee_vnd: "30000" }],
+  },
+];
+const shippingAddress = {
+  id: otherUserId,
+  recipient_name: "Garden Recipient",
+  phone_number: "+84901234567",
+  province_code: "66",
+  ward_code: "22015",
+  address: "12 Orchid Street",
+  is_supported: true,
+  shipping_fee_vnd: "30000",
+  created_at: "2026-11-23T00:00:00Z",
+  updated_at: "2026-11-23T00:00:00Z",
+};
 
 function scene(children: React.ReactNode, initialLocale: "en" | "vi" = "en") {
   return (
@@ -169,7 +203,7 @@ describe("CMS account administration", () => {
     ["Reactivate", "suspended", { id: userId }],
   ])("keeps the loaded account state on a malformed %s response", async (action, status, data) => {
     const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
-      Response.json({ data: init?.method === "POST" ? data : { ...user, status } }),
+      Response.json({ data: init?.method === "POST" ? data : account(status) }),
     );
     vi.stubGlobal("fetch", fetcher);
     show(<UserDetail userId={userId} />);
@@ -428,7 +462,7 @@ describe("CMS account administration", () => {
         return Response.json({ data: [{ ...user, status }], meta: listMeta });
       }
       return Response.json({
-        data: { ...user, status },
+        data: account(status),
         meta: { invited: listMeta },
       });
     });
@@ -572,7 +606,7 @@ describe("CMS account administration", () => {
       const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
         init?.method === "POST"
           ? Response.json({ data: { id: userId, status } })
-          : Response.json({ data: { ...user, status, email: "unverified@example.com" } }),
+          : Response.json({ data: account(status, { email: "unverified@example.com" }) }),
       );
       vi.stubGlobal("fetch", fetcher);
       show(<UserDetail userId={userId} />);
@@ -603,7 +637,7 @@ describe("CMS account administration", () => {
       "fetch",
       vi.fn(async () =>
         Response.json({
-          data: { ...user, status: "active", email: "member@example.com", email_verified: true },
+          data: account("active", { email: "member@example.com", email_verified: true }),
         }),
       ),
     );
@@ -619,12 +653,350 @@ describe("CMS account administration", () => {
   ])("shows %s details without account mutations", async (status, label) => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ data: { ...user, status } })),
+      vi.fn(async () => Response.json({ data: account(status) })),
     );
     show(<UserDetail userId={userId} />);
     expect(await screen.findByText(label)).toBeVisible();
     expect(screen.getByText("NFV1234567")).toBeVisible();
     expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
+  });
+
+  it.each([
+    ["pending_activation", "Pending activation"],
+    ["active", "Active"],
+    ["suspended", "Suspended"],
+  ])("keeps protected %s account details read-only", async (status, label) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: { ...account(status), account_actions: [] } })),
+    );
+    show(<UserDetail userId={userId} />);
+    const heading = await screen.findByRole("heading", { name: user.name });
+    expect(within(heading.parentElement!).getByText(label)).toBeVisible();
+    expect(screen.getByText(user.login_phone_number)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Shipping address" })).toBeNull();
+  });
+
+  it("renders legacy account details with mutations hidden when the server omits capabilities", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: legacyUser })),
+    );
+    show(<UserDetail userId={userId} />);
+    const heading = await screen.findByRole("heading", { name: user.name });
+    expect(within(heading.parentElement!).getByText("Pending activation")).toBeVisible();
+    expect(screen.getByText(user.login_phone_number)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Shipping address" })).toBeNull();
+  });
+
+  it("rejects a malformed capability instead of making it actionable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: { ...user, account_actions: "activate" } })),
+    );
+    show(<UserDetail userId={userId} />);
+    expect(await screen.findByText(invalidResponseMessage)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Activate" })).toBeNull();
+  });
+
+  it("adds a shipping address through the BFF, retains input on error, and refreshes after save", async () => {
+    const address = {
+      recipient_name: "Garden Recipient",
+      phone_number: "+84901234567",
+      province_code: "66",
+      ward_code: "22015",
+      address: "12 Orchid Street",
+    };
+    const saved = {
+      ...address,
+      id: otherUserId,
+      is_supported: true,
+      shipping_fee_vnd: "30000",
+      created_at: "2026-11-23T00:00:00Z",
+      updated_at: "2026-11-23T00:00:00Z",
+    };
+    const firstWrite = deferredResponse();
+    let written = false;
+    let writes = 0;
+    const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.includes("public/shipping-areas")) {
+        return Response.json({ data: shippingAreas });
+      }
+      if (init?.method === "PUT") {
+        if (++writes === 1) return firstWrite.promise;
+        written = true;
+        return Response.json({ data: saved });
+      }
+      return Response.json({
+        data: {
+          ...user,
+          can_edit_shipping_address: true,
+          shipping_address: written ? saved : null,
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    const add = await screen.findByRole("button", { name: "Add address" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    fireEvent.change(screen.getByLabelText(/^Recipient name/), {
+      target: { value: " Garden Recipient " },
+    });
+    fireEvent.change(screen.getByLabelText(/^Recipient phone/), {
+      target: { value: "0901234567" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Street address/), {
+      target: { value: "12 Orchid Street" },
+    });
+    const province = screen.getByRole("combobox", { name: "Province/city" });
+    await waitFor(() => expect(province).toBeEnabled());
+    selectOption(province, "66");
+    selectOption(screen.getByRole("combobox", { name: "Ward/commune" }), "22015");
+    const save = screen.getByRole("button", { name: "Save address" });
+    fireEvent.click(save);
+    expect(save).toBeDisabled();
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/backend/admin/users/${userId}/shipping-address`,
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ ...address, expected_updated_at: null }),
+      }),
+    );
+    await act(async () => firstWrite.resolve(Response.json({}, { status: 503 })));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.serverError,
+    );
+    expect(screen.getByLabelText(/^Street address/)).toHaveValue("12 Orchid Street");
+    expect(screen.getByLabelText(/^Recipient name/)).toHaveValue(" Garden Recipient ");
+
+    fireEvent.click(save);
+    expect(await screen.findByRole("button", { name: "Edit address" })).toBeEnabled();
+    expect(screen.getByText("12 Orchid Street")).toBeVisible();
+    expect(fetcher.mock.calls.filter(([path]) => path.endsWith("?invited_page=1"))).toHaveLength(2);
+  });
+
+  it("keeps a saved unsupported address visible and requires a supported ward before saving", async () => {
+    const fetcher = vi.fn(async (path: string) => {
+      if (path.includes("public/shipping-areas")) return Response.json({ data: shippingAreas });
+      return Response.json({
+        data: {
+          ...user,
+          can_edit_shipping_address: true,
+          shipping_address: {
+            ...shippingAddress,
+            ward_code: "22045",
+            is_supported: false,
+            shipping_fee_vnd: null,
+          },
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} intercepted />);
+    const edit = await screen.findByRole("button", { name: "Edit address" });
+    expect(screen.getByText("12 Orchid Street")).toBeVisible();
+    expect(
+      screen.getByText(adminDictionaries.en.csaCustomers.shippingAreaUnsupported),
+    ).toBeVisible();
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    expect(screen.getByLabelText(/^Street address/)).toHaveValue("12 Orchid Street");
+    const ward = screen.getByRole("combobox", { name: "Ward/commune" });
+    await waitFor(() => expect(ward).toBeEnabled());
+    expect(ward).toHaveValue("");
+    const save = screen.getByRole("button", { name: "Save address" });
+    expect(save).toBeDisabled();
+    selectOption(ward, "22015");
+    expect(save).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Edit address" })).toHaveFocus();
+  });
+
+  it("retains the shipping conflict notice when a refresh makes the target read-only", async () => {
+    let protectedTarget = false;
+    const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.includes("public/shipping-areas")) return Response.json({ data: shippingAreas });
+      if (path.includes("administrative-units")) return Response.json({ data: [] });
+      if (init?.method === "PUT") {
+        protectedTarget = true;
+        return Response.json({ errors: [{ code: "account_target_protected" }] }, { status: 409 });
+      }
+      return Response.json({
+        data: {
+          ...user,
+          account_actions: protectedTarget ? [] : user.account_actions,
+          can_edit_shipping_address: !protectedTarget,
+          shipping_address: protectedTarget ? null : shippingAddress,
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
+    fireEvent.change(screen.getByLabelText(/^Street address/), {
+      target: { value: "18 Orchid Street" },
+    });
+    const save = screen.getByRole("button", { name: "Save address" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(save).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.users.accountActions.protected,
+    );
+    expect(screen.queryByRole("button", { name: "Activate" })).toBeNull();
+  });
+
+  it.each(["drawer", "page"])(
+    "blocks %s detail navigation while an address is saving",
+    async (view) => {
+      const write = deferredResponse();
+      const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+        if (path.includes("public/shipping-areas")) return Response.json({ data: shippingAreas });
+        if (path.includes("administrative-units")) return Response.json({ data: [] });
+        if (init?.method === "PUT") return write.promise;
+        return Response.json({
+          data: { ...user, can_edit_shipping_address: true, shipping_address: shippingAddress },
+        });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      show(<UserDetail userId={userId} intercepted={view === "drawer"} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
+      fireEvent.change(screen.getByLabelText(/^Street address/), {
+        target: { value: "14 Orchid Street" },
+      });
+      const save = screen.getByRole("button", { name: "Save address" });
+      await waitFor(() => expect(save).toBeEnabled());
+      fireEvent.click(save);
+      expect(screen.getByRole("link", { name: "Points directory" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      if (view === "drawer") {
+        const close = screen.getByRole("button", { name: "Close" });
+        expect(close).toBeDisabled();
+        fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      } else {
+        const back = screen.getByRole("link", { name: "Users" });
+        expect(back).toHaveAttribute("aria-disabled", "true");
+        expect(fireEvent.click(back)).toBe(false);
+      }
+      expect(router.back).not.toHaveBeenCalled();
+      await act(async () => write.resolve(Response.json({}, { status: 503 })));
+      expect(save).toBeEnabled();
+      expect(screen.getByRole("link", { name: "Points directory" })).not.toHaveAttribute(
+        "aria-disabled",
+      );
+    },
+  );
+
+  it.each(["background refresh", "version conflict"])(
+    "keeps the draft after a %s and requires loading the current address before saving",
+    async (source) => {
+      const latest = {
+        ...shippingAddress,
+        address: "Updated by customer",
+        updated_at: "2026-11-23T00:00:02.123456Z",
+      };
+      let current = shippingAddress;
+      const bodies: Array<Record<string, unknown>> = [];
+      let reads = 0;
+      const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+        if (path.includes("public/shipping-areas")) return Response.json({ data: shippingAreas });
+        if (path.includes("administrative-units")) return Response.json({ data: [] });
+        if (init?.method === "PUT") {
+          const body = JSON.parse(String(init.body));
+          bodies.push(body);
+          if (body.expected_updated_at !== current.updated_at) {
+            return Response.json(
+              { errors: [{ code: "shipping_address_changed" }] },
+              { status: 409 },
+            );
+          }
+          current = {
+            ...current,
+            recipient_name: body.recipient_name,
+            updated_at: "2026-11-23T00:00:03.000001Z",
+          };
+          return Response.json({ data: current });
+        }
+        reads += 1;
+        return Response.json({
+          data: { ...user, can_edit_shipping_address: true, shipping_address: current },
+        });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      show(<UserDetail userId={userId} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
+      const recipient = screen.getByLabelText(/^Recipient name/);
+      const save = screen.getByRole("button", { name: "Save address" });
+      fireEvent.change(recipient, { target: { value: "First draft" } });
+      await waitFor(() => expect(save).toBeEnabled());
+      current = latest;
+      if (source === "background refresh") {
+        act(() => focusManager.setFocused(false));
+        act(() => focusManager.setFocused(true));
+      } else {
+        fireEvent.click(save);
+      }
+      const load = await screen.findByRole("button", { name: "Use latest address" });
+      await waitFor(() => expect(load).toBeEnabled());
+      expect(reads).toBeGreaterThan(1);
+      expect(recipient).toHaveValue("First draft");
+      expect(save).toBeDisabled();
+      expect(bodies).toHaveLength(source === "background refresh" ? 0 : 1);
+      fireEvent.click(load);
+      expect(screen.getByLabelText(/^Street address/)).toHaveValue(latest.address);
+      expect(save).toBeDisabled();
+      fireEvent.change(recipient, { target: { value: "Updated recipient" } });
+      fireEvent.click(save);
+      expect(bodies.at(-1)).toEqual(
+        expect.objectContaining({
+          expected_updated_at: latest.updated_at,
+          recipient_name: "Updated recipient",
+          address: latest.address,
+        }),
+      );
+      expect(await screen.findByText("Updated recipient")).toBeVisible();
+    },
+  );
+
+  it("preserves multiline address data and shows a confirmed write when readback fails", async () => {
+    const first = { ...shippingAddress, address: "Block A\n12 Orchid Street" };
+    const changed = "Block A\n99 Orchid Street";
+    let written = false;
+    const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.includes("public/shipping-areas")) return Response.json({ data: shippingAreas });
+      if (path.includes("administrative-units")) return Response.json({ data: [] });
+      if (init?.method === "PUT") {
+        written = true;
+        return Response.json({
+          data: { ...first, address: changed, updated_at: "2026-11-23T00:00:04Z" },
+        });
+      }
+      if (written) return Response.json({}, { status: 503 });
+      return Response.json({
+        data: { ...user, can_edit_shipping_address: true, shipping_address: first },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
+    const street = screen.getByLabelText(/^Street address/);
+    expect(street).toHaveValue(first.address);
+    fireEvent.change(street, { target: { value: changed } });
+    const save = screen.getByRole("button", { name: "Save address" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    expect(await screen.findByText(/block a\s+99 orchid street/i)).toHaveStyle({
+      whiteSpace: "pre-wrap",
+    });
+    expect(await screen.findByText(adminDictionaries.en.common.serverError)).toBeVisible();
+    expect(fetcher.mock.calls.find(([, init]) => init?.method === "PUT")?.[1]?.body).toContain(
+      JSON.stringify(changed),
+    );
   });
 
   it.each(["desktop", "mobile"] as const)(
@@ -1025,7 +1397,7 @@ describe("CMS account administration", () => {
       const post = vi.fn(() => Response.json(conflict, { status: 409 }));
       const load = vi
         .fn()
-        .mockResolvedValueOnce(Response.json({ data: { ...user, status: initialStatus } }))
+        .mockResolvedValueOnce(Response.json({ data: account(initialStatus) }))
         .mockReturnValueOnce(refreshed);
       vi.stubGlobal(
         "fetch",
@@ -1049,7 +1421,7 @@ describe("CMS account administration", () => {
 
       completeReload(
         Response.json({
-          data: { ...user, status: newStatus, email: "member@example.com", email_verified: true },
+          data: account(newStatus, { email: "member@example.com", email_verified: true }),
         }),
       );
       expect(await screen.findByText(statusLabel)).toBeVisible();
@@ -1067,7 +1439,7 @@ describe("CMS account administration", () => {
       .fn()
       .mockResolvedValueOnce(Response.json({ data: user }))
       .mockResolvedValueOnce(Response.json({}, { status: 500 }))
-      .mockResolvedValueOnce(Response.json({ data: { ...user, status: "active" } }));
+      .mockResolvedValueOnce(Response.json({ data: account("active") }));
     const post = vi.fn(() =>
       Response.json({ errors: [{ code: "account_state_conflict" }] }, { status: 409 }),
     );
@@ -1154,8 +1526,41 @@ describe("CMS account administration", () => {
     },
   );
 
+  it.each(["Activate", "Reset password"])(
+    "reloads target capabilities after %s is rejected because the account is protected",
+    async (action) => {
+      let protectedTarget = false;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_path: string, init?: RequestInit) => {
+          if (init?.method === "POST") {
+            protectedTarget = true;
+            return Response.json(
+              { errors: [{ code: "account_target_protected" }] },
+              { status: 409 },
+            );
+          }
+          return Response.json({ data: protectedTarget ? { ...user, account_actions: [] } : user });
+        }),
+      );
+      show(<UserDetail userId={userId} />);
+      fireEvent.click(await screen.findByRole("button", { name: action }));
+      if (action === "Reset password") {
+        const dialog = screen.getByRole("dialog", { name: action });
+        passwords(dialog);
+        fireEvent.click(within(dialog).getByRole("button", { name: action }));
+      }
+      await waitFor(() =>
+        expect(screen.queryAllByRole("button", { name: action })).toHaveLength(0),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        adminDictionaries.en.users.accountActions.protected,
+      );
+    },
+  );
+
   it.each([
-    [409, { errors: [{ code: "account_target_protected" }] }, /protected account/i],
     [409, { errors: [{ code: "email_recovery_required" }] }, /forgot password/i],
     [403, { detail: "Forbidden" }, /not allowed/i],
   ])("handles Django reset rejection %s", async (status, body, message) => {
