@@ -278,6 +278,7 @@ it("integrates companion settings independently of locked schedule editing", asy
       <CSARoundDetail roundId={id} />
     </AdminI18nProvider>,
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
   await screen.findByText("Not enabled");
   expect(screen.queryByRole("link", { name: "Edit round" })).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Companion order cutoff"), {
@@ -357,13 +358,16 @@ it("keeps the cutoff draft and avoids config requests when participants change p
       <CSARoundDetail roundId={id} />
     </AdminI18nProvider>,
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
   await screen.findByText("Not enabled");
   fireEvent.change(screen.getByLabelText("Companion order cutoff"), {
     target: { value: "2026-11-21T18:00" },
   });
+  fireEvent.click(screen.getByRole("tab", { name: "Members" }));
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await waitFor(() => expect(reads).toBe(2));
   await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeDisabled());
+  fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
   expect(screen.getByLabelText("Companion order cutoff")).toHaveValue("2026-11-21T18:00");
   expect(vi.mocked(api).mock.calls.filter(([target]) => target === path)).toHaveLength(1);
 });
@@ -403,6 +407,7 @@ it.each([false, true])(
         <CSARoundDetail roundId={id} />
       </AdminI18nProvider>,
     );
+    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     await screen.findByText("Not enabled");
     if (dirty)
       fireEvent.change(screen.getByLabelText("Companion order cutoff"), {
@@ -451,6 +456,7 @@ it.each([false, true])(
         <DetailWithLocale />
       </AdminI18nProvider>,
     );
+    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     await screen.findByText("Not enabled");
     if (dirty)
       fireEvent.change(screen.getByLabelText("Companion order cutoff"), {

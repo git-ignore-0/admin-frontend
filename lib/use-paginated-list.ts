@@ -14,6 +14,7 @@ type PaginatedListOptions<T, M extends PaginationMeta> = {
   initialPage?: number;
   controlledPage?: number;
   onPage?: (page: number) => void;
+  enabled?: boolean;
 };
 
 export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
@@ -23,6 +24,7 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   initialPage = 1,
   controlledPage,
   onPage,
+  enabled = true,
 }: PaginatedListOptions<T, M>) {
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<M | null>(null);
@@ -40,6 +42,7 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     activeRequest.current = controller;
     setLoading(true);
@@ -68,7 +71,15 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
     return () => {
       if (activeRequest.current === controller) cancelActiveRequest();
     };
-  }, [cancelActiveRequest, fetchPage, getErrorMessage, page, reloadVersion, validateRecord]);
+  }, [
+    cancelActiveRequest,
+    enabled,
+    fetchPage,
+    getErrorMessage,
+    page,
+    reloadVersion,
+    validateRecord,
+  ]);
 
   const reload = useCallback(() => {
     cancelActiveRequest();

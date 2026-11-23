@@ -12,3 +12,4 @@ coverage/
 /cpanel-deploy*.zip
 *.tsbuildinfo
 __pycache__/
+/docs/ui-reference/

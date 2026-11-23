@@ -8,7 +8,7 @@ import { requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDate } from "@/lib/admin-date";
 import {
   csaDeadlineInputMax,
-  csaDeliveryStartMs,
+  csaOrderReopenUntil,
   roundDateInput,
   roundDateToApi,
   validateReopenDeadline,
@@ -61,23 +61,13 @@ export function CSAReopenDialog({
       .then((order) => {
         if (current !== generation.current) return;
         const selected = order.csa?.selection;
-        const can =
-          order.status === "pending_review" &&
-          !order.approved_at &&
-          selected?.id === selectionId &&
-          ["locked", "confirmed", "reselecting"].includes(selected.state);
         revision.current = selected?.revision ?? null;
         clock.current = { server: Date.parse(order.server_time), received: performance.now() };
-        const now = clock.current.server;
         const delivery = order.csa?.round.delivery_date ?? deliveryDate;
         setActualDelivery(delivery);
-        const until = Math.min(
-          csaDeliveryStartMs(delivery),
-          selected?.state === "reselecting" ? Date.parse(selected.reopen_until ?? "") : Infinity,
-        );
-        const allowed = can && now < until;
-        setEligibleUntil(allowed ? until : null);
-        if (!allowed) setError(new Error("csa_order_already_allocated"));
+        const until = csaOrderReopenUntil(order, selectionId, delivery);
+        setEligibleUntil(until);
+        if (until === null) setError(new Error("csa_order_already_allocated"));
         if (selected?.reopen_until) setDeadline(roundDateInput(selected.reopen_until));
       })
       .catch((e) => {

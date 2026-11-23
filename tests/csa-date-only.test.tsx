@@ -36,7 +36,7 @@ it("saves an actual date without a fabricated delivery time", async () => {
       <CSARoundEditor />
     </AdminI18nProvider>,
   );
-  fireEvent.change(await screen.findByRole("textbox", { name: "Round name" }), {
+  fireEvent.change(await screen.findByRole("textbox", { name: "Configuration name" }), {
     target: { value: "Year end" },
   });
   fireEvent.change(screen.getByLabelText(/^Selection opens/), {
@@ -50,13 +50,14 @@ it("saves an actual date without a fabricated delivery time", async () => {
   fireEvent.change(date, { target: { value: "2027-01-01" } });
   fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() =>
-    expect(api).toHaveBeenCalledWith("admin/csa-rounds", {
+    expect(api).toHaveBeenCalledWith("admin/csa-round-configurations", {
       method: "POST",
       body: JSON.stringify({
         name: "Year end",
         opens_at: round.opens_at,
         closes_at: round.closes_at,
         delivery_date: "2027-01-01",
+        recurrence_mode: null,
       }),
     }),
   );

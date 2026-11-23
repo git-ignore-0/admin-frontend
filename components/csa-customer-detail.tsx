@@ -1,19 +1,16 @@
 "use client";
 
 import {
-  Anchor,
   Button,
   Drawer,
-  Group,
   Paper,
   Skeleton,
   Stack,
-  Title,
+  Text,
   VisuallyHidden,
   getDefaultZIndex,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
-import { IconArrowLeft } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -24,7 +21,7 @@ import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { CustomerMembershipCard } from "@/components/customer-membership-card";
 import { LinkCustomerUserDialog } from "@/components/link-customer-user-dialog";
-import { DataState, Status } from "@/components/nfv-controls";
+import { DataState, Section, Status } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { recordDetailDrawer } from "@/components/record-detail-drawer";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -127,68 +124,69 @@ function CustomerDetailView({
   const content = item ? (
     <Stack gap="md">
       {recovery}
-      <Paper component="section" p="md" withBorder>
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Title order={2} size="md" fw={600}>
-              {copy.accountInformation}
-            </Title>
-            {!item.user && (
-              <Button ref={linkButtonRef} variant="default" onClick={() => setLinkDialogOpen(true)}>
-                {copy.linkUser}
-              </Button>
-            )}
-          </Group>
-          <RecordDetailFields>
-            <RecordDetailField label={copy.name}>{item.user?.name || item.name}</RecordDetailField>
-            <RecordDetailField label="Email">{item.user?.email}</RecordDetailField>
-            <RecordDetailField label={copy.phone}>{item.phone}</RecordDetailField>
-            <RecordDetailField label={copy.websiteAccount}>
-              <Status
-                domain="account-link"
-                status={item.user ? "linked" : "managed"}
-                label={item.user ? copy.linkedAccount : copy.unlinkedAccount}
-              />
-            </RecordDetailField>
-            <RecordDetailField label={copy.province}>{provinceName}</RecordDetailField>
-            <RecordDetailField label={copy.ward}>{wardName}</RecordDetailField>
-            <RecordDetailField label={copy.deliveryAddress}>{item.address}</RecordDetailField>
-          </RecordDetailFields>
-        </Stack>
-      </Paper>
-      <Paper component="section" p="md" withBorder>
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Title order={2} size="md" fw={600}>
-              {copy.membershipHistory}
-            </Title>
-            <Button
-              component={AdminNavigationLink}
-              href={csaCustomerAssignmentHref(listContext, item.id)}
-            >
-              {copy.assignPackage}
+      <Section
+        title={copy.accountInformation}
+        actions={
+          !item.user && (
+            <Button ref={linkButtonRef} variant="default" onClick={() => setLinkDialogOpen(true)}>
+              {copy.linkUser}
             </Button>
-          </Group>
-          {item.memberships?.length ? (
-            <Stack gap="xs">
-              {[...item.memberships]
-                .sort((left, right) => {
-                  const leftDate = Date.parse(left.start_date);
-                  const rightDate = Date.parse(right.start_date);
-                  return (
-                    (Number.isFinite(rightDate) ? rightDate : -Infinity) -
-                    (Number.isFinite(leftDate) ? leftDate : -Infinity)
-                  );
-                })
-                .map((membership) => (
-                  <CustomerMembershipCard key={membership.id} item={membership} t={t} />
-                ))}
-            </Stack>
-          ) : (
-            <DataState kind="empty" title={copy.noHistory} />
+          )
+        }
+      >
+        <RecordDetailFields>
+          <RecordDetailField label={copy.name}>{item.user?.name || item.name}</RecordDetailField>
+          <RecordDetailField label="Email">{item.user?.email}</RecordDetailField>
+          <RecordDetailField label={copy.phone}>{item.phone}</RecordDetailField>
+          <RecordDetailField label={copy.websiteAccount}>
+            <Status
+              domain="account-link"
+              status={item.user ? "linked" : "managed"}
+              label={item.user ? copy.linkedAccount : copy.unlinkedAccount}
+            />
+          </RecordDetailField>
+          <RecordDetailField label={copy.province}>{provinceName}</RecordDetailField>
+          <RecordDetailField label={copy.ward}>{wardName}</RecordDetailField>
+          <RecordDetailField label={copy.deliveryAddress}>{item.address}</RecordDetailField>
+          {item.note && (
+            <RecordDetailField label={copy.note}>
+              <Text component="span" inherit style={{ whiteSpace: "pre-wrap" }}>
+                {item.note}
+              </Text>
+            </RecordDetailField>
           )}
-        </Stack>
-      </Paper>
+        </RecordDetailFields>
+      </Section>
+      <Section
+        title={copy.membershipHistory}
+        actions={
+          <Button
+            component={AdminNavigationLink}
+            href={csaCustomerAssignmentHref(listContext, item.id)}
+          >
+            {copy.assignPackage}
+          </Button>
+        }
+      >
+        {item.memberships?.length ? (
+          <Stack gap="xs">
+            {[...item.memberships]
+              .sort((left, right) => {
+                const leftDate = Date.parse(left.start_date);
+                const rightDate = Date.parse(right.start_date);
+                return (
+                  (Number.isFinite(rightDate) ? rightDate : -Infinity) -
+                  (Number.isFinite(leftDate) ? leftDate : -Infinity)
+                );
+              })
+              .map((membership) => (
+                <CustomerMembershipCard key={membership.id} item={membership} t={t} />
+              ))}
+          </Stack>
+        ) : (
+          <DataState kind="empty" title={copy.noHistory} />
+        )}
+      </Section>
     </Stack>
   ) : recovery ? (
     recovery
@@ -246,26 +244,9 @@ function CustomerDetailView({
           inert={linkDialogActive || undefined}
           aria-labelledby={headingId}
         >
-          <Anchor
-            component={AdminNavigationLink}
-            href={backHref}
-            size="sm"
-            w="fit-content"
-            onNavigate={(event) => {
-              if (intercepted) {
-                event.preventDefault();
-                closeDetail();
-              }
-            }}
-          >
-            <Group component="span" gap={6}>
-              <IconArrowLeft size={16} aria-hidden />
-              <span>{copy.back}</span>
-            </Group>
-          </Anchor>
-          <Title order={1} id={headingId} ref={headingRef} tabIndex={-1} style={longText}>
+          <VisuallyHidden component="h1" id={headingId} ref={headingRef} tabIndex={-1}>
             {title}
-          </Title>
+          </VisuallyHidden>
           {content}
         </Stack>
       )}
@@ -283,6 +264,7 @@ function CustomerDetailView({
             client.setQueryData<CSACustomer>(detailKey, (record) => ({
               ...customer,
               memberships: customer.memberships ?? record?.memberships,
+              note: customer.note ?? record?.note,
             }));
             void client.invalidateQueries({ queryKey: csaCustomerListKey });
             setLinkDialogOpen(false);

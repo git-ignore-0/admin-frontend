@@ -94,11 +94,6 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
           href: "/csa-rounds",
           label: t.common.csaRounds,
           icon: "calendar",
-          childScreens: {
-            new: t.breadcrumb.newRound,
-            record: t.breadcrumb.roundDetails,
-            edit: t.breadcrumb.edit,
-          },
         },
         {
           href: "/csa-purchase-requests",
@@ -270,6 +265,13 @@ export function resolveAdminBreadcrumbs(
         record === "assign" ? t.memberships.assignmentTitle : t.breadcrumb.membershipDetails;
       return [root, { label }];
     }
+  }
+  if (activeItem.href === "/csa-rounds") {
+    if (pathname === "/csa-rounds/new") return [root, { label: t.breadcrumb.newCsaConfiguration }];
+    if (/^\/csa-rounds\/[^/]+\/edit$/.test(pathname)) {
+      return [root, { label: t.breadcrumb.editCsaRound }];
+    }
+    return [root];
   }
 
   const labels = activeItem.childScreens;

@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 117 canonical route shapes and 166 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(117);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(117);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(166);
+  it("covers the 122 canonical route shapes and 173 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(122);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(122);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(173);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);

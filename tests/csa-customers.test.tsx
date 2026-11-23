@@ -2,11 +2,13 @@ import { selectOption } from "./select-option";
 import { focusManager } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import CreateCustomerPage from "@/app/(admin)/csa-customers/new/page";
 import AssignMembershipPage from "@/app/(admin)/memberships/assign/page";
 import {
   AdminBreadcrumbProvider,
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
+import { AdminHeaderContent } from "@/components/admin-header";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { CSACustomerDetail } from "@/components/csa-customer-detail";
@@ -14,6 +16,8 @@ import { CSACustomerForm } from "@/components/csa-customer-form";
 import { CSACustomerList } from "@/components/csa-customer-list";
 import { MembershipAssignmentForm } from "@/components/membership-assignment-form";
 import { ToastProvider } from "@/components/toast-provider";
+import { adminDictionaries } from "@/lib/admin-i18n";
+import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type { AdminMembership, CSACustomer, MembershipStatus, PaginationMeta } from "@/lib/types";
 
@@ -253,7 +257,8 @@ describe("CSA customer administration", () => {
       "2027-01-01",
     );
     const staleDetail = deferred<CSACustomer>();
-    const initialDetail = { ...customer, memberships: [existing] };
+    const note = "Call before delivery.\nMorning only.";
+    const initialDetail = { ...customer, note, memberships: [existing] };
     let detailRequests = 0;
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [user], meta });
     vi.mocked(api).mockImplementation(async (path) => {
@@ -284,6 +289,9 @@ describe("CSA customer administration", () => {
     expect(screen.getByText(user.email)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Link account" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Seasonal package" })).toBeVisible();
+    const displayedNote = screen.getByText(note, { normalizer: (value) => value });
+    expect(displayedNote).toBeVisible();
+    expect(displayedNote).toHaveStyle({ whiteSpace: "pre-wrap" });
   });
 
   it.each([
@@ -324,9 +332,24 @@ describe("CSA customer administration", () => {
     },
   );
 
-  it("uses the common back link and presents a read-only account with one assignment action", async () => {
+  it("uses the Admin header for the customer name and back link", async () => {
+    const pathname = `/csa-customers/${customer.id}`;
+    const search = "search=Lan&linked=managed&page=2";
+    window.history.replaceState(null, "", `${pathname}?${search}`);
+    function Header() {
+      return <AdminHeaderContent items={useAdminBreadcrumbs([])} />;
+    }
     vi.mocked(api).mockResolvedValue(customer);
-    providers(<CSACustomerDetail customerId={customer.id} />);
+    providers(
+      <AdminBreadcrumbProvider pathname={pathname} search={search}>
+        <header>
+          <Header />
+        </header>
+        <main>
+          <CSACustomerDetail customerId={customer.id} />
+        </main>
+      </AdminBreadcrumbProvider>,
+    );
 
     expect(screen.getByText("Loading customer details…")).toBeVisible();
     const account = await screen.findByRole("heading", { name: "Account information" });
@@ -334,13 +357,23 @@ describe("CSA customer administration", () => {
     expect(
       account.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    const back = screen.getByRole("link", { name: "CSA customers" });
-    expect(back).toBeVisible();
-    expect(back).toHaveAttribute("href", "/csa-customers");
-    expect(back.querySelector("svg")).toBeInTheDocument();
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByText(customer.name)).toHaveAttribute("aria-current", "page");
+    expect(header.getByRole("link", { name: "CSA customers" })).toHaveAttribute(
+      "href",
+      `/csa-customers?${search}`,
+    );
+    const body = within(screen.getByRole("main"));
+    expect(body.queryByRole("link", { name: "CSA customers" })).not.toBeInTheDocument();
+    expect(body.getByRole("heading", { name: customer.name, level: 1 })).toHaveClass(
+      "mantine-VisuallyHidden-root",
+    );
     const assign = screen.getAllByRole("link", { name: "Assign CSA package" });
     expect(assign).toHaveLength(1);
-    expect(assign[0]).toHaveAttribute("href", `/memberships/assign?customerId=${customer.id}`);
+    expect(assign[0]).toHaveAttribute(
+      "href",
+      `/memberships/assign?customerId=${customer.id}&${search}`,
+    );
     expect(screen.queryByRole("link", { name: "Edit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -393,6 +426,7 @@ describe("CSA customer administration", () => {
 
     expect(await screen.findByText("Thành phố Hồ Chí Minh")).toBeVisible();
     expect(screen.getByText("Phường Bến Nghé")).toBeVisible();
+    expect(screen.queryByText("Ghi chú")).not.toBeInTheDocument();
     expect(screen.queryByText("79")).toBeNull();
     expect(screen.queryByText("001")).toBeNull();
     expect(api).toHaveBeenCalledWith(
@@ -490,90 +524,179 @@ describe("CSA customer administration", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 
-  it("creates a customer with the same supported shipping areas used by guest CSA", async () => {
-    let resolveCreate!: (value: CSACustomer) => void;
-    vi.mocked(api).mockImplementation(async (path) => {
-      if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
-      if (path === "admin/csa-customers") {
-        return new Promise<CSACustomer>((resolve) => {
-          resolveCreate = resolve;
-        }) as never;
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
+  it.each(["", "Call before delivery.\nMorning only."])(
+    "creates a customer with supported shipping areas and optional note %j",
+    async (note) => {
+      let resolveCreate!: (value: CSACustomer) => void;
+      vi.mocked(api).mockImplementation(async (path) => {
+        if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
+        if (path === "admin/csa-customers") {
+          return new Promise<CSACustomer>((resolve) => {
+            resolveCreate = resolve;
+          }) as never;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      });
 
-    const view = providers(<CSACustomerForm />);
-    expect(screen.queryByRole("radio")).toBeNull();
-    expect(screen.queryByRole("searchbox")).toBeNull();
-    expect(view.container).not.toHaveTextContent("Package");
-    expect(screen.queryByLabelText(/Farmbrite/)).toBeNull();
+      const view = providers(<CSACustomerForm />);
+      expect(screen.queryByRole("radio")).toBeNull();
+      expect(screen.queryByRole("searchbox")).toBeNull();
+      expect(view.container).not.toHaveTextContent("Package");
+      expect(screen.queryByLabelText(/Farmbrite/)).toBeNull();
 
-    await waitFor(() => expect(screen.getByLabelText("Province/city *")).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-    expect(screen.getByText("Name is required.")).toBeVisible();
-    expect(screen.getByText("Phone number is required.")).toBeVisible();
-    expect(screen.getByText("Province/city is required.")).toBeVisible();
-    expect(screen.getByText("Ward/commune is required.")).toBeVisible();
-    expect(screen.getByText("Detailed address is required.")).toBeVisible();
-    expect(api).toHaveBeenCalledTimes(1);
-    expect(api).toHaveBeenCalledWith("public/shipping-areas?locale=en", expect.anything());
-    expect(
-      vi.mocked(api).mock.calls.some(([path]) => path.startsWith("administrative-units/")),
-    ).toBe(false);
+      const contact = screen.getByRole("group", { name: "Contact details" });
+      expect(within(contact).getByLabelText("Name *")).toBeRequired();
+      expect(within(contact).getByLabelText("Phone number *")).toBeRequired();
+      const delivery = screen.getByRole("group", { name: "Delivery address" });
+      expect(within(delivery).getByRole("combobox", { name: "Province/city" })).toBeRequired();
+      expect(within(delivery).getByRole("combobox", { name: "Ward/commune" })).toBeRequired();
+      expect(within(delivery).getByLabelText("Delivery address *")).toBeRequired();
+      const noteInput = screen.getByRole("textbox", { name: "Note" });
+      expect(noteInput).not.toBeRequired();
+      expect(noteInput).toHaveAttribute("maxlength", "1000");
+      const create = screen.getByRole("button", { name: "Create CSA customer" });
+      const card = create.closest(".mantine-Paper-root");
+      expect(card).toContainElement(contact);
+      expect(card).toContainElement(delivery);
+      expect(create.closest("footer")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), {
-      target: { value: customer.name },
-    });
-    const phone = screen.getByRole("textbox", { name: /Phone number/ });
-    expect(phone).toHaveAttribute("type", "tel");
-    expect(phone).toHaveAttribute("inputmode", "tel");
-    expect(phone).toHaveAttribute("autocomplete", "tel");
-    fireEvent.change(phone, { target: { value: "0123" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-    expect(screen.getByText("Enter a valid phone number.")).toBeVisible();
-    expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/csa-customers")).toBe(false);
-    fireEvent.change(phone, { target: { value: "0912345678" } });
-    expect(phone).toHaveValue("0912345678");
-    fireEvent.change(phone, { target: { value: "0912e345678" } });
-    expect(phone).toHaveValue("0912345678");
-    const province = await screen.findByRole("combobox", { name: /Province\/city/ });
-    await waitFor(() => expect(screen.getByLabelText("Province/city *")).toBeEnabled());
-    selectOption(province, "79");
-    const ward = screen.getByRole("combobox", { name: /Ward\/commune/ });
-    selectOption(ward, "001");
-    selectOption(province, "");
-    expect(ward).toHaveValue("Choose a ward or commune");
-    selectOption(province, "79");
-    selectOption(ward, "001");
-    fireEvent.change(screen.getByRole("textbox", { name: /Delivery address/ }), {
-      target: { value: "12 Main Street" },
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-    const saving = screen.getByRole("button", { name: "Saving…" });
-    expect(saving).toBeDisabled();
-    fireEvent.click(saving);
-    await waitFor(() =>
+      await waitFor(() =>
+        expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
+      expect(screen.getByText("Name is required.")).toBeVisible();
+      expect(screen.getByText("Phone number is required.")).toBeVisible();
+      expect(screen.getByText("Province/city is required.")).toBeVisible();
+      expect(screen.getByText("Ward/commune is required.")).toBeVisible();
+      expect(screen.getByText("Detailed address is required.")).toBeVisible();
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(api).toHaveBeenCalledWith("public/shipping-areas?locale=en", expect.anything());
       expect(
-        vi.mocked(api).mock.calls.filter(([path]) => path === "admin/csa-customers"),
-      ).toHaveLength(1),
-    );
-    const createCall = vi.mocked(api).mock.calls.find(([path]) => path === "admin/csa-customers");
-    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
-      name: customer.name,
-      phone: "+84912345678",
-      province_code: "79",
-      ward_code: "001",
-      address: "12 Main Street",
-    });
-    expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith("admin/memberships"))).toBe(
-      false,
-    );
+        vi.mocked(api).mock.calls.some(([path]) => path.startsWith("administrative-units/")),
+      ).toBe(false);
 
-    resolveCreate({ ...customer, phone: "+84912345678" });
-    await waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith(`/csa-customers/${customer.id}`),
+      fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), {
+        target: { value: customer.name },
+      });
+      const phone = screen.getByRole("textbox", { name: /Phone number/ });
+      expect(phone).toHaveAttribute("type", "tel");
+      expect(phone).toHaveAttribute("inputmode", "tel");
+      expect(phone).toHaveAttribute("autocomplete", "tel");
+      fireEvent.change(phone, { target: { value: "0123" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
+      expect(screen.getByText("Enter a valid phone number.")).toBeVisible();
+      expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/csa-customers")).toBe(
+        false,
+      );
+      fireEvent.change(phone, { target: { value: "0912345678" } });
+      expect(phone).toHaveValue("0912345678");
+      fireEvent.change(phone, { target: { value: "0912e345678" } });
+      expect(phone).toHaveValue("0912345678");
+      const province = await screen.findByRole("combobox", { name: /Province\/city/ });
+      await waitFor(() =>
+        expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
+      );
+      selectOption(province, "79");
+      const ward = screen.getByRole("combobox", { name: /Ward\/commune/ });
+      selectOption(ward, "001");
+      selectOption(province, "");
+      expect(ward).toHaveValue("Choose a ward or commune");
+      selectOption(province, "79");
+      selectOption(ward, "001");
+      fireEvent.change(screen.getByRole("textbox", { name: /Delivery address/ }), {
+        target: { value: "12 Main Street" },
+      });
+      fireEvent.change(noteInput, { target: { value: note } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
+      const saving = screen.getByRole("button", { name: "Saving…" });
+      expect(saving).toBeDisabled();
+      fireEvent.click(saving);
+      await waitFor(() =>
+        expect(
+          vi.mocked(api).mock.calls.filter(([path]) => path === "admin/csa-customers"),
+        ).toHaveLength(1),
+      );
+      const createCall = vi.mocked(api).mock.calls.find(([path]) => path === "admin/csa-customers");
+      expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
+        name: customer.name,
+        phone: "+84912345678",
+        province_code: "79",
+        ward_code: "001",
+        address: "12 Main Street",
+        note,
+      });
+      expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith("admin/memberships"))).toBe(
+        false,
+      );
+
+      resolveCreate({ ...customer, phone: "+84912345678" });
+      await waitFor(() =>
+        expect(navigation.replace).toHaveBeenCalledWith(`/csa-customers/${customer.id}`),
+      );
+    },
+  );
+
+  it("uses the Admin header style for creation and sorts shipping options by locality name", async () => {
+    vi.mocked(api).mockResolvedValue([
+      { province_code: "79", province_name: "Hồ Chí Minh", wards: [] },
+      {
+        province_code: "66",
+        province_name: "Đắk Lắk",
+        wards: [
+          { ward_code: "003", ward_name: "Xã Hòa Thắng", shipping_fee_vnd: "30000" },
+          { ward_code: "020", ward_name: "Phường 20", shipping_fee_vnd: "30000" },
+          { ward_code: "002", ward_name: "Phường 2", shipping_fee_vnd: "30000" },
+          { ward_code: "001", ward_name: "Xã An Bình", shipping_fee_vnd: "30000" },
+        ],
+      },
+      { province_code: "01", province_name: "Hà Nội", wards: [] },
+    ] as never);
+    const dictionary = adminDictionaries.vi;
+    const active = adminNavigation(dictionary)
+      .flatMap((section) => section.items)
+      .find((item) => item.href === "/csa-customers");
+    providers(
+      <>
+        <header>
+          <AdminHeaderContent
+            items={resolveAdminBreadcrumbs("/csa-customers/new", active, dictionary)}
+          />
+        </header>
+        <main>
+          <CreateCustomerPage />
+        </main>
+      </>,
+      "vi",
     );
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByText("Tạo khách hàng CSA")).toHaveAttribute("aria-current", "page");
+    expect(header.getByRole("link", { name: "Khách hàng CSA" })).toHaveAttribute(
+      "href",
+      "/csa-customers",
+    );
+    const body = within(screen.getByRole("main"));
+    expect(body.queryByRole("link", { name: "Khách hàng CSA" })).not.toBeInTheDocument();
+    expect(body.getByRole("heading", { name: "Tạo khách hàng CSA", level: 1 })).toHaveClass(
+      "mantine-VisuallyHidden-root",
+    );
+    const province = screen.getByRole("combobox", { name: /Tỉnh/ });
+    await waitFor(() => expect(province).toBeEnabled());
+    fireEvent.click(province);
+    const provinces = screen.getAllByRole("option");
+    expect(provinces.slice(1).map((option) => option.textContent)).toEqual([
+      "Đắk Lắk",
+      "Hà Nội",
+      "Hồ Chí Minh",
+    ]);
+    fireEvent.click(provinces[1]);
+    fireEvent.click(screen.getByRole("combobox", { name: /Phường/ }));
+    expect(
+      screen
+        .getAllByRole("option")
+        .slice(1)
+        .map((option) => option.textContent),
+    ).toEqual(["Phường 2", "Phường 20", "Xã An Bình", "Xã Hòa Thắng"]);
   });
 
   it("keeps the create form intact and reports a duplicate-phone conflict", async () => {
@@ -585,23 +708,29 @@ describe("CSA customer administration", () => {
     const view = providers(<CSACustomerForm />);
     fireEvent.change(screen.getByLabelText("Name *"), { target: { value: customer.name } });
     fireEvent.change(screen.getByLabelText("Phone number *"), { target: { value: "0912345678" } });
-    await waitFor(() => expect(screen.getByLabelText("Province/city *")).toBeEnabled());
-    selectOption(screen.getByLabelText("Province/city *"), "79");
-    selectOption(screen.getByLabelText("Ward/commune *"), "001");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
+    );
+    selectOption(screen.getByRole("combobox", { name: "Province/city" }), "79");
+    selectOption(screen.getByRole("combobox", { name: "Ward/commune" }), "001");
     fireEvent.change(screen.getByLabelText("Delivery address *"), {
       target: { value: "12 Main Street" },
     });
+    const note = screen.getByRole("textbox", { name: "Note" });
+    fireEvent.change(note, { target: { value: "Call before delivery." } });
     fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
 
     const duplicateError = await screen.findByText(
       "This phone number belongs to another CSA customer.",
     );
     const phoneInput = screen.getByLabelText(/Phone number/);
-    expect(duplicateError).toHaveClass("field-error");
+    expect(duplicateError).toHaveClass("mantine-TextInput-error");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
     expect(phoneInput).toHaveAttribute("aria-describedby", duplicateError.id);
-    expect(phoneInput.closest("label")).toContainElement(duplicateError);
+    expect(phoneInput.closest(".mantine-TextInput-root")).toContainElement(duplicateError);
+    await waitFor(() => expect(phoneInput).toHaveFocus());
     expect(phoneInput).toHaveValue("0912345678");
+    expect(note).toHaveValue("Call before delivery.");
     expect(
       [...view.container.querySelectorAll(".error-box")].some((box) =>
         box.textContent?.includes("This phone number belongs to another CSA customer."),

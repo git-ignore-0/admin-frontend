@@ -1,5 +1,5 @@
 import { CSARoundEditor } from "@/components/csa-round-editor";
-import { readRoundListContext, type RoundListQuery } from "../../round-navigation";
+import { readRoundNavigationContext, type RoundListQuery } from "../../round-navigation";
 
 export default async function Page({
   params,
@@ -9,6 +9,6 @@ export default async function Page({
   searchParams: Promise<RoundListQuery>;
 }) {
   const { id } = await params;
-  const { page, status } = readRoundListContext(await searchParams);
-  return <CSARoundEditor key={id} roundId={id} listPage={page} listStatus={status} />;
+  const listContext = readRoundNavigationContext(await searchParams);
+  return <CSARoundEditor key={id} roundId={id} listContext={listContext} />;
 }

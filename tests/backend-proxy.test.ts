@@ -804,6 +804,76 @@ describe("admin backend proxy", () => {
   });
 
   it.each([
+    { suffix: [], search: "?type=weekly&status=published&page=2&page_size=20" },
+    { suffix: [membershipId], search: "" },
+    { suffix: [membershipId, "rounds"], search: "?status=draft&page=2&page_size=100" },
+    {
+      suffix: [membershipId, "rounds"],
+      search: "?status=draft&generated_only=true&search=27%2F11%2F2026",
+    },
+  ])(
+    "forwards a CSA configuration read to the canonical API with $search",
+    async ({ suffix, search }) => {
+      const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+      vi.stubGlobal("fetch", upstream);
+      const path = ["admin", "csa-round-configurations", ...suffix];
+      const endpoint = `${path.join("/")}${search}`;
+      const response = await GET(
+        pageRequest(`https://admin.example.test/api/backend/${endpoint}`),
+        {
+          params: Promise.resolve({ path }),
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(String(upstream.mock.calls[0][0])).toBe(
+        `https://auth.example.test/api/v1/${endpoint}`,
+      );
+    },
+  );
+
+  it.each([
+    ["POST", [], POST],
+    ["PATCH", [membershipId], PATCH],
+    ["DELETE", [membershipId], DELETE],
+    ["POST", [membershipId, "publish"], POST],
+    ["POST", [membershipId, "stop"], POST],
+  ] as const)("forwards CSA configuration %s %j", async (method, suffix, handler) => {
+    const upstream = vi
+      .fn()
+      .mockResolvedValue(
+        method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : Response.json({ data: { id: membershipId } }),
+      );
+    vi.stubGlobal("fetch", upstream);
+    const path = ["admin", "csa-round-configurations", ...suffix];
+    const endpoint = path.join("/");
+    for (const search of ["?page=1", ""]) {
+      const response = await handler(
+        pageRequest(`https://admin.example.test/api/backend/${endpoint}${search}`, {
+          method,
+          headers: {
+            origin: "https://admin.example.test",
+            "x-nfv-admin-request": "1",
+            ...(method !== "DELETE" && { "content-type": "application/json" }),
+          },
+          body: method === "DELETE" ? undefined : "{}",
+        }),
+        { params: Promise.resolve({ path }) },
+      );
+      expect(response.status).toBe(search ? 404 : method === "DELETE" ? 204 : 200);
+      if (search) expect(upstream).not.toHaveBeenCalled();
+      else {
+        const [target, init] = upstream.mock.calls[0];
+        expect(String(target)).toBe(`https://auth.example.test/api/v1/${endpoint}`);
+        expect(init.method).toBe(method);
+        if (method !== "DELETE") expect(new TextDecoder().decode(init.body)).toBe("{}");
+      }
+    }
+  });
+
+  it.each([
     { path: ["administrative-units", "wards"], search: "" },
     { path: ["administrative-units", "wards"], search: "?province=1" },
     { path: ["administrative-units", "wards"], search: "?province=ab" },
@@ -813,6 +883,30 @@ describe("admin backend proxy", () => {
     { path: ["admin", "csa-rounds"], search: "?page_size=20&page_size=20" },
     { path: ["admin", "csa-rounds"], search: "?status=draft&status=open" },
     { path: ["admin", "csa-rounds", membershipId, "selections"], search: "?locale=fr" },
+    { path: ["admin", "csa-round-configurations"], search: "?type=monthly" },
+    { path: ["admin", "csa-round-configurations"], search: "?status=open" },
+    {
+      path: ["admin", "csa-round-configurations", membershipId, "rounds"],
+      search: "?status=published",
+    },
+    { path: ["admin", "csa-round-configurations"], search: "?search=anything" },
+    {
+      path: ["admin", "csa-round-configurations", membershipId, "rounds"],
+      search: "?generated_only=maybe",
+    },
+    { path: ["admin", "csa-round-configurations"], search: "?type=weekly&type=standalone" },
+    { path: ["admin", "csa-round-configurations"], search: "?sort=sequence" },
+    { path: ["admin", "csa-round-configurations"], search: "?page=10001" },
+    { path: ["admin", "csa-round-configurations", membershipId], search: "?page=1" },
+    { path: ["admin", "csa-round-configurations", membershipId, "rounds"], search: "?type=weekly" },
+    {
+      path: ["admin", "csa-round-configurations", membershipId, "rounds"],
+      search: "?status=active",
+    },
+    {
+      path: ["admin", "csa-round-configurations", membershipId, "rounds"],
+      search: "?page_size=101",
+    },
     { path: ["admin", "memberships", membershipId, "history"], search: "?page=1&page=2" },
     { path: ["admin", "membership-usage", membershipId], search: "?locale=en&locale=vi" },
     {

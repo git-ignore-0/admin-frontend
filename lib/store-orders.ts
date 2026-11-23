@@ -91,8 +91,9 @@ export async function listStoreOrders(query: StoreOrderQuery = {}) {
   return payload;
 }
 
-export function getStoreOrder(id: string) {
-  return api<StoreOrder>(`admin/store-orders/${id}`);
+export function getStoreOrder(id: string, signal?: AbortSignal) {
+  const path = `admin/store-orders/${id}`;
+  return signal ? api<StoreOrder>(path, { signal }) : api<StoreOrder>(path);
 }
 
 export async function mutateStoreOrder(
