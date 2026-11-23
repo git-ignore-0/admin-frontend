@@ -205,7 +205,8 @@ export async function api<T>(
 ): Promise<T | void> {
   if (options?.response === "no-content") {
     const response = await fetchApiResponse(path, init, options);
-    if (response.status !== 204 || response.body !== null) {
+    // Browsers can expose an empty stream for a 204 response.
+    if (response.status !== 204) {
       throw invalidApiResponse(response.status);
     }
     return;
