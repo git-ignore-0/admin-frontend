@@ -1123,7 +1123,8 @@ const vi = {
     addNote: "Thêm ghi chú",
     currentShippingAddress: "Địa chỉ giao hàng hiện tại",
     replacementShippingAddress: "Địa chỉ giao hàng sau khi liên kết",
-    shippingAddressChanged: "Địa chỉ giao hàng đã thay đổi. Hãy xem lại địa chỉ mới trước khi xác nhận.",
+    shippingAddressChanged:
+      "Địa chỉ giao hàng đã thay đổi. Hãy xem lại địa chỉ mới trước khi xác nhận.",
     nameRequired: "Họ tên là bắt buộc.",
     phoneRequired: "Số điện thoại là bắt buộc.",
     invalidPhone: "Số điện thoại không đúng định dạng.",
@@ -2672,7 +2673,8 @@ const en: AdminDictionary = {
     addNote: "Add note",
     currentShippingAddress: "Current delivery address",
     replacementShippingAddress: "Delivery address after linking",
-    shippingAddressChanged: "The delivery address has changed. Review the new address before confirming.",
+    shippingAddressChanged:
+      "The delivery address has changed. Review the new address before confirming.",
     nameRequired: "Name is required.",
     phoneRequired: "Phone number is required.",
     invalidPhone: "Enter a valid phone number.",
