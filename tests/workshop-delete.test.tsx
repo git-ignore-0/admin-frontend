@@ -249,25 +249,33 @@ describe("workshop confirmation flows", () => {
 
   it("stops publication on an optimistic save conflict and preserves the edited draft", async () => {
     loadedWorkshop = readyWorkshop;
+    let rejectSave!: (error: Error) => void;
+    const saving = new Promise<never>((_, reject) => {
+      rejectSave = reject;
+    });
     vi.mocked(api)
       .mockResolvedValueOnce(loadedWorkshop)
-      .mockRejectedValueOnce(Object.assign(new Error("version_conflict"), { status: 409 }));
+      .mockImplementationOnce(() => saving);
     renderEditor();
 
     const publish = await screen.findByRole("button", { name: "Xuất bản" });
     const title = screen.getByLabelText("Tiêu đề *");
     fireEvent.change(title, { target: { value: "Tiêu đề chưa lưu" } });
     fireEvent.click(publish);
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xuất bản" }));
+    const dialog = screen.getByRole("dialog", { name: "Xuất bản" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Xuất bản" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Bản nháp đã được người khác cập nhật",
-    );
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    await act(async () => {
+      rejectSave(Object.assign(new Error("version_conflict"), { status: 409 }));
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Bản nháp đã được người khác cập nhật");
+    expect(dialog).not.toBeInTheDocument();
+    expect(publish).toBeEnabled();
     expect(title).toHaveValue("Tiêu đề chưa lưu");
     expect(mutations()).toHaveLength(1);
     expect(mutations()[0][1]?.method).toBe("PATCH");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(publish).toBeEnabled();
   });
 
   it("removes the dialog and stops publication when the session changes during the save", async () => {
