@@ -3,6 +3,7 @@
 import {
   Alert,
   Anchor,
+  Box,
   Button,
   Code,
   Divider,
@@ -12,6 +13,7 @@ import {
   Paper,
   SimpleGrid,
   Stack,
+  Table,
   Text,
   Title,
 } from "@mantine/core";
@@ -32,6 +34,7 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import { ListState } from "@/components/list-state";
 import { DataState, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { recordDetailDrawer } from "@/components/record-detail-drawer";
@@ -39,8 +42,14 @@ import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { UserAccountDialog, type UserAccountDialogAction } from "@/components/user-account-dialog";
 import { UserEmail } from "@/components/user-email";
+import { UserShippingAddressSection } from "@/components/user-shipping-address";
 import { formatAdminDateTime } from "@/lib/admin-date";
-import { accountFailure, requireAccountActionResult, userEmailStatus } from "@/lib/admin-users";
+import {
+  accountFailure,
+  requireAccountActionResult,
+  userAccountPhone,
+  userEmailStatus,
+} from "@/lib/admin-users";
 import {
   adminUsersListHref,
   useAdminUserDetail,
@@ -55,23 +64,13 @@ import type {
   InvitedAdminUser,
   PaginationMeta,
 } from "@/lib/types";
-import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
 const drawerZIndex = getDefaultZIndex("modal") - 1;
 const longText = { overflowWrap: "anywhere" } as const;
 type UserDetailSummary = Omit<AdminUserDetail, "invited_users">;
 
-function statusActionFor(status: string) {
-  switch (status) {
-    case "pending_activation":
-      return "activate";
-    case "active":
-      return "suspend";
-    case "suspended":
-      return "reactivate";
-    default:
-      return null;
-  }
+function statusActionFor(user?: UserDetailSummary) {
+  return user?.account_actions?.find((action) => action !== "reset-password");
 }
 
 export function UserDetail({
@@ -108,6 +107,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   const [invitedPage, setInvitedPage] = useState(1);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [shippingSaving, setShippingSaving] = useState(false);
   const [dialog, setDialog] = useState<{
     action: UserAccountDialogAction;
     accessRevision: number;
@@ -115,10 +115,10 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   const [focusAction, setFocusAction] = useState<UserAccountDialogAction | null>(null);
   const query = useAdminUserDetail(userId, invitedPage);
   const user = query.summary?.data;
-  const exactPage = query.data;
-  const referralPageMissing = Boolean(user && !exactPage);
-  const statusAction = user ? statusActionFor(user.status) : null;
-  const canReset = Boolean(user && statusAction && !user.email_verified);
+  const currentDetail = query.data?.data;
+  const referralPageMissing = Boolean(user && !currentDetail);
+  const statusAction = statusActionFor(user);
+  const canReset = user?.account_actions?.includes("reset-password") === true;
   const activeDialog =
     canMutate &&
     dialog?.accessRevision === query.accessRevision &&
@@ -127,8 +127,9 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       ? dialog.action
       : null;
   const readPending = query.isFetching || query.waitingForConnection;
-  const readUnavailable = !exactPage || readPending || Boolean(query.error);
-  const navigationBlocked = busy || activeDialog !== null;
+  const readUnavailable = !currentDetail || readPending || Boolean(query.error);
+  const accountActionInProgress = busy || activeDialog !== null;
+  const navigationBlocked = accountActionInProgress || shippingSaving;
 
   useLayoutEffect(() => {
     return () => {
@@ -165,7 +166,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       pendingSubmission.current ||
       navigationBlocked ||
       readUnavailable ||
-      action !== statusActionFor(exactPage?.data.status ?? "")
+      action !== statusActionFor(currentDetail)
     ) {
       return;
     }
@@ -201,15 +202,11 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   }
 
   function openDialog(action: UserAccountDialogAction, event: MouseEvent<HTMLButtonElement>) {
-    const target = exactPage?.data;
     if (
-      !target ||
+      !currentDetail?.account_actions?.includes(action) ||
       readUnavailable ||
       navigationBlocked ||
       pendingSubmission.current ||
-      (action === "suspend"
-        ? target.status !== "active"
-        : !statusActionFor(target.status) || target.email_verified) ||
       !captureMutationAccess()
     ) {
       return;
@@ -231,7 +228,12 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
     void query.refetch({ cancelRefetch: false });
   }
 
+  function refreshDetail() {
+    void query.refetch({ cancelRefetch: true });
+  }
+
   const title = user?.name || t.users.detailTitle;
+  const buttonsDisabled = !canMutate || readUnavailable || navigationBlocked;
   const content = (
     <Stack gap="md" aria-busy={(query.isFetching && !referralPageMissing) || undefined}>
       {loadError && !referralPageMissing && (
@@ -252,12 +254,39 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
               {actionError}
             </Alert>
           )}
-          <UserDetails user={user} navigationBlocked={navigationBlocked}>
+          <UserDetails
+            user={user}
+            navigationBlocked={navigationBlocked}
+            addressSection={
+              <UserShippingAddressSection
+                key={user.can_edit_shipping_address === true ? "editable" : "read-only"}
+                userId={userId}
+                address={user.shipping_address}
+                historicalLocation={{
+                  address: user.address ?? "",
+                  province_code: user.province_code ?? "",
+                  ward_code: user.ward_code ?? "",
+                }}
+                canEdit={user.can_edit_shipping_address === true}
+                disabled={!canMutate || readUnavailable || accountActionInProgress}
+                refresh={refreshDetail}
+                onSavingChange={setShippingSaving}
+                onAddressSaved={(saved, expectedVersion) => {
+                  query.applyShippingAddress(saved, expectedVersion);
+                  refreshDetail();
+                }}
+                onProtectedTarget={() => {
+                  setActionError(copy.protected);
+                  refreshDetail();
+                }}
+              />
+            }
+          >
             <UserReferrals
               count={user.invited_count}
-              invitees={exactPage?.data.invited_users}
-              meta={exactPage ? exactPage.meta?.invited : query.summary?.meta?.invited}
-              page={exactPage?.meta?.invited?.page ?? invitedPage}
+              invitees={currentDetail?.invited_users}
+              meta={query.data ? query.data.meta?.invited : query.summary?.meta?.invited}
+              page={query.data?.meta?.invited?.page ?? invitedPage}
               loading={referralPageMissing && query.isFetching}
               error={referralPageMissing ? loadError : ""}
               paginationDisabled={navigationBlocked || readPending}
@@ -269,11 +298,10 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       )}
     </Stack>
   );
-  const buttonsDisabled = !canMutate || readUnavailable || navigationBlocked;
   // Mantine restarts the Drawer focus trap when the nested dialog closes.
   const focusSuspend = !buttonsDisabled && focusAction === "suspend" && statusAction === "suspend";
   const focusReset = !buttonsDisabled && focusAction === "reset-password" && canReset;
-  const actions = statusAction && (
+  const actions = (statusAction || canReset) && (
     <Group component="footer" {...recordDetailDrawer.footer} aria-label={copy.title}>
       {statusAction === "suspend" && (
         <Button
@@ -286,7 +314,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
           {copy.suspend}
         </Button>
       )}
-      {(canReset || statusAction !== "suspend") && (
+      {(canReset || (statusAction && statusAction !== "suspend")) && (
         <Group gap="xs" justify="flex-end" ms="auto" maw="100%">
           {canReset && (
             <Button
@@ -298,7 +326,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
               {copy["reset-password"]}
             </Button>
           )}
-          {statusAction !== "suspend" && (
+          {statusAction && statusAction !== "suspend" && (
             <Button
               variant="filled"
               loading={busy}
@@ -469,34 +497,20 @@ function UserDetailSection({
   );
 }
 
-function UserContactDetails({ user }: { user: UserDetailSummary }) {
-  const { locale, t } = useAdminI18n();
-  const { provinceName, wardName } = useAdministrativeUnitNames(
-    user.province_code || null,
-    user.ward_code || null,
-    locale,
-  );
-  const fields: Array<[string, ReactNode]> = [
-    [t.users.phone, user.phone || null],
-    [t.csaCustomers.address, user.address || null],
-  ];
-  if (user.province_code)
-    fields.push([t.csaCustomers.province, provinceName || user.province_code]);
-  if (user.ward_code) fields.push([t.csaCustomers.ward, wardName || user.ward_code]);
-
-  return <UserDetailSection title={t.users.contactDetails} fields={fields} />;
-}
-
 function UserDetails({
   user,
   navigationBlocked,
+  addressSection,
   children,
 }: {
   user: UserDetailSummary;
   navigationBlocked: boolean;
+  addressSection: ReactNode;
   children: ReactNode;
 }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
+  const referred = user.source === "referred";
+
   function guardPointsNavigation(event: MouseEvent<HTMLAnchorElement>) {
     if (navigationBlocked) event.preventDefault();
   }
@@ -506,43 +520,44 @@ function UserDetails({
       <UserDetailSection
         title={t.users.details}
         fields={[
-          [t.users.loginPhone, user.login_phone_number || null],
+          [t.users.phoneNumber, userAccountPhone(user)],
           [t.users.emailStatus, userEmailStatus(user, t)],
           [t.users.created, formatAdminDateTime(user.date_joined)],
           [t.users.csaProfile, user.has_csa_customer ? t.users.csaPresent : t.users.csaAbsent],
         ]}
-      >
-        {statusActionFor(user.status) && user.email_verified && (
-          <Alert color="info">{t.users.accountActions.emailRecovery}</Alert>
-        )}
-      </UserDetailSection>
-      <UserContactDetails key={`${locale}:${user.province_code}:${user.ward_code}`} user={user} />
-      <UserDetailSection title={t.common.points} fields={[[t.users.balance, user.points_balance]]}>
-        <Group gap="sm">
-          <Anchor
+      />
+      {addressSection}
+      <Paper component="section" p="md">
+        <Group justify="space-between" gap="sm">
+          <Stack gap={4}>
+            <Title order={2} size="md" fw={600}>
+              {t.users.balance}
+            </Title>
+            <Text size="xl" fw={600}>
+              {user.points_balance}
+            </Text>
+          </Stack>
+          <Button
             component={AdminNavigationLink}
             href={`/points/${encodeURIComponent(user.id)}`}
+            variant="default"
+            size="sm"
             aria-disabled={navigationBlocked || undefined}
+            data-disabled={navigationBlocked || undefined}
             onClick={guardPointsNavigation}
           >
             {t.common.managePoints}
-          </Anchor>
-          <Anchor
-            component={AdminNavigationLink}
-            href="/points"
-            aria-disabled={navigationBlocked || undefined}
-            onClick={guardPointsNavigation}
-          >
-            {t.users.pointsDirectory}
-          </Anchor>
+          </Button>
         </Group>
-      </UserDetailSection>
+      </Paper>
       <UserDetailSection
         title={t.users.referralDetails}
         fields={[
           [t.users.referralCode, user.referral_code ? <Code>{user.referral_code}</Code> : null],
-          [t.users.source, user.source === "referred" ? t.users.referralSignup : t.users.organic],
-          [t.users.referrer, user.referrer?.name || null],
+          [
+            referred ? t.users.referrer : t.users.source,
+            referred ? user.referrer?.name.trim() || null : t.users.websiteSignup,
+          ],
         ]}
       >
         <Divider />
@@ -576,57 +591,80 @@ function UserReferrals({
   const { t } = useAdminI18n();
   const headingId = useId();
   return (
-    <Stack component="section" gap="sm" aria-labelledby={headingId}>
+    <Stack component="section" gap="sm" miw={0} aria-labelledby={headingId}>
       <Title order={3} size="sm" fw={600} id={headingId}>
         {t.users.invited.replace("{count}", String(count))}
       </Title>
-      {loading && <DataState kind="loading" title={t.users.invitedLoading} compact />}
-      {!loading && error && (
-        <RecoveryAlert message={error} retryLabel={t.common.retry} onRetry={onRetry} />
-      )}
-      {invitees &&
-        (invitees.length === 0 ? (
-          <DataState kind="empty" title={t.users.invitedEmpty} compact />
-        ) : (
-          <Stack component="ul" p={0} m={0} gap="xs" style={{ listStyle: "none" }}>
-            {invitees.map((invitee) => (
-              <Group
-                key={invitee.id}
-                component="li"
-                justify="space-between"
-                align="flex-start"
-                gap="xs"
-              >
-                <Stack gap={4} miw={0}>
-                  <Text fw={600} style={longText}>
-                    {invitee.name}
-                  </Text>
-                  <Text size="sm" c="dimmed" style={longText}>
-                    {invitee.email || t.users.emailMissing}
-                  </Text>
-                  {invitee.referred_at && (
-                    <Text size="sm" c="dimmed">
+      <Paper w="100%" miw={0} style={{ overflow: "hidden" }}>
+        {invitees && invitees.length > 0 && (
+          <Table.ScrollContainer
+            type="native"
+            minWidth={400}
+            role="group"
+            aria-labelledby={headingId}
+            tabIndex={0}
+            style={{ outlineOffset: -2 }}
+          >
+            <Table aria-labelledby={headingId} withRowBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th scope="col">{t.users.name}</Table.Th>
+                  <Table.Th scope="col">{t.users.shortStatus}</Table.Th>
+                  <Table.Th scope="col">{t.users.invitedAt}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {invitees.map((invitee) => (
+                  <Table.Tr key={invitee.id}>
+                    <Table.Td>
+                      <Stack gap={4} style={longText}>
+                        <Text fw={600}>{invitee.name}</Text>
+                        <Text size="sm" c="dimmed">
+                          {invitee.email || t.users.emailMissing}
+                        </Text>
+                      </Stack>
+                    </Table.Td>
+                    <Table.Td>
+                      <UserStatus status={invitee.status} />
+                    </Table.Td>
+                    <Table.Td style={{ whiteSpace: "nowrap" }}>
                       {formatAdminDateTime(invitee.referred_at)}
-                    </Text>
-                  )}
-                </Stack>
-                <UserStatus status={invitee.status} />
-              </Group>
-            ))}
-          </Stack>
-        ))}
-      {meta && (
-        <Pagination
-          disabled={paginationDisabled}
-          page={page}
-          total={meta.total}
-          pageSize={meta.page_size}
-          onPage={onPage}
-          previousLabel={t.common.previous}
-          nextLabel={t.common.next}
-          summary={t.common.pagination}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+        <ListState
+          embedded
+          hasData={invitees !== undefined}
+          isEmpty={invitees?.length === 0}
+          loading={loading}
+          loadingLabel={t.users.invitedLoading}
+          empty={t.users.invitedEmpty}
+          error={error}
+          onRetry={onRetry}
+          retryLabel={t.common.retry}
         />
-      )}
+        {meta && meta.total > meta.page_size && (
+          <>
+            <Divider />
+            <Box px="md" pb="sm">
+              <Pagination
+                disabled={paginationDisabled}
+                page={page}
+                total={meta.total}
+                pageSize={meta.page_size}
+                onPage={onPage}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+              />
+            </Box>
+          </>
+        )}
+      </Paper>
     </Stack>
   );
 }

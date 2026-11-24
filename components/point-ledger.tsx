@@ -10,6 +10,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { Pagination } from "@/components/pagination";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
@@ -48,24 +49,45 @@ export function PointLedger({
   const [message, setMessage] = useState("");
   const [pendingTransaction, setPendingTransaction] = useState<PendingTransaction | null>(null);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [targetProtected, setTargetProtected] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const historyRequest = useRef<AbortController | null>(null);
+  const canAdjustPoints = meta?.can_adjust_points === true && !targetProtected;
 
   const load = useCallback(() => {
+    historyRequest.current?.abort();
+    const request = new AbortController();
+    historyRequest.current = request;
     setItems(null);
-    apiEnvelope<PointTransaction[], PointHistoryMeta>(`admin/users/${userId}/points?page=${page}`)
+    setLoadError("");
+    apiEnvelope<PointTransaction[], PointHistoryMeta>(`admin/users/${userId}/points?page=${page}`, {
+      signal: request.signal,
+    })
       .then((payload) => {
+        if (request.signal.aborted) return;
         const { data, meta } = requirePaginatedList(payload, requireResponseEntity);
         setItems(data);
         setMeta(meta);
+        if (meta.can_adjust_points !== true) setPendingTransaction(null);
       })
-      .catch((caught) => setError(requestErrorMessage(caught, t)));
+      .catch((caught) => {
+        if (request.signal.aborted) return;
+        setMeta(null);
+        setPendingTransaction(null);
+        setLoadError(requestErrorMessage(caught, t));
+      });
   }, [page, t, userId]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    load();
+    return () => historyRequest.current?.abort();
+  }, [load]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (!canAdjustPoints || savingRef.current) return;
     setError("");
     const parsedAmount = parsePositiveInteger(amount);
     if (parsedAmount.error) {
@@ -85,7 +107,7 @@ export function PointLedger({
   }
 
   async function confirmTransaction() {
-    if (!pendingTransaction || savingRef.current) return;
+    if (!canAdjustPoints || !pendingTransaction || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setError("");
@@ -106,8 +128,14 @@ export function PointLedger({
       toast(t.points.created);
     } catch (caught) {
       const apiError = caught as Error & { payload?: { errors?: Array<{ detail?: string }> } };
+      if (apiError?.message === "account_target_protected") {
+        setTargetProtected(true);
+        setPendingTransaction(null);
+        setError(t.users.accountActions.protected);
+        return;
+      }
       setError(
-        apiError.payload?.errors?.[0]?.detail?.includes("Insufficient")
+        apiError?.payload?.errors?.[0]?.detail?.includes("Insufficient")
           ? t.points.insufficient
           : requestErrorMessage(caught, t),
       );
@@ -119,68 +147,84 @@ export function PointLedger({
 
   return (
     <section className="ledger-grid" aria-labelledby={`points-${userId}`}>
-      <div className="panel ledger-form">
-        <div className="panel-head">
-          <div>
-            <h2 id={`points-${userId}`}>{t.points.newTransaction}</h2>
-            <p className="muted-copy">
-              {t.users.balance}: {meta?.balance ?? "—"}
-            </p>
+      {canAdjustPoints && (
+        <div className="panel ledger-form">
+          <div className="panel-head">
+            <div>
+              <h2>{t.points.newTransaction}</h2>
+              <p className="muted-copy">
+                {t.users.balance}: {meta?.balance ?? "—"}
+              </p>
+            </div>
           </div>
+          <form className="form-grid one" noValidate onSubmit={submit}>
+            <FormField className="field" label={t.points.direction}>
+              <FormSelect
+                value={direction}
+                onChange={(value) => setDirection((value ?? "credit") as PointDirection)}
+                data={[
+                  { value: "credit", label: t.points.credit },
+                  { value: "debit", label: t.points.debit },
+                ]}
+              />
+            </FormField>
+            <label className="field">
+              <span>{t.points.amount}</span>
+              <FormInput
+                aria-invalid={Boolean(amountError)}
+                inputMode="numeric"
+                onChange={(event) => {
+                  setAmount(sanitizeIntegerInput(event.target.value));
+                  setAmountError("");
+                }}
+                required
+                type="text"
+                value={amount}
+              />
+              {amountError ? (
+                <small className="field-error" role="alert">
+                  {amountError}
+                </small>
+              ) : null}
+            </label>
+            <label className="field">
+              <span>{t.points.message} *</span>
+              <FormTextarea
+                required
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+              />
+            </label>
+            {error && (
+              <Alert color="red" role="alert">
+                {error}
+              </Alert>
+            )}
+            <Button disabled={saving} type="submit">
+              {t.points.create}
+            </Button>
+          </form>
         </div>
-        <form className="form-grid one" noValidate onSubmit={submit}>
-          <FormField className="field" label={t.points.direction}>
-            <FormSelect
-              value={direction}
-              onChange={(value) => setDirection((value ?? "credit") as PointDirection)}
-              data={[
-                { value: "credit", label: t.points.credit },
-                { value: "debit", label: t.points.debit },
-              ]}
-            />
-          </FormField>
-          <label className="field">
-            <span>{t.points.amount}</span>
-            <FormInput
-              aria-invalid={Boolean(amountError)}
-              inputMode="numeric"
-              onChange={(event) => {
-                setAmount(sanitizeIntegerInput(event.target.value));
-                setAmountError("");
-              }}
-              required
-              type="text"
-              value={amount}
-            />
-            {amountError ? (
-              <small className="field-error" role="alert">
-                {amountError}
-              </small>
-            ) : null}
-          </label>
-          <label className="field">
-            <span>{t.points.message} *</span>
-            <FormTextarea
-              required
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-            />
-          </label>
-          {error && (
-            <Alert color="red" role="alert">
-              {error}
-            </Alert>
-          )}
-          <Button disabled={saving} type="submit">
-            {t.points.create}
-          </Button>
-        </form>
-      </div>
+      )}
       <div className="panel ledger-history">
         <div className="panel-head">
-          <h2>{t.points.history}</h2>
+          <div>
+            <h2 id={`points-${userId}`}>{t.points.history}</h2>
+            {!canAdjustPoints && meta && (
+              <p className="muted-copy">
+                {t.users.balance}: {meta.balance}
+              </p>
+            )}
+          </div>
         </div>
-        {!items ? (
+        {!canAdjustPoints && error && (
+          <Alert color="red" role="alert">
+            {error}
+          </Alert>
+        )}
+        {loadError ? (
+          <RecoveryAlert message={loadError} retryLabel={t.common.retry} onRetry={load} />
+        ) : !items ? (
           <DataState kind="loading" title={t.users.loading} />
         ) : items.length === 0 ? (
           <DataState kind="empty" title={t.points.empty} />
@@ -226,7 +270,7 @@ export function PointLedger({
           />
         )}
       </div>
-      {pendingTransaction && (
+      {canAdjustPoints && pendingTransaction && (
         <ConfirmationDialog
           busy={saving}
           busyLabel={t.points.creating}

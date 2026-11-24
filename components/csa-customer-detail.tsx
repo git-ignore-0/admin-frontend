@@ -253,9 +253,14 @@ function CustomerDetailView({
       {linkDialogActive && (
         <LinkCustomerUserDialog
           customerId={customerId}
+          currentAddress={item.address}
+          currentLocality={[wardName ?? item.ward_code, provinceName ?? item.province_code]
+            .filter(Boolean)
+            .join(", ")}
           fallbackFocusRef={drawer ? drawerCloseRef : headingRef}
           returnFocusRef={linkButtonRef}
           onCancel={() => setLinkDialogOpen(false)}
+          onConflict={() => detail.refetch()}
           onLinked={async (customer) => {
             if (!isQueryScopeCurrent()) return;
             // A detail refresh started before the link can still return a managed customer.

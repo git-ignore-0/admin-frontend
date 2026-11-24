@@ -93,6 +93,7 @@ admin/users/{user}/activate	POST	no
 admin/users/{user}/suspend	POST	no
 admin/users/{user}/reactivate	POST	no
 admin/users/{user}/reset-password	POST	no
+admin/users/{user}/shipping-address	PUT	no
 admin/rewards	GET,POST	no
 admin/rewards/{reward}	GET,PATCH	no
 admin/rewards/reorder	POST	no
@@ -116,6 +117,8 @@ admin/csa-purchase-requests/{request}/approve	POST	no
 admin/csa-purchase-requests/{request}/reject	POST	no
 admin/csa-purchase-requests/{request}/mark-refunded	POST	no
 admin/csa-customers	GET,POST	no
+admin/csa-customers/lookup	POST	no
+admin/csa-customers/from-user	POST	no
 admin/csa-customers/{customer}	GET	no
 admin/csa-customers/{customer}/link-user	POST	no
 admin/membership-usage	POST	no

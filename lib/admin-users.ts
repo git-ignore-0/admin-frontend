@@ -10,9 +10,11 @@ import {
 } from "@/lib/client-error";
 import type {
   AdminAccountSummary,
+  AdminUserAccountAction,
   AdminUserDetail,
   AdminUserListItem,
   InvitedAdminUser,
+  UserShippingAddress,
 } from "@/lib/types";
 
 const statusAfterAction = {
@@ -22,7 +24,13 @@ const statusAfterAction = {
   reactivate: "active",
 } as const;
 
-type AccountAction = keyof typeof statusAfterAction | "reset-password";
+type AccountAction = AdminUserAccountAction | "create";
+const userAccountActions = new Set<AdminUserAccountAction>([
+  "activate",
+  "suspend",
+  "reactivate",
+  "reset-password",
+]);
 
 export function requireAccountActionResult(
   data: Pick<AdminAccountSummary, "id" | "status">,
@@ -88,6 +96,39 @@ export function requireAdminUserDetail(user: AdminUserDetail, id: string) {
     user.invited_count < 0 ||
     (user.referrer !== null &&
       (!isApiObject(user.referrer) || typeof user.referrer.name !== "string"))
+  ) {
+    throw invalidApiResponse();
+  }
+  if (
+    (user.account_actions !== undefined &&
+      (!Array.isArray(user.account_actions) ||
+        user.account_actions.some((action) => !userAccountActions.has(action)))) ||
+    (user.can_edit_shipping_address !== undefined &&
+      typeof user.can_edit_shipping_address !== "boolean") ||
+    (user.can_edit_shipping_address === true && user.shipping_address === undefined)
+  ) {
+    throw invalidApiResponse();
+  }
+  if (user.shipping_address !== undefined && user.shipping_address !== null) {
+    requireUserShippingAddress(user.shipping_address);
+  }
+}
+
+export function requireUserShippingAddress(address: UserShippingAddress) {
+  requireResponseEntity(address);
+  if (
+    !UUID_PATH_SEGMENT.test(address.id) ||
+    typeof address.recipient_name !== "string" ||
+    typeof address.phone_number !== "string" ||
+    [
+      address.province_code,
+      address.ward_code,
+      address.address,
+      address.created_at,
+      address.updated_at,
+    ].some((value) => typeof value !== "string" || !value.trim()) ||
+    typeof address.is_supported !== "boolean" ||
+    (address.shipping_fee_vnd !== null && typeof address.shipping_fee_vnd !== "string")
   ) {
     throw invalidApiResponse();
   }
@@ -168,7 +209,7 @@ export function accountFailure(
   const error = caught instanceof Error ? (caught as ClientApiError) : undefined;
   switch (error?.message) {
     case "account_target_protected":
-      return { message: copy.protected, fields: {} };
+      return { message: copy.protected, fields: {}, stateConflict: error.status === 409 };
     case "email_recovery_required":
       return { message: copy.emailRecovery, fields: {} };
     case "account_state_conflict":
@@ -202,6 +243,10 @@ export function accountFailure(
     return { fields, message: general || !Object.keys(fields).length ? copy.invalid : "" };
   }
   return { message: requestErrorMessage(caught, t), fields: {} };
+}
+
+export function userAccountPhone(user: Pick<AdminUserListItem, "login_phone_number" | "phone">) {
+  return user.login_phone_number || user.phone || null;
 }
 
 export function userIdentityLabel(

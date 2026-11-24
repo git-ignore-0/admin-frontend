@@ -54,6 +54,38 @@ describe("admin backend proxy", () => {
       "x-nfv-admin-request": "1",
       "content-type": "application/json",
     };
+    it("forwards a session-bound shipping address PUT through the existing CSRF checks", async () => {
+      const path = ["admin", "users", userId, "shipping-address"];
+      const tail = `/${userId}/shipping-address`;
+      const context = { params: Promise.resolve({ path }) };
+      const body =
+        '{"province_code":"66","ward_code":"22015","address":"12 Nguyễn Huệ","expected_updated_at":null}';
+      const upstream = vi
+        .fn()
+        .mockResolvedValue(Response.json({ data: { address: "12 Nguyễn Huệ" } }));
+      vi.stubGlobal("fetch", upstream);
+
+      const blocked = await PUT(pageRequest(`${base}${tail}`, { method: "PUT", body }), context);
+      expect(blocked.status).toBe(403);
+      expect(upstream).not.toHaveBeenCalled();
+
+      const result = await PUT(
+        pageRequest(`${base}${tail}`, {
+          method: "PUT",
+          headers: { ...trustedHeaders, authorization: "Bearer browser-token" },
+          body,
+        }),
+        context,
+      );
+      expect(result.status).toBe(200);
+      const [target, init] = upstream.mock.calls[0];
+      expect(String(target)).toBe(`${upstreamBase}${tail}`);
+      expect(init.method).toBe("PUT");
+      expect(init.headers.get("authorization")).toBe("Bearer access-token");
+      expect(new TextDecoder().decode(init.body)).toBe(body);
+      expect(result.headers.get("cache-control")).toBe("private, no-store");
+    });
+
     const writes = [
       {
         name: "create",
