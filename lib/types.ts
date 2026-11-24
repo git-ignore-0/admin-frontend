@@ -596,7 +596,7 @@ export type RedemptionDetail = RedemptionListItem & {
   internal_note: string;
 };
 
-export type PointHistoryMeta = PaginationMeta & { balance: number };
+export type PointHistoryMeta = PaginationMeta & { balance: number; can_adjust_points: boolean };
 
 export type ExternalLink = {
   id?: number;

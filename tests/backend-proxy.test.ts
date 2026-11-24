@@ -58,7 +58,8 @@ describe("admin backend proxy", () => {
       const path = ["admin", "users", userId, "shipping-address"];
       const tail = `/${userId}/shipping-address`;
       const context = { params: Promise.resolve({ path }) };
-      const body = '{"recipient_name":"Nguyễn An","address":"12 Nguyễn Huệ"}';
+      const body =
+        '{"province_code":"66","ward_code":"22015","address":"12 Nguyễn Huệ","expected_updated_at":null}';
       const upstream = vi
         .fn()
         .mockResolvedValue(Response.json({ data: { address: "12 Nguyễn Huệ" } }));

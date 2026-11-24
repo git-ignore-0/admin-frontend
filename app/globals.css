@@ -1744,6 +1744,9 @@
 .ledger-history {
   min-width: 0;
 }
+.ledger-history:only-child {
+  grid-column: 1 / -1;
+}
 .credit-value {
   color: var(--success);
   font-weight: 700;

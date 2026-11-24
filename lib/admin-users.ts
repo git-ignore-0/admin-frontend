@@ -118,9 +118,9 @@ export function requireUserShippingAddress(address: UserShippingAddress) {
   requireResponseEntity(address);
   if (
     !UUID_PATH_SEGMENT.test(address.id) ||
+    typeof address.recipient_name !== "string" ||
+    typeof address.phone_number !== "string" ||
     [
-      address.recipient_name,
-      address.phone_number,
       address.province_code,
       address.ward_code,
       address.address,
@@ -243,6 +243,10 @@ export function accountFailure(
     return { fields, message: general || !Object.keys(fields).length ? copy.invalid : "" };
   }
   return { message: requestErrorMessage(caught, t), fields: {} };
+}
+
+export function userAccountPhone(user: Pick<AdminUserListItem, "login_phone_number" | "phone">) {
+  return user.login_phone_number || user.phone || null;
 }
 
 export function userIdentityLabel(

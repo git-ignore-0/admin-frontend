@@ -43,6 +43,7 @@ export function PointDetail({ userId }: { userId: string }) {
         description={userIdentityLabel(user)}
       />
       <PointLedger
+        key={user.id}
         userId={user.id}
         userName={user.name}
         onBalanceChange={(pointsBalance) =>

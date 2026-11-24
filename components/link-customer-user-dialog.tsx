@@ -8,7 +8,7 @@ import { FormEvent, RefObject, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { requireAccountSearchRecord } from "@/lib/admin-users";
+import { requireAccountSearchRecord, userAccountPhone } from "@/lib/admin-users";
 import { requireResponseList } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -145,14 +145,9 @@ export function LinkCustomerUserDialog({
                   <span>
                     <strong>{user.name}</strong>
                     <small>
-                      {[user.email, user.login_phone_number].filter(Boolean).join(" · ") ||
+                      {[user.email, userAccountPhone(user)].filter(Boolean).join(" · ") ||
                         t.users.emailMissing}
                     </small>
-                    {user.phone && (
-                      <small>
-                        {t.users.phone}: {user.phone}
-                      </small>
-                    )}
                     {user.has_csa_customer && (
                       <small className="field-error">{t.csaCustomers.userExists}</small>
                     )}

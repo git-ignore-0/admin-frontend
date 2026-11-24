@@ -770,7 +770,12 @@ describe("users and points", () => {
     providers(<UserDetail userId={user.id} />);
 
     expect(await screen.findByText("NFV1234567")).toBeInTheDocument();
-    expect(screen.getByText("Organic signup")).toBeInTheDocument();
+    expect(screen.getByText("Signed up on the website")).toBeInTheDocument();
+    expect(screen.queryByText("Referrer")).not.toBeInTheDocument();
+    const referrals = screen.getByRole("heading", { name: "Referral details" }).closest("section")!;
+    const invitees = within(referrals).getByRole("region", { name: "People invited (0)" });
+    expect(within(invitees).getByText("This user has not invited anyone yet.")).toBeVisible();
+    expect(within(referrals).queryByRole("table")).toBeNull();
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: user.name })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
@@ -778,12 +783,9 @@ describe("users and points", () => {
       "href",
       `/points/${user.id}`,
     );
-    expect(screen.getByRole("link", { name: "Points directory" })).toHaveAttribute(
-      "href",
-      "/points",
-    );
-    expect(await screen.findByText("Sample City")).toBeVisible();
-    expect(await screen.findByText("Sample Ward")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Points directory" })).toBeNull();
+    const address = screen.getByRole("region", { name: "Address" });
+    expect(await within(address).findByText("Sample Ward, Sample City")).toBeVisible();
     expect(screen.queryByText("Transaction history")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete|save profile/i })).not.toBeInTheDocument();
   });
@@ -818,10 +820,66 @@ describe("users and points", () => {
     ]);
   });
 
+  it.each([
+    { failure: "network_error", status: 0, canAdjust: true },
+    { failure: "service_unavailable", status: 503, canAdjust: false },
+  ])(
+    "retries point history page three after $failure and verifies permissions again",
+    async ({ failure, status, canAdjust }) => {
+      let failed = false;
+      const history = (page: number, allowed: boolean) => ({
+        data: [
+          {
+            id: `transaction-${page}`,
+            direction: "credit",
+            amount: 1,
+            message: `History page ${page}`,
+            actor: null,
+            created_at: "2026-07-20T02:00:00Z",
+          },
+        ],
+        meta: { page, page_size: 30, total: 90, balance: 50, can_adjust_points: allowed },
+      });
+      let finishRetry!: (value: ReturnType<typeof history>) => void;
+      const retry = new Promise<ReturnType<typeof history>>((resolve) => {
+        finishRetry = resolve;
+      });
+      vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+        const page = Number(new URL(String(path), "https://test.local").searchParams.get("page"));
+        if (page === 3) {
+          if (!failed) {
+            failed = true;
+            throw Object.assign(new Error(failure), { status });
+          }
+          return retry;
+        }
+        return history(page, true);
+      });
+      providers(<PointLedger userId={user.id} userName={user.name} />);
+      expect(await screen.findByText("History page 1")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(await screen.findByText("History page 2")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      const retryButton = await screen.findByRole("button", { name: "Try again" });
+      expect(screen.queryByRole("button", { name: "Create transaction" })).toBeNull();
+      fireEvent.click(retryButton);
+      expect(screen.queryByRole("button", { name: "Create transaction" })).toBeNull();
+      await act(async () => {
+        finishRetry(history(3, canAdjust));
+      });
+      expect(await screen.findByText("History page 3")).toBeVisible();
+      expect(screen.getByRole("navigation", { name: "Page 3/3" })).toBeVisible();
+      expect(Boolean(screen.queryByRole("button", { name: "Create transaction" }))).toBe(canAdjust);
+      expect(vi.mocked(apiEnvelope).mock.calls.map(([path]) => path)).toEqual(
+        [1, 2, 3, 3].map((page) => `admin/users/${user.id}/points?page=${page}`),
+      );
+    },
+  );
+
   it("confirms a manual transaction and blocks an insufficient debit before submission", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [],
-      meta: { page: 1, page_size: 30, total: 0, balance: 50 },
+      meta: { page: 1, page_size: 30, total: 0, balance: 50, can_adjust_points: true },
     });
     vi.mocked(api).mockResolvedValue({
       transaction: {
@@ -862,7 +920,7 @@ describe("users and points", () => {
   it("sanitizes point input, validates it inline, and submits a numeric amount", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [],
-      meta: { page: 1, page_size: 30, total: 0, balance: 500 },
+      meta: { page: 1, page_size: 30, total: 0, balance: 500, can_adjust_points: true },
     });
     vi.mocked(api).mockResolvedValue({
       transaction: {
@@ -916,10 +974,23 @@ describe("users and points", () => {
     expect(typeof payload.amount).toBe("number");
   });
 
-  it("opens point management on a dedicated detail screen", async () => {
+  it("shows the protected target's point history without adjustment controls", async () => {
     vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
       if (path.includes("/points")) {
-        return { data: [], meta: { page: 1, page_size: 30, total: 0, balance: 50 } };
+        return {
+          data: [
+            {
+              id: "historical-transaction",
+              direction: "credit",
+              amount: 50,
+              template: "manual_adjustment",
+              message: "Existing ledger entry",
+              actor: null,
+              created_at: "2026-07-20T02:00:00Z",
+            },
+          ],
+          meta: { page: 1, page_size: 30, total: 1, balance: 50, can_adjust_points: false },
+        };
       }
       return {
         data: {
@@ -938,6 +1009,31 @@ describe("users and points", () => {
 
     expect(await screen.findByRole("heading", { name: "Point details" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Points" })).toHaveAttribute("href", "/points");
-    expect(screen.getByText("Transaction history")).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: "Transaction history" })).toBeVisible();
+    expect(screen.getByRole("row", { name: /Existing ledger entry/ })).toBeVisible();
+    expect(screen.getByText(/Point balance.*50/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Create transaction" })).toBeNull();
+    expect(screen.queryByLabelText("Direction")).toBeNull();
+  });
+
+  it("removes adjustment controls when the target becomes protected before confirmation", async () => {
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [],
+      meta: { page: 1, page_size: 30, total: 0, balance: 50, can_adjust_points: true },
+    });
+    vi.mocked(api).mockRejectedValueOnce(
+      Object.assign(new Error("account_target_protected"), { status: 409 }),
+    );
+    providers(<PointLedger userId={user.id} userName={user.name} />);
+    const message = await screen.findByLabelText("Message *");
+    fireEvent.change(message, { target: { value: "Manual adjustment" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create transaction" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/protected account/i);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create transaction" })).toBeNull();
+    expect(screen.getByText(/Point balance.*50/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Transaction history" })).toBeVisible();
   });
 });

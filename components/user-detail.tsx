@@ -3,6 +3,7 @@
 import {
   Alert,
   Anchor,
+  Box,
   Button,
   Code,
   Divider,
@@ -12,6 +13,7 @@ import {
   Paper,
   SimpleGrid,
   Stack,
+  Table,
   Text,
   Title,
 } from "@mantine/core";
@@ -32,6 +34,7 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import { ListState } from "@/components/list-state";
 import { DataState, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { recordDetailDrawer } from "@/components/record-detail-drawer";
@@ -41,7 +44,12 @@ import { UserAccountDialog, type UserAccountDialogAction } from "@/components/us
 import { UserEmail } from "@/components/user-email";
 import { UserShippingAddressSection } from "@/components/user-shipping-address";
 import { formatAdminDateTime } from "@/lib/admin-date";
-import { accountFailure, requireAccountActionResult, userEmailStatus } from "@/lib/admin-users";
+import {
+  accountFailure,
+  requireAccountActionResult,
+  userAccountPhone,
+  userEmailStatus,
+} from "@/lib/admin-users";
 import {
   adminUsersListHref,
   useAdminUserDetail,
@@ -56,7 +64,6 @@ import type {
   InvitedAdminUser,
   PaginationMeta,
 } from "@/lib/types";
-import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
 const drawerZIndex = getDefaultZIndex("modal") - 1;
 const longText = { overflowWrap: "anywhere" } as const;
@@ -108,8 +115,8 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   const [focusAction, setFocusAction] = useState<UserAccountDialogAction | null>(null);
   const query = useAdminUserDetail(userId, invitedPage);
   const user = query.summary?.data;
-  const exactPage = query.data;
-  const referralPageMissing = Boolean(user && !exactPage);
+  const currentDetail = query.data?.data;
+  const referralPageMissing = Boolean(user && !currentDetail);
   const statusAction = statusActionFor(user);
   const canReset = user?.account_actions?.includes("reset-password") === true;
   const activeDialog =
@@ -120,7 +127,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       ? dialog.action
       : null;
   const readPending = query.isFetching || query.waitingForConnection;
-  const readUnavailable = !exactPage || readPending || Boolean(query.error);
+  const readUnavailable = !currentDetail || readPending || Boolean(query.error);
   const accountActionInProgress = busy || activeDialog !== null;
   const navigationBlocked = accountActionInProgress || shippingSaving;
 
@@ -159,7 +166,7 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
       pendingSubmission.current ||
       navigationBlocked ||
       readUnavailable ||
-      action !== statusActionFor(exactPage?.data)
+      action !== statusActionFor(currentDetail)
     ) {
       return;
     }
@@ -195,9 +202,8 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
   }
 
   function openDialog(action: UserAccountDialogAction, event: MouseEvent<HTMLButtonElement>) {
-    const target = exactPage?.data;
     if (
-      !target?.account_actions?.includes(action) ||
+      !currentDetail?.account_actions?.includes(action) ||
       readUnavailable ||
       navigationBlocked ||
       pendingSubmission.current ||
@@ -251,31 +257,36 @@ function UserDetailView({ userId, intercepted }: { userId: string; intercepted: 
           <UserDetails
             user={user}
             navigationBlocked={navigationBlocked}
-            shippingAddressSection={
-              user.can_edit_shipping_address === true && (
-                <UserShippingAddressSection
-                  userId={userId}
-                  address={user.shipping_address ?? null}
-                  disabled={!canMutate || readUnavailable || accountActionInProgress}
-                  refresh={refreshDetail}
-                  onSavingChange={setShippingSaving}
-                  onAddressSaved={(saved, expectedVersion) => {
-                    query.applyShippingAddress(saved, expectedVersion);
-                    refreshDetail();
-                  }}
-                  onProtectedTarget={() => {
-                    setActionError(copy.protected);
-                    refreshDetail();
-                  }}
-                />
-              )
+            addressSection={
+              <UserShippingAddressSection
+                key={user.can_edit_shipping_address === true ? "editable" : "read-only"}
+                userId={userId}
+                address={user.shipping_address}
+                historicalLocation={{
+                  address: user.address ?? "",
+                  province_code: user.province_code ?? "",
+                  ward_code: user.ward_code ?? "",
+                }}
+                canEdit={user.can_edit_shipping_address === true}
+                disabled={!canMutate || readUnavailable || accountActionInProgress}
+                refresh={refreshDetail}
+                onSavingChange={setShippingSaving}
+                onAddressSaved={(saved, expectedVersion) => {
+                  query.applyShippingAddress(saved, expectedVersion);
+                  refreshDetail();
+                }}
+                onProtectedTarget={() => {
+                  setActionError(copy.protected);
+                  refreshDetail();
+                }}
+              />
             }
           >
             <UserReferrals
               count={user.invited_count}
-              invitees={exactPage?.data.invited_users}
-              meta={exactPage ? exactPage.meta?.invited : query.summary?.meta?.invited}
-              page={exactPage?.meta?.invited?.page ?? invitedPage}
+              invitees={currentDetail?.invited_users}
+              meta={query.data ? query.data.meta?.invited : query.summary?.meta?.invited}
+              page={query.data?.meta?.invited?.page ?? invitedPage}
               loading={referralPageMissing && query.isFetching}
               error={referralPageMissing ? loadError : ""}
               paginationDisabled={navigationBlocked || readPending}
@@ -486,36 +497,20 @@ function UserDetailSection({
   );
 }
 
-function UserContactDetails({ user }: { user: UserDetailSummary }) {
-  const { locale, t } = useAdminI18n();
-  const { provinceName, wardName } = useAdministrativeUnitNames(
-    user.province_code || null,
-    user.ward_code || null,
-    locale,
-  );
-  const fields: Array<[string, ReactNode]> = [
-    [t.users.phone, user.phone || null],
-    [t.csaCustomers.address, user.address || null],
-  ];
-  if (user.province_code)
-    fields.push([t.csaCustomers.province, provinceName || user.province_code]);
-  if (user.ward_code) fields.push([t.csaCustomers.ward, wardName || user.ward_code]);
-
-  return <UserDetailSection title={t.users.contactDetails} fields={fields} />;
-}
-
 function UserDetails({
   user,
   navigationBlocked,
-  shippingAddressSection,
+  addressSection,
   children,
 }: {
   user: UserDetailSummary;
   navigationBlocked: boolean;
-  shippingAddressSection: ReactNode;
+  addressSection: ReactNode;
   children: ReactNode;
 }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
+  const referred = user.source === "referred";
+
   function guardPointsNavigation(event: MouseEvent<HTMLAnchorElement>) {
     if (navigationBlocked) event.preventDefault();
   }
@@ -525,44 +520,44 @@ function UserDetails({
       <UserDetailSection
         title={t.users.details}
         fields={[
-          [t.users.loginPhone, user.login_phone_number || null],
+          [t.users.phoneNumber, userAccountPhone(user)],
           [t.users.emailStatus, userEmailStatus(user, t)],
           [t.users.created, formatAdminDateTime(user.date_joined)],
           [t.users.csaProfile, user.has_csa_customer ? t.users.csaPresent : t.users.csaAbsent],
         ]}
-      >
-        {statusActionFor(user) && user.email_verified && (
-          <Alert color="info">{t.users.accountActions.emailRecovery}</Alert>
-        )}
-      </UserDetailSection>
-      <UserContactDetails key={`${locale}:${user.province_code}:${user.ward_code}`} user={user} />
-      {shippingAddressSection}
-      <UserDetailSection title={t.common.points} fields={[[t.users.balance, user.points_balance]]}>
-        <Group gap="sm">
-          <Anchor
+      />
+      {addressSection}
+      <Paper component="section" p="md">
+        <Group justify="space-between" gap="sm">
+          <Stack gap={4}>
+            <Title order={2} size="md" fw={600}>
+              {t.users.balance}
+            </Title>
+            <Text size="xl" fw={600}>
+              {user.points_balance}
+            </Text>
+          </Stack>
+          <Button
             component={AdminNavigationLink}
             href={`/points/${encodeURIComponent(user.id)}`}
+            variant="default"
+            size="sm"
             aria-disabled={navigationBlocked || undefined}
+            data-disabled={navigationBlocked || undefined}
             onClick={guardPointsNavigation}
           >
             {t.common.managePoints}
-          </Anchor>
-          <Anchor
-            component={AdminNavigationLink}
-            href="/points"
-            aria-disabled={navigationBlocked || undefined}
-            onClick={guardPointsNavigation}
-          >
-            {t.users.pointsDirectory}
-          </Anchor>
+          </Button>
         </Group>
-      </UserDetailSection>
+      </Paper>
       <UserDetailSection
         title={t.users.referralDetails}
         fields={[
           [t.users.referralCode, user.referral_code ? <Code>{user.referral_code}</Code> : null],
-          [t.users.source, user.source === "referred" ? t.users.referralSignup : t.users.organic],
-          [t.users.referrer, user.referrer?.name || null],
+          [
+            referred ? t.users.referrer : t.users.source,
+            referred ? user.referrer?.name.trim() || null : t.users.websiteSignup,
+          ],
         ]}
       >
         <Divider />
@@ -596,57 +591,80 @@ function UserReferrals({
   const { t } = useAdminI18n();
   const headingId = useId();
   return (
-    <Stack component="section" gap="sm" aria-labelledby={headingId}>
+    <Stack component="section" gap="sm" miw={0} aria-labelledby={headingId}>
       <Title order={3} size="sm" fw={600} id={headingId}>
         {t.users.invited.replace("{count}", String(count))}
       </Title>
-      {loading && <DataState kind="loading" title={t.users.invitedLoading} compact />}
-      {!loading && error && (
-        <RecoveryAlert message={error} retryLabel={t.common.retry} onRetry={onRetry} />
-      )}
-      {invitees &&
-        (invitees.length === 0 ? (
-          <DataState kind="empty" title={t.users.invitedEmpty} compact />
-        ) : (
-          <Stack component="ul" p={0} m={0} gap="xs" style={{ listStyle: "none" }}>
-            {invitees.map((invitee) => (
-              <Group
-                key={invitee.id}
-                component="li"
-                justify="space-between"
-                align="flex-start"
-                gap="xs"
-              >
-                <Stack gap={4} miw={0}>
-                  <Text fw={600} style={longText}>
-                    {invitee.name}
-                  </Text>
-                  <Text size="sm" c="dimmed" style={longText}>
-                    {invitee.email || t.users.emailMissing}
-                  </Text>
-                  {invitee.referred_at && (
-                    <Text size="sm" c="dimmed">
+      <Paper w="100%" miw={0} style={{ overflow: "hidden" }}>
+        {invitees && invitees.length > 0 && (
+          <Table.ScrollContainer
+            type="native"
+            minWidth={400}
+            role="group"
+            aria-labelledby={headingId}
+            tabIndex={0}
+            style={{ outlineOffset: -2 }}
+          >
+            <Table aria-labelledby={headingId} withRowBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th scope="col">{t.users.name}</Table.Th>
+                  <Table.Th scope="col">{t.users.shortStatus}</Table.Th>
+                  <Table.Th scope="col">{t.users.invitedAt}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {invitees.map((invitee) => (
+                  <Table.Tr key={invitee.id}>
+                    <Table.Td>
+                      <Stack gap={4} style={longText}>
+                        <Text fw={600}>{invitee.name}</Text>
+                        <Text size="sm" c="dimmed">
+                          {invitee.email || t.users.emailMissing}
+                        </Text>
+                      </Stack>
+                    </Table.Td>
+                    <Table.Td>
+                      <UserStatus status={invitee.status} />
+                    </Table.Td>
+                    <Table.Td style={{ whiteSpace: "nowrap" }}>
                       {formatAdminDateTime(invitee.referred_at)}
-                    </Text>
-                  )}
-                </Stack>
-                <UserStatus status={invitee.status} />
-              </Group>
-            ))}
-          </Stack>
-        ))}
-      {meta && (
-        <Pagination
-          disabled={paginationDisabled}
-          page={page}
-          total={meta.total}
-          pageSize={meta.page_size}
-          onPage={onPage}
-          previousLabel={t.common.previous}
-          nextLabel={t.common.next}
-          summary={t.common.pagination}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+        <ListState
+          embedded
+          hasData={invitees !== undefined}
+          isEmpty={invitees?.length === 0}
+          loading={loading}
+          loadingLabel={t.users.invitedLoading}
+          empty={t.users.invitedEmpty}
+          error={error}
+          onRetry={onRetry}
+          retryLabel={t.common.retry}
         />
-      )}
+        {meta && meta.total > meta.page_size && (
+          <>
+            <Divider />
+            <Box px="md" pb="sm">
+              <Pagination
+                disabled={paginationDisabled}
+                page={page}
+                total={meta.total}
+                pageSize={meta.page_size}
+                onPage={onPage}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+              />
+            </Box>
+          </>
+        )}
+      </Paper>
     </Stack>
   );
 }

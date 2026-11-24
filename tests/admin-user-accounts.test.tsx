@@ -65,7 +65,12 @@ function account(status: string, fields: Partial<typeof legacyUser> = {}) {
 }
 const user = account("pending_activation");
 const otherUser = { ...user, id: otherUserId, name: "Orchard Member" };
-const referralUser = { ...user, email: "member@example.com", address: "12 Private Lane" };
+const referralUser = {
+  ...user,
+  email: "member@example.com",
+  address: "12 Private Lane",
+  shipping_address: undefined,
+};
 const password = "  Strong-Harvest-42!  ";
 const originalMatchMedia = window.matchMedia;
 const shippingAreas = [
@@ -112,15 +117,14 @@ function deferredResponse() {
   return { promise, resolve };
 }
 
-function referralPage(page: 1 | 2) {
-  const invited = {
-    ...user.invited_users[0],
-    id: page === 2 ? "invitee-two" : "invitee",
-    name: page === 2 ? "Second Invited Member" : "Invited Member",
-  };
+function referralDetail(count = 31, page = 1) {
+  const invitees =
+    page === 1
+      ? referralUser.invited_users
+      : [{ ...referralUser.invited_users[0], id: "invitee-two", name: "Second Invited Member" }];
   return Response.json({
-    data: { ...referralUser, invited_count: 31, invited_users: [invited] },
-    meta: { invited: { page, page_size: 30, total: 31 } },
+    data: { ...referralUser, invited_count: count, invited_users: invitees },
+    meta: { invited: { page, page_size: 30, total: count } },
   });
 }
 
@@ -260,7 +264,7 @@ describe("CMS account administration", () => {
     expect(screen.getByRole("button", { name: "Confirm link" })).toBeDisabled();
   });
 
-  it("shows Chờ kích hoạt in Users and keeps both phone fields in the account detail", async () => {
+  it("shows Chờ kích hoạt and displays one account phone even when contact data differs", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) =>
@@ -279,8 +283,22 @@ describe("CMS account administration", () => {
 
     directory.rerender(scene(<UserDetail userId={userId} />, "vi"));
     expect(await screen.findByText(user.login_phone_number)).toBeVisible();
-    expect(screen.getByText(user.phone)).toBeVisible();
-    expect(screen.getByText("SĐT đăng nhập")).toBeVisible();
+    expect(screen.getByText("Số điện thoại")).toBeVisible();
+    expect(screen.getAllByText(user.login_phone_number)).toHaveLength(1);
+    expect(screen.queryByText(user.phone)).toBeNull();
+    expect(screen.queryByText("SĐT liên hệ")).toBeNull();
+    expect(screen.queryByText("SĐT đăng nhập")).toBeNull();
+  });
+
+  it("displays one historical phone for accounts without a login phone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ data: { ...user, login_phone_number: null } })),
+    );
+    show(<UserDetail userId={userId} />);
+    expect(await screen.findByText(user.phone)).toBeVisible();
+    expect(screen.getByText("Phone number")).toBeVisible();
+    expect(screen.getAllByText(user.phone)).toHaveLength(1);
   });
 
   it.each([
@@ -494,7 +512,7 @@ describe("CMS account administration", () => {
         expect.objectContaining({ method: "POST", body: "{}" }),
       );
       expect(screen.getByText("NFV1234567")).toBeVisible();
-      expect(screen.getByText("Invited Member")).toBeVisible();
+      expect(screen.getByText("People invited (1)")).toBeVisible();
       expect(screen.getByText("50")).toBeVisible();
     }
     expect(fetcher.mock.calls.filter(([path]) => path.includes("?invited_page="))).toHaveLength(4);
@@ -632,7 +650,7 @@ describe("CMS account administration", () => {
     },
   );
 
-  it("directs a verified account to email recovery and omits the CMS reset action", async () => {
+  it("shows verified email without a recovery notice or CMS password reset action", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -642,8 +660,8 @@ describe("CMS account administration", () => {
       ),
     );
     show(<UserDetail userId={userId} />);
-    expect(await screen.findByText(/forgot password with their verified email/i)).toBeVisible();
-    expect(screen.getByText("Verified")).toBeVisible();
+    expect(await screen.findByText("Verified")).toBeVisible();
+    expect(screen.queryByText(/forgot password with their verified email/i)).toBeNull();
     expect(screen.queryByRole("button", { name: "Reset password" })).toBeNull();
   });
 
@@ -668,14 +686,21 @@ describe("CMS account administration", () => {
   ])("keeps protected %s account details read-only", async (status, label) => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ data: { ...account(status), account_actions: [] } })),
+      vi.fn(async (path: string) => {
+        if (path.includes("administrative-units")) return Response.json({ data: [] });
+        return Response.json({
+          data: { ...account(status), account_actions: [], shipping_address: shippingAddress },
+        });
+      }),
     );
     show(<UserDetail userId={userId} />);
     const heading = await screen.findByRole("heading", { name: user.name });
     expect(within(heading.parentElement!).getByText(label)).toBeVisible();
     expect(screen.getByText(user.login_phone_number)).toBeVisible();
     expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Shipping address" })).toBeNull();
+    const address = screen.getByRole("region", { name: "Address" });
+    expect(within(address).getByText(shippingAddress.address)).toBeVisible();
+    expect(within(address).queryByRole("button")).toBeNull();
   });
 
   it("renders legacy account details with mutations hidden when the server omits capabilities", async () => {
@@ -688,7 +713,7 @@ describe("CMS account administration", () => {
     expect(within(heading.parentElement!).getByText("Pending activation")).toBeVisible();
     expect(screen.getByText(user.login_phone_number)).toBeVisible();
     expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Shipping address" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Address" })).toBeNull();
   });
 
   it("rejects a malformed capability instead of making it actionable", async () => {
@@ -701,21 +726,70 @@ describe("CMS account administration", () => {
     expect(screen.queryByRole("button", { name: "Activate" })).toBeNull();
   });
 
+  it("shows one address when the user has both current and historical address data", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path.includes("administrative-units")) return Response.json({ data: [] });
+        return Response.json({
+          data: {
+            ...user,
+            address: "Old contact address",
+            can_edit_shipping_address: true,
+            shipping_address: shippingAddress,
+          },
+        });
+      }),
+    );
+    show(<UserDetail userId={userId} />);
+    const address = await screen.findByRole("region", { name: "Address" });
+    expect(within(address).getByText(shippingAddress.address)).toBeVisible();
+    expect(screen.queryByText("Old contact address")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Shipping address" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Contact details" })).toBeNull();
+  });
+
+  it("uses historical address data only as a draft when there is no shared address", async () => {
+    const historical = "Old address to carry forward";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path.includes("public/shipping-areas")) return Response.json({ data: shippingAreas });
+        if (path.includes("administrative-units")) return Response.json({ data: [] });
+        return Response.json({
+          data: {
+            ...user,
+            province_code: "66",
+            ward_code: "22015",
+            address: historical,
+            can_edit_shipping_address: true,
+          },
+        });
+      }),
+    );
+    show(<UserDetail userId={userId} />);
+    const section = await screen.findByRole("region", { name: "Address" });
+    expect(within(section).getByText("No address saved.")).toBeVisible();
+    expect(within(section).queryByText(historical)).toBeNull();
+    fireEvent.click(within(section).getByRole("button", { name: "Add address" }));
+    expect(within(section).getByLabelText(/^Street address/)).toHaveValue(historical);
+    await waitFor(() =>
+      expect(within(section).getByRole("combobox", { name: "Ward/commune" })).toHaveValue(
+        "Sample Ward",
+      ),
+    );
+  });
+
   it("adds a shipping address through the BFF, retains input on error, and refreshes after save", async () => {
     const address = {
-      recipient_name: "Garden Recipient",
-      phone_number: "+84901234567",
       province_code: "66",
       ward_code: "22015",
       address: "12 Orchid Street",
     };
     const saved = {
+      ...shippingAddress,
       ...address,
-      id: otherUserId,
-      is_supported: true,
-      shipping_fee_vnd: "30000",
-      created_at: "2026-11-23T00:00:00Z",
-      updated_at: "2026-11-23T00:00:00Z",
+      phone_number: "",
     };
     const firstWrite = deferredResponse();
     let written = false;
@@ -742,12 +816,8 @@ describe("CMS account administration", () => {
     const add = await screen.findByRole("button", { name: "Add address" });
     await waitFor(() => expect(add).toBeEnabled());
     fireEvent.click(add);
-    fireEvent.change(screen.getByLabelText(/^Recipient name/), {
-      target: { value: " Garden Recipient " },
-    });
-    fireEvent.change(screen.getByLabelText(/^Recipient phone/), {
-      target: { value: "0901234567" },
-    });
+    expect(screen.queryByLabelText(/^Recipient name/)).toBeNull();
+    expect(screen.queryByLabelText(/^Recipient phone/)).toBeNull();
     fireEvent.change(screen.getByLabelText(/^Street address/), {
       target: { value: "12 Orchid Street" },
     });
@@ -770,11 +840,15 @@ describe("CMS account administration", () => {
       adminDictionaries.en.common.serverError,
     );
     expect(screen.getByLabelText(/^Street address/)).toHaveValue("12 Orchid Street");
-    expect(screen.getByLabelText(/^Recipient name/)).toHaveValue(" Garden Recipient ");
+    expect(province).toHaveValue("Sample Province");
+    expect(screen.getByRole("combobox", { name: "Ward/commune" })).toHaveValue("Sample Ward");
 
     fireEvent.click(save);
     expect(await screen.findByRole("button", { name: "Edit address" })).toBeEnabled();
     expect(screen.getByText("12 Orchid Street")).toBeVisible();
+    const section = within(screen.getByRole("region", { name: "Address" }));
+    expect(section.queryByText(saved.recipient_name)).toBeNull();
+    expect(section.queryByText(/complete the recipient details/i)).toBeNull();
     expect(fetcher.mock.calls.filter(([path]) => path.endsWith("?invited_page=1"))).toHaveLength(2);
   });
 
@@ -813,6 +887,40 @@ describe("CMS account administration", () => {
     expect(save).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("button", { name: "Edit address" })).toHaveFocus();
+  });
+
+  it("starts focus before the address controls while shipping options are loading", async () => {
+    const options = deferredResponse();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path.includes("public/shipping-areas")) return options.promise;
+        return Response.json({ data: { ...user, can_edit_shipping_address: true } });
+      }),
+    );
+    show(<UserDetail userId={userId} />);
+    const add = await screen.findByRole("button", { name: "Add address" });
+    fireEvent.click(add);
+
+    const address = within(screen.getByRole("region", { name: "Address" }));
+    const form = address.getByRole("form", { name: "Address" });
+    const province = address.getByRole("combobox", { name: "Province/city" });
+    const ward = address.getByRole("combobox", { name: "Ward/commune" });
+    const street = address.getByRole("textbox", { name: /^Street address/ });
+    expect(form).toHaveFocus();
+    expect(province).toBeDisabled();
+    expect(ward).toBeDisabled();
+    expect(street).toBeEnabled();
+
+    await act(async () => options.resolve(Response.json({ data: shippingAreas })));
+    await waitFor(() => expect(province).toBeEnabled());
+    expect(form).toHaveFocus();
+    selectOption(province, "66");
+    expect(province.compareDocumentPosition(ward)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(ward.compareDocumentPosition(street)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(ward).toBeEnabled();
+    fireEvent.click(address.getByRole("button", { name: "Cancel" }));
+    expect(address.getByRole("button", { name: "Add address" })).toHaveFocus();
   });
 
   it("retains the shipping conflict notice when a refresh makes the target read-only", async () => {
@@ -870,10 +978,9 @@ describe("CMS account administration", () => {
       const save = screen.getByRole("button", { name: "Save address" });
       await waitFor(() => expect(save).toBeEnabled());
       fireEvent.click(save);
-      expect(screen.getByRole("link", { name: "Points directory" })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
+      const managePoints = screen.getByRole("link", { name: "Manage points" });
+      expect(managePoints).toHaveAttribute("aria-disabled", "true");
+      expect(fireEvent.click(managePoints)).toBe(false);
       if (view === "drawer") {
         const close = screen.getByRole("button", { name: "Close" });
         expect(close).toBeDisabled();
@@ -886,9 +993,7 @@ describe("CMS account administration", () => {
       expect(router.back).not.toHaveBeenCalled();
       await act(async () => write.resolve(Response.json({}, { status: 503 })));
       expect(save).toBeEnabled();
-      expect(screen.getByRole("link", { name: "Points directory" })).not.toHaveAttribute(
-        "aria-disabled",
-      );
+      expect(managePoints).not.toHaveAttribute("aria-disabled");
     },
   );
 
@@ -917,7 +1022,7 @@ describe("CMS account administration", () => {
           }
           current = {
             ...current,
-            recipient_name: body.recipient_name,
+            address: body.address,
             updated_at: "2026-11-23T00:00:03.000001Z",
           };
           return Response.json({ data: current });
@@ -930,9 +1035,9 @@ describe("CMS account administration", () => {
       vi.stubGlobal("fetch", fetcher);
       show(<UserDetail userId={userId} />);
       fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
-      const recipient = screen.getByLabelText(/^Recipient name/);
+      const street = screen.getByLabelText(/^Street address/);
       const save = screen.getByRole("button", { name: "Save address" });
-      fireEvent.change(recipient, { target: { value: "First draft" } });
+      fireEvent.change(street, { target: { value: "First draft" } });
       await waitFor(() => expect(save).toBeEnabled());
       current = latest;
       if (source === "background refresh") {
@@ -944,22 +1049,22 @@ describe("CMS account administration", () => {
       const load = await screen.findByRole("button", { name: "Use latest address" });
       await waitFor(() => expect(load).toBeEnabled());
       expect(reads).toBeGreaterThan(1);
-      expect(recipient).toHaveValue("First draft");
+      expect(street).toHaveValue("First draft");
       expect(save).toBeDisabled();
       expect(bodies).toHaveLength(source === "background refresh" ? 0 : 1);
       fireEvent.click(load);
       expect(screen.getByLabelText(/^Street address/)).toHaveValue(latest.address);
       expect(save).toBeDisabled();
-      fireEvent.change(recipient, { target: { value: "Updated recipient" } });
+      fireEvent.change(street, { target: { value: "Updated street" } });
       fireEvent.click(save);
       expect(bodies.at(-1)).toEqual(
         expect.objectContaining({
           expected_updated_at: latest.updated_at,
-          recipient_name: "Updated recipient",
-          address: latest.address,
+          address: "Updated street",
         }),
       );
-      expect(await screen.findByText("Updated recipient")).toBeVisible();
+      await waitFor(() => expect(street).not.toBeInTheDocument());
+      expect(screen.getByText("Updated street")).toBeVisible();
     },
   );
 
@@ -1000,89 +1105,126 @@ describe("CMS account administration", () => {
   });
 
   it.each(["desktop", "mobile"] as const)(
-    "keeps the %s account projection stable while only the requested referral page loads",
+    "shows the referral count and paginated Data List in %s account detail",
     async (viewport) => {
       if (viewport === "mobile") setMobileViewport();
       const nextPage = deferredResponse();
-      const fetcher = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(
-        async (path) => (path.endsWith("invited_page=2") ? nextPage.promise : referralPage(1)),
+      const fetcher = vi.fn(async (path: string) =>
+        path.endsWith("invited_page=2") ? nextPage.promise : referralDetail(),
       );
       vi.stubGlobal("fetch", fetcher);
-      show(<UserDetail userId={userId} intercepted />);
-      expect(await screen.findByText("Invited Member")).toBeVisible();
-      const heading = screen.getByRole("heading", { name: user.name });
-      const activate = screen.getByRole("button", { name: "Activate" });
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      show(<UserDetail userId={userId} intercepted />, "vi");
 
-      const referrals = await screen.findByRole("region", { name: "People invited (31)" });
-      expect(within(referrals).getByRole("status")).toHaveTextContent("Loading invited users");
-      expect(screen.getAllByRole("status")).toHaveLength(1);
-      expect(screen.queryByText("Loading users…")).toBeNull();
-      expect(screen.queryByText("Invited Member")).toBeNull();
-      expect(heading).toBeVisible();
-      expect(screen.getByText(referralUser.email)).toBeVisible();
-      expect(screen.getByText(referralUser.address)).toBeVisible();
-      expect(screen.getByText(user.login_phone_number)).toBeVisible();
-      expect(screen.getByText("50")).toBeVisible();
-      expect(screen.getByText("NFV1234567")).toBeVisible();
-      expect(screen.getByRole("navigation", { name: "Page 2/2" })).toHaveAttribute(
-        "aria-busy",
-        "true",
+      const section = (
+        await screen.findByRole("heading", { name: "Thông tin giới thiệu" })
+      ).closest("section")!;
+      expect(
+        within(section)
+          .getAllByRole("term")
+          .map((term) => term.textContent),
+      ).toEqual(["Mã giới thiệu", "Nguồn đăng ký"]);
+      expect(within(section).getByText("NFV1234567")).toBeVisible();
+      expect(within(section).getByText("Đăng ký qua website")).toBeVisible();
+      const invitees = within(section).getByRole("region", { name: "Người đã giới thiệu (31)" });
+      const table = within(invitees).getByRole("table", { name: "Người đã giới thiệu (31)" });
+      expect(within(table).getByRole("row", { name: /Invited Member/ })).toBeVisible();
+
+      fireEvent.click(within(invitees).getByRole("button", { name: "Sau" }));
+      expect(await within(invitees).findByRole("status")).toHaveTextContent(
+        "Đang tải người được giới thiệu",
       );
-      expect(activate).toBeDisabled();
-      fireEvent.click(activate);
-      expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
-
-      await act(async () => nextPage.resolve(referralPage(2)));
-      expect(await within(referrals).findByText("Second Invited Member")).toBeVisible();
-      expect(within(referrals).queryByRole("status")).toBeNull();
-      expect(screen.queryByText("Invited Member")).toBeNull();
-      expect(heading).toBeVisible();
-      expect(activate).toBeEnabled();
-      expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
-        `/api/backend/admin/users/${userId}?invited_page=1`,
-        `/api/backend/admin/users/${userId}?invited_page=2`,
-      ]);
+      expect(within(invitees).queryByText("Invited Member")).toBeNull();
+      expect(within(section).getByText("NFV1234567")).toBeVisible();
+      await act(async () => nextPage.resolve(referralDetail(31, 2)));
+      expect(await within(invitees).findByText("Second Invited Member")).toBeVisible();
+      expect(within(invitees).getByRole("navigation", { name: "Trang 2/2" })).toBeVisible();
+      expect(fetcher).toHaveBeenCalledTimes(2);
     },
   );
 
-  it("retries a failed referral page without losing the account projection", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(referralPage(1))
-      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
-      .mockResolvedValueOnce(referralPage(2));
-    vi.stubGlobal("fetch", fetcher);
-    show(<UserDetail userId={userId} intercepted />);
-    expect(await screen.findByText("Invited Member")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    const referrals = await screen.findByRole("region", { name: "People invited (31)" });
-    expect(await within(referrals).findByRole("alert")).toHaveTextContent(
-      adminDictionaries.en.common.serverError,
+  it("shows the referrer name when the account has a referrer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          data: {
+            ...user,
+            source: "referred",
+            referrer: { id: otherUserId, name: "Orchard Member" },
+          },
+        }),
+      ),
     );
-    expect(screen.queryByText("Invited Member")).toBeNull();
-    expect(screen.getByRole("heading", { name: user.name })).toBeVisible();
-    expect(screen.getByText(referralUser.address)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
-    fireEvent.click(within(referrals).getByRole("button", { name: "Try again" }));
-    expect(await within(referrals).findByText("Second Invited Member")).toBeVisible();
-    expect(within(referrals).queryByRole("alert")).toBeNull();
-    expect(fetcher).toHaveBeenLastCalledWith(
-      `/api/backend/admin/users/${userId}?invited_page=2`,
-      expect.anything(),
-    );
+    show(<UserDetail userId={userId} />);
+    expect(await screen.findByText("Orchard Member")).toBeVisible();
+    expect(screen.getByText("Referrer")).toBeVisible();
+    expect(screen.queryByText("Signed up on the website")).toBeNull();
   });
 
-  it("removes all retained detail and referral metadata after a referral-page denial", async () => {
+  it("keeps a referral with an unnamed referrer distinct from a website signup", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          data: { ...user, source: "referred", referrer: { id: otherUserId, name: "" } },
+        }),
+      ),
+    );
+    show(<UserDetail userId={userId} />);
+    const label = await screen.findByText("Referrer");
+    expect(label.nextElementSibling).toHaveTextContent("—");
+    expect(screen.queryByText("Signed up on the website")).toBeNull();
+  });
+
+  it("retries the first load of referral page two after a 503", async () => {
+    const nextPage = deferredResponse();
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(referralPage(1))
-      .mockResolvedValueOnce(Response.json({}, { status: 403 }));
+      .mockResolvedValueOnce(referralDetail())
+      .mockReturnValueOnce(nextPage.promise)
+      .mockResolvedValueOnce(referralDetail(31, 2));
     vi.stubGlobal("fetch", fetcher);
     show(<UserDetail userId={userId} intercepted />);
-    expect(await screen.findByText("Invited Member")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const invitees = within(await screen.findByRole("region", { name: "People invited (31)" }));
+    expect(invitees.getByText("Invited Member")).toBeVisible();
+    fireEvent.click(invitees.getByRole("button", { name: "Next" }));
+    expect(invitees.getByRole("status")).toHaveTextContent(
+      adminDictionaries.en.users.invitedLoading,
+    );
+    expect(invitees.queryByText("Invited Member")).toBeNull();
+    expect(screen.getByText(referralUser.address)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+
+    await act(async () => nextPage.resolve(Response.json({}, { status: 503 })));
+    expect(await invitees.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.serverError,
+    );
+    expect(invitees.queryByRole("table")).toBeNull();
+    expect(screen.getByRole("heading", { name: user.name })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+    fireEvent.click(invitees.getByRole("button", { name: "Try again" }));
+    expect(await invitees.findByText("Second Invited Member")).toBeVisible();
+    expect(invitees.getByRole("navigation", { name: "Page 2/2" })).toBeVisible();
+    expect(invitees.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled();
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+      `/api/backend/admin/users/${userId}?invited_page=1`,
+      `/api/backend/admin/users/${userId}?invited_page=2`,
+      `/api/backend/admin/users/${userId}?invited_page=2`,
+    ]);
+  });
+
+  it("removes the retained account and referral metadata when referral page two returns 403", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(referralDetail())
+        .mockResolvedValueOnce(Response.json({}, { status: 403 })),
+    );
+    show(<UserDetail userId={userId} intercepted />);
+    const invitees = within(await screen.findByRole("region", { name: "People invited (31)" }));
+    fireEvent.click(invitees.getByRole("button", { name: "Next" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       adminDictionaries.en.common.forbidden,
@@ -1090,51 +1232,84 @@ describe("CMS account administration", () => {
     expect(screen.queryByRole("heading", { name: user.name })).toBeNull();
     expect(screen.queryByText(referralUser.email)).toBeNull();
     expect(screen.queryByText(referralUser.address)).toBeNull();
-    expect(screen.queryByText("50")).toBeNull();
     expect(screen.queryByText("NFV1234567")).toBeNull();
     expect(screen.queryByRole("region", { name: "People invited (31)" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: /Page/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Activate" })).toBeNull();
   });
 
-  it("keeps the account visible and the pending referral page local while offline", async () => {
+  it("keeps the referral page two offline state local and resumes on reconnect", async () => {
     const fetcher = vi.fn(async (path: string) =>
-      referralPage(path.endsWith("invited_page=2") ? 2 : 1),
+      referralDetail(31, path.endsWith("invited_page=2") ? 2 : 1),
     );
     vi.stubGlobal("fetch", fetcher);
     show(<UserDetail userId={userId} />);
-    expect(await screen.findByText("Invited Member")).toBeVisible();
+    const invitees = within(await screen.findByRole("region", { name: "People invited (31)" }));
     act(() => onlineManager.setOnline(false));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(invitees.getByRole("button", { name: "Next" }));
 
-    const referrals = screen.getByRole("region", { name: "People invited (31)" });
-    expect(await within(referrals).findByRole("alert")).toHaveTextContent(
+    expect(await invitees.findByRole("alert")).toHaveTextContent(
       adminDictionaries.en.users.offline,
     );
-    expect(within(referrals).queryByRole("status")).toBeNull();
+    expect(invitees.queryByRole("status")).toBeNull();
+    expect(invitees.queryByRole("table")).toBeNull();
     expect(screen.getByRole("heading", { name: user.name })).toBeVisible();
     expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
-    expect(screen.queryByText("Invited Member")).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
 
     act(() => onlineManager.setOnline(true));
-    expect(await within(referrals).findByText("Second Invited Member")).toBeVisible();
-    expect(within(referrals).queryByRole("alert")).toBeNull();
+    expect(await invitees.findByText("Second Invited Member")).toBeVisible();
+    expect(invitees.queryByRole("alert")).toBeNull();
+    expect(invitees.getByRole("navigation", { name: "Page 2/2" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled();
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+      `/api/backend/admin/users/${userId}?invited_page=1`,
+      `/api/backend/admin/users/${userId}?invited_page=2`,
+    ]);
+  });
+
+  it("retries a failed detail refresh while keeping the referral summary", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(referralDetail())
+      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+      .mockResolvedValueOnce(referralDetail(32));
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} intercepted />);
+    expect(await screen.findByText("People invited (31)")).toBeVisible();
+
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.serverError,
+    );
+    expect(screen.getByText("People invited (31)")).toBeVisible();
+    expect(screen.getByText(referralUser.address)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("People invited (32)")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled();
   });
 
-  it("discards the previous user's detail and late invitees when changing users mid-page", async () => {
-    const nextPage = deferredResponse();
+  it("discards the previous user detail when changing users during a refresh", async () => {
+    const refresh = deferredResponse();
     const nextAccount = deferredResponse();
-    const fetcher = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(async (path) => {
-      if (path.includes(otherUserId)) return nextAccount.promise;
-      if (path.endsWith("invited_page=2")) return nextPage.promise;
-      return referralPage(1);
-    });
+    const fetcher = vi
+      .fn<(path: string, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(referralDetail())
+      .mockReturnValueOnce(refresh.promise)
+      .mockReturnValueOnce(nextAccount.promise);
     vi.stubGlobal("fetch", fetcher);
     const view = show(<UserDetail userId={userId} />);
-    expect(await screen.findByText("Invited Member")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("People invited (31)")).toBeVisible();
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
 
     view.rerender(scene(<UserDetail userId={otherUserId} />));
@@ -1142,19 +1317,18 @@ describe("CMS account administration", () => {
     expect(screen.queryByText(referralUser.address)).toBeNull();
     expect(await screen.findByRole("status")).toHaveTextContent("Loading users…");
     expect(fetcher.mock.calls[1][1]?.signal?.aborted).toBe(true);
-    await act(async () => nextPage.resolve(referralPage(2)));
-    expect(screen.queryByText("Second Invited Member")).toBeNull();
+    await act(async () => refresh.resolve(referralDetail(32)));
     await act(async () => nextAccount.resolve(Response.json({ data: otherUser })));
     expect(await screen.findByRole("heading", { name: otherUser.name })).toBeVisible();
-    expect(screen.queryByText(user.name)).toBeNull();
-    expect(screen.queryByText("Second Invited Member")).toBeNull();
+    expect(screen.queryByText("People invited (32)")).toBeNull();
   });
 
-  it("cancels a pending referral page and removes the account summary when the session retires", async () => {
-    const nextPage = deferredResponse();
-    const fetcher = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(async (path) =>
-      path.endsWith("invited_page=2") ? nextPage.promise : referralPage(1),
-    );
+  it("cancels a pending detail refresh and removes the referral summary when the session retires", async () => {
+    const refresh = deferredResponse();
+    const fetcher = vi
+      .fn<(path: string, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(referralDetail())
+      .mockReturnValueOnce(refresh.promise);
     vi.stubGlobal("fetch", fetcher);
     const sessionBinding = "referral-test-users-session";
     render(
@@ -1166,9 +1340,12 @@ describe("CMS account administration", () => {
         </ToastProvider>
       </AdminI18nProvider>,
     );
-    expect(await screen.findByText("Invited Member")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Loading invited users…")).toBeVisible();
+    expect(await screen.findByText("People invited (31)")).toBeVisible();
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
 
     act(() => {
       window.dispatchEvent(
@@ -1178,10 +1355,10 @@ describe("CMS account administration", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("The admin session changed");
     expect(fetcher.mock.calls[1][1]?.signal?.aborted).toBe(true);
     expect(screen.queryByText(referralUser.address)).toBeNull();
-    expect(screen.queryByRole("navigation", { name: /Page/ })).toBeNull();
-    await act(async () => nextPage.resolve(referralPage(2)));
+    expect(screen.queryByText("People invited (31)")).toBeNull();
+    await act(async () => refresh.resolve(referralDetail(32)));
     expect(screen.queryByText(user.name)).toBeNull();
-    expect(screen.queryByText("Second Invited Member")).toBeNull();
+    expect(screen.queryByText("People invited (32)")).toBeNull();
   });
 
   it("uses one initial detail loading state and keeps the drawer populated during revalidation", async () => {
@@ -1195,7 +1372,7 @@ describe("CMS account administration", () => {
     show(<UserDetail userId={userId} intercepted />);
     expect(await screen.findByRole("status")).toHaveTextContent("Loading users…");
     expect(screen.getAllByRole("status")).toHaveLength(1);
-    await act(async () => initial.resolve(referralPage(1)));
+    await act(async () => initial.resolve(referralDetail()));
     const drawer = await screen.findByRole("dialog", { name: user.name });
 
     act(() => {
@@ -1205,9 +1382,8 @@ describe("CMS account administration", () => {
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
     expect(within(drawer).queryByRole("status")).toBeNull();
     expect(within(drawer).getByText(referralUser.address)).toBeVisible();
-    expect(within(drawer).getByText("Invited Member")).toBeVisible();
-    expect(within(drawer).getByRole("navigation", { name: "Page 1/2" })).toBeVisible();
-    await act(async () => refresh.resolve(referralPage(1)));
+    expect(within(drawer).getByText("People invited (31)")).toBeVisible();
+    await act(async () => refresh.resolve(referralDetail()));
     expect(drawer).toBeVisible();
   });
 
@@ -1266,11 +1442,7 @@ describe("CMS account administration", () => {
     "drops protected detail and closes a reset dialog after a %s background read returns 403",
     async (viewport) => {
       if (viewport === "mobile") setMobileViewport();
-      const protectedAccount = {
-        ...user,
-        email: "member@example.com",
-        address: "12 Private Lane",
-      };
+      const protectedAccount = referralUser;
       const fetcher = vi
         .fn()
         .mockResolvedValueOnce(
@@ -1287,8 +1459,7 @@ describe("CMS account administration", () => {
       expect(await screen.findByText(protectedAccount.address)).toBeVisible();
       expect(screen.getByText(protectedAccount.email)).toBeVisible();
       expect(screen.getByText("50")).toBeVisible();
-      expect(screen.getByText("Invited Member")).toBeVisible();
-      expect(screen.getByRole("navigation", { name: "Page 1/2" })).toBeVisible();
+      expect(screen.getByText("People invited (1)")).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
       const dialog = await screen.findByRole("dialog", { name: "Reset password" });
       passwords(dialog);
@@ -1305,8 +1476,7 @@ describe("CMS account administration", () => {
       expect(screen.queryByText(user.phone)).toBeNull();
       expect(screen.queryByText("50")).toBeNull();
       expect(screen.queryByText("NFV1234567")).toBeNull();
-      expect(screen.queryByText("Invited Member")).toBeNull();
-      expect(screen.queryByRole("navigation", { name: "Page 1/2" })).toBeNull();
+      expect(screen.queryByText("People invited (1)")).toBeNull();
       expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
       expect(fetcher).toHaveBeenCalledTimes(2);
     },
@@ -1600,6 +1770,7 @@ describe("CMS account administration", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "0912345678" } });
     fireEvent.submit(screen.getByRole("form", { name: /find account/i }));
     expect(await screen.findByText(user.login_phone_number)).toBeVisible();
+    expect(screen.queryByText(user.phone, { exact: false })).toBeNull();
     expect(fetcher.mock.calls[0][0]).toBe("/api/backend/admin/users?page=1&search=0912345678");
     fireEvent.click(screen.getByRole("radio", { name: /Garden Member/ }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
