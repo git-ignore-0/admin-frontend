@@ -91,6 +91,12 @@ export type CSACustomer = MembershipCustomer & {
   memberships?: AdminMembership[];
 };
 
+export type CSACustomerPhoneLookup = { phone: string } & (
+  | { status: "available" }
+  | { status: "account_found"; user: { id: string; name: string } }
+  | { status: "customer_exists"; customer: { id: string; is_linked: boolean } }
+);
+
 export type MembershipAuditActor = WebsiteAccount;
 
 export type CSAContractSummary = {

@@ -1,5 +1,5 @@
 import { selectOption } from "./select-option";
-import { focusManager } from "@tanstack/react-query";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CreateCustomerPage from "@/app/(admin)/csa-customers/new/page";
@@ -19,7 +19,13 @@ import { ToastProvider } from "@/components/toast-provider";
 import { adminDictionaries } from "@/lib/admin-i18n";
 import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { api, apiEnvelope } from "@/lib/client-api";
-import type { AdminMembership, CSACustomer, MembershipStatus, PaginationMeta } from "@/lib/types";
+import type {
+  AdminMembership,
+  AdminUserDetail,
+  CSACustomer,
+  MembershipStatus,
+  PaginationMeta,
+} from "@/lib/types";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn() }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
@@ -50,6 +56,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   focusManager.setFocused(undefined);
+  onlineManager.setOnline(true);
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
@@ -76,6 +83,74 @@ const supportedShippingAreas = [
     wards: [{ ward_code: "001", ward_name: "Ben Nghe Ward", shipping_fee_vnd: "30000" }],
   },
 ];
+const lookupPath = "admin/csa-customers/lookup";
+const createPath = "admin/csa-customers";
+const fromUserPath = "admin/csa-customers/from-user";
+const availablePhone = { status: "available", phone: "+84912345678" };
+const account: AdminUserDetail = {
+  id: "58cbea40-4749-4400-9fa3-188de573abaf",
+  name: "Web User",
+  email: "web@example.com",
+  email_verified: true,
+  login_phone_number: "+84909000000",
+  phone: "0909000000",
+  has_csa_customer: false,
+  status: "active",
+  date_joined: "2026-09-01T00:00:00Z",
+  points_balance: 0,
+  province_code: "",
+  ward_code: "",
+  address: "",
+  source: "organic",
+  referral_code: "sample-code",
+  referrer: null,
+  invited_count: 0,
+  invited_users: [],
+  shipping_address: {
+    id: "a9319b81-4cef-4bc8-abdf-b3ee499375a7",
+    recipient_name: "Old recipient name",
+    phone_number: "0900001000",
+    province_code: "79",
+    ward_code: "001",
+    address: "50 New Street",
+    is_supported: true,
+    shipping_fee_vnd: "30000",
+    created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-05T00:00:00Z",
+  },
+};
+const accountLookup = {
+  status: "account_found",
+  phone: account.login_phone_number!,
+  user: { id: account.id, name: account.name },
+};
+
+function checkPhone(phone = "0912345678", label = "Check") {
+  fireEvent.change(screen.getByRole("textbox", { name: /Phone number|Số điện thoại/ }), {
+    target: { value: phone },
+  });
+  fireEvent.click(screen.getByRole("button", { name: label }));
+}
+
+async function fillManagedCustomer() {
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: customer.name },
+  });
+  selectOption(screen.getByRole("combobox", { name: "Province/city" }), "79");
+  selectOption(screen.getByRole("combobox", { name: "Ward/commune" }), "001");
+  fireEvent.change(screen.getByRole("textbox", { name: "Delivery address" }), {
+    target: { value: "12 Main Street" },
+  });
+}
+
+async function searchAccounts(name = "Web User") {
+  fireEvent.click(screen.getByRole("tab", { name: "From account" }));
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: name } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+}
 
 function membership(
   id: string,
@@ -130,17 +205,293 @@ function deferred<T>() {
 }
 
 describe("CSA customer administration", () => {
-  it("offers only manual customer creation", async () => {
+  it("renders the customer form only after an available phone lookup", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
+      if (path === lookupPath) return availablePhone as never;
       throw new Error(`Unexpected request: ${path}`);
     });
 
     providers(<CSACustomerForm />);
 
-    expect(screen.queryByRole("radio", { name: "Choose from website accounts" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "New customer" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
     expect(screen.queryByRole("searchbox")).toBeNull();
-    expect(await screen.findByRole("button", { name: "Create CSA customer" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    checkPhone();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Name" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    expect(api).toHaveBeenCalledWith(
+      lookupPath,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ phone: "+84912345678" }),
+      }),
+    );
+    expect(
+      vi.mocked(api).mock.calls.some(([path]) => path === createPath || path === fromUserPath),
+    ).toBe(false);
+  });
+
+  it("hands off a found account without a second search", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) return account as never;
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    checkPhone("0909000000");
+    fireEvent.click(await screen.findByRole("button", { name: "Use this account" }));
+    expect(screen.getByRole("tab", { name: "From account" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeEnabled(),
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(account.name);
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "Phone number" })).toHaveValue(
+      account.login_phone_number,
+    );
+    expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveValue(
+      account.shipping_address!.address,
+    );
+    expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveAttribute("readonly");
+    expect(apiEnvelope).not.toHaveBeenCalled();
+    expect(vi.mocked(api).mock.calls.some(([path]) => path === fromUserPath)).toBe(false);
+  });
+
+  it("creates from a selected account using only user_id", async () => {
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => ({
+      data: [account],
+      meta: { ...meta, page: path.includes("page=2") ? 2 : 1, total: 31 },
+    }));
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) return account as never;
+      if (path === fromUserPath) return { ...customer, user: account } as never;
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenCalledWith(
+        expect.stringMatching(/page=1.*search=Web\+User.*has_csa_customer=false/),
+        expect.anything(),
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        expect.stringMatching(/page=2.*search=Web\+User.*has_csa_customer=false/),
+        expect.anything(),
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith(`/csa-customers/${customer.id}`),
+    );
+    expect(api).toHaveBeenCalledWith(
+      fromUserPath,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ user_id: account.id }),
+      }),
+    );
+  });
+
+  it.each(["managed", "linked", "missing", "unsupported"])(
+    "blocks duplicate customers and incomplete account shipping (%s)",
+    async (scenario) => {
+      vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+      const existing = scenario === "managed" || scenario === "linked";
+      vi.mocked(api).mockImplementation(async (path) => {
+        if (path === lookupPath)
+          return existing
+            ? ({
+                status: "customer_exists",
+                phone: accountLookup.phone,
+                customer: { id: customer.id, is_linked: scenario === "linked" },
+              } as never)
+            : (accountLookup as never);
+        if (path === `admin/users/${account.id}`)
+          return {
+            ...account,
+            shipping_address:
+              scenario === "missing"
+                ? null
+                : {
+                    ...account.shipping_address!,
+                    is_supported: scenario !== "unsupported",
+                  },
+          } as never;
+        return [] as never;
+      });
+      providers(<CSACustomerForm />);
+      if (existing) {
+        checkPhone("0909000000");
+        expect(
+          await screen.findByText("A CSA customer already exists for this phone number."),
+        ).toBeVisible();
+        expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+        expect(screen.queryByRole("link", { name: "Open customer to link" })).toBeNull();
+      }
+      await searchAccounts();
+      fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+      if (scenario === "managed") {
+        expect(await screen.findByRole("link", { name: "Open customer to link" })).toHaveAttribute(
+          "href",
+          `/csa-customers/${customer.id}`,
+        );
+      } else if (scenario === "linked") {
+        expect(
+          await screen.findByText("This phone number belongs to another CSA customer."),
+        ).toBeVisible();
+        expect(screen.queryByRole("link", { name: "Open customer to link" })).toBeNull();
+      } else {
+        expect(await screen.findByRole("link", { name: "Open account" })).toHaveAttribute(
+          "href",
+          `/users/${account.id}`,
+        );
+      }
+      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+      expect(vi.mocked(api).mock.calls.some(([path]) => path === fromUserPath)).toBe(false);
+    },
+  );
+
+  it("ignores stale phone and account responses", async () => {
+    const oldPhone = deferred<typeof availablePhone>();
+    const oldAccount = deferred<AdminUserDetail>();
+    const nextAccount = { ...account, id: customer.id, name: "Next User" };
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account, nextAccount], meta });
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === lookupPath) {
+        const { phone } = JSON.parse(String(init?.body));
+        if (phone === availablePhone.phone) return oldPhone.promise as never;
+        return { ...accountLookup, user: { id: nextAccount.id, name: nextAccount.name } } as never;
+      }
+      if (path === `admin/users/${account.id}`) return oldAccount.promise as never;
+      if (path === `admin/users/${nextAccount.id}`) return nextAccount as never;
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    checkPhone();
+    checkPhone("0909000000");
+    expect(await screen.findByRole("button", { name: "Use this account" })).toBeVisible();
+    await act(async () => oldPhone.resolve(availablePhone));
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+    await searchAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose another account" }));
+    const nextUser = await screen.findByRole("button", { name: /Next User/ });
+    await waitFor(() => expect(nextUser).toBeEnabled());
+    fireEvent.click(nextUser);
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Next User"),
+    );
+    await act(async () => oldAccount.resolve(account));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Next User");
+  });
+
+  it.each([
+    [
+      { shipping_address: null },
+      "csa_customer_shipping_address_unavailable",
+      "This account has no delivery address.",
+    ],
+    [{ name: "" }, "csa_customer_name_required", "Name is required."],
+    [
+      { login_phone_number: null },
+      "csa_customer_phone_required",
+      "This account needs a valid login phone number.",
+    ],
+  ] as const)("refreshes account after create validation %j", async (change, code, reason) => {
+    let reads = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) {
+        return (reads++ === 0 ? account : { ...account, ...change }) as never;
+      }
+      if (path === fromUserPath) throw Object.assign(new Error(code), { status: 400 });
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    expect(await screen.findByRole("link", { name: "Open account" })).toHaveAttribute(
+      "href",
+      `/users/${account.id}`,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(reason);
+    expect(submit).toBeDisabled();
+    expect(reads).toBe(2);
+  });
+
+  it("retires the account preview and cached results if create loses read access", async () => {
+    const forbidden = Object.assign(new Error("forbidden"), { status: 403 });
+    let reads = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) {
+        if (reads++ === 0) return account as never;
+        throw forbidden;
+      }
+      if (path === fromUserPath) throw forbidden;
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(reads).toBe(2));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.forbidden,
+    );
+    expect(screen.queryByDisplayValue(account.name)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue(account.shipping_address!.address)).not.toBeInTheDocument();
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Choose another account" }));
+    expect(screen.queryByRole("button", { name: /Web User/ })).not.toBeInTheDocument();
+    expect(vi.mocked(api).mock.calls.filter(([path]) => path === fromUserPath)).toHaveLength(1);
+  });
+
+  it("returns to account selection with specific feedback if the account no longer exists", async () => {
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) return account as never;
+      if (path === fromUserPath) {
+        throw Object.assign(new Error("csa_customer_user_not_found"), { status: 404 });
+      }
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    expect(
+      await screen.findByText("This account no longer exists. Choose another account."),
+    ).toBeVisible();
+    expect(screen.getByRole("searchbox")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+    expect(submit).toBeDisabled();
   });
 
   it("links the customer name to a detail URL with the current filters and page", async () => {
@@ -263,6 +614,7 @@ describe("CSA customer administration", () => {
     vi.mocked(apiEnvelope).mockResolvedValue({ data: [user], meta });
     vi.mocked(api).mockImplementation(async (path) => {
       if (path.endsWith("/link-user")) return { ...customer, user, memberships: undefined };
+      if (path === `admin/users/${user.id}`) return account as never;
       if (path === `admin/csa-customers/${customer.id}`)
         return detailRequests++ === 0 ? initialDetail : staleDetail.promise;
       return [];
@@ -279,6 +631,7 @@ describe("CSA customer administration", () => {
     fireEvent.change(dialog.getByRole("searchbox"), { target: { value: "web@example.com" } });
     fireEvent.click(dialog.getByRole("button", { name: "Search" }));
     fireEvent.click(await dialog.findByRole("radio"));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Confirm link" })).toBeEnabled());
     fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
 
     expect(await screen.findByText("Website account linked")).toBeVisible();
@@ -530,6 +883,7 @@ describe("CSA customer administration", () => {
       let resolveCreate!: (value: CSACustomer) => void;
       vi.mocked(api).mockImplementation(async (path) => {
         if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
+        if (path === lookupPath) return availablePhone as never;
         if (path === "admin/csa-customers") {
           return new Promise<CSACustomer>((resolve) => {
             resolveCreate = resolve;
@@ -545,68 +899,45 @@ describe("CSA customer administration", () => {
       expect(screen.queryByLabelText(/Farmbrite/)).toBeNull();
 
       const contact = screen.getByRole("group", { name: "Contact details" });
-      expect(within(contact).getByLabelText("Name *")).toBeRequired();
       expect(within(contact).getByLabelText("Phone number *")).toBeRequired();
       const delivery = screen.getByRole("group", { name: "Delivery address" });
       expect(within(delivery).getByRole("combobox", { name: "Province/city" })).toBeRequired();
       expect(within(delivery).getByRole("combobox", { name: "Ward/commune" })).toBeRequired();
       expect(within(delivery).getByLabelText("Delivery address *")).toBeRequired();
-      const noteInput = screen.getByRole("textbox", { name: "Note" });
-      expect(noteInput).not.toBeRequired();
-      expect(noteInput).toHaveAttribute("maxlength", "1000");
       const create = screen.getByRole("button", { name: "Create CSA customer" });
       const card = create.closest(".mantine-Paper-root");
       expect(card).toContainElement(contact);
       expect(card).toContainElement(delivery);
       expect(create.closest("footer")).toBeInTheDocument();
 
-      await waitFor(() =>
-        expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-      expect(screen.getByText("Name is required.")).toBeVisible();
-      expect(screen.getByText("Phone number is required.")).toBeVisible();
-      expect(screen.getByText("Province/city is required.")).toBeVisible();
-      expect(screen.getByText("Ward/commune is required.")).toBeVisible();
-      expect(screen.getByText("Detailed address is required.")).toBeVisible();
-      expect(api).toHaveBeenCalledTimes(1);
-      expect(api).toHaveBeenCalledWith("public/shipping-areas?locale=en", expect.anything());
-      expect(
-        vi.mocked(api).mock.calls.some(([path]) => path.startsWith("administrative-units/")),
-      ).toBe(false);
-
-      fireEvent.change(screen.getByRole("textbox", { name: /Name/ }), {
-        target: { value: customer.name },
-      });
       const phone = screen.getByRole("textbox", { name: /Phone number/ });
       expect(phone).toHaveAttribute("type", "tel");
       expect(phone).toHaveAttribute("inputmode", "tel");
       expect(phone).toHaveAttribute("autocomplete", "tel");
       fireEvent.change(phone, { target: { value: "0123" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
-      expect(screen.getByText("Enter a valid phone number.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
       expect(vi.mocked(api).mock.calls.some(([path]) => path === "admin/csa-customers")).toBe(
         false,
       );
-      fireEvent.change(phone, { target: { value: "0912345678" } });
+      checkPhone();
       expect(phone).toHaveValue("0912345678");
       fireEvent.change(phone, { target: { value: "0912e345678" } });
       expect(phone).toHaveValue("0912345678");
+      await fillManagedCustomer();
       const province = await screen.findByRole("combobox", { name: /Province\/city/ });
-      await waitFor(() =>
-        expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
-      );
-      selectOption(province, "79");
       const ward = screen.getByRole("combobox", { name: /Ward\/commune/ });
-      selectOption(ward, "001");
       selectOption(province, "");
+      expect(create).toBeDisabled();
       expect(ward).toHaveValue("Choose a ward or commune");
       selectOption(province, "79");
       selectOption(ward, "001");
-      fireEvent.change(screen.getByRole("textbox", { name: /Delivery address/ }), {
-        target: { value: "12 Main Street" },
-      });
-      fireEvent.change(noteInput, { target: { value: note } });
+      if (note) {
+        fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+        const noteInput = screen.getByRole("textbox", { name: "Note" });
+        expect(noteInput).not.toBeRequired();
+        expect(noteInput).toHaveAttribute("maxlength", "1000");
+        fireEvent.change(noteInput, { target: { value: note } });
+      }
 
       fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
       const saving = screen.getByRole("button", { name: "Saving…" });
@@ -638,7 +969,7 @@ describe("CSA customer administration", () => {
   );
 
   it("uses the Admin header style for creation and sorts shipping options by locality name", async () => {
-    vi.mocked(api).mockResolvedValue([
+    const areas = [
       { province_code: "79", province_name: "Hồ Chí Minh", wards: [] },
       {
         province_code: "66",
@@ -651,7 +982,10 @@ describe("CSA customer administration", () => {
         ],
       },
       { province_code: "01", province_name: "Hà Nội", wards: [] },
-    ] as never);
+    ];
+    vi.mocked(api).mockImplementation(
+      async (path) => (path === lookupPath ? availablePhone : areas) as never,
+    );
     const dictionary = adminDictionaries.vi;
     const active = adminNavigation(dictionary)
       .flatMap((section) => section.items)
@@ -680,6 +1014,7 @@ describe("CSA customer administration", () => {
     expect(body.getByRole("heading", { name: "Tạo khách hàng CSA", level: 1 })).toHaveClass(
       "mantine-VisuallyHidden-root",
     );
+    checkPhone("0912345678", "Kiểm tra");
     const province = screen.getByRole("combobox", { name: /Tỉnh/ });
     await waitFor(() => expect(province).toBeEnabled());
     fireEvent.click(province);
@@ -699,49 +1034,98 @@ describe("CSA customer administration", () => {
     ).toEqual(["Phường 2", "Phường 20", "Xã An Bình", "Xã Hòa Thắng"]);
   });
 
-  it("keeps the create form intact and reports a duplicate-phone conflict", async () => {
+  it("handles a create conflict and preserves input on network failure", async () => {
+    let lookups = 0;
+    let attempts = 0;
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === "public/shipping-areas?locale=en") return supportedShippingAreas as never;
-      if (path === "admin/csa-customers") throw new Error("csa_customer_phone_exists");
+      if (path === lookupPath) {
+        if (lookups++ === 0) return availablePhone as never;
+        return {
+          ...availablePhone,
+          status: "customer_exists",
+          customer: { id: customer.id, is_linked: false },
+        } as never;
+      }
+      if (path === createPath) {
+        if (attempts++ === 0) throw new Error("network_error");
+        throw Object.assign(new Error("csa_customer_phone_exists"), { status: 409 });
+      }
       throw new Error(`Unexpected request: ${path}`);
     });
-    const view = providers(<CSACustomerForm />);
-    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: customer.name } });
-    fireEvent.change(screen.getByLabelText("Phone number *"), { target: { value: "0912345678" } });
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
-    );
-    selectOption(screen.getByRole("combobox", { name: "Province/city" }), "79");
-    selectOption(screen.getByRole("combobox", { name: "Ward/commune" }), "001");
-    fireEvent.change(screen.getByLabelText("Delivery address *"), {
-      target: { value: "12 Main Street" },
-    });
+    providers(<CSACustomerForm />);
+    checkPhone();
+    await fillManagedCustomer();
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
     const note = screen.getByRole("textbox", { name: "Note" });
     fireEvent.change(note, { target: { value: "Call before delivery." } });
     fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.networkError,
+    );
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(customer.name);
+    expect(note).toHaveValue("Call before delivery.");
+    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
 
     const duplicateError = await screen.findByText(
-      "This phone number belongs to another CSA customer.",
+      "A CSA customer already exists for this phone number.",
     );
     const phoneInput = screen.getByLabelText(/Phone number/);
     expect(duplicateError).toHaveClass("mantine-TextInput-error");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
     expect(phoneInput).toHaveAttribute("aria-describedby", duplicateError.id);
     expect(phoneInput.closest(".mantine-TextInput-root")).toContainElement(duplicateError);
-    await waitFor(() => expect(phoneInput).toHaveFocus());
     expect(phoneInput).toHaveValue("0912345678");
-    expect(note).toHaveValue("Call before delivery.");
-    expect(
-      [...view.container.querySelectorAll(".error-box")].some((box) =>
-        box.textContent?.includes("This phone number belongs to another CSA customer."),
-      ),
-    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    expect(lookups).toBe(2);
     expect(navigation.replace).not.toHaveBeenCalled();
+    fireEvent.change(phoneInput, { target: { value: "0909000000" } });
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveValue("");
+  });
+
+  it("reloads shipping areas after a ward becomes unsupported without losing the draft", async () => {
+    let areaRequests = 0;
+    const nextArea = [
+      {
+        ...supportedShippingAreas[0],
+        wards: [{ ward_code: "002", ward_name: "New Ward", shipping_fee_vnd: "30000" }],
+      },
+    ];
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return availablePhone as never;
+      if (path.startsWith("public/shipping-areas")) {
+        return (areaRequests++ === 0 ? supportedShippingAreas : nextArea) as never;
+      }
+      if (path === createPath) {
+        throw Object.assign(new Error("csa_customer_shipping_area_unsupported"), { status: 400 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    providers(<CSACustomerForm />);
+    checkPhone();
+    await fillManagedCustomer();
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    fireEvent.click(submit);
+    await waitFor(() => expect(areaRequests).toBe(2));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.csaCustomers.shippingAreaUnsupported,
+    );
+    const ward = screen.getByRole("combobox", { name: "Ward/commune" });
+    await waitFor(() => expect(ward).toHaveValue("Choose a ward or commune"));
+    expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveValue("12 Main Street");
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(customer.name);
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(vi.mocked(api).mock.calls.filter(([path]) => path === createPath)).toHaveLength(1);
+    selectOption(ward, "002");
+    expect(submit).toBeEnabled();
   });
 
   it("keeps the link dialog open when the backend reports a user conflict", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path.endsWith("link-user")) throw new Error("csa_customer_user_exists");
+      if (path === `admin/users/${account.id}`) return account as never;
       return customer;
     });
     vi.mocked(apiEnvelope).mockResolvedValue({
@@ -768,17 +1152,85 @@ describe("CSA customer administration", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Search" }));
     fireEvent.click(await within(dialog).findByRole("radio"));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Confirm link" })).toBeEnabled(),
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm link" }));
     expect(
       await within(dialog).findByText("This account is linked to another CSA customer."),
     ).toBeVisible();
+    const confirm = await within(dialog).findByRole("button", { name: "Confirm link" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/link-user"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("refreshes the CSA customer when a different account was linked before confirmation", async () => {
+    let customerReads = 0;
+    const linkedElsewhere = { ...account, id: customer.id, email: "linked-elsewhere@example.com" };
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`) return account as never;
+      if (path.endsWith("/link-user"))
+        throw Object.assign(new Error("csa_customer_user_exists"), { status: 409 });
+      if (path === `${createPath}/${customer.id}`) {
+        return (customerReads++ === 0 ? customer : { ...customer, user: linkedElsewhere }) as never;
+      }
+      return [] as never;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: account.email } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Confirm link" })).toBeEnabled());
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+    expect(await screen.findByText(linkedElsewhere.email)).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link account" })).not.toBeInTheDocument();
+    expect(customerReads).toBe(2);
+  });
+
+  it("retires the account preview and cached results if linking loses read access", async () => {
+    const forbidden = Object.assign(new Error("forbidden"), { status: 403 });
+    let reads = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`) {
+        if (reads++ === 0) return account as never;
+        throw forbidden;
+      }
+      if (path.endsWith("/link-user")) throw forbidden;
+      if (path === `${createPath}/${customer.id}`) return customer as never;
+      return [] as never;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: account.email } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    expect(await dialog.findByText(account.shipping_address!.address)).toBeVisible();
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+    await waitFor(() => expect(reads).toBe(2));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.forbidden,
+    );
+    expect(dialog.queryByText(account.shipping_address!.address)).not.toBeInTheDocument();
+    expect(dialog.queryByRole("radio")).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Confirm link" })).toBeDisabled();
+    expect(vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/link-user"))).toHaveLength(
+      1,
+    );
   });
 
   it("explains that a supported delivery address is required before linking", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
-      if (path.endsWith("link-user")) {
-        throw new Error("csa_customer_shipping_address_unavailable");
-      }
+      if (path === `admin/users/${account.id}`)
+        return { ...account, shipping_address: null } as never;
       return customer;
     });
     vi.mocked(apiEnvelope).mockResolvedValue({
@@ -805,13 +1257,69 @@ describe("CSA customer administration", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Tìm kiếm" }));
     fireEvent.click(await within(dialog).findByRole("radio"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận liên kết" }));
-
     expect(
       await within(dialog).findByText(
         "Tài khoản chưa có địa chỉ giao hàng đang được hỗ trợ. Hãy cập nhật địa chỉ trước khi liên kết.",
       ),
     ).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Xác nhận liên kết" })).toBeDisabled();
+    expect(vi.mocked(api).mock.calls.some(([path]) => path.endsWith("link-user"))).toBe(false);
+  });
+
+  it("previews current and replacement addresses before linking", async () => {
+    const address = {
+      ...account.shipping_address!,
+      address: customer.address,
+      ward_code: "22015",
+      province_code: "66",
+    };
+    const next = { ...address, address: "99 Updated Street", updated_at: "2026-09-06T00:00:00Z" };
+    const refresh = deferred<AdminUserDetail>();
+    let addressRequests = 0;
+    let linkRequests = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`)
+        return (
+          addressRequests++ === 0 ? { ...account, shipping_address: address } : refresh.promise
+        ) as never;
+      if (path.endsWith("/link-user")) {
+        if (linkRequests++ === 0)
+          throw Object.assign(new Error("csa_customer_shipping_address_changed"), { status: 409 });
+        return { ...customer, user: account } as never;
+      }
+      if (path === `${createPath}/${customer.id}`) return customer as never;
+      return [] as never;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("button", { name: "Confirm link" })).toBeDisabled();
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: account.email } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    expect(await dialog.findByText("22015, 66")).toBeVisible();
+    expect(dialog.getByText("001, 79")).toBeVisible();
+    expect(dialog.getAllByText(customer.address)).toHaveLength(2);
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+    await waitFor(() => expect(addressRequests).toBe(2));
+    expect(dialog.getByRole("button", { name: /Confirm link|Linking/ })).toBeDisabled();
+    expect(linkRequests).toBe(1);
+    await act(async () => refresh.resolve({ ...account, shipping_address: next }));
+    expect(await dialog.findByText(next.address)).toBeVisible();
+    expect(
+      dialog.getByText(
+        "The delivery address has changed. Review the new address before confirming.",
+      ),
+    ).toBeVisible();
+    expect(linkRequests).toBe(1);
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+    expect(await screen.findByText("Website account linked")).toBeVisible();
+    const links = vi.mocked(api).mock.calls.filter(([path]) => path.endsWith("/link-user"));
+    expect(links.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { user_id: account.id, expected_shipping_address_updated_at: address.updated_at },
+      { user_id: account.id, expected_shipping_address_updated_at: next.updated_at },
+    ]);
   });
 
   it("requires a customerId and never falls back to a customer picker", () => {
@@ -1459,5 +1967,264 @@ describe("CSA customer administration", () => {
     ).toBe(false);
     expect(screen.queryByRole("link", { name: "Customer details" })).toBeNull();
     expect(navigation.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("CSA account revalidation", () => {
+  it("clears the selection and refreshes the customer when linking returns 404", async () => {
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`) return account as never;
+      if (path.endsWith("/link-user"))
+        throw Object.assign(new Error("request_failed"), { status: 404 });
+      if (path === `${createPath}/${customer.id}`) return customer as never;
+      return [] as never;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: account.email } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    expect(await dialog.findByText(account.shipping_address!.address)).toBeVisible();
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.requestFailed,
+    );
+    expect(dialog.getByRole("button", { name: "Confirm link" })).toBeDisabled();
+    expect(dialog.queryByText(account.shipping_address!.address)).not.toBeInTheDocument();
+    expect(dialog.queryByRole("radio")).not.toBeInTheDocument();
+    expect(
+      vi.mocked(api).mock.calls.filter(([path]) => path === `${createPath}/${customer.id}`),
+    ).toHaveLength(2);
+  });
+
+  it("closes the link dialog if the customer is gone after a link 404", async () => {
+    const missing = Object.assign(new Error("request_failed"), { status: 404 });
+    let customerReads = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`) return account as never;
+      if (path.endsWith("/link-user")) throw missing;
+      if (path === `${createPath}/${customer.id}` && customerReads++ === 0)
+        return customer as never;
+      throw missing;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: account.email } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    expect(await dialog.findByText(account.shipping_address!.address)).toBeVisible();
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm link" }));
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link account" })).not.toBeInTheDocument();
+  });
+
+  it("clears the matching phone lookup after the account was deleted", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) return account as never;
+      if (path === fromUserPath) {
+        throw Object.assign(new Error("csa_customer_user_not_found"), { status: 404 });
+      }
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    checkPhone("0909000000");
+    fireEvent.click(await screen.findByRole("button", { name: "Use this account" }));
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    expect(
+      await screen.findByText("This account no longer exists. Choose another account."),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "New customer" }));
+    expect(screen.queryByText(account.name + " · " + accountLookup.phone)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use this account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
+  });
+
+  it("retires the phone lookup when the first account details request is denied", async () => {
+    const forbidden = Object.assign(new Error("forbidden"), { status: 403 });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      throw forbidden;
+    });
+    providers(<CSACustomerForm />);
+    checkPhone("0909000000");
+    fireEvent.click(await screen.findByRole("button", { name: "Use this account" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.forbidden,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "New customer" }));
+    expect(screen.queryByRole("button", { name: "Use this account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
+  });
+
+  it("waits for reconnection before showing a cached account or allowing creation", async () => {
+    let reads = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) {
+        reads += 1;
+        return account as never;
+      }
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Choose another account" }));
+    const candidate = await screen.findByRole("button", { name: /Web User/ });
+    await waitFor(() => expect(candidate).toBeEnabled());
+    act(() => onlineManager.setOnline(false));
+    fireEvent.click(candidate);
+    expect(await screen.findByText(adminDictionaries.en.users.offline)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    expect(screen.queryByDisplayValue(account.shipping_address!.address)).not.toBeInTheDocument();
+    expect(reads).toBe(1);
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeEnabled(),
+    );
+    expect(reads).toBe(2);
+  });
+
+  it("verifies that managed create rechecks a newly registered phone and exposes account handoff", async () => {
+    let lookups = 0;
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) {
+        return (
+          lookups++ === 0 ? { ...availablePhone, phone: accountLookup.phone } : accountLookup
+        ) as never;
+      }
+      if (path.startsWith("public/shipping-areas")) return supportedShippingAreas as never;
+      if (path === createPath)
+        throw Object.assign(new Error("csa_customer_phone_has_account"), { status: 409 });
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    checkPhone("0909000000");
+    await fillManagedCustomer();
+    fireEvent.click(screen.getByRole("button", { name: "Create CSA customer" }));
+    expect(await screen.findByRole("button", { name: "Use this account" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    expect(lookups).toBe(2);
+  });
+
+  it.each([true, false])(
+    "verifies revalidation of from-user conflict, existing linked account=%s",
+    async (linked) => {
+      let lookupReads = 0;
+      let accountReads = 0;
+      vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+      vi.mocked(api).mockImplementation(async (path) => {
+        if (path === `admin/users/${account.id}`) {
+          return (
+            accountReads++ === 0 ? account : { ...account, has_csa_customer: linked }
+          ) as never;
+        }
+        if (path === lookupPath) {
+          return (
+            lookupReads++ === 0
+              ? accountLookup
+              : {
+                  ...accountLookup,
+                  status: "customer_exists",
+                  customer: { id: customer.id, is_linked: false },
+                }
+          ) as never;
+        }
+        if (path === fromUserPath) {
+          throw Object.assign(
+            new Error(linked ? "csa_customer_user_exists" : "csa_customer_phone_exists"),
+            { status: 409 },
+          );
+        }
+        return [] as never;
+      });
+      providers(<CSACustomerForm />);
+      await searchAccounts();
+      fireEvent.click(await screen.findByRole("button", { name: /Web User/ }));
+      const submit = screen.getByRole("button", { name: "Create CSA customer" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      if (linked) {
+        expect(await screen.findByText(adminDictionaries.en.csaCustomers.userExists)).toBeVisible();
+      } else {
+        expect(await screen.findByRole("link", { name: "Open customer to link" })).toBeVisible();
+      }
+      expect(submit).toBeDisabled();
+      expect(accountReads).toBe(2);
+      expect(lookupReads).toBe(linked ? 1 : 2);
+    },
+  );
+
+  it("clears the matching phone lookup after read access is denied", async () => {
+    let reads = 0;
+    const forbidden = Object.assign(new Error("forbidden"), { status: 403 });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === lookupPath) return accountLookup as never;
+      if (path === `admin/users/${account.id}`) {
+        if (reads++ === 0) return account as never;
+        throw forbidden;
+      }
+      if (path === fromUserPath) throw forbidden;
+      return [] as never;
+    });
+    providers(<CSACustomerForm />);
+    checkPhone("0909000000");
+    fireEvent.click(await screen.findByRole("button", { name: "Use this account" }));
+    const submit = screen.getByRole("button", { name: "Create CSA customer" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(reads).toBe(2));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      adminDictionaries.en.common.forbidden,
+    );
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByRole("tab", { name: "New customer" }));
+    expect(screen.queryByText(account.name + " · " + accountLookup.phone)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use this account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
+  });
+
+  it("waits for reconnection before showing a cached address or allowing a link", async () => {
+    let reads = 0;
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [account], meta });
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`) {
+        reads += 1;
+        return account as never;
+      }
+      if (path === `${createPath}/${customer.id}`) return customer as never;
+      return [] as never;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: account.email } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    fireEvent.click(await dialog.findByRole("radio"));
+    expect(await dialog.findByText(account.shipping_address!.address)).toBeVisible();
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    const candidate = await dialog.findByRole("radio");
+    await waitFor(() => expect(candidate).toBeEnabled());
+    act(() => onlineManager.setOnline(false));
+    fireEvent.click(candidate);
+    expect(await dialog.findByText(adminDictionaries.en.users.offline)).toBeVisible();
+    expect(dialog.getByRole("button", { name: "Confirm link" })).toBeDisabled();
+    expect(dialog.queryByText(account.shipping_address!.address)).not.toBeInTheDocument();
+    expect(reads).toBe(1);
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Confirm link" })).toBeEnabled());
+    expect(reads).toBe(2);
   });
 });

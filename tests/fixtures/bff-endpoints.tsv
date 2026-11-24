@@ -117,6 +117,8 @@ admin/csa-purchase-requests/{request}/approve	POST	no
 admin/csa-purchase-requests/{request}/reject	POST	no
 admin/csa-purchase-requests/{request}/mark-refunded	POST	no
 admin/csa-customers	GET,POST	no
+admin/csa-customers/lookup	POST	no
+admin/csa-customers/from-user	POST	no
 admin/csa-customers/{customer}	GET	no
 admin/csa-customers/{customer}/link-user	POST	no
 admin/membership-usage	POST	no

@@ -252,6 +252,8 @@ describe("CMS account administration", () => {
     show(
       <LinkCustomerUserDialog
         customerId="customer"
+        currentAddress="12 Private Lane"
+        currentLocality="Sample Ward, Sample Province"
         fallbackFocusRef={{ current: null }}
         onCancel={vi.fn()}
         onLinked={vi.fn()}
@@ -1753,15 +1755,19 @@ describe("CMS account administration", () => {
   });
 
   it("finds a phone-only user for CSA and links the selected UUID", async () => {
-    const fetcher = vi.fn(async (_path: string, init?: RequestInit) =>
-      init?.method === "POST"
-        ? Response.json({ data: { id: "customer" } })
-        : Response.json({ data: [user] }),
-    );
+    const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
+      if (path.endsWith(`/admin/users/${userId}`)) {
+        return Response.json({ data: { ...user, shipping_address: shippingAddress } });
+      }
+      return Response.json({ data: [user] });
+    });
     vi.stubGlobal("fetch", fetcher);
     show(
       <LinkCustomerUserDialog
         customerId="customer"
+        currentAddress="12 Private Lane"
+        currentLocality="Sample Ward, Sample Province"
         fallbackFocusRef={{ current: null }}
         onCancel={vi.fn()}
         onLinked={vi.fn()}
@@ -1773,11 +1779,18 @@ describe("CMS account administration", () => {
     expect(screen.queryByText(user.phone, { exact: false })).toBeNull();
     expect(fetcher.mock.calls[0][0]).toBe("/api/backend/admin/users?page=1&search=0912345678");
     fireEvent.click(screen.getByRole("radio", { name: /Garden Member/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
+    const confirm = screen.getByRole("button", { name: "Confirm link" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(fetcher).toHaveBeenCalledWith(
         "/api/backend/admin/csa-customers/customer/link-user",
-        expect.objectContaining({ body: JSON.stringify({ user_id: userId }) }),
+        expect.objectContaining({
+          body: JSON.stringify({
+            user_id: userId,
+            expected_shipping_address_updated_at: shippingAddress.updated_at,
+          }),
+        }),
       ),
     );
   });
@@ -1791,6 +1804,13 @@ describe("CMS account administration", () => {
       const nextSearch = deferredResponse();
       const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
         if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
+        if (path.includes("/administrative-units/")) return Response.json({ data: [] });
+        if (path.endsWith(`/admin/users/${userId}`)) {
+          return Response.json({ data: { ...user, shipping_address: shippingAddress } });
+        }
+        if (path.endsWith(`/admin/users/${otherUserId}`)) {
+          return Response.json({ data: { ...otherUser, shipping_address: shippingAddress } });
+        }
         return path.includes("search=garden")
           ? Response.json({ data: [user] })
           : nextSearch.promise;
@@ -1800,6 +1820,8 @@ describe("CMS account administration", () => {
       show(
         <LinkCustomerUserDialog
           customerId="customer"
+          currentAddress="12 Private Lane"
+          currentLocality="Sample Ward, Sample Province"
           fallbackFocusRef={{ current: null }}
           onCancel={vi.fn()}
           onLinked={onLinked}
@@ -1810,7 +1832,9 @@ describe("CMS account administration", () => {
       fireEvent.change(search, { target: { value: "garden" } });
       fireEvent.submit(form);
       fireEvent.click(await screen.findByRole("radio", { name: /Garden Member/ }));
-      expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled(),
+      );
 
       fireEvent.change(search, { target: { value: "orchard" } });
       fireEvent.submit(form);
@@ -1829,13 +1853,19 @@ describe("CMS account administration", () => {
       }
 
       fireEvent.click(screen.getByRole("radio", { name: /Orchard Member/ }));
+      await waitFor(() => expect(confirm).toBeEnabled());
       fireEvent.click(confirm);
       await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ id: "customer" }));
       const posts = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
       expect(posts).toEqual([
         [
           "/api/backend/admin/csa-customers/customer/link-user",
-          expect.objectContaining({ body: JSON.stringify({ user_id: otherUserId }) }),
+          expect.objectContaining({
+            body: JSON.stringify({
+              user_id: otherUserId,
+              expected_shipping_address_updated_at: shippingAddress.updated_at,
+            }),
+          }),
         ],
       ]);
     },
@@ -1846,6 +1876,13 @@ describe("CMS account administration", () => {
     let orchardSearches = 0;
     const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
       if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
+      if (path.includes("/administrative-units/")) return Response.json({ data: [] });
+      if (path.endsWith(`/admin/users/${userId}`)) {
+        return Response.json({ data: { ...user, shipping_address: shippingAddress } });
+      }
+      if (path.endsWith(`/admin/users/${otherUserId}`)) {
+        return Response.json({ data: { ...otherUser, shipping_address: shippingAddress } });
+      }
       if (path.includes("search=garden")) return Response.json({ data: [user] });
       return ++orchardSearches === 1 ? failedSearch.promise : Response.json({ data: [otherUser] });
     });
@@ -1854,6 +1891,8 @@ describe("CMS account administration", () => {
     show(
       <LinkCustomerUserDialog
         customerId="customer"
+        currentAddress="12 Private Lane"
+        currentLocality="Sample Ward, Sample Province"
         fallbackFocusRef={{ current: null }}
         onCancel={vi.fn()}
         onLinked={onLinked}
@@ -1867,7 +1906,7 @@ describe("CMS account administration", () => {
     const gardenOption = await screen.findByRole("radio", { name: /Garden Member/ });
     fireEvent.click(gardenOption.closest(".assignment-user")!);
     expect(gardenOption).toBeChecked();
-    expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled());
 
     fireEvent.change(search, { target: { value: "orchard" } });
     fireEvent.submit(form);
@@ -1882,12 +1921,18 @@ describe("CMS account administration", () => {
 
     fireEvent.submit(form);
     fireEvent.click(await screen.findByRole("radio", { name: /Orchard Member/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
     await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ id: "customer" }));
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([
       [
         "/api/backend/admin/csa-customers/customer/link-user",
-        expect.objectContaining({ body: JSON.stringify({ user_id: otherUserId }) }),
+        expect.objectContaining({
+          body: JSON.stringify({
+            user_id: otherUserId,
+            expected_shipping_address_updated_at: shippingAddress.updated_at,
+          }),
+        }),
       ],
     ]);
   });
