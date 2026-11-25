@@ -1,6 +1,7 @@
 import type { AdminDictionary, AdminLocale } from "@/lib/admin-i18n";
 import { requireResponseEntity } from "@/lib/api-response";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import {
   apiErrorFields,
   type ClientApiError,
@@ -246,13 +247,15 @@ export function accountFailure(
 }
 
 export function userAccountPhone(user: Pick<AdminUserListItem, "login_phone_number" | "phone">) {
-  return user.login_phone_number || user.phone || null;
+  return formatVietnamPhone(user.login_phone_number || user.phone || null);
 }
 
 export function userIdentityLabel(
   user: Pick<AdminUserListItem, "name" | "email" | "login_phone_number">,
 ) {
-  return [user.name, user.email || user.login_phone_number].filter(Boolean).join(" · ");
+  return [user.name, user.email || formatVietnamPhone(user.login_phone_number)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function userEmailStatus(

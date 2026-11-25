@@ -15,6 +15,7 @@ import { requireResponseEntity } from "@/lib/api-response";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { PaginationMeta, RedemptionListItem, RedemptionStatus } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
@@ -139,7 +140,9 @@ export function RedemptionList() {
                       {item.user.name}
                     </Link>
                     <small className="table-secondary">{item.user.email}</small>
-                    <small className="table-secondary">{item.user.phone || "—"}</small>
+                    <small className="table-secondary">
+                      {formatVietnamPhone(item.user.phone) || "—"}
+                    </small>
                   </Table.Td>
                   <Table.Td role="cell" data-label={t.redemptions.reward}>
                     {locale === "en" ? item.reward_name_en_snapshot : item.reward_name_vi_snapshot}

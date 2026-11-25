@@ -5,6 +5,7 @@ import {
   formatStoreDeliveryDate,
   formatStoreShippingBenefitDate,
 } from "@/lib/store-orders";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import { storeOrdersCopy, storeShippingDiscountReason } from "@/lib/store-orders-copy";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 import type { StoreOrder } from "@/lib/types";
@@ -114,9 +115,13 @@ export function StoreRecipientSummary({ order }: { order: StoreOrder }) {
     <div className="store-order-recipient">
       <div className="store-order-recipient-contact">
         <strong>{order.shipping_address.recipient_name}</strong>
-        <a href={`tel:${order.shipping_address.phone_number}`}>
-          {order.shipping_address.phone_number}
-        </a>
+        {order.shipping_address.phone_number ? (
+          <a href={`tel:${order.shipping_address.phone_number}`}>
+            {formatVietnamPhone(order.shipping_address.phone_number)}
+          </a>
+        ) : (
+          "—"
+        )}
       </div>
       <p>
         {order.shipping_address.address} · {wardName || order.shipping_address.ward_code} ·{" "}

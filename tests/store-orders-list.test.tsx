@@ -44,6 +44,7 @@ describe("Store order list", () => {
     const alert = await screen.findByRole("alert");
     fireEvent.click(within(alert).getByRole("button"));
     expect(await screen.findByText("NFV-STORE-001")).toBeVisible();
+    expect(screen.getByText("0901234567")).toBeVisible();
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
 
@@ -349,6 +350,21 @@ describe("Store order list", () => {
       expect(within(row).getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
       expect(within(row).queryByText(/Hạn xử lý:/u)).not.toBeInTheDocument();
     }
+  });
+
+  it.each(["0901234567", "090", "4567"])("sends phone search %s unchanged", async (search) => {
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [storeOrderFixture()],
+      meta: { page: 1, page_size: 20, total: 21 },
+    });
+    view();
+    await screen.findByText("NFV-STORE-001");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: search } });
+    fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
+    await waitFor(() => {
+      const path = String(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]);
+      expect(new URLSearchParams(path.split("?")[1]).get("search")).toBe(search);
+    });
   });
 
   it("sends explicit payment filtering, search, sort and page to the server", async () => {

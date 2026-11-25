@@ -36,6 +36,7 @@ import {
   csaCustomerPath,
   readCsaCustomerListContext,
 } from "@/lib/csa-customers-query";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { CSACustomer } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
@@ -137,7 +138,7 @@ function CustomerDetailView({
         <RecordDetailFields>
           <RecordDetailField label={copy.name}>{item.user?.name || item.name}</RecordDetailField>
           <RecordDetailField label="Email">{item.user?.email}</RecordDetailField>
-          <RecordDetailField label={copy.phone}>{item.phone}</RecordDetailField>
+          <RecordDetailField label={copy.phone}>{formatVietnamPhone(item.phone)}</RecordDetailField>
           <RecordDetailField label={copy.websiteAccount}>
             <Status
               domain="account-link"

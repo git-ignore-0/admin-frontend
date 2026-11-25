@@ -11,6 +11,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import { formatVietnamPhone, handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
 import type { ExternalLink, SiteSettings } from "@/lib/types";
 
 // Store is now an internal public page with its own fixed Farmbrite destinations.
@@ -23,10 +24,12 @@ export function SiteSettingsForm() {
   const { t } = useAdminI18n();
   const showToast = useToast();
   const [data, setData] = useState<SiteSettings | null>(null);
+  const [phoneDraft, setPhoneDraft] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const kindLabels: Record<ConfigurableLinkKind, string> = t.settings.linkLabels;
+  const invalidPhone = Boolean(phoneDraft && !normalizeLocalPhone(phoneDraft, "contact"));
   useEffect(() => {
     api<SiteSettings>("admin/site-settings")
       .then(setData)
@@ -54,7 +57,7 @@ export function SiteSettingsForm() {
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (savingRef.current) return;
+    if (savingRef.current || invalidPhone) return;
     const currentData = data;
     if (!currentData) return;
 
@@ -91,10 +94,13 @@ export function SiteSettingsForm() {
         method: "PATCH",
         body: JSON.stringify({
           ...currentData,
+          // The public site displays this field verbatim.
+          phone_display: phoneDraft ?? currentData.phone_display,
           links,
         }),
       });
       setData(saved);
+      setPhoneDraft(null);
       showToast(t.settings.saved);
     } catch (caught) {
       showToast(
@@ -137,8 +143,14 @@ export function SiteSettingsForm() {
             <label htmlFor="phone-display">{t.settings.phoneDisplay}</label>
             <FormInput
               id="phone-display"
-              value={data.phone_display}
-              onChange={(e) => setData({ ...data, phone_display: e.target.value })}
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              disabled={saving}
+              error={invalidPhone ? t.common.invalidVietnamPhone : undefined}
+              value={phoneDraft ?? formatVietnamPhone(data.phone_display) ?? ""}
+              onChange={(event) => setPhoneDraft(event.currentTarget.value)}
+              onPaste={(event) => handlePhonePaste(event, setPhoneDraft)}
             />
             <Checkbox
               checked={data.is_phone_enabled}
@@ -184,7 +196,7 @@ export function SiteSettingsForm() {
         </div>
       </section>
       <div className="form-actions">
-        <Button type="submit" disabled={saving}>
+        <Button type="submit" disabled={saving || invalidPhone}>
           {saving ? t.settings.saving : t.settings.save}
         </Button>
       </div>

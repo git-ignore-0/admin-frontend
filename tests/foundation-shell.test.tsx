@@ -69,6 +69,7 @@ it("offers direct operational navigation and contextual point discovery without 
 it("keeps sign out as a session-bound POST in the real account menu", () => {
   const { container } = show();
   fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
+  expect(screen.getByText("0912345678")).toBeVisible();
   const logout = screen.getByRole("menuitem", { name: "Sign out" });
   const form = logout.closest("form")!;
   expect(form).toHaveAttribute("action", "/api/auth/logout");

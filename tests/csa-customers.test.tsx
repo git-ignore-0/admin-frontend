@@ -245,6 +245,7 @@ describe("CSA customer administration", () => {
     });
     providers(<CSACustomerForm />);
     checkPhone("0909000000");
+    expect(await screen.findByText(account.name + " · 0909000000")).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "Use this account" }));
     expect(screen.getByRole("tab", { name: "From account" })).toHaveAttribute(
       "aria-selected",
@@ -255,9 +256,8 @@ describe("CSA customer administration", () => {
     );
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(account.name);
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveAttribute("readonly");
-    expect(screen.getByRole("textbox", { name: "Phone number" })).toHaveValue(
-      account.login_phone_number,
-    );
+    expect(screen.getByRole("textbox", { name: "Phone number" })).toHaveValue("0909000000");
+    expect(screen.getByRole("textbox", { name: "Phone number" })).toHaveAttribute("readonly");
     expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveValue(
       account.shipping_address!.address,
     );
@@ -501,7 +501,7 @@ describe("CSA customer administration", () => {
       "/csa-customers?search=Lan&linked=managed&membership_status=active&page=2",
     );
     vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [customer],
+      data: [{ ...customer, phone: "+84912345678" }],
       meta: { ...meta, page: 2, total: 31 },
     });
     providers(<CSACustomerList />);
@@ -512,7 +512,7 @@ describe("CSA customer administration", () => {
       `/csa-customers/${customer.id}?search=Lan&linked=managed&membership_status=active&page=2`,
     );
     const row = screen.getByRole("row", { name: /Lan Nguyen/ });
-    expect(within(row).getByText(customer.phone!)).toBeVisible();
+    expect(within(row).getByText("0912345678")).toBeVisible();
     expect(within(row).getAllByRole("cell")).toHaveLength(3);
     expect(screen.getByRole("link", { name: "Create CSA customer" })).toHaveAttribute(
       "href",
@@ -921,8 +921,6 @@ describe("CSA customer administration", () => {
       );
       checkPhone();
       expect(phone).toHaveValue("0912345678");
-      fireEvent.change(phone, { target: { value: "0912e345678" } });
-      expect(phone).toHaveValue("0912345678");
       await fillManagedCustomer();
       const province = await screen.findByRole("combobox", { name: /Province\/city/ });
       const ward = screen.getByRole("combobox", { name: /Ward\/commune/ });
@@ -1033,6 +1031,38 @@ describe("CSA customer administration", () => {
         .map((option) => option.textContent),
     ).toEqual(["Phường 2", "Phường 20", "Xã An Bình", "Xã Hòa Thắng"]);
   });
+
+  it.each(["84912345678", "+84912345678", "0912e345678", "091234567899"])(
+    "cancels the previous lookup and blocks creation when the phone changes to %j",
+    async (invalidPhone) => {
+      const response = deferred<typeof availablePhone>();
+      vi.mocked(api).mockImplementation((path) => {
+        if (path === lookupPath) return response.promise as never;
+        throw new Error(`Unexpected request: ${path}`);
+      });
+      providers(<CSACustomerForm />);
+      checkPhone();
+      const phone = screen.getByRole("textbox", { name: /Phone number/ });
+      const lookup = vi.mocked(api).mock.calls.find(([path]) => path === lookupPath);
+      expect(lookup?.[1]?.signal?.aborted).toBe(false);
+
+      fireEvent.change(phone, { target: { value: invalidPhone } });
+      fireEvent.blur(phone);
+      expect(lookup?.[1]?.signal?.aborted).toBe(true);
+      expect(phone).toHaveValue(invalidPhone);
+      expect(phone).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+      fireEvent.submit(phone.closest("form")!);
+      await act(async () => response.resolve(availablePhone));
+      expect(
+        screen.queryByText("You can create a new CSA customer for this phone number."),
+      ).toBeNull();
+      expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([lookupPath]);
+      fireEvent.change(phone, { target: { value: "" } });
+      expect(phone).toHaveValue("");
+    },
+  );
 
   it("handles a create conflict and preserves input on network failure", async () => {
     let lookups = 0;
@@ -2042,7 +2072,7 @@ describe("CSA account revalidation", () => {
       await screen.findByText("This account no longer exists. Choose another account."),
     ).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "New customer" }));
-    expect(screen.queryByText(account.name + " · " + accountLookup.phone)).not.toBeInTheDocument();
+    expect(screen.queryByText(account.name + " · 0909000000")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Use this account" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
   });
@@ -2191,7 +2221,7 @@ describe("CSA account revalidation", () => {
     );
     expect(submit).toBeDisabled();
     fireEvent.click(screen.getByRole("tab", { name: "New customer" }));
-    expect(screen.queryByText(account.name + " · " + accountLookup.phone)).not.toBeInTheDocument();
+    expect(screen.queryByText(account.name + " · 0909000000")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Use this account" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
   });

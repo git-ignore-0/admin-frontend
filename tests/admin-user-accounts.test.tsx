@@ -64,6 +64,7 @@ function account(status: string, fields: Partial<typeof legacyUser> = {}) {
   };
 }
 const user = account("pending_activation");
+const displayedLoginPhone = "0912345678";
 const otherUser = { ...user, id: otherUserId, name: "Orchard Member" };
 const referralUser = {
   ...user,
@@ -279,14 +280,14 @@ describe("CMS account administration", () => {
     const row = await screen.findByRole("row", { name: /Garden Member/ });
     expect(within(row).getByText("Chờ kích hoạt")).toBeVisible();
     expect(within(row).getByText("Chưa có email")).toBeVisible();
-    expect(within(row).queryByText(user.login_phone_number)).toBeNull();
+    expect(within(row).queryByText(displayedLoginPhone)).toBeNull();
     expect(within(row).queryByText(user.phone)).toBeNull();
     expect(screen.queryByRole("columnheader", { name: "SĐT đăng nhập" })).toBeNull();
 
     directory.rerender(scene(<UserDetail userId={userId} />, "vi"));
-    expect(await screen.findByText(user.login_phone_number)).toBeVisible();
+    expect(await screen.findByText(displayedLoginPhone)).toBeVisible();
     expect(screen.getByText("Số điện thoại")).toBeVisible();
-    expect(screen.getAllByText(user.login_phone_number)).toHaveLength(1);
+    expect(screen.getAllByText(displayedLoginPhone)).toHaveLength(1);
     expect(screen.queryByText(user.phone)).toBeNull();
     expect(screen.queryByText("SĐT liên hệ")).toBeNull();
     expect(screen.queryByText("SĐT đăng nhập")).toBeNull();
@@ -386,11 +387,42 @@ describe("CMS account administration", () => {
     expect(path).toBe("/api/backend/admin/users");
     expect(JSON.parse(String(init?.body))).toEqual({
       name: user.name,
-      login_phone_number: "0912345678",
+      login_phone_number: "+84912345678",
       password1: password,
       password2: password,
     });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it.each([
+    "84912345678",
+    "+84912345678",
+    "0912-345678",
+    "0912345678 ",
+    "091234567899",
+    "0612345678",
+  ])("blocks account creation with a previously valid phone replaced by %j", async (value) => {
+    const fetcher = vi.fn(async (_path: string, _init?: RequestInit) =>
+      Response.json({ data: [], meta: listMeta }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDirectory />);
+    const dialog = await openCreateAccount();
+    const phone = within(dialog).getByLabelText("Login phone");
+    fireEvent.change(within(dialog).getByLabelText("Full name"), { target: { value: user.name } });
+    passwords(dialog);
+    fireEvent.change(phone, { target: { value: "0912345678" } });
+    const create = within(dialog).getByRole("button", { name: "Create account" });
+    expect(create).toBeEnabled();
+    fireEvent.change(phone, { target: { value } });
+    fireEvent.blur(phone);
+    expect(phone).toHaveValue(value);
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+    expect(create).toBeDisabled();
+    fireEvent.submit(dialog.querySelector("form")!);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    fireEvent.change(phone, { target: { value: "" } });
+    expect(phone).toHaveValue("");
   });
 
   it("keeps the current page when account creation completes after leaving Users", async () => {
@@ -698,7 +730,7 @@ describe("CMS account administration", () => {
     show(<UserDetail userId={userId} />);
     const heading = await screen.findByRole("heading", { name: user.name });
     expect(within(heading.parentElement!).getByText(label)).toBeVisible();
-    expect(screen.getByText(user.login_phone_number)).toBeVisible();
+    expect(screen.getByText(displayedLoginPhone)).toBeVisible();
     expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
     const address = screen.getByRole("region", { name: "Address" });
     expect(within(address).getByText(shippingAddress.address)).toBeVisible();
@@ -713,7 +745,7 @@ describe("CMS account administration", () => {
     show(<UserDetail userId={userId} />);
     const heading = await screen.findByRole("heading", { name: user.name });
     expect(within(heading.parentElement!).getByText("Pending activation")).toBeVisible();
-    expect(screen.getByText(user.login_phone_number)).toBeVisible();
+    expect(screen.getByText(displayedLoginPhone)).toBeVisible();
     expect(screen.queryByRole("button", { name: /activate|suspend|reset password/i })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Address" })).toBeNull();
   });
@@ -1431,7 +1463,7 @@ describe("CMS account administration", () => {
 
     expect(await screen.findByRole("heading", { name: user.name, level: 1 })).toBeVisible();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText(user.login_phone_number)).toBeVisible();
+    expect(screen.getByText(displayedLoginPhone)).toBeVisible();
     expect(screen.getByText("NFV1234567")).toBeVisible();
     expect(screen.getByRole("button", { name: "Activate" }).closest("footer")).toBeInTheDocument();
     const back = screen.getByRole("link", { name: "Users" });
@@ -1474,7 +1506,7 @@ describe("CMS account administration", () => {
       expect(dialog).not.toBeInTheDocument();
       expect(screen.queryByText(protectedAccount.address)).toBeNull();
       expect(screen.queryByText(protectedAccount.email)).toBeNull();
-      expect(screen.queryByText(user.login_phone_number)).toBeNull();
+      expect(screen.queryByText(displayedLoginPhone)).toBeNull();
       expect(screen.queryByText(user.phone)).toBeNull();
       expect(screen.queryByText("50")).toBeNull();
       expect(screen.queryByText("NFV1234567")).toBeNull();
@@ -1499,7 +1531,7 @@ describe("CMS account administration", () => {
 
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
-    expect(screen.queryByText(user.login_phone_number)).toBeNull();
+    expect(screen.queryByText(displayedLoginPhone)).toBeNull();
     expect(screen.queryByText("NFV1234567")).toBeNull();
     expect(fetcher.mock.calls.map(([, init]) => init.method ?? "GET")).toEqual([
       "GET",
@@ -1543,7 +1575,7 @@ describe("CMS account administration", () => {
       reset.resolve(Response.json({ data: { id: userId, status: user.status } })),
     );
     expect(screen.queryByText("Password reset.")).toBeNull();
-    expect(screen.queryByText(user.login_phone_number)).toBeNull();
+    expect(screen.queryByText(displayedLoginPhone)).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
@@ -1754,7 +1786,7 @@ describe("CMS account administration", () => {
     expect(within(screen.getByRole("dialog")).getByLabelText(/^New password/i)).toHaveValue("");
   });
 
-  it("finds a phone-only user for CSA and links the selected UUID", async () => {
+  it.each(["0912345678", "091", "4567"])("links a phone-only user found by %s", async (search) => {
     const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
       if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
       if (path.endsWith(`/admin/users/${userId}`)) {
@@ -1773,11 +1805,11 @@ describe("CMS account administration", () => {
         onLinked={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "0912345678" } });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: search } });
     fireEvent.submit(screen.getByRole("form", { name: /find account/i }));
-    expect(await screen.findByText(user.login_phone_number)).toBeVisible();
+    expect(await screen.findByText(displayedLoginPhone)).toBeVisible();
     expect(screen.queryByText(user.phone, { exact: false })).toBeNull();
-    expect(fetcher.mock.calls[0][0]).toBe("/api/backend/admin/users?page=1&search=0912345678");
+    expect(fetcher.mock.calls[0][0]).toBe(`/api/backend/admin/users?page=1&search=${search}`);
     fireEvent.click(screen.getByRole("radio", { name: /Garden Member/ }));
     const confirm = screen.getByRole("button", { name: "Confirm link" });
     await waitFor(() => expect(confirm).toBeEnabled());

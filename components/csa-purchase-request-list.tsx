@@ -21,6 +21,7 @@ import {
   csaPurchaseStatuses,
   readCsaPurchaseListContext,
 } from "@/lib/csa-purchase-navigation";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { CSAPurchaseRequest, CSAPurchaseRequestStatus, PaginationMeta } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
@@ -160,7 +161,7 @@ export function CSAPurchaseRequestList() {
                         {item.name}
                       </Text>
                       <Text c="dimmed" size="sm">
-                        {item.phone || "—"}
+                        {formatVietnamPhone(item.phone) || "—"}
                       </Text>
                     </Stack>
                   </Table.Td>

@@ -505,7 +505,7 @@ describe("CSA purchase request admin", () => {
     });
     expect(link.tagName).toBe("A");
     expect(link).toHaveAttribute("href", `/csa-purchase-requests/${request.id}`);
-    expect(screen.getByText(request.phone)).toBeVisible();
+    expect(screen.getByText("0901234567")).toBeVisible();
     expect(screen.queryByRole("columnheader", { name: "Số tiền" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Thao tác" })).not.toBeInTheDocument();
     expect(screen.queryByText("1.200.000 ₫")).not.toBeInTheDocument();

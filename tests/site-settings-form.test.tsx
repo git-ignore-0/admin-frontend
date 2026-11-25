@@ -94,6 +94,7 @@ describe("site settings form", () => {
     const payload = JSON.parse(
       vi.mocked(api).mock.calls.at(-1)?.[1]?.body as string,
     ) as SiteSettings;
+    expect(payload.phone_display).toBe(settings.phone_display);
     expect(payload.links).toContainEqual(
       expect.objectContaining({
         kind: "farms",
@@ -125,6 +126,38 @@ describe("site settings form", () => {
       expect(api).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("formats the stored public phone and accepts only a domestic replacement", async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce(settings)
+      .mockResolvedValueOnce({ ...settings, phone_display: "0981234567", version: 2 });
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <SiteSettingsForm />
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    const phone = await screen.findByLabelText("Public phone number");
+    const submit = screen.getByRole("button", { name: "Save changes" });
+    expect(phone).toHaveValue("0971519185");
+    (phone as HTMLInputElement).select();
+    fireEvent.paste(phone, { clipboardData: { getData: () => "+84981234567" } });
+    expect(phone).toHaveValue("+84981234567");
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+    expect(submit).toBeDisabled();
+    fireEvent.submit(phone.closest("form")!);
+    expect(api).toHaveBeenCalledOnce();
+    (phone as HTMLInputElement).select();
+    fireEvent.paste(phone, { clipboardData: { getData: () => "0981234567\n" } });
+    expect(phone).toHaveValue("0981234567 ");
+    expect(submit).toBeDisabled();
+    fireEvent.change(phone, { target: { value: "0981234567" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+    const payload = JSON.parse(String(vi.mocked(api).mock.calls[1]?.[1]?.body)) as SiteSettings;
+    expect(payload.phone_display).toBe("0981234567");
+  });
 
   it("does not expose organization or location fields", async () => {
     vi.mocked(api).mockResolvedValue(settings);

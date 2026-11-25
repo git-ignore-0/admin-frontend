@@ -56,6 +56,7 @@ import {
   resolveAdminBreadcrumbs,
 } from "@/lib/admin-navigation";
 import { ADMIN_SESSION_CHANGED_EVENT, pageSessionBinding } from "@/lib/client-api";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { AdminSessionUser } from "@/lib/session";
 import classes from "./admin-shell.module.css";
 
@@ -230,7 +231,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
   }, [mobile]);
 
   const userName = user.name.trim();
-  const identifier = user.email?.trim() || user.login_phone_number?.trim();
+  const identifier = user.email?.trim() || formatVietnamPhone(user.login_phone_number?.trim());
   const userLabel = userName || identifier || "NFV Admin";
   const initial = (userName || identifier || "A").charAt(0).toUpperCase();
   const sidebarToggleLabel = collapsed ? t.common.expandSidebar : t.common.collapseSidebar;

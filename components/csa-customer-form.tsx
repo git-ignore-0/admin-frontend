@@ -33,8 +33,8 @@ import {
   lookupCSACustomerPhone,
   type CreateCSACustomer,
 } from "@/lib/csa-customer-creation";
-import { acceptPhoneInput, normalizeVietnamPhone } from "@/lib/csa-customer-input";
 import { csaCustomerListKey } from "@/lib/csa-customers-query";
+import { formatVietnamPhone, handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
 import { getSupportedShippingAreas } from "@/lib/shipping-areas";
 import type { CSACustomer, CSACustomerPhoneLookup } from "@/lib/types";
 
@@ -152,9 +152,9 @@ function ManagedCustomerForm({
   const [noteOpen, setNoteOpen] = useState(false);
   const [error, setError] = useState("");
   const lookupRequest = useRef<AbortController | null>(null);
-  const normalizedPhone = normalizeVietnamPhone(phone);
+  const normalizedPhone = normalizeLocalPhone(phone, "contact");
   const checking = lookup.status === "checking";
-  const available = lookup.status === "available";
+  const available = lookup.status === "available" && lookup.phone === normalizedPhone;
   const areas = useQuery({
     queryKey: ["csa-customer-create", "shipping-areas", locale],
     enabled: available,
@@ -176,16 +176,14 @@ function ManagedCustomerForm({
   useEffect(() => () => lookupRequest.current?.abort(), []);
 
   function updatePhone(value: string) {
-    const accepted = acceptPhoneInput(value);
-    if (accepted === null) return;
-    if (normalizeVietnamPhone(accepted) !== normalizedPhone) {
+    if (normalizeLocalPhone(value, "contact") !== normalizedPhone) {
       lookupRequest.current?.abort();
       onLookupChange({ status: "idle" });
       setFields(emptyFields);
       setNoteOpen(false);
       setError("");
     }
-    setPhone(accepted);
+    setPhone(value);
   }
 
   async function checkPhone(number: string) {
@@ -245,7 +243,7 @@ function ManagedCustomerForm({
       : lookup.status === "error"
         ? lookup.message
         : phoneTouched && phone && !normalizedPhone
-          ? copy.invalidPhone
+          ? t.common.invalidVietnamPhone
           : undefined;
 
   return (
@@ -262,12 +260,12 @@ function ManagedCustomerForm({
                   required
                   autoComplete="tel"
                   inputMode="tel"
-                  maxLength={13}
                   type="tel"
                   value={phone}
                   style={{ flex: "1 1 12rem" }}
                   onBlur={() => setPhoneTouched(true)}
                   onChange={(event) => updatePhone(event.currentTarget.value)}
+                  onPaste={(event) => handlePhonePaste(event, updatePhone)}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
                     event.preventDefault();
@@ -296,7 +294,7 @@ function ManagedCustomerForm({
               {lookup.status === "account_found" && (
                 <Group gap="sm">
                   <Text role="status" size="sm">
-                    {lookup.user.name} · {lookup.phone}
+                    {lookup.user.name} · {formatVietnamPhone(lookup.phone)}
                   </Text>
                   <Button
                     type="button"
