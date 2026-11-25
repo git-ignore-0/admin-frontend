@@ -209,6 +209,7 @@ describe("users and points", () => {
     expect(indicator).toHaveAttribute("tabindex", "0");
     fireEvent.focus(indicator);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Has a CSA customer profile");
+    expect(active.queryByText("0912345678")).toBeNull();
     expect(active.queryByText(user.login_phone_number)).toBeNull();
     expect(active.queryByText(user.phone)).toBeNull();
     expect(active.queryByText("50")).toBeNull();

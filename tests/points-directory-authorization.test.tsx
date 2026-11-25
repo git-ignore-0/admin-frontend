@@ -25,6 +25,7 @@ const listPath = "/api/backend/admin/users";
 const initialPath = `${listPath}?page=1&search=`;
 const searchPath = `${listPath}?page=1&search=orchard`;
 const pageTwoPath = `${listPath}?page=2&search=`;
+const displayedPhone = "0912345678";
 
 function page(record = account, current = 1, total = 31) {
   return Response.json({
@@ -65,7 +66,8 @@ async function expectInitialPage() {
   expect(link).toHaveAttribute("href", `/points/${account.id}`);
   const row = within(link.closest("tr")!);
   expect(row.getByText(account.email)).toBeVisible();
-  expect(row.getByText(account.login_phone_number)).toBeVisible();
+  expect(row.getByText(displayedPhone)).toBeVisible();
+  expect(row.queryByText(account.login_phone_number)).not.toBeInTheDocument();
   expect(row.getByText("827")).toBeVisible();
   expect(screen.getByText("31 results")).toBeVisible();
   expect(screen.getByRole("navigation", { name: "Page 1/2" })).toBeVisible();
@@ -74,6 +76,7 @@ async function expectInitialPage() {
 function expectProtectedDataAbsent() {
   expect(screen.queryByText(account.name)).not.toBeInTheDocument();
   expect(screen.queryByText(account.email)).not.toBeInTheDocument();
+  expect(screen.queryByText(displayedPhone)).not.toBeInTheDocument();
   expect(screen.queryByText(account.login_phone_number)).not.toBeInTheDocument();
   expect(screen.queryByText("827")).not.toBeInTheDocument();
   expect(screen.queryByText("31 results")).not.toBeInTheDocument();

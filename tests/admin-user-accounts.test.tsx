@@ -335,7 +335,7 @@ describe("CMS account administration", () => {
     },
   );
 
-  it("creates a phone-only account and opens its detail with the password preserved in the POST", async () => {
+  it("creates a phone-only account from a pasted domestic number and preserves the POST password", async () => {
     let resolveCreate!: (response: Response) => void;
     const create = new Promise<Response>((resolve) => {
       resolveCreate = resolve;
@@ -356,9 +356,13 @@ describe("CMS account administration", () => {
     fireEvent.change(within(dialog).getByLabelText(/^Full name/i), {
       target: { value: user.name },
     });
-    fireEvent.change(within(dialog).getByLabelText(/^Login phone/i), {
-      target: { value: "0912345678" },
-    });
+    const phone = within(dialog).getByLabelText(/^Login phone/i);
+    expect(
+      fireEvent.paste(phone, { clipboardData: { getData: () => displayedLoginPhone } }),
+    ).toBe(true);
+    // jsdom does not insert clipboard text after an uncanceled paste.
+    fireEvent.input(phone, { target: { value: displayedLoginPhone } });
+    expect(phone).toHaveValue(displayedLoginPhone);
     passwords(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "Create account" }));
     expect(within(dialog).getByRole("button", { name: /saving/i })).toBeDisabled();
@@ -395,28 +399,35 @@ describe("CMS account administration", () => {
   });
 
   it.each([
+    "84",
+    "+84",
     "84912345678",
     "+84912345678",
     "0912-345678",
+    "0912 345678",
     "0912345678 ",
+    "0912345678\n",
     "091234567899",
     "0612345678",
-  ])("blocks account creation with a previously valid phone replaced by %j", async (value) => {
+  ])("blocks account creation when %j is pasted over a valid number", async (value) => {
     const fetcher = vi.fn(async (_path: string, _init?: RequestInit) =>
       Response.json({ data: [], meta: listMeta }),
     );
     vi.stubGlobal("fetch", fetcher);
     show(<UserDirectory />);
     const dialog = await openCreateAccount();
-    const phone = within(dialog).getByLabelText("Login phone");
+    const phone = within(dialog).getByLabelText<HTMLInputElement>("Login phone");
     fireEvent.change(within(dialog).getByLabelText("Full name"), { target: { value: user.name } });
     passwords(dialog);
-    fireEvent.change(phone, { target: { value: "0912345678" } });
+    fireEvent.change(phone, { target: { value: displayedLoginPhone } });
     const create = within(dialog).getByRole("button", { name: "Create account" });
     expect(create).toBeEnabled();
-    fireEvent.change(phone, { target: { value } });
+    phone.select();
+    if (fireEvent.paste(phone, { clipboardData: { getData: () => value } })) {
+      fireEvent.input(phone, { target: { value } });
+    }
     fireEvent.blur(phone);
-    expect(phone).toHaveValue(value);
+    expect(phone).toHaveValue(value === "0912345678\n" ? "0912345678 " : value);
     expect(phone).toHaveAttribute("aria-invalid", "true");
     expect(create).toBeDisabled();
     fireEvent.submit(dialog.querySelector("form")!);
