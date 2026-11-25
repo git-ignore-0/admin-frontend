@@ -357,9 +357,9 @@ describe("CMS account administration", () => {
       target: { value: user.name },
     });
     const phone = within(dialog).getByLabelText(/^Login phone/i);
-    expect(
-      fireEvent.paste(phone, { clipboardData: { getData: () => displayedLoginPhone } }),
-    ).toBe(true);
+    expect(fireEvent.paste(phone, { clipboardData: { getData: () => displayedLoginPhone } })).toBe(
+      true,
+    );
     // jsdom does not insert clipboard text after an uncanceled paste.
     fireEvent.input(phone, { target: { value: displayedLoginPhone } });
     expect(phone).toHaveValue(displayedLoginPhone);

@@ -226,9 +226,7 @@ describe("CSA customer administration", () => {
     expect(name).toBeDisabled();
     expect(screen.queryByRole("searchbox")).toBeNull();
     expect(create).toBeDisabled();
-    expect(
-      fireEvent.paste(phone, { clipboardData: { getData: () => "0912345678" } }),
-    ).toBe(true);
+    expect(fireEvent.paste(phone, { clipboardData: { getData: () => "0912345678" } })).toBe(true);
     // jsdom does not insert clipboard text after an uncanceled paste.
     fireEvent.input(phone, { target: { value: "0912345678" } });
     expect(phone).toHaveValue("0912345678");
@@ -1067,42 +1065,39 @@ describe("CSA customer administration", () => {
     "0912-345678",
     "0912345678\n",
     "091234567899",
-  ])(
-    "cancels the previous lookup and blocks creation when %j is pasted",
-    async (invalidPhone) => {
-      const response = deferred<typeof availablePhone>();
-      vi.mocked(api).mockImplementation((path) => {
-        if (path === lookupPath) return response.promise as never;
-        throw new Error(`Unexpected request: ${path}`);
-      });
-      providers(<CSACustomerForm />);
-      checkPhone();
-      const phone = screen.getByRole<HTMLInputElement>("textbox", { name: /Phone number/ });
-      const lookup = vi.mocked(api).mock.calls.find(([path]) => path === lookupPath);
-      expect(lookup?.[1]?.signal?.aborted).toBe(false);
+  ])("cancels the previous lookup and blocks creation when %j is pasted", async (invalidPhone) => {
+    const response = deferred<typeof availablePhone>();
+    vi.mocked(api).mockImplementation((path) => {
+      if (path === lookupPath) return response.promise as never;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    providers(<CSACustomerForm />);
+    checkPhone();
+    const phone = screen.getByRole<HTMLInputElement>("textbox", { name: /Phone number/ });
+    const lookup = vi.mocked(api).mock.calls.find(([path]) => path === lookupPath);
+    expect(lookup?.[1]?.signal?.aborted).toBe(false);
 
-      phone.select();
-      if (fireEvent.paste(phone, { clipboardData: { getData: () => invalidPhone } })) {
-        fireEvent.input(phone, { target: { value: invalidPhone } });
-      }
-      fireEvent.blur(phone);
-      expect(lookup?.[1]?.signal?.aborted).toBe(true);
-      expect(phone).toHaveValue(invalidPhone === "0912345678\n" ? "0912345678 " : invalidPhone);
-      expect(phone).toHaveAttribute("aria-invalid", "true");
-      expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
-      fireEvent.submit(phone.closest("form")!);
-      await act(async () => response.resolve(availablePhone));
-      expect(
-        screen.queryByText("You can create a new CSA customer for this phone number."),
-      ).toBeNull();
-      expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
-      expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([lookupPath]);
-      fireEvent.change(phone, { target: { value: "" } });
-      expect(phone).toHaveValue("");
-    },
-  );
+    phone.select();
+    if (fireEvent.paste(phone, { clipboardData: { getData: () => invalidPhone } })) {
+      fireEvent.input(phone, { target: { value: invalidPhone } });
+    }
+    fireEvent.blur(phone);
+    expect(lookup?.[1]?.signal?.aborted).toBe(true);
+    expect(phone).toHaveValue(invalidPhone === "0912345678\n" ? "0912345678 " : invalidPhone);
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    fireEvent.submit(phone.closest("form")!);
+    await act(async () => response.resolve(availablePhone));
+    expect(
+      screen.queryByText("You can create a new CSA customer for this phone number."),
+    ).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create CSA customer" })).toBeDisabled();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path)).toEqual([lookupPath]);
+    fireEvent.change(phone, { target: { value: "" } });
+    expect(phone).toHaveValue("");
+  });
 
   it("handles a create conflict and preserves input on network failure", async () => {
     let lookups = 0;
