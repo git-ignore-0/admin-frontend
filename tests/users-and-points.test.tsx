@@ -684,8 +684,27 @@ describe("users and points", () => {
     expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     const dialog = screen.getByRole("dialog", { name: "Create account" });
-    fireEvent.submit(dialog.querySelector("form")!);
+    const fields = within(dialog);
+    const name = "Pending Member";
+    const password = "Strong-Harvest-42!";
+    fireEvent.change(fields.getByLabelText("Full name"), { target: { value: name } });
+    fireEvent.change(fields.getByLabelText("Login phone"), { target: { value: "0912345678" } });
+    fireEvent.change(fields.getByLabelText("New password"), { target: { value: password } });
+    fireEvent.change(fields.getByLabelText("Confirm password"), { target: { value: password } });
+    const submit = fields.getByRole("button", { name: "Create account" });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
     await waitFor(() => expect(api).toHaveBeenCalledOnce());
+    const [path, request] = vi.mocked(api).mock.calls[0];
+    expect(path).toBe("admin/users");
+    expect(request?.method).toBe("POST");
+    expect(JSON.parse(String(request?.body))).toEqual({
+      name,
+      login_phone_number: "+84912345678",
+      password1: password,
+      password2: password,
+    });
+    expect(fields.getByRole("button", { name: /saving/i })).toBeDisabled();
 
     act(() => {
       focusManager.setFocused(false);
@@ -693,14 +712,20 @@ describe("users and points", () => {
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(/not allowed/i);
     expect(dialog).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Green Member/ })).toBeNull();
     fireEvent.submit(dialog.querySelector("form")!);
     expect(api).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("link", { name: /Green Member/ })).toBeVisible();
-    await act(async () => finishCreate({ id: user.id, status: "pending_activation" }));
+    await act(async () =>
+      finishCreate({ id: "04d465b7-8245-4123-b1a5-4cf28e13e4d5", status: "pending_activation" }),
+    );
     expect(router.push).not.toHaveBeenCalled();
     expect(screen.queryByText("Account created and pending activation.")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Create account" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Pending Member/ })).toBeNull();
+    expect(apiEnvelope).toHaveBeenCalledTimes(3);
     expect(api).toHaveBeenCalledOnce();
   });
 

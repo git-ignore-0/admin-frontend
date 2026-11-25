@@ -410,9 +410,7 @@ describe("CMS account administration", () => {
     "091234567899",
     "0612345678",
   ])("blocks account creation when %j is pasted over a valid number", async (value) => {
-    const fetcher = vi.fn(async (_path: string, _init?: RequestInit) =>
-      Response.json({ data: [], meta: listMeta }),
-    );
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [], meta: listMeta }));
     vi.stubGlobal("fetch", fetcher);
     show(<UserDirectory />);
     const dialog = await openCreateAccount();
