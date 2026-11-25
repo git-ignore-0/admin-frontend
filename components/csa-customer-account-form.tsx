@@ -20,7 +20,7 @@ import {
   lookupCSACustomerPhone,
   type CreateCSACustomer,
 } from "@/lib/csa-customer-creation";
-import { normalizeVietnamPhone } from "@/lib/csa-customer-input";
+import { formatVietnamPhone, normalizeVietnamPhone } from "@/lib/phone-number";
 import type { AdminUserListItem, PaginationMeta } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
@@ -260,7 +260,9 @@ export function CSACustomerAccountForm({
                           size="xs"
                           style={{ overflowWrap: "anywhere" }}
                         >
-                          {[user.login_phone_number, user.email].filter(Boolean).join(" · ")}
+                          {[formatVietnamPhone(user.login_phone_number), user.email]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </Text>
                       </Stack>
                     </Button>
@@ -313,7 +315,11 @@ export function CSACustomerAccountForm({
           {account && (
             <>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-                <TextInput label={copy.phone} value={account.login_phone_number ?? ""} readOnly />
+                <TextInput
+                  label={copy.phone}
+                  value={formatVietnamPhone(account.login_phone_number) ?? ""}
+                  readOnly
+                />
                 <TextInput label={copy.name} value={account.name} readOnly />
               </SimpleGrid>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">

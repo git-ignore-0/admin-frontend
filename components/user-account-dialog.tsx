@@ -15,6 +15,7 @@ import {
 } from "@/lib/admin-users";
 import { useAdminUsersMutationAccess, useRefreshAdminUsers } from "@/lib/admin-users-query";
 import { api } from "@/lib/client-api";
+import { handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
 import type { AdminAccountSummary } from "@/lib/types";
 
 export type UserAccountDialogAction = "suspend" | "reset-password";
@@ -56,12 +57,19 @@ function UserAccountDialogForm({
   const formId = useId();
   const pendingSubmission = useRef<symbol | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loginPhone, setLoginPhone] = useState("");
+  const [phoneTouched, setPhoneTouched] = useState(false);
   const [failure, setFailure] = useState<ReturnType<typeof accountFailure>>({
     message: "",
     fields: {},
   });
   const create = action === "create";
   const reset = action === "reset-password";
+  const canonicalPhone = normalizeLocalPhone(loginPhone, "identity");
+  const phoneError =
+    phoneTouched && loginPhone && !canonicalPhone
+      ? t.common.invalidVietnamPhone
+      : failure.fields.login_phone_number;
   const notice = {
     create: "",
     suspend: copy.suspendNotice,
@@ -85,6 +93,13 @@ function UserAccountDialogForm({
           payload[field] = value;
         }
       }
+    }
+    if (create) {
+      if (!canonicalPhone) {
+        setPhoneTouched(true);
+        return;
+      }
+      payload.login_phone_number = canonicalPhone;
     }
     const submission = Symbol();
     const isCurrent = () => pendingSubmission.current === submission && isDialogCurrent();
@@ -128,7 +143,7 @@ function UserAccountDialogForm({
   function field(
     name: AccountField,
     label: string,
-    type: "text" | "tel" | "email" | "password",
+    type: "text" | "email" | "password",
     autoComplete: string,
   ) {
     const showPasswordPolicy = create && name === "password1";
@@ -159,7 +174,9 @@ function UserAccountDialogForm({
       busy={busy}
       busyLabel={copy.saving}
       cancelLabel={t.membershipCatalog.cancel}
-      confirmDisabled={confirmDisabled || !canMutate || !isDialogCurrent?.()}
+      confirmDisabled={
+        confirmDisabled || !canMutate || !isDialogCurrent?.() || (create && !canonicalPhone)
+      }
       confirmLabel={copy[action]}
       danger={action === "suspend"}
       error={failure.message}
@@ -178,7 +195,20 @@ function UserAccountDialogForm({
             {create && (
               <>
                 {field("name", copy.fullName, "text", "name")}
-                {field("login_phone_number", t.users.loginPhone, "tel", "tel")}
+                <FormField label={t.users.loginPhone} error={phoneError}>
+                  <FormInput
+                    autoComplete="tel"
+                    disabled={busy}
+                    inputMode="tel"
+                    name="login_phone_number"
+                    required
+                    type="tel"
+                    value={loginPhone}
+                    onBlur={() => setPhoneTouched(true)}
+                    onChange={(event) => setLoginPhone(event.currentTarget.value)}
+                    onPaste={(event) => handlePhonePaste(event, setLoginPhone)}
+                  />
+                </FormField>
                 {field("email", copy.optionalEmail, "email", "email")}
               </>
             )}

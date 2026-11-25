@@ -533,6 +533,7 @@ describe("redemptions", () => {
       await screen.findByText("Pending", { selector: ".mantine-Badge-label" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Seasonal vegetables")).toBeInTheDocument();
+    expect(screen.getByText("0912345678")).toBeVisible();
     expect(screen.queryByText("Private fulfillment note")).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: `View details: ${redemption.user.name}` }),
@@ -721,6 +722,7 @@ describe("redemptions", () => {
     providers(<RedemptionDetailView redemptionId={redemption.id} />);
 
     const contactButton = await screen.findByRole("button", { name: "Mark contacted" });
+    expect(screen.getByText("0912345678")).toBeVisible();
     contactButton.focus();
     fireEvent.click(contactButton);
     const dialog = screen.getByRole("dialog", { name: "Confirm contact" });

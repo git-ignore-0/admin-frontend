@@ -13,6 +13,7 @@ import { formatAdminDateTime } from "@/lib/admin-date";
 import { userEmailStatus } from "@/lib/admin-users";
 import { useAdminUsersList } from "@/lib/admin-users-query";
 import { requestErrorMessage } from "@/lib/client-error";
+import { formatVietnamPhone } from "@/lib/phone-number";
 
 export function PointsManager() {
   const { t } = useAdminI18n();
@@ -133,7 +134,7 @@ export function PointsManager() {
                         </Text>
                       </Stack>
                     </Table.Td>
-                    <Table.Td>{user.login_phone_number || "—"}</Table.Td>
+                    <Table.Td>{formatVietnamPhone(user.login_phone_number) || "—"}</Table.Td>
                     <Table.Td>{formatAdminDateTime(user.date_joined)}</Table.Td>
                     <Table.Td>
                       <Status

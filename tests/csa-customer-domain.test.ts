@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { acceptPhoneInput, normalizeVietnamPhone } from "@/lib/csa-customer-input";
+import { formatVietnamPhone, normalizeLocalPhone, normalizeVietnamPhone } from "@/lib/phone-number";
 import {
   addMonthsToDate,
   membershipWouldOverlap,
@@ -14,15 +14,43 @@ function scheduled(start: string, end: string, status: AdminMembership["status"]
 
 describe("CSA customer input and package scheduling", () => {
   it("keeps a domestic leading zero and normalizes the submitted phone", () => {
-    expect(acceptPhoneInput("0912345678")).toBe("0912345678");
+    expect(normalizeLocalPhone("0912345678", "contact")).toBe("+84912345678");
+    expect(normalizeLocalPhone("0912345678", "identity")).toBe("+84912345678");
+    expect(normalizeLocalPhone("02412345678", "identity")).toBe("+842412345678");
+    expect(normalizeLocalPhone("0612345678", "contact")).toBe("+84612345678");
+    expect(normalizeLocalPhone("0612345678", "identity")).toBeNull();
     expect(normalizeVietnamPhone("0912345678")).toBe("+84912345678");
+    expect(normalizeVietnamPhone("84912345678")).toBe("+84912345678");
     expect(normalizeVietnamPhone("+84912345678")).toBe("+84912345678");
   });
 
-  it("rejects invalid phone characters and impossible lengths", () => {
-    expect(acceptPhoneInput("0912 345 678")).toBeNull();
-    expect(acceptPhoneInput("0912abc")).toBeNull();
-    expect(normalizeVietnamPhone("0123")).toBeNull();
+  it.each([
+    "",
+    "0123",
+    "84912345678",
+    "+84912345678",
+    "0912 345 678",
+    "0912-345678",
+    "0912abc",
+    "0912345678!",
+    "0912345678 ",
+    "0912345678\n",
+    "091234567899",
+  ])("rejects non-local or invalid input %j", (value) => {
+    expect(normalizeLocalPhone(value, "contact")).toBeNull();
+    expect(normalizeLocalPhone(value, "identity")).toBeNull();
+  });
+
+  it.each([
+    ["+84912345678", "0912345678"],
+    ["(+84) 241-234.5678", "02412345678"],
+    ["0912345678", "0912345678"],
+    ["Legacy contact", "Legacy contact"],
+    ["+12025550123", "+12025550123"],
+    ["", ""],
+    [null, null],
+  ])("formats a recognized stored phone and preserves other values %j", (value, displayed) => {
+    expect(formatVietnamPhone(value)).toBe(displayed);
   });
 
   it("clamps month-end dates and treats the package end date as exclusive", () => {

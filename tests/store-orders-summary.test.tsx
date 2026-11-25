@@ -37,6 +37,10 @@ describe("Store order localized summaries", () => {
     });
     renderSummary("vi");
 
+    expect(screen.getByRole("link", { name: "0901234567" })).toHaveAttribute(
+      "href",
+      "tel:+84901234567",
+    );
     expect(useAdministrativeUnitNames).toHaveBeenCalledWith("79", "26734", "vi");
     expect(
       screen.getByText("1 Đường Vườn · Phường Bến Nghé · Thành phố Hồ Chí Minh"),

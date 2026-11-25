@@ -19,6 +19,7 @@ import {
   storeOrderDisplayStatuses,
   type StoreOrderDisplayStatus,
 } from "@/lib/store-orders";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import { storeOrdersCopy, storeOrderStatusLabel } from "@/lib/store-orders-copy";
 import type { StoreOrderSort, StorePaymentStatus } from "@/lib/types";
 import { useStoreOrderList } from "@/lib/use-store-order-list";
@@ -190,7 +191,7 @@ export function StoreOrderList() {
                   <Table.Td role="cell" data-label={c.recipient}>
                     {item.shipping_address.recipient_name}
                     <small className="table-secondary store-order-contact">
-                      {item.shipping_address.phone_number}
+                      {formatVietnamPhone(item.shipping_address.phone_number) || "—"}
                     </small>
                   </Table.Td>
                   <Table.Td role="cell" data-label={c.total}>

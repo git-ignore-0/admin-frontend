@@ -13,6 +13,7 @@ import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { RedemptionDetail, RedemptionStatus, RedemptionTransaction } from "@/lib/types";
 
 type RedemptionAction = "mark-contacted" | "complete" | "reject";
@@ -190,7 +191,7 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
           <dl className="detail-list">
             <DetailRow label={t.users.name} value={item.user.name} />
             <DetailRow label={t.users.email} value={item.user.email} />
-            <DetailRow label={t.users.phone} value={item.user.phone || "—"} />
+            <DetailRow label={t.users.phone} value={formatVietnamPhone(item.user.phone) || "—"} />
             <DetailRow label={t.users.balance} value={String(item.points_balance)} />
           </dl>
         </section>

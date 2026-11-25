@@ -166,7 +166,7 @@ describe("users and points", () => {
     expect(screen.queryByRole("button", { name: "View points" })).toBeNull();
     const pointsRow = screen.getByRole("row", { name: /Green Member/ });
     expect(within(pointsRow).getByText("50")).toBeVisible();
-    expect(within(pointsRow).getByText(user.login_phone_number)).toBeVisible();
+    expect(within(pointsRow).getByText("0912345678")).toBeVisible();
     expect(within(pointsRow).getByText("20/07/2026 09:00")).toBeVisible();
   });
 
@@ -209,6 +209,7 @@ describe("users and points", () => {
     expect(indicator).toHaveAttribute("tabindex", "0");
     fireEvent.focus(indicator);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Has a CSA customer profile");
+    expect(active.queryByText("0912345678")).toBeNull();
     expect(active.queryByText(user.login_phone_number)).toBeNull();
     expect(active.queryByText(user.phone)).toBeNull();
     expect(active.queryByText("50")).toBeNull();

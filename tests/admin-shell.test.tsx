@@ -246,7 +246,8 @@ describe("admin account identity", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
     expect(screen.getByRole("menu")).toHaveTextContent("Nguyễn An");
-    expect(screen.getByText("+84912345678")).toBeVisible();
+    expect(screen.getByText("0912345678")).toBeVisible();
+    expect(screen.queryByText("+84912345678")).not.toBeInTheDocument();
   });
 
   it("prefers email when the account also has a login phone", () => {
@@ -259,6 +260,7 @@ describe("admin account identity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
     expect(screen.getByRole("menu")).toHaveTextContent("Nguyễn An");
     expect(screen.getByText("admin@example.com")).toBeVisible();
+    expect(screen.queryByText("0912345678")).not.toBeInTheDocument();
     expect(screen.queryByText("+84912345678")).not.toBeInTheDocument();
   });
 
@@ -271,6 +273,7 @@ describe("admin account identity", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Admin account" }));
     expect(screen.getByRole("menu")).toHaveTextContent("Nguyễn An");
+    expect(screen.queryByText("0912345678")).not.toBeInTheDocument();
     expect(screen.queryByText("+84912345678")).not.toBeInTheDocument();
   });
 

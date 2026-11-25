@@ -42,6 +42,7 @@ import {
 import { api } from "@/lib/client-api";
 import { apiErrorContext, requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type {
   CSAPurchasePayment,
   CSAPurchaseCustomerResolution,
@@ -449,7 +450,9 @@ export function CSAPurchaseRequestDetail({
           <Section title={copy.buyerInformation}>
             <RecordDetailFields>
               <RecordDetailField label={copy.name}>{item.name}</RecordDetailField>
-              <RecordDetailField label={copy.phone}>{item.phone}</RecordDetailField>
+              <RecordDetailField label={copy.phone}>
+                {formatVietnamPhone(item.phone)}
+              </RecordDetailField>
               <RecordDetailField label={copy.websiteAccount}>
                 {item.user
                   ? [item.user.name, item.user.email].filter(Boolean).join(" · ")
@@ -830,7 +833,7 @@ export function CSAPurchaseRequestDetail({
                           </Text>
                           <Text size="sm">{customer.name}</Text>
                           <Text size="sm" c="dimmed">
-                            {customer.phone}
+                            {formatVietnamPhone(customer.phone)}
                           </Text>
                           <Text size="sm" c="dimmed">
                             {customer.address}

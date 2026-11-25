@@ -37,6 +37,7 @@ import {
   csaMembershipStatuses,
   readCsaCustomerListContext,
 } from "@/lib/csa-customers-query";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { CSACustomer, PaginationMeta } from "@/lib/types";
 
 const emptyParams = new URLSearchParams();
@@ -214,7 +215,7 @@ export function CSACustomerList() {
                           {item.name}
                         </Anchor>
                         <Text size="sm" c="dimmed">
-                          {item.phone || "—"}
+                          {formatVietnamPhone(item.phone) || "—"}
                         </Text>
                       </Stack>
                     </Table.Td>

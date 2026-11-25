@@ -51,6 +51,7 @@ import {
   membershipWouldOverlap,
   suggestedMembershipStart,
 } from "@/lib/membership-schedule";
+import { formatVietnamPhone } from "@/lib/phone-number";
 import type { AdminMembership, CSACustomer, MembershipPackage, PaginationMeta } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
 
@@ -264,7 +265,9 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
             </Title>
             <RecordDetailFields>
               <RecordDetailField label={t.csaCustomers.name}>{customer.name}</RecordDetailField>
-              <RecordDetailField label={t.csaCustomers.phone}>{customer.phone}</RecordDetailField>
+              <RecordDetailField label={t.csaCustomers.phone}>
+                {formatVietnamPhone(customer.phone)}
+              </RecordDetailField>
               <RecordDetailField label={t.csaCustomers.websiteAccount}>
                 <Status
                   domain="account-link"
