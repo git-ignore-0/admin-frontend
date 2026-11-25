@@ -1,14 +1,22 @@
 "use client";
-import { IconChevronRight } from "@tabler/icons-react";
-import { DataState } from "@/components/nfv-controls";
-
-import { Button, Checkbox } from "@mantine/core";
-
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Accordion,
+  Alert,
+  Button,
+  Checkbox,
+  Group,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+} from "@mantine/core";
+import { IconCornerDownRight } from "@tabler/icons-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
-import { FormInput } from "@/components/nfv-controls";
+import { ListResultSummary, ListToolbar } from "@/components/list-toolbar";
+import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
 import {
   administrativeWardSortName,
@@ -47,13 +55,24 @@ function upsertOverride(
     : [...overrides, next];
 }
 
+function provinceSearchText(value: string) {
+  return value
+    .toLocaleLowerCase("vi")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/đ/g, "d");
+}
+
 export function ShippingAreaManager() {
   const { locale, t } = useAdminI18n();
   const copy = t.shippingSettings;
   const toast = useToast();
+  const defaultFeeId = useId();
   const [provinces, setProvinces] = useState<AdministrativeUnit[] | null>(null);
   const [provinceError, setProvinceError] = useState("");
   const [provinceAttempt, setProvinceAttempt] = useState(0);
+  const [draftSearch, setDraftSearch] = useState("");
+  const [search, setSearch] = useState("");
   const [expandedCode, setExpandedCode] = useState("");
   const expandedCodeRef = useRef("");
   const [wards, setWards] = useState<AdministrativeUnit[]>([]);
@@ -139,8 +158,8 @@ export function ShippingAreaManager() {
     [settings],
   );
 
-  function toggleProvince(provinceCode: string) {
-    const nextCode = expandedCode === provinceCode ? "" : provinceCode;
+  function selectProvince(provinceCode: string | null) {
+    const nextCode = provinceCode ?? "";
     expandedCodeRef.current = nextCode;
     setExpandedCode(nextCode);
   }
@@ -195,7 +214,7 @@ export function ShippingAreaManager() {
   }
 
   async function save() {
-    if (!settings || savingRef.current) return;
+    if (!settings || settings.province_code !== expandedCode || savingRef.current) return;
     const provinceCode = expandedCode;
     const defaultFee = parseNonNegativeBigInteger(settings.default_shipping_fee_vnd);
     if ("error" in defaultFee) {
@@ -241,169 +260,277 @@ export function ShippingAreaManager() {
     }
   }
 
-  if (provinces === null) {
-    return (
-      <ListState
-        empty={copy.noProvinces}
-        error={provinceError}
-        hasData={false}
-        isEmpty={false}
-        loading={!provinceError}
-        loadingLabel={copy.loadingProvinces}
-        onRetry={() => setProvinceAttempt((attempt) => attempt + 1)}
-        retryLabel={t.common.retry}
-      />
-    );
-  }
-
-  if (provinces.length === 0) {
-    return <DataState kind="empty" title={copy.noProvinces} />;
-  }
+  const query = provinceSearchText(search);
+  const visibleProvinces = sortedProvinces.filter((province) =>
+    provinceSearchText(province.name).includes(query),
+  );
+  const loadingProvinces = provinces === null && !provinceError;
+  const refreshProvinces = () => setProvinceAttempt((attempt) => attempt + 1);
 
   return (
-    <section className="panel shipping-tree-panel">
-      <div aria-label={copy.treeLabel} className="shipping-tree" role="tree">
-        {sortedProvinces.map((province) => {
-          const expanded = expandedCode === province.code;
-          return (
-            <div
-              aria-expanded={expanded}
-              aria-selected={expanded}
-              className="shipping-province-node"
-              key={province.code}
-              role="treeitem"
-            >
-              <div className="shipping-province-header">
-                <Button
-                  aria-label={(expanded ? copy.collapseProvince : copy.expandProvince).replace(
-                    "{province}",
-                    province.name,
-                  )}
-                  variant="subtle"
-                  justify="flex-start"
-                  leftSection={
-                    <IconChevronRight
-                      aria-hidden="true"
-                      className="shipping-tree-chevron"
-                      size={16}
-                      stroke={1.5}
-                    />
-                  }
-                  className="shipping-province-toggle"
-                  onClick={() => toggleProvince(province.code)}
-                  type="button"
-                >
-                  <span>{province.name}</span>
-                </Button>
-                {expanded && settings && !loadingSettings && !settingsError && (
-                  <>
-                    <Checkbox
-                      className="shipping-rule-check shipping-province-default"
-                      classNames={{ label: "shipping-province-default-label" }}
-                      aria-label={copy.defaultSupport}
-                      checked={settings.is_active}
-                      onChange={(event) =>
-                        editSettings((current) => ({
-                          ...current,
-                          is_active: event.target.checked,
-                        }))
-                      }
-                      label={copy.wholeProvince}
-                    />
-                    <div className="shipping-fee-control shipping-province-fee">
-                      <FormInput
-                        aria-label={copy.defaultFee}
-                        disabled={!settings.is_active}
-                        inputMode="numeric"
-                        onChange={(event) =>
-                          editSettings((current) => ({
-                            ...current,
-                            default_shipping_fee_vnd: sanitizeIntegerInput(event.target.value),
-                          }))
-                        }
-                        value={settings.default_shipping_fee_vnd}
-                      />
-                      <span>VND</span>
-                    </div>
-                    <Button loading={saving} onClick={save} size="xs">
-                      {copy.saveAll}
-                    </Button>
-                  </>
-                )}
-              </div>
+    <Stack gap="md" miw={0}>
+      <PageHeading title={copy.title} visuallyHiddenTitle bottomSpacing={0} />
+      <ListToolbar
+        busy={loadingProvinces}
+        search={{
+          label: copy.searchLabel,
+          placeholder: copy.searchPlaceholder,
+          value: draftSearch,
+          appliedValue: search,
+          formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
+          onChange: setDraftSearch,
+          onSubmit: (value) => setSearch(value.trim()),
+          submitLabel: t.users.search,
+          clearLabel: t.common.clearFilters,
+          onClear: () => {
+            setDraftSearch("");
+            setSearch("");
+          },
+        }}
+        refresh={{ label: copy.refresh, onRefresh: refreshProvinces }}
+      />
 
-              {expanded && (
-                <div aria-label={province.name} className="shipping-province-content" role="group">
-                  {loadingSettings || settingsError ? (
-                    <ListState
-                      empty={copy.empty}
-                      error={settingsError}
-                      hasData={false}
-                      isEmpty={false}
-                      loading={loadingSettings}
-                      loadingLabel={copy.loadingAreas}
-                      onRetry={() => setSettingsAttempt((attempt) => attempt + 1)}
-                      retryLabel={t.common.retry}
-                    />
-                  ) : (
-                    settings && (
-                      <>
-                        <div className="shipping-ward-tree" role="group">
-                          <div className="shipping-ward-list">
-                            {sortedWards.map((ward) => {
-                              const override = overrides.get(ward.code);
-                              const supported = override?.is_active ?? settings.is_active;
-                              const fee = override?.shipping_fee_vnd ?? "";
-                              return (
-                                <div
-                                  aria-label={ward.name}
-                                  aria-selected="false"
-                                  className="shipping-rule-row shipping-ward-row"
-                                  key={ward.code}
-                                  role="treeitem"
-                                >
-                                  <span className="shipping-ward-name">{ward.name}</span>
-                                  <div className="shipping-ward-controls">
-                                    <Checkbox
-                                      className="shipping-ward-toggle"
-                                      aria-label={copy.supportFor.replace("{ward}", ward.name)}
-                                      checked={supported}
-                                      onChange={(event) =>
-                                        toggleWard(ward.code, event.target.checked)
-                                      }
-                                    />
-                                    <div className="shipping-fee-control">
-                                      <FormInput
-                                        aria-label={copy.feeFor.replace("{ward}", ward.name)}
-                                        disabled={!supported}
-                                        inputMode="numeric"
-                                        onChange={(event) =>
-                                          changeWardFee(ward.code, event.target.value)
-                                        }
-                                        placeholder={settings.default_shipping_fee_vnd}
-                                        value={fee}
-                                      />
-                                      <span>VND</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
+      <Stack component="section" aria-label={copy.areas} gap="xs" miw={0}>
+        {visibleProvinces.length > 0 && (
+          <Accordion
+            value={expandedCode || null}
+            onChange={selectProvince}
+            order={2}
+            variant="separated"
+            chevronPosition="left"
+            styles={{
+              root: { display: "grid", gap: "var(--mantine-spacing-xs)" },
+              item: { margin: 0, backgroundColor: "var(--surface)", borderColor: "var(--border)" },
+              control: { borderRadius: "var(--accordion-radius)" },
+              label: { fontWeight: 600 },
+            }}
+          >
+            {visibleProvinces.map((province) => {
+              const expanded = expandedCode === province.code;
+              return (
+                <Accordion.Item key={province.code} value={province.code}>
+                  <Accordion.Control
+                    aria-label={(expanded ? copy.collapseProvince : copy.expandProvince).replace(
+                      "{province}",
+                      province.name,
+                    )}
+                  >
+                    {province.name}
+                  </Accordion.Control>
+                  <Accordion.Panel>
+                    {expanded &&
+                      (loadingSettings ||
+                      settingsError ||
+                      settings?.province_code !== province.code ? (
+                        <ListState
+                          embedded
+                          empty={copy.empty}
+                          error={settingsError}
+                          hasData={false}
+                          isEmpty={false}
+                          loading={!settingsError}
+                          loadingLabel={copy.loadingAreas}
+                          onRetry={() => setSettingsAttempt((attempt) => attempt + 1)}
+                          retryLabel={t.common.retry}
+                        />
+                      ) : (
+                        <Stack
+                          component="form"
+                          aria-label={province.name}
+                          gap="xs"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void save();
+                          }}
+                        >
+                          <Group
+                            role="group"
+                            aria-label={copy.provinceDefaults}
+                            justify="space-between"
+                            gap="xs"
+                          >
+                            <Checkbox
+                              label={copy.defaultSupport}
+                              checked={settings.is_active}
+                              disabled={saving}
+                              onChange={(event) =>
+                                editSettings((current) => ({
+                                  ...current,
+                                  is_active: event.target.checked,
+                                }))
+                              }
+                            />
+                            <Group gap="xs">
+                              <Text component="label" htmlFor={defaultFeeId} size="sm">
+                                {copy.defaultFee}
+                              </Text>
+                              <TextInput
+                                id={defaultFeeId}
+                                size="xs"
+                                w={{ base: 104, sm: 128 }}
+                                disabled={saving || !settings.is_active}
+                                inputMode="numeric"
+                                rightSectionWidth={34}
+                                rightSection={
+                                  <Text size="xs" c="dimmed" aria-hidden>
+                                    VND
+                                  </Text>
+                                }
+                                onChange={(event) =>
+                                  editSettings((current) => ({
+                                    ...current,
+                                    default_shipping_fee_vnd: sanitizeIntegerInput(
+                                      event.target.value,
+                                    ),
+                                  }))
+                                }
+                                value={settings.default_shipping_fee_vnd}
+                              />
+                              <Button loading={saving} type="submit" size="xs">
+                                {copy.saveAll}
+                              </Button>
+                            </Group>
+                          </Group>
 
-                        {validationError && (
-                          <p className="field-error shipping-tree-error">{validationError}</p>
-                        )}
-                      </>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
+                          {validationError && (
+                            <Alert color="danger" role="alert">
+                              {validationError}
+                            </Alert>
+                          )}
+
+                          {sortedWards.length > 0 ? (
+                            <Table.ScrollContainer
+                              type="native"
+                              minWidth={248}
+                              mah={480}
+                              role="region"
+                              aria-label={copy.wards}
+                              tabIndex={0}
+                              style={{
+                                borderRadius: "var(--mantine-radius-default)",
+                                overflow: "auto",
+                                outlineOffset: -2,
+                              }}
+                            >
+                              <Table
+                                aria-label={copy.wards}
+                                horizontalSpacing="xs"
+                                verticalSpacing={4}
+                                stickyHeader
+                                withRowBorders
+                                style={{ tableLayout: "fixed" }}
+                              >
+                                <Table.Thead>
+                                  <Table.Tr>
+                                    <Table.Th scope="col">{copy.wards}</Table.Th>
+                                    <Table.Th scope="col" ta="center" w={{ base: 74, sm: 136 }}>
+                                      {copy.supported}
+                                    </Table.Th>
+                                    <Table.Th scope="col" w={{ base: 96, sm: 168 }}>
+                                      {copy.deliveryFee}
+                                    </Table.Th>
+                                  </Table.Tr>
+                                </Table.Thead>
+                                <Table.Tbody>
+                                  {sortedWards.map((ward) => {
+                                    const override = overrides.get(ward.code);
+                                    const supported = override?.is_active ?? settings.is_active;
+                                    return (
+                                      <Table.Tr key={ward.code}>
+                                        <Table.Th scope="row" bg="transparent">
+                                          <Group gap={6} wrap="nowrap">
+                                            <IconCornerDownRight
+                                              aria-hidden
+                                              size={13}
+                                              stroke={1.5}
+                                              color="var(--mantine-color-dimmed)"
+                                              style={{ flexShrink: 0 }}
+                                            />
+                                            <Text
+                                              size="sm"
+                                              fw={500}
+                                              style={{ overflowWrap: "anywhere" }}
+                                            >
+                                              {ward.name}
+                                            </Text>
+                                          </Group>
+                                        </Table.Th>
+                                        <Table.Td>
+                                          <Group justify="center">
+                                            <Checkbox
+                                              aria-label={copy.supportFor.replace(
+                                                "{ward}",
+                                                ward.name,
+                                              )}
+                                              checked={supported}
+                                              disabled={saving}
+                                              onChange={(event) =>
+                                                toggleWard(ward.code, event.target.checked)
+                                              }
+                                            />
+                                          </Group>
+                                        </Table.Td>
+                                        <Table.Td>
+                                          <TextInput
+                                            size="xs"
+                                            aria-label={copy.feeFor.replace("{ward}", ward.name)}
+                                            disabled={saving || !supported}
+                                            inputMode="numeric"
+                                            onChange={(event) =>
+                                              changeWardFee(ward.code, event.target.value)
+                                            }
+                                            placeholder={settings.default_shipping_fee_vnd}
+                                            value={override?.shipping_fee_vnd ?? ""}
+                                          />
+                                        </Table.Td>
+                                      </Table.Tr>
+                                    );
+                                  })}
+                                </Table.Tbody>
+                              </Table>
+                            </Table.ScrollContainer>
+                          ) : (
+                            <ListState
+                              embedded
+                              empty={copy.empty}
+                              error=""
+                              hasData
+                              isEmpty
+                              loading={false}
+                              loadingLabel={copy.loadingAreas}
+                              onRetry={() => setSettingsAttempt((attempt) => attempt + 1)}
+                              retryLabel={t.common.retry}
+                            />
+                          )}
+                        </Stack>
+                      ))}
+                  </Accordion.Panel>
+                </Accordion.Item>
+              );
+            })}
+          </Accordion>
+        )}
+
+        <ListState
+          empty={copy.noProvinces}
+          noResults={search ? copy.noMatches : undefined}
+          error={provinceError}
+          hasData={provinces !== null}
+          isEmpty={visibleProvinces.length === 0}
+          loading={loadingProvinces}
+          loadingLabel={copy.loadingProvinces}
+          onRetry={refreshProvinces}
+          retryLabel={t.common.retry}
+        />
+
+        {provinces && (
+          <ListResultSummary
+            count={visibleProvinces.length}
+            label={t.common.resultCount}
+            singularLabel={t.common.resultCountSingular}
+          />
+        )}
+      </Stack>
+    </Stack>
   );
 }

@@ -1,7 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { ShippingAreaManager } from "@/components/shipping-area-manager";
@@ -104,63 +102,76 @@ describe("shipping settings contracts", () => {
   });
 });
 
-describe("shipping area tree", () => {
-  it("keeps the province checkbox accessible when its mobile label is hidden", async () => {
+describe("shipping area settings", () => {
+  it("keeps the default support and fee controls labeled in the province form", async () => {
     mockLoadedSettings();
     show("en");
     fireEvent.click(await screen.findByRole("button", { name: "Open Đắk Lắk" }));
     const checkbox = await screen.findByRole("checkbox", {
       name: "Apply by default to the entire province",
     });
-    const label = screen.getByText("Entire province");
+    const label = screen.getByText("Apply by default to the entire province");
     expect(label).toBeVisible();
-
-    // jsdom does not evaluate breakpoints; apply the real compact rules directly.
-    const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
-    const mobileRules = css.match(/@media \(max-width: 620px\) \{([\s\S]*?)\n\}/u)?.[1];
-    expect(mobileRules).toBeTruthy();
-    const style = document.createElement("style");
-    style.textContent = mobileRules!;
-    document.head.appendChild(style);
-    try {
-      expect(label).not.toBeVisible();
-      expect(checkbox).toBeVisible();
-      expect(checkbox).toHaveAccessibleName("Apply by default to the entire province");
-      fireEvent.click(checkbox);
-      expect(checkbox).not.toBeChecked();
-      expect(screen.getByRole("textbox", { name: "Default fee" })).toBeDisabled();
-    } finally {
-      style.remove();
-    }
-    expect(label).toBeVisible();
+    const form = within(screen.getByRole("form", { name: "Đắk Lắk" }));
+    const defaults = within(form.getByRole("group", { name: "Province defaults" }));
+    expect(defaults.getByRole("checkbox")).toBe(checkbox);
+    expect(defaults.getByRole("button", { name: "Save settings" })).toBeVisible();
+    fireEvent.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+    expect(defaults.getByRole("textbox", { name: "Default fee" })).toBeDisabled();
   });
 
-  it("renders a compact A-Z province tree and lazy-loads one expanded node", async () => {
+  it("lists provinces A-Z and lazy-loads the selected province into the ward table", async () => {
     mockLoadedSettings();
     show();
 
-    const tree = await screen.findByRole("tree", { name: "Khu vực giao hàng" });
-    const provinceButtons = within(tree).getAllByRole("button");
+    const list = screen.getByRole("region", { name: "Khu vực giao hàng" });
+    const provinceButtons = await within(list).findAllByRole("button");
     expect(provinceButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "Mở Đắk Lắk",
       "Mở Hồ Chí Minh",
     ]);
-    expect(provinceButtons[0].querySelector("svg")).toHaveClass("shipping-tree-chevron");
+    expect(provinceButtons[0]).toHaveAttribute("aria-expanded", "false");
     expect(getAdministrativeWards).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Mở Đắk Lắk" }));
 
-    const group = await screen.findByRole("group", { name: "Đắk Lắk" });
     expect(getAdministrativeWards).toHaveBeenCalledWith("66", "vi", expect.any(AbortSignal));
     expect(
       await screen.findByRole("checkbox", { name: "Áp dụng mặc định toàn tỉnh" }),
     ).toBeVisible();
+    const table = screen.getByRole("table", { name: "Xã, phường" });
     expect(
-      within(group)
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["Xã, phường", "Hỗ trợ", "Phí giao hàng (VND)"]);
+    expect(
+      within(table)
         .getAllByRole("checkbox")
         .map((input) => input.getAttribute("aria-label")),
     ).toEqual(["Hỗ trợ Phường Bình Minh", "Hỗ trợ Phường Tuy Hoà", "Hỗ trợ Xã An Phú"]);
-    expect(group.querySelector(".shipping-ward-tree > .shipping-ward-list")).not.toBeNull();
+  });
+
+  it("searches provinces locally and refreshes only the province list", async () => {
+    mockLoadedSettings();
+    show();
+    await screen.findByRole("button", { name: "Mở Đắk Lắk" });
+    expect(screen.getByText("2 kết quả")).toBeVisible();
+
+    const search = screen.getByRole("search", { name: "Tìm tỉnh hoặc thành phố" });
+    fireEvent.change(within(search).getByRole("searchbox"), { target: { value: "ho chi minh" } });
+    fireEvent.submit(search);
+    expect(screen.getByRole("button", { name: "Mở Hồ Chí Minh" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Mở Đắk Lắk" })).toBeNull();
+    expect(getAdministrativeProvinces).toHaveBeenCalledTimes(1);
+    expect(getAdministrativeWards).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới danh sách tỉnh / thành phố" }));
+    await waitFor(() => expect(getAdministrativeProvinces).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Mở Hồ Chí Minh" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Mở Đắk Lắk" })).toBeNull();
+    expect(getAdministrativeWards).not.toHaveBeenCalled();
   });
 
   it("saves inherited, excluded, and custom ward fees", async () => {
@@ -168,13 +179,13 @@ describe("shipping area tree", () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Mở Đắk Lắk" }));
 
-    const inherited = await screen.findByRole("treeitem", { name: /Phường Bình Minh/ });
+    const inherited = await screen.findByRole("row", { name: /Phường Bình Minh/ });
     expect(within(inherited).getByRole("checkbox")).toBeChecked();
     expect(within(inherited).getByRole("textbox")).toHaveValue("");
     expect(within(inherited).getByRole("textbox")).toHaveAttribute("placeholder", "30000");
     fireEvent.click(within(inherited).getByRole("checkbox"));
 
-    const custom = screen.getByRole("treeitem", { name: /Phường Tuy Hoà/ });
+    const custom = screen.getByRole("row", { name: /Phường Tuy Hoà/ });
     fireEvent.change(within(custom).getByRole("textbox"), { target: { value: "25000" } });
     fireEvent.click(screen.getByRole("button", { name: "Lưu cấu hình" }));
 
@@ -198,7 +209,7 @@ describe("shipping area tree", () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Mở Đắk Lắk" }));
 
-    const group = await screen.findByRole("group", { name: "Đắk Lắk" });
+    const form = await screen.findByRole("form", { name: "Đắk Lắk" });
     const defaultToggle = await screen.findByRole("checkbox", {
       name: "Áp dụng mặc định toàn tỉnh",
     });
@@ -206,7 +217,7 @@ describe("shipping area tree", () => {
     expect(defaultFee).toHaveAttribute("inputmode", "numeric");
     expect(defaultFee).toBeDisabled();
 
-    const ward = within(group).getByRole("treeitem", { name: /Phường Bình Minh/ });
+    const ward = within(form).getByRole("row", { name: /Phường Bình Minh/ });
     const wardFee = within(ward).getByRole("textbox");
     expect(wardFee).toBeDisabled();
     fireEvent.click(within(ward).getByRole("checkbox"));

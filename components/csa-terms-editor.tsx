@@ -1,19 +1,29 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Alert } from "@mantine/core";
-
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Stack, Tabs as MantineTabs } from "@mantine/core";
+import {
+  ActionIcon,
+  Alert,
+  Box,
+  Button,
+  Divider,
+  Group,
+  Paper,
+  Stack,
+  Tabs,
+  Text,
+  Title,
+} from "@mantine/core";
+import { IconArrowDown, IconArrowUp, IconCopy, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useRouter } from "next/navigation";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import {
-  Button,
+  DataState,
   FormField,
   FormInput,
   FormTextarea,
-  Icon,
+  Section,
   Status,
 } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
@@ -261,177 +271,187 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
     }
   }
 
-  if (loading)
+  const heading =
+    !termsId && !document
+      ? copy.createTitle
+      : !document || readOnly
+        ? copy.viewTitle
+        : copy.editTitle;
+
+  if (loading || loadFailed)
     return (
-      <div className="csa-terms-editor">
-        <DataState kind="loading" title={copy.loading} />
-      </div>
+      <Stack gap="md" w="100%" maw={760} miw={0}>
+        <PageHeading title={heading} visuallyHiddenTitle />
+        <Paper withBorder p="md">
+          {loading ? (
+            <DataState kind="loading" title={copy.loading} />
+          ) : (
+            <Alert color="danger" role="alert">
+              {error}
+            </Alert>
+          )}
+        </Paper>
+      </Stack>
     );
 
-  if (loadFailed)
-    return (
-      <div className="csa-terms-editor csa-terms-editor-shell">
-        <PageHeading
-          bottomSpacing={0}
-          backHref="/csa-terms"
-          backLabel={copy.back}
-          title={copy.viewTitle}
-        />
-        <Alert color="red" role="alert">
-          {error}
-        </Alert>
-      </div>
-    );
-
-  const heading = !document ? copy.createTitle : readOnly ? copy.viewTitle : copy.editTitle;
-
-  const languageTabs = (
-    <MantineTabs.List aria-label={copy.language}>
-      <MantineTabs.Tab value="vi">{copy.vietnamese}</MantineTabs.Tab>
-      <MantineTabs.Tab value="en">{copy.english}</MantineTabs.Tab>
-    </MantineTabs.List>
+  const status = document && (
+    <Status domain="csa-terms" status={document.status} label={copy.statuses[document.status]} />
   );
 
   return (
-    <MantineTabs
-      className="csa-terms-editor csa-terms-editor-shell"
-      value={locale}
-      onChange={(value) => {
-        if (value) setLocale(value as CSATermsLocale);
-      }}
-      keepMounted={false}
-    >
-      <PageHeading
-        bottomSpacing={0}
-        action={
-          readOnly ? (
-            <div className="csa-terms-heading-actions">
-              <Status
-                domain="csa-terms"
-                status={document.status}
-                label={copy.statuses[document.status]}
-              />
-              <Button
-                onClick={() => {
-                  setCloneVersion("");
-                  setDialog("clone");
-                }}
-                small
-              >
-                <Icon name="copy" />
-                {copy.clone}
-              </Button>
-            </div>
-          ) : undefined
-        }
-        backHref="/csa-terms"
-        backLabel={copy.back}
-        description={readOnly ? copy.readOnly : undefined}
-        title={heading}
-      />
-      {error ? (
-        <Alert color="red" role="alert">
+    <Stack gap="md" w="100%" maw={760} miw={0}>
+      <PageHeading title={heading} visuallyHiddenTitle />
+      {error && (
+        <Alert color="danger" role="alert">
           {error}
         </Alert>
-      ) : null}
-      {message ? (
-        <Alert color="green" role="status">
+      )}
+      {message && (
+        <Alert color="success" role="status">
           {message}
         </Alert>
-      ) : null}
-
-      <div className="csa-terms-meta-bar">
-        <div className="csa-terms-meta-version">
-          <span>{copy.version}</span>
-          {readOnly ? (
-            <strong>{draft.version}</strong>
-          ) : (
-            <FormInput
-              aria-label={copy.versionLabel}
-              disabled={busy}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, version: event.target.value }))
-              }
-              value={draft.version}
-            />
-          )}
-        </div>
-        {!readOnly && document ? (
-          <Status
-            domain="csa-terms"
-            status={document.status}
-            label={copy.statuses[document.status]}
-          />
-        ) : null}
-        <div className="csa-terms-language-tabs">{languageTabs}</div>
-      </div>
-
-      <MantineTabs.Panel value={locale}>
+      )}
+      <Tabs
+        value={locale}
+        onChange={(value) => {
+          if (value === "vi" || value === "en") setLocale(value);
+        }}
+        keepMounted={false}
+      >
         <Stack gap="md">
-          {readOnly ? (
-            <section className="csa-terms-read-document">
-              <header>
-                <span>{copy.documentTitle}</span>
-                <h2>{draft.titles[locale]}</h2>
-              </header>
-              <div className="csa-terms-read-list">
-                {draft.clauses.map((clause, index) => (
-                  <article className="csa-terms-read-clause" key={clause.key}>
-                    <span>{String(index + 1).padStart(2, "0")}</span>
-                    <div>
-                      {clause.headings[locale] ? <h3>{clause.headings[locale]}</h3> : null}
-                      {splitParagraphs(clause.paragraphs[locale]).map(
-                        (paragraph, paragraphIndex) => (
-                          <p key={`${clause.key}-${paragraphIndex}`}>{paragraph}</p>
-                        ),
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : (
-            <>
-              <section className="csa-terms-title-field">
-                <FormField label={copy.documentTitle}>
-                  <FormInput
-                    disabled={busy}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        titles: { ...current.titles, [locale]: event.target.value },
-                      }))
-                    }
-                    value={draft.titles[locale]}
-                  />
-                </FormField>
-              </section>
+          <Paper component="section" withBorder p="md">
+            <Stack gap="md">
+              {readOnly ? (
+                <>
+                  <Group justify="space-between" gap="sm">
+                    <Stack gap={4}>
+                      <Text size="sm" c="dimmed">
+                        {copy.version}
+                      </Text>
+                      <Text fw={600} style={{ overflowWrap: "anywhere" }}>
+                        {draft.version}
+                      </Text>
+                    </Stack>
+                    <Group gap="sm">
+                      {status}
+                      <Button
+                        leftSection={<IconCopy size={16} aria-hidden />}
+                        onClick={() => {
+                          setCloneVersion("");
+                          setDialog("clone");
+                        }}
+                        variant="default"
+                      >
+                        {copy.clone}
+                      </Button>
+                    </Group>
+                  </Group>
+                  <Text size="sm" c="dimmed">
+                    {copy.readOnly}
+                  </Text>
+                </>
+              ) : (
+                <Group align="flex-end" gap="sm">
+                  <Box flex={1} maw={360} miw={0}>
+                    <FormField label={copy.versionLabel}>
+                      <FormInput
+                        disabled={busy}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            version: event.currentTarget.value,
+                          }))
+                        }
+                        value={draft.version}
+                      />
+                    </FormField>
+                  </Box>
+                  {status}
+                </Group>
+              )}
+              <Tabs.List aria-label={copy.language}>
+                <Tabs.Tab value="vi">{copy.vietnamese}</Tabs.Tab>
+                <Tabs.Tab value="en">{copy.english}</Tabs.Tab>
+              </Tabs.List>
+            </Stack>
+          </Paper>
 
-              <div className="csa-terms-clauses">
+          <Tabs.Panel value={locale}>
+            {readOnly ? (
+              <Section title={draft.titles[locale] || copy.documentTitle}>
+                <Stack gap="md">
+                  {draft.clauses.map((clause, index) => (
+                    <Fragment key={clause.key}>
+                      {index > 0 && <Divider />}
+                      <Stack
+                        component="article"
+                        gap="xs"
+                        miw={0}
+                        style={{ overflowWrap: "anywhere" }}
+                      >
+                        <Group gap="xs" align="baseline">
+                          <Text size="sm" c="dimmed" aria-hidden>
+                            {String(index + 1).padStart(2, "0")}
+                          </Text>
+                          <Title order={3} size="h5">
+                            {clause.headings[locale] ||
+                              copy.clause.replace("{number}", String(index + 1))}
+                          </Title>
+                        </Group>
+                        {splitParagraphs(clause.paragraphs[locale]).map(
+                          (paragraph, paragraphIndex) => (
+                            <Text key={paragraphIndex} size="sm">
+                              {paragraph}
+                            </Text>
+                          ),
+                        )}
+                      </Stack>
+                    </Fragment>
+                  ))}
+                </Stack>
+              </Section>
+            ) : (
+              <Stack gap="md">
+                <Paper withBorder p="md">
+                  <FormField label={copy.documentTitle}>
+                    <FormInput
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          titles: { ...current.titles, [locale]: event.target.value },
+                        }))
+                      }
+                      value={draft.titles[locale]}
+                    />
+                  </FormField>
+                </Paper>
+
                 {draft.clauses.map((clause, index) => (
-                  <section className="csa-terms-edit-clause" key={clause.key}>
-                    <header className="csa-terms-edit-clause-header">
-                      <span>{copy.clause.replace("{number}", String(index + 1))}</span>
-                      <div className="csa-terms-clause-actions">
-                        <Button
+                  <Section
+                    key={clause.key}
+                    title={copy.clause.replace("{number}", String(index + 1))}
+                    actions={
+                      <>
+                        <ActionIcon
                           aria-label={copy.moveUp}
                           disabled={busy || index === 0}
                           onClick={() => moveClause(index, -1)}
-                          small
-                          variant="plain"
+                          color="gray"
+                          variant="subtle"
                         >
-                          <Icon name="up" />
-                        </Button>
-                        <Button
+                          <IconArrowUp size={16} aria-hidden />
+                        </ActionIcon>
+                        <ActionIcon
                           aria-label={copy.moveDown}
                           disabled={busy || index === draft.clauses.length - 1}
                           onClick={() => moveClause(index, 1)}
-                          small
-                          variant="plain"
+                          color="gray"
+                          variant="subtle"
                         >
-                          <Icon name="down" />
-                        </Button>
-                        <Button
+                          <IconArrowDown size={16} aria-hidden />
+                        </ActionIcon>
+                        <ActionIcon
                           aria-label={copy.deleteClause}
                           disabled={busy}
                           onClick={() =>
@@ -442,14 +462,15 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
                               ),
                             }))
                           }
-                          small
-                          variant="plain"
+                          color="gray"
+                          variant="subtle"
                         >
-                          <Icon name="trash" />
-                        </Button>
-                      </div>
-                    </header>
-                    <div className="csa-terms-edit-clause-body">
+                          <IconTrash size={16} aria-hidden />
+                        </ActionIcon>
+                      </>
+                    }
+                  >
+                    <Stack gap="sm">
                       <FormField label={copy.heading}>
                         <FormInput
                           disabled={busy}
@@ -477,39 +498,46 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
                           value={clause.paragraphs[locale]}
                         />
                       </FormField>
-                    </div>
-                  </section>
+                    </Stack>
+                  </Section>
                 ))}
-              </div>
 
-              <Button
-                className="csa-terms-add-clause"
-                disabled={busy}
-                onClick={addClause}
-                variant="outline"
-              >
-                <Icon name="plus" />
-                {copy.addClause}
-              </Button>
-
-              <div className="csa-terms-footer-actions">
-                {document ? (
-                  <Button disabled={busy} onClick={() => setDialog("delete")} variant="plain">
-                    <Icon name="trash" />
-                    {copy.deleteDraft}
+                <Group>
+                  <Button
+                    disabled={busy}
+                    leftSection={<IconPlus size={16} aria-hidden />}
+                    onClick={addClause}
+                    variant="default"
+                  >
+                    {copy.addClause}
                   </Button>
-                ) : null}
-                <Button loading={busy} onClick={() => void saveDraft()} variant="outline">
-                  {busy ? copy.saving : copy.save}
-                </Button>
-                <Button disabled={busy} onClick={() => setDialog("publish")}>
-                  {copy.publish}
-                </Button>
-              </div>
-            </>
-          )}
+                </Group>
+
+                <Group component="footer" justify="flex-end" gap="sm">
+                  {document && (
+                    <Button
+                      color="danger"
+                      disabled={busy}
+                      leftSection={<IconTrash size={16} aria-hidden />}
+                      onClick={() => setDialog("delete")}
+                      me="auto"
+                      variant="subtle"
+                    >
+                      {copy.deleteDraft}
+                    </Button>
+                  )}
+                  <Button loading={busy} onClick={() => void saveDraft()} variant="default">
+                    {busy ? copy.saving : copy.save}
+                  </Button>
+                  <Button disabled={busy} onClick={() => setDialog("publish")}>
+                    {copy.publish}
+                  </Button>
+                </Group>
+              </Stack>
+            )}
+          </Tabs.Panel>
         </Stack>
-      </MantineTabs.Panel>
+      </Tabs>
 
       {dialog === "publish" ? (
         <ConfirmationDialog
@@ -562,6 +590,6 @@ export function CSATermsEditor({ termsId }: { termsId?: string }) {
           </FormField>
         </ConfirmationDialog>
       ) : null}
-    </MantineTabs>
+    </Stack>
   );
 }

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSATermsEditor } from "@/components/csa-terms-editor";
 import { CSATermsList } from "@/components/csa-terms-list";
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/components/nfv-controls";
 import { parseCSATermsDocument } from "@/lib/csa-terms";
 import { api } from "@/lib/client-api";
+import { selectOption } from "./select-option";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn() }));
@@ -122,33 +124,78 @@ describe("CSA terms administration", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  it("renders the versions and exposes edit only for drafts", async () => {
+  it("uses the shared list toolbar and opens drafts and published terms from the version link", async () => {
     vi.mocked(api).mockResolvedValue([
       rawTerms,
-      { ...rawTerms, id: "34803641-2dce-4cac-8fc4-91e55f03e95f", status: "published" },
-      { ...rawTerms, id: "44803641-2dce-4cac-8fc4-91e55f03e95f", status: "archived" },
+      {
+        ...rawTerms,
+        id: "34803641-2dce-4cac-8fc4-91e55f03e95f",
+        version: "CSA_TERMS_V2",
+        title_en: "Current agreement",
+        status: "published",
+      },
+      {
+        ...rawTerms,
+        id: "44803641-2dce-4cac-8fc4-91e55f03e95f",
+        version: "CSA_TERMS_V1",
+        status: "archived",
+      },
     ]);
     render(
       <AdminI18nProvider initialLocale="en">
-        <CSATermsList />
+        <AdminQueryProvider>
+          <CSATermsList />
+        </AdminQueryProvider>
       </AdminI18nProvider>,
     );
 
-    expect(await screen.findAllByText("CSA_TERMS_V3")).toHaveLength(3);
-    expect(document.querySelector(".csa-terms-list-shell")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create draft" })).toHaveAttribute("data-size", "xs");
+    const version = await screen.findByRole("link", { name: "CSA_TERMS_V3" });
+    expect(version).toHaveAttribute("href", `/csa-terms/${rawTerms.id}`);
+    const table = screen.getByRole("table", { name: "CSA terms" });
+    expect(within(table).getByRole("row", { name: /CSA_TERMS_V2/ })).toHaveTextContent("In use");
+    expect(within(table).getByRole("row", { name: /CSA_TERMS_V1/ })).toHaveTextContent("Archived");
     expect(screen.getByRole("link", { name: "Create draft" })).toHaveAttribute(
       "href",
       "/csa-terms/new",
     );
-    const editLink = screen.getAllByRole("link", { name: "Edit" })[0];
-    const viewLinks = screen.getAllByRole("link", { name: "View" });
-    expect(editLink).toHaveAttribute("data-variant", "default");
-    expect(editLink.querySelector("svg")).toBeInTheDocument();
-    expect(viewLinks).toHaveLength(2);
-    expect(viewLinks.every((link) => link.getAttribute("data-variant") === "default")).toBe(true);
-    expect(viewLinks.every((link) => link.querySelector("svg") === null)).toBe(true);
-    expect(document.querySelectorAll("time")).toHaveLength(3);
+    expect(within(table).getAllByRole("link")).toHaveLength(3);
+    expect(screen.getByText("3 results")).toBeVisible();
+
+    const search = screen.getByRole("search", { name: "Search by version or title" });
+    fireEvent.change(within(search).getByRole("searchbox"), {
+      target: { value: "current agreement" },
+    });
+    fireEvent.submit(search);
+    expect(within(table).getByRole("link", { name: "CSA_TERMS_V2" })).toBeVisible();
+    expect(within(table).queryByRole("link", { name: "CSA_TERMS_V3" })).toBeNull();
+    expect(screen.getByText("1 result")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+    const filters = within(screen.getByRole("dialog"));
+    selectOption(filters.getByRole("textbox", { name: "Status" }), "draft");
+    fireEvent.click(filters.getByRole("button", { name: "Apply" }));
+    expect(screen.getByText("No matching terms versions.")).toBeVisible();
+    expect(api).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh terms" }));
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows the shared loading, retry and empty states for the terms list", async () => {
+    vi.mocked(api).mockRejectedValueOnce(new Error("request_failed")).mockResolvedValueOnce([]);
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <AdminQueryProvider>
+          <CSATermsList />
+        </AdminQueryProvider>
+      </AdminI18nProvider>,
+    );
+
+    expect(screen.getByText("Loading terms…")).toBeInTheDocument();
+    const recovery = within(await screen.findByRole("alert"));
+    fireEvent.click(recovery.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("No terms versions yet.")).toBeVisible();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(api).toHaveBeenCalledTimes(2);
   });
 
   it("edits both languages, orders clauses and saves the backend payload", async () => {
@@ -160,8 +207,8 @@ describe("CSA terms administration", () => {
     );
 
     expect(await screen.findByDisplayValue("Delivery")).toBeVisible();
-    expect(document.querySelector(".csa-terms-editor-shell")).toBeInTheDocument();
-    expect(document.querySelectorAll(".csa-terms-edit-clause")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "Edit terms" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: /^Clause \d+$/ })).toHaveLength(2);
     expect(screen.getByRole("tabpanel")).toHaveAttribute(
       "aria-labelledby",
       screen.getByRole("tab", { name: "English" }).id,
@@ -170,13 +217,13 @@ describe("CSA terms administration", () => {
     expect(screen.getByDisplayValue("Giao hàng")).toBeVisible();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Move down" })[0]);
-    const clauses = document.querySelectorAll(".csa-terms-edit-clause");
-    expect(within(clauses[0] as HTMLElement).getByDisplayValue("Thanh toán")).toBeVisible();
+    const firstClause = screen.getByRole("heading", { name: "Clause 1" }).closest("section")!;
+    expect(within(firstClause).getByDisplayValue("Thanh toán")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Add clause" }));
-    expect(document.querySelectorAll(".csa-terms-edit-clause")).toHaveLength(3);
+    expect(screen.getAllByRole("heading", { name: /^Clause \d+$/ })).toHaveLength(3);
     fireEvent.click(screen.getAllByRole("button", { name: "Delete clause" })[2]);
-    expect(document.querySelectorAll(".csa-terms-edit-clause")).toHaveLength(2);
+    expect(screen.getAllByRole("heading", { name: /^Clause \d+$/ })).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
@@ -266,7 +313,7 @@ describe("CSA terms administration", () => {
     expect(await screen.findByText(/read-only/i)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(document.querySelectorAll("article.csa-terms-read-clause")).toHaveLength(2);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
     expect(screen.getByRole("heading", { name: "Delivery" })).toBeVisible();
     expect(screen.getByText("Delivery details.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Create new draft" }));
