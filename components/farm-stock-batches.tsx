@@ -20,7 +20,7 @@ import { DataState, Status } from "@/components/nfv-controls";
 import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { Pagination } from "@/components/pagination";
 import { StockBatchFields } from "@/components/stock-batch-fields";
-import { formatAdminDate } from "@/lib/admin-date";
+import { adminDateInputToIso, formatAdminDate } from "@/lib/admin-date";
 import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   cancelFarmStockBatch,
@@ -31,6 +31,7 @@ import {
 import { farmsCopy } from "@/lib/farms-copy";
 import {
   formatStockQuantityTotal,
+  stockBatchDateDraft,
   stockBatchRangeForPreset,
   validateStockBatchInput,
   type StockBatchDraft,
@@ -51,7 +52,7 @@ const conflictCodes = new Set([
 ]);
 
 function emptyDraft(): StockBatchDraft {
-  return { ...stockBatchRangeForPreset("week"), quantity: "" };
+  return { ...stockBatchDateDraft(stockBatchRangeForPreset("week")), quantity: "" };
 }
 
 type Props = {
@@ -157,10 +158,12 @@ export function FarmStockBatches({
     !canIncrease && editor && editor !== "new"
       ? { start: editor.start_date, end: editor.end_date, quantity: editor.quantity_units }
       : undefined;
+  const startDate = limits && adminDateInputToIso(draft.start_date);
+  const endDate = limits && adminDateInputToIso(draft.end_date);
   const exceedsLimits = Boolean(
     limits &&
-    ((draft.start_date && draft.start_date < limits.start) ||
-      draft.end_date > limits.end ||
+    ((startDate && startDate < limits.start) ||
+      (endDate && endDate > limits.end) ||
       Number(draft.quantity) > limits.quantity),
   );
   const productStockLabel = c.availableUnits.replace("{count}", String(product.available_quantity));
@@ -179,8 +182,7 @@ export function FarmStockBatches({
     setEditor(batch);
     setPreset("custom");
     setDraft({
-      start_date: batch.start_date,
-      end_date: batch.end_date,
+      ...stockBatchDateDraft(batch),
       quantity: String(batch.quantity_units),
     });
     setFieldErrors({});

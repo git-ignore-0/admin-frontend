@@ -1,9 +1,13 @@
 "use client";
 
 import { Box, Paper, SegmentedControl, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
+import { useId } from "react";
+import { AdminDateInput } from "@/components/admin-date-input";
+import { FormField } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import {
   formatStockQuantityTotal,
+  stockBatchDateDraft,
   stockBatchRangeForPreset,
   type StockBatchDraft,
   type StockBatchFieldErrors,
@@ -18,11 +22,14 @@ type Labels = {
   customRange: string;
   startDate: string;
   endDate: string;
+  openStartDatePicker: string;
+  openEndDatePicker: string;
   quantityUnits: string;
   quantityTotal: string;
   saleUnit: string;
   saleUnitHint: string;
   requiredField: string;
+  invalidDate: string;
   invalidDateOrder: string;
   expiredDate: string;
   positiveInteger: string;
@@ -45,6 +52,7 @@ type Props = {
 
 function errorMessage(error: StockBatchFieldErrors[keyof StockBatchFieldErrors], labels: Labels) {
   if (error === "required") return labels.requiredField;
+  if (error === "invalid_date") return labels.invalidDate;
   if (error === "date_order") return labels.invalidDateOrder;
   if (error === "expired") return labels.expiredDate;
   if (error === "integer_range") return labels.integerRange;
@@ -65,6 +73,7 @@ export function StockBatchFields({
   onChange,
   onPresetChange,
 }: Props) {
+  const id = useId();
   const quantity = Number(draft.quantity);
   const total =
     Number.isSafeInteger(quantity) && quantity > 0
@@ -76,8 +85,13 @@ export function StockBatchFields({
     const nextPreset = value as StockBatchPreset;
     onPresetChange(nextPreset);
     if (nextPreset !== "custom") {
-      onChange({ ...draft, ...stockBatchRangeForPreset(nextPreset) });
+      onChange({ ...draft, ...stockBatchDateDraft(stockBatchRangeForPreset(nextPreset)) });
     }
+  }
+
+  function changeDate(field: "start_date" | "end_date", value: string) {
+    onPresetChange("custom");
+    onChange({ ...draft, [field]: value });
   }
 
   return (
@@ -103,30 +117,26 @@ export function StockBatchFields({
         </Stack>
       )}
       <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="sm">
-        <TextInput
-          label={labels.startDate}
-          error={errorMessage(errors.start_date, labels)}
-          disabled={disabled || startDisabled}
-          min={limits?.start}
-          type="date"
-          value={draft.start_date}
-          onChange={(event) => {
-            onPresetChange("custom");
-            onChange({ ...draft, start_date: event.currentTarget.value });
-          }}
-        />
-        <TextInput
-          label={labels.endDate}
-          error={errorMessage(errors.end_date, labels)}
-          type="date"
-          value={draft.end_date}
-          disabled={disabled}
-          max={limits?.end}
-          onChange={(event) => {
-            onPresetChange("custom");
-            onChange({ ...draft, end_date: event.currentTarget.value });
-          }}
-        />
+        <FormField label={labels.startDate} error={errorMessage(errors.start_date, labels)}>
+          <AdminDateInput
+            id={`${id}-start`}
+            pickerLabel={labels.openStartDatePicker}
+            disabled={disabled || startDisabled}
+            min={limits?.start}
+            value={draft.start_date}
+            onValueChange={(value) => changeDate("start_date", value)}
+          />
+        </FormField>
+        <FormField label={labels.endDate} error={errorMessage(errors.end_date, labels)}>
+          <AdminDateInput
+            id={`${id}-end`}
+            pickerLabel={labels.openEndDatePicker}
+            disabled={disabled}
+            max={limits?.end}
+            value={draft.end_date}
+            onValueChange={(value) => changeDate("end_date", value)}
+          />
+        </FormField>
       </SimpleGrid>
       <SimpleGrid type="container" cols={{ base: 1, "34rem": 2 }} spacing="sm">
         <TextInput

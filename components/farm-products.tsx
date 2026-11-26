@@ -38,6 +38,7 @@ import {
 } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import {
+  stockBatchDateDraft,
   stockBatchRangeForPreset,
   validateStockBatchInput,
   type StockBatchDraft,
@@ -49,7 +50,7 @@ import type { AvailableFarmProduct, FarmProduct, PaginationMeta, StoreProduct } 
 import classes from "./farm-inventory.module.css";
 
 function firstBatchDraft(): StockBatchDraft {
-  return { ...stockBatchRangeForPreset("week"), quantity: "" };
+  return { ...stockBatchDateDraft(stockBatchRangeForPreset("week")), quantity: "" };
 }
 
 type FarmProductsProps = {

@@ -756,14 +756,18 @@ it("links a catalog Product together with the first current-week stock batch", a
     expect(within(addDialog).getByLabelText("Số lượng đơn vị")).toHaveAccessibleDescription(
       "Nhập số phần theo đúng quy cách bán của sản phẩm.",
     );
-    expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("2026-10-26");
-    expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("2026-11-01");
+    expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("26/10/2026");
+    expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("01/11/2026");
+    fireEvent.click(within(addDialog).getByRole("radio", { name: "Tháng hiện tại" }));
+    expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("01/10/2026");
+    expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("31/10/2026");
+    fireEvent.click(within(addDialog).getByRole("radio", { name: "Tuần hiện tại" }));
     fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
-      target: { value: "2026-10-31" },
+      target: { value: "31102026" },
     });
     expect(within(addDialog).getByRole("radio", { name: "Tùy chọn" })).toBeChecked();
     fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
-      target: { value: "2026-11-01" },
+      target: { value: "01/11/2026" },
     });
     fireEvent.change(within(addDialog).getByLabelText("Số lượng đơn vị"), {
       target: { value: "10" },
@@ -1089,6 +1093,118 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+it("keeps impossible and incomplete date drafts, then submits manually entered ISO dates", async () => {
+  prepareInventory();
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  mocks.createBatch.mockResolvedValue(liveBatch);
+  view(<FarmProducts farmId="farm-1" />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Thêm đợt hàng" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Thêm đợt hàng" }));
+  const start = dialog.getByRole("textbox", { name: "Ngày bắt đầu" });
+  const end = dialog.getByRole("textbox", { name: "Ngày kết thúc" });
+  const submit = dialog.getByRole("button", { name: "Thêm đợt hàng" });
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị"), { target: { value: "5" } });
+  fireEvent.change(start, { target: { value: "31022027" } });
+  fireEvent.change(end, { target: { value: "03/11/202" } });
+  fireEvent.blur(end);
+  fireEvent.click(submit);
+
+  expect(start).toHaveValue("31/02/2027");
+  expect(end).toHaveValue("03/11/202");
+  expect(start).toBeInvalid();
+  expect(end).toBeInvalid();
+  expect(start).toHaveAccessibleDescription(/dd\/mm\/yyyy/);
+  expect(end).toHaveAccessibleDescription(/dd\/mm\/yyyy/);
+  expect(mocks.createBatch).not.toHaveBeenCalled();
+
+  fireEvent.change(start, { target: { value: "02112026" } });
+  fireEvent.change(end, { target: { value: "03112026" } });
+  fireEvent.click(submit);
+  expect(mocks.createBatch).toHaveBeenCalledExactlyOnceWith(
+    "farm-1",
+    "product-1",
+    { start_date: "2026-11-02", end_date: "2026-11-03", quantity_units: 5 },
+    "link-1",
+  );
+});
+
+it("selects a date from the Foundation calendar and closes an open calendar during an update", async () => {
+  prepareInventory();
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  const pending = deferred<FarmStockBatch>();
+  mocks.updateBatch.mockReturnValue(pending.promise);
+  view(<FarmProducts farmId="farm-1" />, "en");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit details" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Edit stock batch" }));
+  const start = dialog.getByRole("textbox", { name: "Start date" });
+  const end = dialog.getByRole("textbox", { name: "End date" });
+  expect(start).toBeDisabled();
+  expect(dialog.getByRole("button", { name: "Open start date picker" })).toBeDisabled();
+  const calendar = dialog.getByRole("button", { name: "Open end date picker" });
+  calendar.focus();
+  fireEvent.click(calendar);
+  const day = await screen.findByRole("button", { name: "4 November 2026" });
+  fireEvent.keyDown(day, { key: "Escape" });
+  expect(screen.getByRole("dialog", { name: "Edit stock batch" })).toBeVisible();
+  expect(calendar).toHaveAttribute("aria-expanded", "false");
+  expect(calendar).toHaveFocus();
+
+  fireEvent.click(calendar);
+  fireEvent.click(await screen.findByRole("button", { name: "4 November 2026" }));
+  expect(end).toHaveValue("04/11/2026");
+  expect(calendar).toHaveAttribute("aria-expanded", "false");
+
+  fireEvent.click(calendar);
+  const anotherDay = await screen.findByRole("button", { name: "5 November 2026" });
+  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  expect(calendar).toBeDisabled();
+  expect(end).toBeDisabled();
+  expect(calendar).toHaveAttribute("aria-expanded", "false");
+  expect(anotherDay).not.toBeInTheDocument();
+  fireEvent.click(anotherDay);
+  expect(end).toHaveValue("04/11/2026");
+  expect(mocks.updateBatch).toHaveBeenCalledExactlyOnceWith(
+    "farm-1",
+    "product-1",
+    "batch-1",
+    { start_date: "2026-10-26", end_date: "2026-11-04", quantity_units: 10, version: 1 },
+    "link-1",
+  );
+  await act(async () => pending.resolve(liveBatch));
+});
+
+it("limits both the calendar and manual dates to the saved window for a stopped product", async () => {
+  prepareInventory();
+  mocks.linked.mockResolvedValue(
+    linkedResult([{ ...linkedProduct, product_status: "discontinued" }]),
+  );
+  mocks.batches.mockResolvedValue({
+    data: [{ ...liveBatch, start_date: "2026-11-02", end_date: "2026-11-08", status: "upcoming" }],
+    meta: { page: 1, page_size: 20, total: 1 },
+  });
+  view(<FarmProducts farmId="farm-1" />, "en");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit details" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Edit stock batch" }));
+  const start = dialog.getByRole("textbox", { name: "Start date" });
+  const startPicker = dialog.getByRole("button", { name: "Open start date picker" });
+  fireEvent.click(startPicker);
+  expect(await screen.findByRole("button", { name: "1 November 2026" })).toBeDisabled();
+  fireEvent.click(startPicker);
+  const endPicker = dialog.getByRole("button", { name: "Open end date picker" });
+  fireEvent.click(endPicker);
+  expect(await screen.findByRole("button", { name: "9 November 2026" })).toBeDisabled();
+  fireEvent.click(endPicker);
+
+  fireEvent.change(start, { target: { value: "01/11/2026" } });
+  const save = dialog.getByRole("button", { name: "Save changes" });
+  expect(save).toBeDisabled();
+  expect(start).toHaveValue("01/11/2026");
+  expect(mocks.updateBatch).not.toHaveBeenCalled();
+});
+
 it("enforces existing batch boundaries for stopped inventory and reports a reservation conflict", async () => {
   prepareInventory();
   mocks.linked.mockResolvedValue(
@@ -1106,11 +1222,11 @@ it("enforces existing batch boundaries for stopped inventory and reports a reser
   fireEvent.change(quantity, { target: { value: "11" } });
   expect(save).toBeDisabled();
   fireEvent.change(quantity, { target: { value: "8" } });
-  fireEvent.change(end, { target: { value: "2026-11-02" } });
+  fireEvent.change(end, { target: { value: "02/11/2026" } });
   expect(save).toBeDisabled();
   expect(mocks.updateBatch).not.toHaveBeenCalled();
 
-  fireEvent.change(end, { target: { value: "2026-11-01" } });
+  fireEvent.change(end, { target: { value: "01/11/2026" } });
   fireEvent.click(save);
   expect(await edit.findByText(/Tồn kho đã được giữ/)).toBeVisible();
   expect(mocks.updateBatch).toHaveBeenCalledWith(
