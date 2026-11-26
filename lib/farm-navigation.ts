@@ -4,7 +4,7 @@ export const FARM_LIST_PATH = "/farms";
 
 type SearchReader = Pick<URLSearchParams, "get">;
 export type FarmRouteSearch = Record<string, string | string[] | undefined>;
-export const farmDetailTabs = ["products", "information", "tracker"] as const;
+export const farmDetailTabs = ["products", "information"] as const;
 export type FarmDetailTab = (typeof farmDetailTabs)[number];
 export type FarmSupplyContext = {
   search: string;
@@ -13,7 +13,7 @@ export type FarmSupplyContext = {
 };
 type FarmDestination = {
   id?: string;
-  mode?: "new" | "edit";
+  mode?: "new";
   tab?: FarmDetailTab;
   productId?: string;
   supply?: FarmSupplyContext;
@@ -57,13 +57,12 @@ export function readFarmSupplyContext(search: SearchReader | null): FarmSupplyCo
 
 export function readFarmDetailTab(search: SearchReader | null): FarmDetailTab {
   const tab = search?.get("tab");
-  return tab === "tracker" || tab === "information" ? tab : "products";
+  return tab === "tracker" || tab === "information" ? "information" : "products";
 }
 
 export function farmHref(search: SearchReader | null, destination: FarmDestination = {}) {
   const { id, mode, tab, productId, supply } = destination;
-  const suffix =
-    mode === "edit" ? "/edit" : productId ? `/products/${encodeURIComponent(productId)}` : "";
+  const suffix = productId ? `/products/${encodeURIComponent(productId)}` : "";
   const path =
     mode === "new"
       ? `${FARM_LIST_PATH}/new`
@@ -89,6 +88,6 @@ export function farmHref(search: SearchReader | null, destination: FarmDestinati
 
 export function legacyTrackerHref(search: FarmRouteSearch, id?: string) {
   const destination =
-    id && id !== "new" && /^[a-z0-9_-]+$/i.test(id) ? { id, tab: "tracker" as const } : {};
+    id && id !== "new" && /^[a-z0-9_-]+$/i.test(id) ? { id, tab: "information" as const } : {};
   return farmHref(readFarmRouteSearch(search), destination);
 }

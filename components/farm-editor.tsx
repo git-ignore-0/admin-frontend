@@ -7,7 +7,6 @@ import {
   Divider,
   Grid,
   Group,
-  Loader,
   Paper,
   Select,
   Stack,
@@ -20,10 +19,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   type FormEvent,
+  type Ref,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -34,20 +34,19 @@ import { AdminImagePicker } from "@/components/admin-image-picker";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { BilingualContentFields } from "@/components/bilingual-content-fields";
+import { FarmTrackerFields, useFarmTracker } from "@/components/farm-tracker-profile-editor";
 import { PageHeading } from "@/components/page-heading";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
-import { type ClientApiError, requestErrorMessage } from "@/lib/client-error";
+import { type ClientApiError, invalidApiResponse, requestErrorMessage } from "@/lib/client-error";
 import { farmHref } from "@/lib/farm-navigation";
 import {
   farmAccess,
   farmAccessDenied,
   farmDetailKey,
   farmListKey,
-  farmSupplyKey,
   retireFarmAccess,
-  retireFarmQueries,
   retryFarmAccess,
   useFarmAccess,
 } from "@/lib/farm-query";
@@ -65,12 +64,17 @@ type Form = {
   description_en: string;
   description_vi: string;
   photos: MediaAsset[];
-  is_active: boolean;
-  version?: number;
 };
 type SaveRecovery =
   | { kind: "create"; search: string }
-  | { kind: "edit"; version: number; latest?: Farm; stale?: boolean; problem?: unknown };
+  | {
+      kind: "edit";
+      version: number;
+      latest?: Farm;
+      stale?: boolean;
+      problem?: unknown;
+      conflict?: boolean;
+    };
 type UploadedPhotos = Map<string, "temporary" | "submitted">;
 
 const emptyForm: Form = {
@@ -81,7 +85,6 @@ const emptyForm: Form = {
   description_en: "",
   description_vi: "",
   photos: [],
-  is_active: true,
 };
 function fromFarm(farm: Farm): Form {
   return {
@@ -92,8 +95,6 @@ function fromFarm(farm: Farm): Form {
     description_en: farm.description_en,
     description_vi: farm.description_vi,
     photos: farm.photos.length ? farm.photos : farm.image ? [farm.image] : [],
-    is_active: farm.is_active,
-    version: farm.version,
   };
 }
 
@@ -125,44 +126,111 @@ function discardTemporaryPhotos(uploads: UploadedPhotos) {
   }
 }
 
-export function FarmEditor({ farmId }: { farmId?: string }) {
+const textFields = [
+  "name_vi",
+  "name_en",
+  "location_vi",
+  "location_en",
+  "description_vi",
+  "description_en",
+] as const;
+
+function farmInformation(form: Form) {
+  const { photos, ...texts } = form;
+  for (const field of textFields) texts[field] = texts[field].trim();
+  return { ...texts, photo_ids: photos.map((photo) => photo.id) };
+}
+
+function changedFarmInformation(baseline: Form, draft: Form) {
+  const previous = farmInformation(baseline);
+  const current = farmInformation(draft);
+  const patch: Partial<typeof current> = {};
+  for (const field of textFields) {
+    if (previous[field] !== current[field]) patch[field] = current[field];
+  }
+  if (
+    current.photo_ids.length !== previous.photo_ids.length ||
+    current.photo_ids.some(
+      (id, index) => id.toLowerCase() !== previous.photo_ids[index].toLowerCase(),
+    )
+  ) {
+    patch.photo_ids = current.photo_ids;
+  }
+  return patch;
+}
+
+export function sameFarmInformation(a: Farm, b: Farm) {
+  return Object.keys(changedFarmInformation(fromFarm(a), fromFarm(b))).length === 0;
+}
+
+function keepFarmEdits(baseline: Farm, latest: Farm, draft: Form) {
+  const patch = changedFarmInformation(fromFarm(baseline), draft);
+  const next = fromFarm(latest);
+  for (const field of textFields) {
+    if (patch[field] !== undefined) next[field] = draft[field];
+  }
+  if (patch.photo_ids) next.photos = draft.photos;
+  return next;
+}
+
+export type FarmInformationHandle = { syncTracker: () => Promise<boolean> };
+
+type InformationProps = {
+  farm: Farm;
+  active: boolean;
+  headerLocked: boolean;
+  ownToggle?: { from: number; to: number };
+  claimWrite: () => (() => void) | undefined;
+  setInformationLocked: (locked: boolean) => void;
+  onAccessLost: (cause: unknown) => void;
+  ref?: Ref<FarmInformationHandle>;
+};
+
+export function FarmEditor() {
+  const access = useFarmAccess();
+  return <FarmEditorForm key={access.revision} accessRevision={access.revision} />;
+}
+
+export function FarmInformation(props: InformationProps) {
   const access = useFarmAccess();
   return (
-    <FarmEditorForm key={`${farmId ?? "new"}:${access.revision}`} farmId={farmId} access={access} />
+    <FarmEditorForm
+      key={`${props.farm.id}:${access.revision}`}
+      accessRevision={access.revision}
+      information={props}
+    />
   );
 }
 
 function FarmEditorForm({
-  farmId,
-  access,
+  information,
+  accessRevision,
 }: {
-  farmId?: string;
-  access: ReturnType<typeof useFarmAccess>;
+  information?: InformationProps;
+  accessRevision: number;
 }) {
-  const { error: accessError, revision: accessRevision } = access;
+  const farm = information?.farm;
+  const farmId = farm?.id;
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const router = useRouter();
   const queryClient = useQueryClient();
+  const access = useFarmAccess();
   const search = useSearchParams();
-  const { breakpoints } = useMantineTheme();
   const isCurrent = useIsAdminQueryScopeCurrent();
   const listHref = farmHref(search);
-  const returnHref = farmHref(search, { id: farmId });
-  const routePath = farmHref(null, { id: farmId, mode: farmId ? "edit" : "new" });
   const toast = useToast();
-  const [form, setForm] = useState<Form>(emptyForm);
-  const [savedNames, setSavedNames] = useState<Record<AdminLocale, string>>();
-  const [loading, setLoading] = useState(Boolean(farmId));
+  const { breakpoints } = useMantineTheme();
+  const [form, setForm] = useState<Form>(() => (farm ? fromFarm(farm) : emptyForm));
+  const [baseline, setBaseline] = useState(farm);
+  const [initialActive, setInitialActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [photoError, setPhotoError] = useState("");
-  const [conflict, setConflict] = useState(false);
   const [recovery, setRecovery] = useState<SaveRecovery | null>(null);
   const [checkingLatest, setCheckingLatest] = useState(false);
   const [activeLocale, setActiveLocale] = useState<AdminLocale>(locale);
-  const [retry, setRetry] = useState(0);
   const translationRef = useRef(t);
   translationRef.current = t;
   const formRef = useRef<HTMLFormElement>(null);
@@ -173,45 +241,107 @@ function FarmEditorForm({
   const mounted = useRef(false);
   const saveLock = useRef(false);
   const uploadLock = useRef(false);
+  const onAccessLost = information?.onAccessLost;
 
-  function canAct() {
-    return (
+  const canAct = useCallback(
+    () =>
       mounted.current &&
       isCurrent() &&
       !accessRevoked.current &&
-      farmAccess(queryClient).revision === accessRevision
-    );
-  }
+      farmAccess(queryClient).revision === accessRevision,
+    [accessRevision, isCurrent, queryClient],
+  );
 
   const hideFarm = useCallback(
     (cause: unknown) => {
-      accessRevoked.current = true;
+      if (!isCurrent()) return;
       if (farmAccessDenied(cause)) retireFarmAccess(queryClient, cause);
-      else if (farmId) retireFarmQueries(queryClient, farmId);
-      setSavedNames(undefined);
+      if (!mounted.current) return;
+      accessRevoked.current = true;
+      if (farmId) onAccessLost?.(cause);
       setForm(emptyForm);
       setPhotoError("");
-      setConflict(false);
+      setError(requestErrorMessage(cause, translationRef.current));
     },
-    [farmId, queryClient],
+    [farmId, isCurrent, onAccessLost, queryClient],
   );
 
-  const adoptFarm = useCallback((farm: Farm) => {
-    accessRevoked.current = false;
-    const uploads = uploadsRef.current;
-    forgetReferencedPhotos(uploads, farm);
-    for (const [id, state] of uploads) {
-      if (state === "temporary") {
-        void deleteFarmImage(id)
-          .then(() => uploads.delete(id))
-          .catch(() => undefined);
-      }
+  const tracker = useFarmTracker({
+    farmId,
+    enabled: Boolean(information?.active && !information.headerLocked),
+    canAct,
+    onAccessLost: hideFarm,
+  });
+  const { busy: trackerBusy, syncAfterFarmWrite } = tracker;
+  useImperativeHandle(information?.ref, () => ({ syncTracker: syncAfterFarmWrite }), [
+    syncAfterFarmWrite,
+  ]);
+  const setInformationLocked = information?.setInformationLocked;
+  const blocksHeader = trackerBusy || uploading || recovery !== null;
+  useLayoutEffect(() => {
+    setInformationLocked?.(blocksHeader);
+    return () => setInformationLocked?.(false);
+  }, [blocksHeader, setInformationLocked]);
+
+  const delta = baseline ? changedFarmInformation(fromFarm(baseline), form) : {};
+  const farmDirty = Object.keys(delta).length > 0;
+  const dirty = farmDirty || tracker.dirty;
+  const valid = (["vi", "en"] as const).every(
+    (language) => form[`name_${language}`].trim() && form[`location_${language}`].trim(),
+  );
+  const farmSnapshotChanged = Boolean(
+    farm &&
+    baseline &&
+    (farm.version !== baseline.version ||
+      farm.is_active !== baseline.is_active ||
+      !sameFarmInformation(farm, baseline)),
+  );
+  const toggle = information?.ownToggle;
+
+  useEffect(() => {
+    if (
+      !farm ||
+      !baseline ||
+      !farmSnapshotChanged ||
+      recovery ||
+      information?.headerLocked ||
+      trackerBusy ||
+      saveLock.current ||
+      uploadLock.current
+    )
+      return;
+    if (
+      toggle?.from === baseline.version &&
+      toggle.to === farm.version &&
+      sameFarmInformation(farm, baseline)
+    ) {
+      setBaseline(farm);
+    } else if (!dirty && farm.version > baseline.version) {
+      setForm(fromFarm(farm));
+      setBaseline(farm);
+      // This was an external Farm revision. Its Tracker may have changed too.
+      void syncAfterFarmWrite(false);
+    } else {
+      setRecovery({
+        kind: "edit",
+        version: baseline.version,
+        conflict: true,
+        latest: farm.version > baseline.version ? farm : undefined,
+      });
     }
-    setForm(fromFarm(farm));
-    setSavedNames({ vi: farm.name_vi, en: farm.name_en });
-    setPhotoError("");
-    setConflict(false);
-  }, []);
+  }, [
+    baseline,
+    dirty,
+    farm,
+    farmSnapshotChanged,
+    information?.headerLocked,
+    recovery,
+    saving,
+    toggle,
+    trackerBusy,
+    syncAfterFarmWrite,
+    uploading,
+  ]);
 
   useLayoutEffect(() => {
     const uploads = uploadsRef.current;
@@ -223,31 +353,11 @@ function FarmEditorForm({
         isCurrent() &&
         !accessRevoked.current &&
         farmAccess(queryClient).revision === accessRevision
-      )
+      ) {
         discardTemporaryPhotos(uploads);
+      }
     };
   }, [accessRevision, isCurrent, queryClient]);
-  useEffect(() => {
-    if (accessError || !farmId || !isCurrent()) return;
-    const controller = new AbortController();
-    setLoading(true);
-    setError("");
-    getFarm(farmId, controller.signal)
-      .then((farm) => {
-        if (controller.signal.aborted || !isCurrent()) return;
-        adoptFarm(farm);
-      })
-      .catch((caught) => {
-        if (controller.signal.aborted || !isCurrent()) return;
-        setSavedNames(undefined);
-        if (farmUnavailable(caught)) hideFarm(caught);
-        setError(requestErrorMessage(caught, translationRef.current));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted && isCurrent()) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [accessError, adoptFarm, farmId, hideFarm, isCurrent, retry]);
   useEffect(() => {
     if (!pendingFocus.current) return;
     const selector =
@@ -274,7 +384,11 @@ function FarmEditorForm({
         try {
           const asset = await uploadFarmImage(file);
           if (!canAct()) {
-            if (isCurrent() && !accessRevoked.current) {
+            if (
+              isCurrent() &&
+              !accessRevoked.current &&
+              farmAccess(queryClient).revision === accessRevision
+            ) {
               void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
             }
             break;
@@ -282,6 +396,10 @@ function FarmEditorForm({
           uploadsRef.current.set(asset.id.toLowerCase(), "temporary");
           setForm((current) => ({ ...current, photos: [...current.photos, asset] }));
         } catch (caught) {
+          if (farmAccessDenied(caught)) {
+            hideFarm(caught);
+            break;
+          }
           if (!canAct()) break;
           setPhotoError(requestErrorMessage(caught, translationRef.current));
         }
@@ -320,64 +438,121 @@ function FarmEditorForm({
       void deleteFarmImage(id)
         .then(() => uploadsRef.current.delete(uploadId))
         .catch((caught) => {
-          if (canAct()) {
+          if (farmAccessDenied(caught)) {
+            hideFarm(caught);
+          } else if (canAct()) {
             setPhotoError(requestErrorMessage(caught, translationRef.current));
           }
         });
     }
   }
 
+  async function publishFarm(snapshot: Farm) {
+    const detailKey = farmDetailKey(snapshot.id);
+    await queryClient.cancelQueries({ queryKey: detailKey });
+    if (!isCurrent() || farmAccess(queryClient).revision !== accessRevision) return;
+    const cached = queryClient.getQueryData<Farm>(detailKey);
+    if (!cached || cached.version <= snapshot.version)
+      queryClient.setQueryData(detailKey, snapshot);
+    void queryClient.invalidateQueries({ queryKey: farmListKey });
+  }
+
   async function checkLatestFarm() {
-    if (!farmId || recovery?.kind !== "edit" || recoveryRequest.current || !canAct()) return;
+    if (
+      !farmId ||
+      recovery?.kind !== "edit" ||
+      recoveryRequest.current ||
+      !canAct() ||
+      information?.headerLocked
+    )
+      return;
     const controller = new AbortController();
     recoveryRequest.current = controller;
     setCheckingLatest(true);
     try {
       const latest = await getFarm(farmId, controller.signal);
       if (!canAct() || controller.signal.aborted) return;
-      // PATCH compares its expected version under the Farm row lock. An equal or
-      // older read cannot establish that the earlier write has finished.
+      // A read of the original revision does not settle an uncertain write.
       if (latest.version <= recovery.version) {
-        setRecovery({ kind: "edit", version: recovery.version, stale: true });
+        setRecovery({ ...recovery, latest: undefined, stale: true });
         return;
       }
-      // A newer snapshot can confirm references. Missing photos remain protected
-      // because the snapshot cannot identify which write attached them previously.
       forgetReferencedPhotos(uploadsRef.current, latest);
-      setRecovery({ kind: "edit", version: recovery.version, latest });
+      setRecovery({ ...recovery, latest, stale: false, problem: undefined });
     } catch (caught) {
-      if (!canAct() || controller.signal.aborted) return;
-      if (farmUnavailable(caught)) {
+      if (farmAccessDenied(caught)) {
         hideFarm(caught);
-        setError(requestErrorMessage(caught, translationRef.current));
-      } else {
-        setRecovery({ kind: "edit", version: recovery.version, problem: caught });
+        return;
       }
+      if (!canAct() || controller.signal.aborted) return;
+      if (farmUnavailable(caught)) hideFarm(caught);
+      else setRecovery({ ...recovery, problem: caught });
     } finally {
       recoveryRequest.current = null;
-      if (mounted.current && isCurrent() && !controller.signal.aborted) setCheckingLatest(false);
+      if (canAct() && !controller.signal.aborted) setCheckingLatest(false);
     }
   }
 
-  function adoptLatestFarm() {
-    if (recovery?.kind !== "edit" || !recovery.latest || !canAct()) return;
-    adoptFarm(recovery.latest);
-    setRecovery(null);
-    saveLock.current = false;
+  async function adoptLatestFarm() {
+    if (recovery?.kind !== "edit" || !recovery.latest || !baseline || !canAct()) return;
+    const release = information?.claimWrite();
+    if (!release) return;
+    const latest = recovery.latest;
+    const cached = queryClient.getQueryData<Farm>(farmDetailKey(latest.id));
+    if (cached && cached.version > latest.version) {
+      setRecovery({ ...recovery, latest: cached });
+      release();
+      return;
+    }
+    try {
+      const confirmedOwnWrite =
+        !recovery.conflict &&
+        latest.version === baseline.version + 1 &&
+        latest.is_active === baseline.is_active &&
+        Object.keys(changedFarmInformation(form, fromFarm(latest))).length === 0;
+      forgetReferencedPhotos(uploadsRef.current, latest);
+      setForm(keepFarmEdits(baseline, latest, form));
+      setBaseline(latest);
+      await publishFarm(latest);
+      if (!canAct()) return;
+      await tracker.syncAfterFarmWrite(confirmedOwnWrite);
+      if (canAct()) {
+        setRecovery(null);
+        setError("");
+      }
+    } finally {
+      release();
+    }
+  }
+
+  function undo() {
+    if (
+      !baseline ||
+      !canAct() ||
+      saving ||
+      recovery ||
+      uploadLock.current ||
+      information?.headerLocked
+    )
+      return;
+    discardTemporaryPhotos(uploadsRef.current);
+    setForm(fromFarm(baseline));
+    tracker.reset();
+    setError("");
+    setPhotoError("");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const version = form.version;
     if (
       saveLock.current ||
       uploadLock.current ||
-      conflict ||
       recovery ||
       !canAct() ||
-      (farmId && version === undefined)
-    )
+      (information && (!dirty || !tracker.ready || farmSnapshotChanged || information.headerLocked))
+    ) {
       return;
+    }
     for (const language of ["vi", "en"] as const) {
       const missing = !form[`name_${language}`].trim()
         ? "name"
@@ -386,9 +561,9 @@ function FarmEditorForm({
           : null;
       if (missing) {
         const selector = missing === "name" ? "[data-bilingual-name]" : "[data-farm-location]";
-        if (activeLocale === language) {
+        if (activeLocale === language)
           formRef.current?.querySelector<HTMLInputElement>(selector)?.focus();
-        } else {
+        else {
           pendingFocus.current = missing;
           setActiveLocale(language);
         }
@@ -396,38 +571,65 @@ function FarmEditorForm({
         return;
       }
     }
+
+    const release = information?.claimWrite();
+    if (information && !release) return;
     saveLock.current = true;
     setSaving(true);
     setError("");
-    const photoIds = form.photos.map((photo) => photo.id);
+    const version = baseline?.version;
+    const fields = farmInformation(form);
+    const patch = information ? { ...delta, version } : { ...fields, is_active: initialActive };
     const uploads = uploadsRef.current;
-    const submitted = photoIds
+    const submitted = (!information || delta.photo_ids ? fields.photo_ids : [])
       .map((id) => id.toLowerCase())
       .filter((id) => uploads.get(id) === "temporary");
-    // Protect uploads before the request starts, even if this editor exits before it settles.
-    for (const id of submitted) uploads.set(id, "submitted");
-    const nameVi = form.name_vi.trim();
-    let result: Farm;
+    let sendingFarm = false;
+    let leavingAfterCreate = false;
     try {
-      result = await saveFarm(farmId, {
-        name_vi: nameVi,
-        name_en: form.name_en.trim(),
-        location_vi: form.location_vi.trim(),
-        location_en: form.location_en.trim(),
-        description_vi: form.description_vi,
-        description_en: form.description_en,
-        is_active: form.is_active,
-        photo_ids: photoIds,
-        ...(farmId ? { version } : {}),
-      });
-    } catch (caught) {
-      if (isCurrent() && farmAccessDenied(caught)) {
-        if (mounted.current) {
-          hideFarm(caught);
-          setError(requestErrorMessage(caught, translationRef.current));
-        } else {
-          retireFarmAccess(queryClient, caught);
+      // A Tracker write does not bump Farm.version. Farm writes do bump Tracker.version.
+      if (information && !(await tracker.save())) return;
+      if (!canAct()) return;
+      if (information && !farmDirty) {
+        toast(c.savedChanges);
+        return;
+      }
+      for (const id of submitted) uploads.set(id, "submitted");
+      sendingFarm = true;
+      const result = await saveFarm(farmId, patch);
+      if (
+        baseline &&
+        (result.version !== baseline.version + 1 ||
+          result.is_active !== baseline.is_active ||
+          Object.keys(changedFarmInformation(form, fromFarm(result))).length)
+      ) {
+        throw invalidApiResponse();
+      }
+      sendingFarm = false;
+      forgetReferencedPhotos(uploads, result);
+      if (!canAct()) {
+        if (isCurrent() && farmAccess(queryClient).revision === accessRevision) {
+          void queryClient.invalidateQueries({ queryKey: farmDetailKey(result.id) });
+          void queryClient.invalidateQueries({ queryKey: farmListKey });
         }
+        return;
+      }
+      setForm(fromFarm(result));
+      setBaseline(result);
+      await publishFarm(result);
+      if (!canAct()) return;
+      if (information) {
+        const synced = await tracker.syncAfterFarmWrite();
+        if (canAct()) toast(synced ? c.savedChanges : c.farmSaved);
+      } else {
+        toast(c.farmSaved);
+        leavingAfterCreate = true;
+        router.replace(farmHref(search, { id: result.id }));
+        router.refresh();
+      }
+    } catch (caught) {
+      if (farmAccessDenied(caught)) {
+        hideFarm(caught);
         return;
       }
       const problem = caught instanceof Error ? (caught as ClientApiError) : null;
@@ -435,145 +637,87 @@ function FarmEditorForm({
       const rejected = !unavailable && farmSaveRejected(problem);
       if (rejected) for (const id of submitted) uploads.set(id, "temporary");
       if (!canAct()) {
-        if (rejected && isCurrent() && !accessRevoked.current) discardTemporaryPhotos(uploads);
+        if (rejected && isCurrent() && farmAccess(queryClient).revision === accessRevision)
+          discardTemporaryPhotos(uploads);
         return;
       }
-      setSaving(false);
-      if (unavailable) {
-        hideFarm(caught);
-      } else if (!rejected) {
+      if (unavailable) hideFarm(caught);
+      else if (sendingFarm && !rejected) {
         setRecovery(
-          farmId && version !== undefined
-            ? { kind: "edit", version }
-            : { kind: "create", search: nameVi.slice(0, 200) },
+          version === undefined
+            ? { kind: "create", search: fields.name_vi.slice(0, 200) }
+            : { kind: "edit", version },
         );
-        return;
-      }
-      saveLock.current = false;
-      if (rejected && problem?.status === 409) {
-        setConflict(true);
-        setError(c.conflict);
+      } else if (sendingFarm && version !== undefined && problem?.status === 409) {
+        setRecovery({ kind: "edit", version, conflict: true });
       } else setError(requestErrorMessage(caught, translationRef.current));
-      return;
+    } finally {
+      saveLock.current = leavingAfterCreate;
+      release?.();
+      if (canAct() && !leavingAfterCreate) setSaving(false);
     }
-    forgetReferencedPhotos(uploads, result);
-    if (!isCurrent() || farmAccess(queryClient).revision !== accessRevision) return;
-    if (!canAct()) {
-      void queryClient.invalidateQueries({ queryKey: farmDetailKey(result.id) });
-      void queryClient.invalidateQueries({ queryKey: farmListKey });
-      void queryClient.invalidateQueries({ queryKey: farmSupplyKey(result.id) });
-      return;
-    }
-    const detailKey = farmDetailKey(result.id);
-    await queryClient.cancelQueries({ queryKey: detailKey });
-    if (!canAct()) return;
-    const previousFarm = queryClient.getQueryData<Farm>(detailKey);
-    if (!previousFarm || previousFarm.version <= result.version) {
-      queryClient.setQueryData(detailKey, result);
-    }
-    void queryClient.invalidateQueries({ queryKey: farmListKey });
-    if (previousFarm?.is_active !== result.is_active) {
-      void queryClient.invalidateQueries({ queryKey: farmSupplyKey(result.id) });
-    }
-    toast(locale === "vi" ? "Đã lưu trang trại." : "Farm saved.");
-    router.replace(farmHref(search, { id: result.id }));
-    router.refresh();
   }
 
-  const breadcrumbTitle = farmId ? t.breadcrumb.edit : t.breadcrumb.newFarm;
-  const sessionCurrent = isCurrent();
-  const recordLabel =
-    (sessionCurrent &&
-      !loading &&
-      (savedNames?.[locale].trim() || savedNames?.[locale === "vi" ? "en" : "vi"].trim())) ||
-    t.breadcrumb.farmDetails;
-  const breadcrumbItems = useMemo(
-    () => [
-      { label: t.common.farmList, href: listHref },
-      ...(farmId ? [{ label: recordLabel, href: returnHref }] : []),
-      { label: breadcrumbTitle },
-    ],
-    [t.common.farmList, listHref, farmId, recordLabel, returnHref, breadcrumbTitle],
-  );
-  const heading = (
+  const heading = !information && (
     <>
       <AdminBreadcrumbForRoute
-        pathname={routePath}
+        pathname={farmHref(null, { mode: "new" })}
         search={search?.toString() ?? ""}
-        items={breadcrumbItems}
+        items={[{ label: t.common.farmList, href: listHref }, { label: t.breadcrumb.newFarm }]}
       />
-      <PageHeading title={farmId ? c.editFarm : breadcrumbTitle} visuallyHiddenTitle />
+      <PageHeading title={t.breadcrumb.newFarm} visuallyHiddenTitle />
     </>
   );
-  const cancel = (
+  const locked = saving || Boolean(information?.headerLocked);
+  const fieldBusy = locked || recovery !== null;
+  const sectionSpan = information ? { base: 12, sm: 6 } : 12;
+  const cancel = !information && (
     <Button
       component={AdminNavigationLink}
       variant="default"
-      href={returnHref}
+      href={listHref}
       disabled={saving}
       aria-disabled={saving || undefined}
       tabIndex={saving ? -1 : undefined}
       onClick={(event) => {
-        if (saving || (saveLock.current && !recovery)) event.preventDefault();
+        if (saving || saveLock.current) event.preventDefault();
       }}
     >
       {c.cancel}
     </Button>
   );
 
-  if (!sessionCurrent)
+  if (!isCurrent())
     return (
-      <>
-        {heading}
-        <Alert color="danger" role="alert">
-          {t.common.sessionChanged}
-        </Alert>
-      </>
+      <Alert color="danger" role="alert">
+        {t.common.sessionChanged}
+      </Alert>
     );
-  if (accessError)
+  if (access.error) {
     return (
       <>
         {heading}
         <RecoveryAlert
-          message={requestErrorMessage(accessError, t)}
+          message={requestErrorMessage(access.error, t)}
           retryLabel={t.common.retry}
           onRetry={() => retryFarmAccess(queryClient)}
         />
       </>
     );
-  if (loading)
-    return (
-      <>
-        {heading}
-        <Group role="status" gap="xs">
-          <Loader size="sm" />
-          <Text size="sm">{c.loading}</Text>
-        </Group>
-      </>
-    );
-  if (error && (accessRevoked.current || (farmId && form.version === undefined)))
-    return (
-      <Stack gap="md">
-        {heading}
-        {farmId && !recovery ? (
-          <RecoveryAlert
-            message={error}
-            retryLabel={t.common.retry}
-            onRetry={() => setRetry((n) => n + 1)}
-          />
-        ) : (
-          <Alert color="danger" role="alert">
-            {error}
-          </Alert>
-        )}
-        <Group justify="flex-end">{cancel}</Group>
-      </Stack>
-    );
+  }
 
   return (
     <>
       {heading}
-      <Box component="form" maw="72rem" mb="lg" noValidate onSubmit={submit} ref={formRef}>
+      <Box
+        component="form"
+        w="100%"
+        maw={information ? undefined : 760}
+        mb="lg"
+        noValidate
+        onSubmit={submit}
+        ref={formRef}
+      >
         <Stack gap="md">
           {recovery?.kind === "create" && (
             <Alert color="warning" role="alert">
@@ -595,7 +739,30 @@ function FarmEditorForm({
               <Alert color="warning" role="alert">
                 <Stack gap="sm" align="flex-start">
                   <Text size="sm">{c.latestFarmAvailable}</Text>
-                  <Button variant="default" type="button" onClick={adoptLatestFarm}>
+                  {baseline && (
+                    <Stack gap="xs">
+                      {textFields
+                        .filter((field) => baseline[field] !== recovery.latest?.[field])
+                        .map((field) => (
+                          <Text key={field} size="sm" style={{ overflowWrap: "anywhere" }}>
+                            {field.startsWith("name")
+                              ? c.nameField
+                              : field.startsWith("location")
+                                ? c.location
+                                : c.descriptionField}{" "}
+                            {field.endsWith("vi") ? t.common.vietnamese : t.common.english}
+                            {" · "}
+                            {recovery.latest?.[field] || "—"}
+                          </Text>
+                        ))}
+                    </Stack>
+                  )}
+                  <Button
+                    variant="default"
+                    type="button"
+                    disabled={locked}
+                    onClick={() => void adoptLatestFarm()}
+                  >
                     {c.useLatestFarm}
                   </Button>
                 </Stack>
@@ -603,7 +770,7 @@ function FarmEditorForm({
             ) : (
               <RecoveryAlert
                 message={[
-                  c.saveUncertain,
+                  recovery.conflict ? c.conflict : c.saveUncertain,
                   recovery.stale ? c.saveStillUncertain : "",
                   recovery.problem ? requestErrorMessage(recovery.problem, t) : "",
                 ]
@@ -614,26 +781,16 @@ function FarmEditorForm({
                 loading={checkingLatest}
               />
             ))}
-          {error &&
-            (conflict ? (
-              <RecoveryAlert
-                message={error}
-                retryLabel={c.reload}
-                onRetry={() => {
-                  if (!uploadLock.current) setRetry((n) => n + 1);
-                }}
-                loading={uploading}
-              />
-            ) : (
-              <Alert color="danger" role="alert">
-                {error}
-              </Alert>
-            ))}
-          <Grid type="container" breakpoints={breakpoints} align="flex-start" gutter="md">
-            <Grid.Col span={{ base: 12, sm: 7 }}>
+          {error && (
+            <Alert color="danger" role="alert">
+              {error}
+            </Alert>
+          )}
+          <Grid type="container" breakpoints={breakpoints} gutter="md" align="flex-start">
+            <Grid.Col span={sectionSpan}>
               <BilingualContentFields
                 activeLocale={activeLocale}
-                busy={saving}
+                busy={fieldBusy}
                 completionLabels={{
                   complete: locale === "vi" ? "Đã nhập" : "Complete",
                   incomplete: locale === "vi" ? "Chưa nhập" : "Incomplete",
@@ -650,7 +807,7 @@ function FarmEditorForm({
                   <TextInput
                     data-farm-location
                     label={c.location}
-                    disabled={saving}
+                    disabled={fieldBusy}
                     maxLength={240}
                     onChange={(event) => {
                       const location = event.currentTarget.value;
@@ -679,74 +836,101 @@ function FarmEditorForm({
                 }
               />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 5 }}>
-              <Paper p="md" withBorder miw={0}>
-                <Stack gap="md">
-                  <Stack component="section" gap="xs">
-                    <Group gap="xs">
-                      <Title order={2}>{c.photos}</Title>
-                      <Text component="span" size="sm" c="dimmed">
-                        {form.photos.length}/12
-                      </Text>
-                    </Group>
-                    <AdminImagePicker
-                      items={form.photos.map((photo, index) => ({
-                        id: photo.id,
-                        src: mediaUrlForWidth(photo, 160),
-                        alt: `${c.photos} ${index + 1}`,
-                      }))}
-                      maxItems={12}
-                      busy={uploading || saving || recovery !== null}
-                      error={photoError}
-                      help={c.photoHint}
-                      labels={{
-                        choose: c.upload,
-                        replace: c.upload,
-                        empty: locale === "vi" ? "Chưa có ảnh" : "No images yet",
-                        cover: locale === "vi" ? "Ảnh đại diện" : "Cover image",
-                        setCover: locale === "vi" ? "Đặt làm đại diện" : "Set as cover",
-                        moveEarlier: c.moveEarlier,
-                        moveLater: c.moveLater,
-                        remove: c.removePhoto,
-                        uploading: uploading
-                          ? locale === "vi"
-                            ? "Đang tải ảnh…"
-                            : "Uploading images…"
-                          : undefined,
-                        select: locale === "vi" ? "Chọn ảnh số" : "Select image",
-                      }}
-                      onChooseFiles={upload}
-                      onMove={movePhoto}
-                      onSetCover={setCover}
-                      onRemove={removePhoto}
-                    />
+            <Grid.Col span={sectionSpan}>
+              <Stack gap="md">
+                <Paper component="section" aria-label={c.photos} p="md" withBorder miw={0}>
+                  <Stack gap="md">
+                    <Stack component="section" gap="xs">
+                      <Group gap="xs">
+                        <Title order={2}>{c.photos}</Title>
+                        <Text component="span" size="sm" c="dimmed">
+                          {form.photos.length}/12
+                        </Text>
+                      </Group>
+                      <AdminImagePicker
+                        items={form.photos.map((photo, index) => ({
+                          id: photo.id,
+                          src: mediaUrlForWidth(photo, 160),
+                          alt: `${c.photos} ${index + 1}`,
+                        }))}
+                        maxItems={12}
+                        busy={uploading || fieldBusy}
+                        error={photoError}
+                        help={c.photoHint}
+                        labels={{
+                          choose: c.upload,
+                          replace: c.upload,
+                          empty: locale === "vi" ? "Chưa có ảnh" : "No images yet",
+                          cover: locale === "vi" ? "Ảnh đại diện" : "Cover image",
+                          setCover: locale === "vi" ? "Đặt làm đại diện" : "Set as cover",
+                          moveEarlier: c.moveEarlier,
+                          moveLater: c.moveLater,
+                          remove: c.removePhoto,
+                          uploading: uploading
+                            ? locale === "vi"
+                              ? "Đang tải ảnh…"
+                              : "Uploading images…"
+                            : undefined,
+                          select: locale === "vi" ? "Chọn ảnh số" : "Select image",
+                        }}
+                        onChooseFiles={upload}
+                        onMove={movePhoto}
+                        onSetCover={setCover}
+                        onRemove={removePhoto}
+                      />
+                    </Stack>
+                    {!information && (
+                      <>
+                        <Divider />
+                        <Select
+                          label={c.status}
+                          allowDeselect={false}
+                          disabled={fieldBusy}
+                          value={String(initialActive)}
+                          onChange={(selection) => setInitialActive(selection === "true")}
+                          data={[
+                            { value: "true", label: c.active },
+                            { value: "false", label: c.inactive },
+                          ]}
+                        />
+                      </>
+                    )}
                   </Stack>
-                  <Divider />
-                  <Select
-                    label={c.status}
-                    allowDeselect={false}
-                    disabled={saving}
-                    value={String(form.is_active)}
-                    onChange={(selection) =>
-                      setForm((current) => ({ ...current, is_active: selection === "true" }))
-                    }
-                    data={[
-                      { value: "true", label: c.active },
-                      { value: "false", label: c.inactive },
-                    ]}
-                  />
-                </Stack>
-              </Paper>
+                </Paper>
+                {information && (
+                  <Paper p="md" withBorder miw={0}>
+                    <FarmTrackerFields
+                      tracker={tracker}
+                      disabled={fieldBusy}
+                      farmActive={information.farm.is_active}
+                    />
+                  </Paper>
+                )}
+              </Stack>
             </Grid.Col>
           </Grid>
           <Group component="footer" justify="flex-end" gap="xs">
             {cancel}
+            {information && dirty && (
+              <Button
+                type="button"
+                variant="default"
+                onClick={undo}
+                disabled={fieldBusy || uploading || tracker.busy}
+              >
+                {c.undo}
+              </Button>
+            )}
             <Button
               type="submit"
               loading={saving}
-              disabled={saving || uploading || conflict || recovery !== null}
+              disabled={
+                fieldBusy ||
+                uploading ||
+                Boolean(information && (!dirty || !valid || !tracker.ready || farmSnapshotChanged))
+              }
             >
-              {saving ? c.saving : farmId ? c.save : c.create}
+              {saving ? c.saving : information ? c.save : c.create}
             </Button>
           </Group>
         </Stack>

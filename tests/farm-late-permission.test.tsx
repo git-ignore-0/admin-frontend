@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
-import { FarmEditor } from "@/components/farm-editor";
 import { FarmDetail } from "@/components/farm-detail";
 import { FarmList } from "@/components/farm-list";
 import { ToastProvider } from "@/components/toast-provider";
@@ -11,6 +10,7 @@ import type { Farm, FarmProductDetail } from "@/lib/types";
 
 const api = vi.hoisted(() => ({
   getFarm: vi.fn(),
+  getFarmTracker: vi.fn(),
   listFarms: vi.fn(),
   listFarmProducts: vi.fn(),
   getFarmProduct: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock("@/lib/farms-api", async (importOriginal) => ({
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
-  useSearchParams: () => null,
+  useSearchParams: () => search,
 }));
 
 const farm: Farm = {
@@ -88,6 +88,7 @@ const pickerProduct = {
   unit_label_en: source.unit_label_en,
 };
 let client: QueryClient;
+let search: URLSearchParams | null;
 function CaptureClient() {
   client = useQueryClient();
   return null;
@@ -95,6 +96,7 @@ function CaptureClient() {
 const deny = () => Object.assign(new Error("forbidden"), { status: 403 });
 
 function screenFor(view: "source" | "farm" | "list" | "editor", binding = "original") {
+  search = view === "editor" ? new URLSearchParams("tab=information") : null;
   return (
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
@@ -102,8 +104,6 @@ function screenFor(view: "source" | "farm" | "list" | "editor", binding = "origi
           <CaptureClient />
           {view === "list" ? (
             <FarmList />
-          ) : view === "editor" ? (
-            <FarmEditor farmId={farm.id} />
           ) : (
             <FarmDetail farmId={farm.id} productId={view === "source" ? "product" : undefined} />
           )}
@@ -132,6 +132,7 @@ async function startRemove() {
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
   api.getFarm.mockResolvedValue(farm);
+  api.getFarmTracker.mockRejectedValue(Object.assign(new Error("not_found"), { status: 404 }));
   api.listFarms.mockResolvedValue({ data: [farm], meta: { ...page, total: 1 } });
   api.listFarmProducts.mockResolvedValue({ data: [source], meta: { ...page, total: 1 } });
   api.getFarmProduct.mockResolvedValue(source);
@@ -286,8 +287,12 @@ it("does not publish a late Farm save after access was retired elsewhere in the 
   api.saveFarm.mockReturnValue(save.promise);
   api.getFarmProduct.mockRejectedValueOnce(deny());
   const screenView = render(screenFor("editor"));
-  expect(await screen.findByDisplayValue(farm.name_vi)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
+  const name = await screen.findByDisplayValue(farm.name_vi);
+  expect(name).toBeVisible();
+  fireEvent.change(name, { target: { value: "Tên của phản hồi cũ" } });
+  const submit = screen.getByRole("button", { name: "Lưu thay đổi" });
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
   await waitFor(() => expect(api.saveFarm).toHaveBeenCalledOnce());
   screenView.rerender(screenFor("source"));
   expect(await screen.findByRole("alert")).toHaveTextContent("không có quyền");

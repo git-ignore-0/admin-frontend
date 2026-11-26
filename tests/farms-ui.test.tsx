@@ -202,6 +202,20 @@ function view(node: React.ReactNode, locale: "vi" | "en" = "vi") {
   const rendered = render(shell(node));
   return { ...rendered, close: () => rendered.rerender(shell(null)) };
 }
+function viewFarmInformation(extra?: React.ReactNode) {
+  search = new URLSearchParams("tab=information");
+  return view(
+    <>
+      {extra}
+      <FarmDetail farmId={farm.id} />
+    </>,
+  );
+}
+async function saveFarmInformation() {
+  const save = screen.getByRole("button", { name: "Lưu thay đổi" });
+  await waitFor(() => expect(save).toBeEnabled());
+  await act(async () => fireEvent.click(save));
+}
 beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
   search = new URLSearchParams();
@@ -224,7 +238,7 @@ beforeEach(() => {
     unit_label_vi: "kg",
     unit_label_en: "kg",
   }));
-  mocks.tracker.mockResolvedValue(trackerProfile);
+  mocks.tracker.mockRejectedValue(Object.assign(new Error("not_found"), { status: 404 }));
 });
 afterEach(() => {
   cleanup();
@@ -251,37 +265,32 @@ it("lists canonical Farms with search and status without fetching tracker data",
   expect(mocks.tracker).not.toHaveBeenCalled();
 });
 
-it("keeps Farm shared fields and version in its own editor", async () => {
-  mocks.save.mockResolvedValue({ ...farm, version: 3 });
-  view(<FarmEditor farmId="farm-1" />);
+it("saves only the changed Farm information fields at the current version", async () => {
+  mocks.save.mockResolvedValue({ ...farm, name_vi: "Nông trại Mới", version: 3 });
+  viewFarmInformation();
   expect(await screen.findByDisplayValue("Nông trại Xanh")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Lưu thay đổi" })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Tên trang trại *"), {
     target: { value: "Nông trại Mới" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({
-        name_vi: "Nông trại Mới",
-        version: 2,
-        photo_ids: [],
-      }),
-    ),
-  );
-  expect(mocks.replace).toHaveBeenCalledWith("/farms/farm-1");
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith("farm-1", {
+    name_vi: "Nông trại Mới",
+    version: 2,
+  });
+  expect(screen.getByRole("heading", { name: "Nông trại Mới", level: 1 })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Lưu thay đổi" })).toBeDisabled();
+  expect(mocks.enableTracker).not.toHaveBeenCalled();
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+  expect(mocks.replace).not.toHaveBeenCalled();
+  expect(mocks.refresh).not.toHaveBeenCalled();
 });
 
 it("keeps Farm edits and temporary photos when the Admin language changes", async () => {
   const temp = { id: "temp-locale", url: "/temp.webp", width: 100, height: 100, variants: [] };
   mocks.upload.mockResolvedValue(temp);
   mocks.deleteImage.mockResolvedValue(undefined);
-  view(
-    <>
-      <LanguageSwitcher />
-      <FarmEditor farmId="farm-1" />
-    </>,
-  );
+  viewFarmInformation(<LanguageSwitcher />);
   fireEvent.change(await screen.findByDisplayValue("Nông trại Xanh"), {
     target: { value: "Nông trại đang sửa" },
   });
@@ -296,9 +305,9 @@ it("keeps Farm edits and temporary photos when the Admin language changes", asyn
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
 
-it("groups name, location, and description by locale in the Farm editor", async () => {
-  mocks.save.mockResolvedValue({ ...farm, version: 3 });
-  view(<FarmEditor farmId="farm-1" />);
+it("groups name, location, and description by locale in Farm Information", async () => {
+  mocks.save.mockResolvedValue({ ...farm, location_en: "Da Lat City", version: 3 });
+  viewFarmInformation();
   expect(await screen.findByDisplayValue("Nông trại Xanh")).toBeVisible();
   expect(screen.getByLabelText("Địa điểm *")).toHaveValue("Đà Lạt");
   expect(screen.getByLabelText("Mô tả")).toHaveValue("Rau sạch");
@@ -309,20 +318,23 @@ it("groups name, location, and description by locale in the Farm editor", async 
   expect(screen.getByLabelText("Địa điểm *")).toHaveValue("Da Lat");
   expect(screen.getByLabelText("Mô tả")).toHaveValue("Organic greens");
   fireEvent.change(screen.getByLabelText("Địa điểm *"), { target: { value: "Da Lat City" } });
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({ location_vi: "Đà Lạt", location_en: "Da Lat City" }),
-    ),
-  );
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith("farm-1", {
+    version: 2,
+    location_en: "Da Lat City",
+  });
+  fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
+  expect(screen.getByLabelText("Địa điểm *")).toHaveValue("Đà Lạt");
 });
 
-it("opens and focuses the missing language field before saving a Farm", async () => {
-  mocks.get.mockResolvedValue({ ...farm, location_en: "" });
-  view(<FarmEditor farmId="farm-1" />);
-  expect(await screen.findByDisplayValue("Nông trại Xanh")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
+it("opens and focuses the missing language field before creating a Farm", () => {
+  view(<FarmEditor />);
+  fireEvent.change(screen.getByLabelText("Tên trang trại *"), { target: { value: farm.name_vi } });
+  fireEvent.change(screen.getByLabelText("Địa điểm *"), { target: { value: farm.location_vi } });
+  fireEvent.click(screen.getByRole("tab", { name: /English/ }));
+  fireEvent.change(screen.getByLabelText("Tên trang trại *"), { target: { value: farm.name_en } });
+  fireEvent.click(screen.getByRole("tab", { name: /Tiếng Việt/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Tạo trang trại" }));
   expect(screen.getByRole("alert")).toHaveTextContent("Nhập tên và địa điểm ở cả hai ngôn ngữ.");
   expect(screen.getByRole("tab", { name: /English/ })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByLabelText("Địa điểm *")).toHaveFocus();
@@ -331,12 +343,17 @@ it("opens and focuses the missing language field before saving a Farm", async ()
 
 it.each(["vi", "en"] as const)(
   "focuses the missing %s Farm name through the shared Mantine fields",
-  async (language) => {
-    mocks.get.mockResolvedValue({ ...farm, [`name_${language}`]: "" });
-    view(<FarmEditor farmId="farm-1" />);
-    await screen.findByRole("button", { name: "Lưu thay đổi" });
-    fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
+  (language) => {
+    view(<FarmEditor />);
+    fireEvent.change(screen.getByLabelText("Tên trang trại *"), {
+      target: { value: language === "vi" ? "" : farm.name_vi },
+    });
+    fireEvent.change(screen.getByLabelText("Địa điểm *"), { target: { value: farm.location_vi } });
+    fireEvent.click(screen.getByRole("button", { name: "Tạo trang trại" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Nhập tên và địa điểm ở cả hai ngôn ngữ.");
+    expect(
+      screen.getByRole("tab", { name: language === "vi" ? /Tiếng Việt/ : /English/ }),
+    ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByLabelText("Tên trang trại *")).toHaveFocus();
     expect(mocks.save).not.toHaveBeenCalled();
   },
@@ -345,16 +362,21 @@ it.each(["vi", "en"] as const)(
 it("preserves an existing cover image when the older Farm has no gallery rows", async () => {
   const cover = { id: "cover-1", url: "/cover.webp", width: 100, height: 100, variants: [] };
   mocks.get.mockResolvedValue({ ...farm, image: cover, photos: [] });
-  mocks.save.mockResolvedValue({ ...farm, image: cover, photos: [cover], version: 3 });
-  view(<FarmEditor farmId="farm-1" />);
-  expect(await screen.findByDisplayValue("Nông trại Xanh")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({ photo_ids: ["cover-1"] }),
-    ),
-  );
+  mocks.save.mockResolvedValue({
+    ...farm,
+    name_vi: "Tên mới",
+    image: cover,
+    photos: [],
+    version: 3,
+  });
+  viewFarmInformation();
+  fireEvent.change(await screen.findByDisplayValue(farm.name_vi), { target: { value: "Tên mới" } });
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, { version: 2, name_vi: "Tên mới" });
+  const photo = screen.getByRole("button", { name: "Chọn ảnh số 1" });
+  expect(photo).toHaveAccessibleDescription("Ảnh đại diện");
+  expect(within(photo).getByRole("img")).toHaveAttribute("src", "/cover.webp");
+  expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
 
 it("reorders Farm photos and sets the cover using the compact image picker", async () => {
@@ -366,28 +388,30 @@ it("reorders Farm photos and sets the cover using the compact image picker", asy
     variants: [],
   }));
   mocks.get.mockResolvedValue({ ...farm, image: photos[0], photos });
-  mocks.save.mockResolvedValue({ ...farm, image: photos[2], photos, version: 3 });
-  view(<FarmEditor farmId="farm-1" />);
+  mocks.save.mockResolvedValue({
+    ...farm,
+    image: photos[2],
+    photos: [photos[2], photos[0], photos[1]],
+    version: 3,
+  });
+  viewFarmInformation();
   expect(await screen.findByDisplayValue("Nông trại Xanh")).toBeVisible();
 
   fireEvent.click(screen.getByRole("button", { name: "Chọn ảnh số 3" }));
   fireEvent.click(screen.getByRole("button", { name: "Đưa ảnh lên trước 3" }));
   fireEvent.click(screen.getByRole("button", { name: "Đặt làm đại diện" }));
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({ photo_ids: ["photo-3", "photo-1", "photo-2"] }),
-    ),
-  );
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    photo_ids: ["photo-3", "photo-1", "photo-2"],
+    version: 2,
+  });
 });
 
 it("promotes the next Farm photo to cover when the existing cover is removed", async () => {
   const photos = [farmPhoto("cover"), farmPhoto("next")];
   mocks.get.mockResolvedValue({ ...farm, image: photos[0], photos });
   mocks.save.mockResolvedValue({ ...farm, image: photos[1], photos: [photos[1]], version: 3 });
-  view(<FarmEditor farmId="farm-1" />);
+  viewFarmInformation();
 
   fireEvent.click(await screen.findByRole("button", { name: "Chọn ảnh số 1" }));
   fireEvent.click(screen.getByRole("button", { name: "Bỏ ảnh" }));
@@ -397,31 +421,21 @@ it("promotes the next Farm photo to cover when the existing cover is removed", a
     "/next.webp",
   );
   expect(next).toHaveAccessibleDescription("Ảnh đại diện");
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({ photo_ids: ["next"], version: 2 }),
-    ),
-  );
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, { photo_ids: ["next"], version: 2 });
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
 
 it("clears a legacy Farm cover through the photo order payload", async () => {
   mocks.get.mockResolvedValue({ ...farm, image: farmPhoto("legacy"), photos: [] });
   mocks.save.mockResolvedValue({ ...farm, version: 3 });
-  view(<FarmEditor farmId="farm-1" />);
+  viewFarmInformation();
 
   fireEvent.click(await screen.findByRole("button", { name: "Chọn ảnh số 1" }));
   fireEvent.click(screen.getByRole("button", { name: "Bỏ ảnh" }));
   expect(screen.getByText("0/12")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({ photo_ids: [], version: 2 }),
-    ),
-  );
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, { photo_ids: [], version: 2 });
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
 
@@ -430,7 +444,7 @@ it("rejects a batch beyond the remaining Farm photo capacity and disables choosi
   mocks.get.mockResolvedValue({ ...farm, photos });
   mocks.upload.mockResolvedValue(farmPhoto("last"));
   mocks.deleteImage.mockResolvedValue(undefined);
-  view(<FarmEditor farmId="farm-1" />);
+  viewFarmInformation();
   await screen.findByText("11/12");
 
   const file = photoFile("last");
@@ -448,16 +462,17 @@ it("uploads Farm photos one at a time and keeps the successful files after anoth
   let rejectFirst!: (cause: Error) => void;
   const first = photoFile("broken");
   const second = photoFile("working");
+  const uploaded = farmPhoto("working");
   mocks.upload
     .mockReturnValueOnce(
       new Promise<MediaAsset>((_, reject) => {
         rejectFirst = reject;
       }),
     )
-    .mockResolvedValueOnce(farmPhoto("working"));
-  mocks.save.mockResolvedValue({ ...farm, version: 3 });
+    .mockResolvedValueOnce(uploaded);
+  mocks.save.mockResolvedValue({ ...farm, image: uploaded, photos: [uploaded], version: 3 });
   mocks.deleteImage.mockResolvedValue(undefined);
-  const rendered = view(<FarmEditor farmId="farm-1" />);
+  const rendered = viewFarmInformation();
   await screen.findByDisplayValue("Nông trại Xanh");
   chooseFarmPhotos(first, second);
   expect(mocks.upload.mock.calls).toEqual([[first]]);
@@ -467,14 +482,12 @@ it("uploads Farm photos one at a time and keeps the successful files after anoth
   expect(mocks.upload.mock.calls).toEqual([[first], [second]]);
   expect(screen.getByRole("alert")).toBeVisible();
   expect(screen.getByRole("button", { name: "Chọn ảnh số 1" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenCalledWith(
-      "farm-1",
-      expect.objectContaining({ photo_ids: ["working"], version: 2 }),
-    ),
-  );
-  expect(mocks.replace).toHaveBeenCalledWith("/farms/farm-1");
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    photo_ids: ["working"],
+    version: 2,
+  });
+  expect(mocks.replace).not.toHaveBeenCalled();
   rendered.unmount();
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
@@ -492,19 +505,19 @@ it("cleans a temporary Farm upload when removed from the draft", async () => {
   expect(mocks.deleteImage.mock.calls).toEqual([["temporary"]]);
 });
 
-it("cleans all temporary uploads when leaving the Farm editor and preserves removed persisted images", async () => {
+it("cleans temporary uploads when leaving Farm Information and preserves removed persisted images", async () => {
   const saved = farmPhoto("persisted");
   mocks.get.mockResolvedValue({ ...farm, image: saved, photos: [saved] });
   mocks.upload
     .mockResolvedValueOnce(farmPhoto("temporary-one"))
     .mockResolvedValueOnce(farmPhoto("temporary-two"));
   mocks.deleteImage.mockResolvedValue(undefined);
-  const rendered = view(<FarmEditor farmId="farm-1" />);
+  const rendered = viewFarmInformation();
   fireEvent.click(await screen.findByRole("button", { name: "Chọn ảnh số 1" }));
   fireEvent.click(screen.getByRole("button", { name: "Bỏ ảnh" }));
   chooseFarmPhotos(photoFile("temporary-one"), photoFile("temporary-two"));
   await screen.findByText("2/12");
-  expect(screen.getByRole("link", { name: "Hủy" })).toHaveAttribute("href", "/farms/farm-1");
+  expect(screen.getByRole("button", { name: "Hoàn tác" })).toBeEnabled();
   expect(mocks.deleteImage).not.toHaveBeenCalled();
   rendered.close();
   expect(mocks.deleteImage.mock.calls).toEqual([
@@ -513,20 +526,20 @@ it("cleans all temporary uploads when leaving the Farm editor and preserves remo
   ]);
 });
 
-it("keeps a submitted Farm photo when the editor unmounts after a successful save", async () => {
+it("keeps a submitted Farm photo when Information unmounts after a successful save", async () => {
   const uploaded = farmPhoto("accepted");
   mocks.upload.mockResolvedValue(uploaded);
   mocks.save.mockResolvedValue({ ...farm, image: uploaded, photos: [uploaded], version: 3 });
-  const rendered = view(<FarmEditor farmId="farm-1" />);
+  const rendered = viewFarmInformation();
   await screen.findByDisplayValue("Nông trại Xanh");
   chooseFarmPhotos(photoFile("accepted"));
   await screen.findByText("1/12");
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/farms/farm-1"));
-  expect(mocks.save).toHaveBeenCalledWith(
-    "farm-1",
-    expect.objectContaining({ photo_ids: ["accepted"] }),
-  );
+  await saveFarmInformation();
+  expect(screen.getByRole("button", { name: "Lưu thay đổi" })).toBeDisabled();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    photo_ids: ["accepted"],
+    version: 2,
+  });
   rendered.unmount();
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
@@ -555,7 +568,7 @@ it("closes Farm photo actions after clicking outside, pressing Escape, or clicki
     variants: [],
   }));
   mocks.get.mockResolvedValue({ ...farm, image: photos[0], photos });
-  view(<FarmEditor farmId="farm-1" />);
+  viewFarmInformation();
   expect(await screen.findByDisplayValue("Nông trại Xanh")).toBeVisible();
 
   const secondPhoto = screen.getByRole("button", { name: "Chọn ảnh số 2" });
@@ -573,14 +586,14 @@ it("closes Farm photo actions after clicking outside, pressing Escape, or clicki
   expect(screen.queryByRole("button", { name: "Đưa ảnh lên trước 2" })).not.toBeInTheDocument();
 });
 
-it("opens Farm inventory by default with its stock summary and supporting tabs", async () => {
+it("opens the supplied products tab before loading Tracker on Information", async () => {
+  mocks.tracker.mockResolvedValue(trackerProfile);
   view(<FarmDetail farmId="farm-1" />);
   expect(await screen.findByRole("heading", { name: "Nông trại Xanh" })).toBeVisible();
-  expect(screen.getByRole("link", { name: "Sửa thông tin" })).toHaveAttribute(
-    "href",
-    "/farms/farm-1/edit",
-  );
+  expect(screen.queryByRole("link", { name: "Sửa thông tin" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
+  expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+  expect(screen.getByRole("menuitem", { name: "Ngừng hoạt động" })).toBeVisible();
   fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
   expect(screen.getByRole("dialog", { name: "Xóa trang trại" })).toBeVisible();
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy" }));
@@ -592,38 +605,47 @@ it("opens Farm inventory by default with its stock summary and supporting tabs",
       expect.any(AbortSignal),
     ),
   );
-  expect(screen.getByRole("tab", { name: "Sản phẩm & nguồn cung" })).toHaveAttribute(
+  const tabs = within(screen.getByRole("tablist", { name: "Chi tiết trang trại" }));
+  expect(tabs.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+    "Sản phẩm cung cấp",
+    "Thông tin",
+  ]);
+  expect(tabs.getByRole("tab", { name: "Sản phẩm cung cấp" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   expect(mocks.tracker).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("tab", { name: "Growth Tracker" }));
-  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(24);
+  fireEvent.click(tabs.getByRole("tab", { name: "Thông tin" }));
+  const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
+  await waitFor(() => expect(count).toHaveValue("24"));
   expect(mocks.get).toHaveBeenCalledTimes(1);
   expect(mocks.tracker).toHaveBeenCalledExactlyOnceWith("farm-1", expect.any(AbortSignal));
 });
 
 it("moves Farm detail tabs with arrow, Home and End keys", async () => {
   view(<FarmDetail farmId="farm-1" />);
-  const products = await screen.findByRole("tab", { name: "Sản phẩm & nguồn cung" });
+  const products = await screen.findByRole("tab", { name: "Sản phẩm cung cấp" });
   const information = screen.getByRole("tab", { name: "Thông tin" });
-  const tracker = screen.getByRole("tab", { name: "Growth Tracker" });
   expect(products).toHaveAttribute("tabindex", "0");
   fireEvent.keyDown(products, { key: "ArrowRight" });
   expect(information).toHaveFocus();
   expect(information).toHaveAttribute("aria-selected", "true");
-  fireEvent.keyDown(information, { key: "End" });
-  expect(tracker).toHaveFocus();
-  fireEvent.keyDown(tracker, { key: "Home" });
+  fireEvent.keyDown(information, { key: "Home" });
   expect(products).toHaveFocus();
+  fireEvent.keyDown(products, { key: "End" });
+  expect(information).toHaveFocus();
 });
 
 it("shows zero Growth Tracker signups without treating an existing profile as missing", async () => {
   mocks.tracker.mockResolvedValue({ ...trackerProfile, signup_count: 0 });
   view(<FarmDetail farmId="farm-1" />);
-  fireEvent.click(await screen.findByRole("tab", { name: "Growth Tracker" }));
-  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(0);
-  expect(screen.getByRole("button", { name: "Lưu Growth Tracker" })).toBeVisible();
+  fireEvent.click(await screen.findByRole("tab", { name: "Thông tin" }));
+  const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
+  await waitFor(() => expect(count).toBeEnabled());
+  expect(count).toHaveValue("0");
+  expect(screen.getByRole("checkbox", { name: "Hiển thị trên Growth Tracker" })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Lưu thay đổi" })).toBeDisabled();
+  expect(mocks.enableTracker).not.toHaveBeenCalled();
 });
 
 const liveBatch: FarmStockBatch = {
@@ -948,38 +970,44 @@ it("pages linked Farm products without loading every Product detail", async () =
   );
 });
 
-it("retains a stale Farm draft until reload, then cleans its discarded photo and uses the new version", async () => {
+it("reviews a newer Farm version after conflict and cleans the photo when the draft is undone", async () => {
   const latest = { ...farm, name_vi: "Nông trại từ máy chủ", version: 3 };
   mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
   mocks.upload.mockResolvedValue(farmPhoto("temp-1"));
   mocks.deleteImage.mockResolvedValue(undefined);
   mocks.save
     .mockRejectedValueOnce(Object.assign(new Error("version_conflict"), { status: 409 }))
-    .mockResolvedValueOnce({ ...latest, version: 4 });
-  view(<FarmEditor farmId="farm-1" />);
+    .mockResolvedValueOnce({ ...latest, description_vi: "Rau mới", version: 4 });
+  viewFarmInformation();
   fireEvent.change(await screen.findByDisplayValue("Nông trại Xanh"), {
     target: { value: "Bản nháp" },
   });
   chooseFarmPhotos(photoFile("temp-1"));
   const photo = await screen.findByRole("button", { name: "Chọn ảnh số 1" });
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  const reload = await screen.findByRole("button", { name: "Tải lại dữ liệu" });
+  await saveFarmInformation();
+  const check = await screen.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" });
   expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
   expect(photo).toBeVisible();
   expect(screen.getByRole("button", { name: "Lưu thay đổi" })).toBeDisabled();
   expect(mocks.get).toHaveBeenCalledTimes(1);
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 
-  fireEvent.click(reload);
-  await waitFor(() => expect(mocks.deleteImage).toHaveBeenCalledWith("temp-1"));
+  await act(async () => fireEvent.click(check));
+  expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
+  expect(mocks.deleteImage).not.toHaveBeenCalled();
+  const useLatest = await screen.findByRole("button", { name: "Dùng phiên bản mới nhất" });
+  await act(async () => fireEvent.click(useLatest));
+  const undo = screen.getByRole("button", { name: "Hoàn tác" });
+  await waitFor(() => expect(undo).toBeEnabled());
+  fireEvent.click(undo);
+  expect(mocks.deleteImage).toHaveBeenCalledExactlyOnceWith("temp-1", { keepalive: true });
   expect(await screen.findByDisplayValue("Nông trại từ máy chủ")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.save).toHaveBeenLastCalledWith(
-      "farm-1",
-      expect.objectContaining({ version: 3, name_vi: "Nông trại từ máy chủ", photo_ids: [] }),
-    ),
-  );
+  fireEvent.change(screen.getByLabelText("Mô tả"), { target: { value: "Rau mới" } });
+  await saveFarmInformation();
+  expect(mocks.save).toHaveBeenLastCalledWith("farm-1", {
+    version: 3,
+    description_vi: "Rau mới",
+  });
 });
 
 it("cleans an image upload that finishes after the Farm editor closes", async () => {
@@ -1053,8 +1081,12 @@ it("retries the failed Farm list read and shows a filtered empty result", async 
   expect(mocks.tracker).not.toHaveBeenCalled();
 });
 
-it("loads only Tracker on direct entry, keeps its draft across tabs and preserves the parent context", async () => {
-  search = new URLSearchParams("search=xanh&is_active=true&page=2&view=tracker&tab=tracker");
+it("opens Information from the old Tracker query and keeps the draft and browsing context across tabs", async () => {
+  mocks.tracker.mockResolvedValue(trackerProfile);
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct], 3, 41));
+  search = new URLSearchParams(
+    "search=xanh&is_active=true&page=2&supply_search=rau&supply_status=all&supply_page=3&view=tracker&tab=tracker",
+  );
   view(<FarmBreadcrumbScope />);
   const breadcrumb = within(screen.getByRole("navigation", { name: "Farm breadcrumb" }));
   expect(breadcrumb.getByText("Chi tiết trang trại")).toBeVisible();
@@ -1064,19 +1096,70 @@ it("loads only Tracker on direct entry, keeps its draft across tabs and preserve
     "href",
     "/farms?search=xanh&is_active=true&page=2",
   );
-  expect(screen.getByRole("link", { name: "Sửa thông tin" })).toHaveAttribute(
-    "href",
-    "/farms/farm-1/edit?search=xanh&is_active=true&page=2&tab=tracker",
-  );
+  expect(screen.getByRole("tab", { name: "Thông tin" })).toHaveAttribute("aria-selected", "true");
   expect(mocks.linked).not.toHaveBeenCalled();
+  await waitFor(() => expect(count).toHaveValue("24"));
   fireEvent.change(count, { target: { value: "25" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Sản phẩm cung cấp" }));
+  await waitFor(() =>
+    expect(mocks.linked).toHaveBeenCalledExactlyOnceWith(
+      "farm-1",
+      { page: 3, search: "rau", supplyStatus: "all" },
+      expect.any(AbortSignal),
+    ),
+  );
   fireEvent.click(screen.getByRole("tab", { name: "Thông tin" }));
-  expect(screen.getByText("Organic greens")).toBeVisible();
-  fireEvent.click(screen.getByRole("tab", { name: "Growth Tracker" }));
-  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(25);
+  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue("25");
+  expect(screen.getByDisplayValue("Rau sạch")).toBeVisible();
+  expect(mocks.push.mock.calls).toEqual([
+    [
+      "/farms/farm-1?search=xanh&is_active=true&page=2&supply_search=rau&supply_status=all&supply_page=3",
+      { scroll: false },
+    ],
+    [
+      "/farms/farm-1?search=xanh&is_active=true&page=2&supply_search=rau&supply_status=all&supply_page=3&tab=information",
+      { scroll: false },
+    ],
+  ]);
   expect(mocks.get).toHaveBeenCalledTimes(1);
   expect(mocks.tracker).toHaveBeenCalledTimes(1);
-  expect(mocks.linked).not.toHaveBeenCalled();
+});
+
+it("corrects a late out-of-range supply page only when the Products tab is active", async () => {
+  setRoute("/farms/farm-1?search=green&supply_status=all&supply_page=3");
+  const reduced = linkedResult([linkedProduct]);
+  const pending = deferred<typeof reduced>();
+  mocks.linked.mockReturnValueOnce(pending.promise).mockResolvedValue(reduced);
+  view(<FarmDetail farmId={farm.id} />);
+  await waitFor(() =>
+    expect(mocks.linked).toHaveBeenCalledExactlyOnceWith(
+      farm.id,
+      { page: 3, search: "", supplyStatus: "all" },
+      expect.any(AbortSignal),
+    ),
+  );
+  const information = screen.getByRole("tab", { name: "Thông tin" });
+  fireEvent.click(information);
+  fireEvent.change(await screen.findByDisplayValue(farm.name_vi), {
+    target: { value: "Bản nháp" },
+  });
+
+  await act(async () => pending.resolve(reduced));
+  // The inactive panel stays mounted. Waiting for the SKU proves the delayed query settled.
+  await screen.findByText(linkedProduct.sku);
+  expect(information).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
+  expect(mocks.replace).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("tab", { name: "Sản phẩm cung cấp" }));
+  await waitFor(() =>
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
+      "/farms/farm-1?search=green&supply_status=all",
+      { scroll: false },
+    ),
+  );
+  fireEvent.click(information);
+  expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
 });
 
 it("retires the Farm name and its breadcrumb when Tracker loses access", async () => {
@@ -1084,27 +1167,40 @@ it("retires the Farm name and its breadcrumb when Tracker loses access", async (
   view(<FarmBreadcrumbScope />);
   const breadcrumb = within(screen.getByRole("navigation", { name: "Farm breadcrumb" }));
   await breadcrumb.findByText("Nông trại Xanh");
-  fireEvent.click(screen.getByRole("tab", { name: "Growth Tracker" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Thông tin" }));
   expect(await screen.findByRole("alert")).toBeVisible();
   expect(breadcrumb.queryByText("Nông trại Xanh")).not.toBeInTheDocument();
   expect(breadcrumb.getByText("Chi tiết trang trại")).toBeVisible();
-  expect(screen.queryByRole("link", { name: "Sửa thông tin" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Lưu thay đổi" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Tùy chọn khác" })).not.toBeInTheDocument();
 });
 
-it("keeps Farm deletion protection and can deactivate using the current version", async () => {
+it("keeps Farm deletion protection and confirms deactivation as a separate action", async () => {
   mocks.removeFarm.mockRejectedValue(Object.assign(new Error("farm_in_use"), { status: 409 }));
   mocks.save.mockResolvedValue({ ...farm, is_active: false, version: 3 });
   view(<FarmDetail farmId="farm-1" />);
   fireEvent.click(await screen.findByRole("button", { name: "Tùy chọn khác" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
-  const dialog = within(screen.getByRole("dialog"));
-  fireEvent.click(dialog.getByRole("button", { name: "Xóa trang trại" }));
-  expect(await dialog.findByRole("alert")).toHaveTextContent(/thay vì xóa/);
-  fireEvent.click(dialog.getByRole("button", { name: "Tắt hoạt động" }));
+  const deletion = within(screen.getByRole("dialog", { name: "Xóa trang trại" }));
+  fireEvent.click(deletion.getByRole("button", { name: "Xóa trang trại" }));
+  expect(await deletion.findByRole("alert")).toHaveTextContent(/thay vì xóa/);
+  expect(deletion.getAllByRole("button")).toHaveLength(2);
+  fireEvent.click(deletion.getByRole("button", { name: "Hủy" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Ngừng hoạt động" }));
+  const deactivation = within(screen.getByRole("dialog", { name: "Ngừng hoạt động" }));
+  expect(mocks.save).not.toHaveBeenCalled();
+  await act(async () =>
+    fireEvent.click(deactivation.getByRole("button", { name: "Ngừng hoạt động" })),
+  );
   expect(await screen.findByText("Ngừng hoạt động")).toBeVisible();
   expect(mocks.save).toHaveBeenCalledExactlyOnceWith("farm-1", { version: 2, is_active: false });
   expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
+  expect(mocks.disableTracker).not.toHaveBeenCalled();
   expect(mocks.replace).not.toHaveBeenCalled();
+  expect(mocks.refresh).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
+  expect(await screen.findByRole("menuitem", { name: "Bật hoạt động" })).toBeVisible();
 });
 
 it("opens supply through a contextual link without fetching capabilities or batches for rows", async () => {

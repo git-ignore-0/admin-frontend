@@ -1,417 +1,583 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
-import { FarmTrackerProfileEditor } from "@/components/farm-tracker-profile-editor";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
+import { FarmTrackerFields, useFarmTracker } from "@/components/farm-tracker-profile-editor";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { ToastProvider } from "@/components/toast-provider";
+import { farmAccess, farmDetailKey } from "@/lib/farm-query";
 
-const mocks = vi.hoisted(() => ({
-  farms: vi.fn(),
-  farm: vi.fn(),
-  profile: vi.fn(),
-  enable: vi.fn(),
-  update: vi.fn(),
-  disable: vi.fn(),
+const api = vi.hoisted(() => ({
+  getFarm: vi.fn(),
+  getFarmTracker: vi.fn(),
+  enableFarmTracker: vi.fn(),
+  updateFarmTracker: vi.fn(),
+  disableFarmTracker: vi.fn(),
   saveFarm: vi.fn(),
-  replace: vi.fn(),
-  refresh: vi.fn(),
 }));
-vi.mock("@/lib/farms-api", () => ({
-  listFarms: mocks.farms,
-  getFarm: mocks.farm,
-  getFarmTracker: mocks.profile,
-  enableFarmTracker: mocks.enable,
-  updateFarmTracker: mocks.update,
-  disableFarmTracker: mocks.disable,
-  saveFarm: mocks.saveFarm,
-}));
+vi.mock("@/lib/farms-api", () => api);
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh }),
+  useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-const farm = {
-  id: "farm-1",
-  name_vi: "Nông trại Xanh",
-  name_en: "Green Farm",
-  location_vi: "Đà Lạt",
-  location_en: "Da Lat",
-  description_vi: "",
-  description_en: "",
-  image: null,
-  photos: [],
-  is_active: true,
-  in_stock_product_count: 0,
-  out_of_stock_product_count: 0,
-  version: 1,
-  created_at: "",
-  updated_at: "",
-};
+const farmId = "farm-1";
 const profile = {
-  ...farm,
+  id: farmId,
   signup_count: 12,
   one_month_signup_count: 3,
   is_visible: true,
-  sort_order: 0,
   version: 4,
 };
-function view(node: React.ReactNode) {
-  return render(
-    <AdminI18nProvider initialLocale="vi">
-      <ToastProvider>{node}</ToastProvider>
-    </AdminI18nProvider>,
+const month = "Số người đăng ký 1 tháng";
+const sixMonths = "Số người đăng ký 6 tháng";
+const visibility = "Hiển thị trên Growth Tracker";
+const notFound = () => Object.assign(new Error("not_found"), { status: 404 });
+const error = (message: string, status: number) => Object.assign(new Error(message), { status });
+const save = () => screen.getByRole("button", { name: "Lưu thay đổi" });
+const check = () => screen.getByRole("button", { name: "Đồng bộ sau khi lưu trang trại" });
+const checkExternal = () => screen.getByRole("button", { name: "Đồng bộ sau thay đổi bên ngoài" });
+const changeCount = (label: string, value: string) =>
+  fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const retry = (name = "Kiểm tra lại dữ liệu") =>
+  fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name }));
+
+function Tracker({
+  enabled = true,
+  farmActive = true,
+  canAct = () => true,
+  onAccessLost = () => undefined,
+}: {
+  enabled?: boolean;
+  farmActive?: boolean;
+  canAct?: () => boolean;
+  onAccessLost?: (cause: unknown) => void;
+}) {
+  const tracker = useFarmTracker({ farmId, enabled, canAct, onAccessLost });
+  return (
+    <form
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        void tracker.save();
+      }}
+    >
+      {enabled && <FarmTrackerFields tracker={tracker} disabled={false} farmActive={farmActive} />}
+      <button type="submit" disabled={!tracker.dirty || !tracker.ready || tracker.busy}>
+        Lưu thay đổi
+      </button>
+      <button type="button" onClick={tracker.reset}>
+        Hoàn tác
+      </button>
+      <button type="button" onClick={() => void tracker.syncAfterFarmWrite()}>
+        Đồng bộ sau khi lưu trang trại
+      </button>
+      <button type="button" onClick={() => void tracker.syncAfterFarmWrite(false)}>
+        Đồng bộ sau thay đổi bên ngoài
+      </button>
+    </form>
   );
 }
+
+function tree(node: React.ReactNode, session = "original") {
+  return (
+    <AdminI18nProvider initialLocale="vi">
+      <AdminQueryProvider key={session}>{node}</AdminQueryProvider>
+    </AdminI18nProvider>
+  );
+}
+
 beforeEach(() => {
-  Object.values(mocks).forEach((mock) => mock.mockReset());
-  mocks.farms.mockResolvedValue({ data: [farm], meta: { page: 1, page_size: 20, total: 1 } });
-  mocks.farm.mockResolvedValue(farm);
-  mocks.disable.mockResolvedValue(undefined);
+  Object.values(api).forEach((mock) => mock.mockReset());
+  api.getFarmTracker.mockResolvedValue(profile);
+  api.getFarm.mockResolvedValue({ id: farmId });
 });
 afterEach(cleanup);
 
-it("enables Growth Tracker for the current Farm and stays on its tab", async () => {
-  mocks.profile.mockRejectedValue(Object.assign(new Error("not_found"), { status: 404 }));
-  mocks.enable.mockResolvedValue(profile);
-  view(<FarmTrackerProfileEditor farm={farm} />);
-
-  const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
-  expect(screen.getByText("Chưa bật Growth Tracker")).toBeVisible();
-  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
-  expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  fireEvent.change(count, { target: { value: "12" } });
-  fireEvent.click(screen.getByRole("button", { name: "Bật Growth Tracker" }));
-
-  expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeVisible();
-  expect(screen.getByLabelText("Số người đăng ký 1 tháng")).toHaveValue(3);
-  expect(mocks.enable).toHaveBeenCalledWith("farm-1", {
-    signup_count: 12,
+it("loads lazily and creates a missing profile only after an actual change", async () => {
+  api.getFarmTracker.mockRejectedValueOnce(notFound());
+  api.enableFarmTracker.mockResolvedValue({
+    ...profile,
+    signup_count: 9,
     one_month_signup_count: 0,
-    is_visible: true,
-  });
-  expect(mocks.profile).toHaveBeenCalledWith("farm-1", expect.any(AbortSignal));
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(mocks.farm).not.toHaveBeenCalled();
-  expect(mocks.farms).not.toHaveBeenCalled();
-  expect(mocks.replace).not.toHaveBeenCalled();
-  expect(mocks.refresh).not.toHaveBeenCalled();
-});
-
-it("edits counts and visibility with the current optimistic version and hydrates the response", async () => {
-  mocks.profile.mockResolvedValue(profile);
-  const updated = { ...profile, signup_count: 23, is_visible: false, version: 5 };
-  mocks.update.mockResolvedValue(updated);
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  const month = await screen.findByLabelText("Số người đăng ký 1 tháng");
-  expect(screen.getByText("Đã bật Growth Tracker")).toBeVisible();
-  expect(screen.getByText("Bắt đầu phát triển")).toBeVisible();
-  expect(screen.getByText("Cho phép hiển thị")).toBeVisible();
-  fireEvent.change(month, { target: { value: "4" } });
-  fireEvent.click(screen.getByRole("checkbox", { name: "Hiển thị trên Growth Tracker công khai" }));
-  const save = screen.getByRole("button", { name: "Lưu Growth Tracker" });
-  fireEvent.click(save);
-  expect(await screen.findByDisplayValue("23")).toBeVisible();
-  expect(screen.getByText("Chăm lo cho gia đình")).toBeVisible();
-  expect(screen.getByText("Đã ẩn")).toBeVisible();
-  expect(mocks.update).toHaveBeenCalledWith("farm-1", {
-    version: 4,
-    signup_count: 12,
-    one_month_signup_count: 4,
     is_visible: false,
   });
-  fireEvent.click(save);
-  await waitFor(() =>
-    expect(mocks.update).toHaveBeenLastCalledWith("farm-1", {
-      version: 5,
-      signup_count: 23,
-      one_month_signup_count: 3,
-      is_visible: false,
-    }),
-  );
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(mocks.replace).not.toHaveBeenCalled();
+  const rendered = render(tree(<Tracker enabled={false} />));
+  fireEvent.click(check());
+  expect(api.getFarmTracker).not.toHaveBeenCalled();
+  rendered.rerender(tree(<Tracker />));
+
+  expect(await screen.findByLabelText(sixMonths)).toHaveValue("0");
+  expect(screen.getByLabelText(month)).toHaveValue("0");
+  expect(screen.getByRole("checkbox", { name: visibility })).not.toBeChecked();
+  expect(save()).toBeDisabled();
+  expect(api.enableFarmTracker).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /bật|tắt growth tracker/i })).not.toBeInTheDocument();
+
+  changeCount(sixMonths, "9");
+  fireEvent.click(save());
+  await waitFor(() => expect(save()).toBeDisabled());
+  expect(api.enableFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, {
+    signup_count: 9,
+    one_month_signup_count: 0,
+    is_visible: false,
+  });
+  expect(api.getFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, expect.any(AbortSignal));
+  expect(api.getFarm).not.toHaveBeenCalled();
+  expect(api.saveFarm).not.toHaveBeenCalled();
 });
 
-it("keeps the draft and distinguishes inactive Farm from Tracker visibility when the locale changes", async () => {
-  mocks.profile.mockResolvedValue(profile);
-  view(
-    <>
-      <LanguageSwitcher />
-      <FarmTrackerProfileEditor farm={{ ...farm, is_active: false }} />
-    </>,
-  );
+it("patches only the changed visibility and preserves both signup counts", async () => {
+  api.updateFarmTracker.mockResolvedValue({ ...profile, is_visible: false, version: 5 });
+  render(tree(<Tracker />));
+  const checkbox = await screen.findByRole("checkbox", { name: visibility });
+  expect(save()).toBeDisabled();
+  fireEvent.click(checkbox);
+  expect(save()).toBeEnabled();
+  fireEvent.click(checkbox);
+  expect(save()).toBeDisabled();
+  fireEvent.click(checkbox);
+  fireEvent.click(save());
+  await waitFor(() => expect(checkbox).toBeEnabled());
+  expect(save()).toBeDisabled();
+  expect(checkbox).not.toBeChecked();
+  expect(screen.getByLabelText(month)).toHaveValue("3");
+  expect(screen.getByLabelText(sixMonths)).toHaveValue("12");
+  expect(api.updateFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, {
+    version: 4,
+    is_visible: false,
+  });
+  expect(api.disableFarmTracker).not.toHaveBeenCalled();
+  expect(api.saveFarm).not.toHaveBeenCalled();
+});
+
+it("keeps a Tracker draft across locale and tab changes until undo", async () => {
+  const content = (enabled: boolean) =>
+    tree(
+      <>
+        <LanguageSwitcher />
+        <Tracker enabled={enabled} farmActive={false} />
+      </>,
+    );
+  const rendered = render(content(true));
   expect(await screen.findByText(/Trang trại đã tắt hoạt động/)).toBeVisible();
-  expect(screen.getByText("Cho phép hiển thị")).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Số người đăng ký 6 tháng"), {
-    target: { value: "29" },
-  });
+  changeCount(sixMonths, "29");
+  rendered.rerender(content(false));
+  rendered.rerender(content(true));
   fireEvent.click(screen.getByRole("radio", { name: "EN" }));
-  expect(screen.getByLabelText("6-month signup count")).toHaveValue(29);
-  expect(screen.getByLabelText("1-month signup count")).toHaveValue(3);
+  expect(screen.getByLabelText("6-month signup count")).toHaveValue("29");
   expect(screen.getByText(/This farm is inactive/)).toBeVisible();
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(mocks.farm).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Hoàn tác" }));
+  expect(screen.getByLabelText("6-month signup count")).toHaveValue("12");
+  expect(save()).toBeDisabled();
+  expect(api.getFarmTracker).toHaveBeenCalledTimes(1);
 });
 
-it("warns about an inactive farm when a hidden profile is set to become public", async () => {
-  mocks.profile.mockResolvedValue({ ...profile, is_visible: false });
-  view(<FarmTrackerProfileEditor farm={{ ...farm, is_active: false }} />);
-
-  const visibility = await screen.findByRole("checkbox", {
-    name: "Hiển thị trên Growth Tracker công khai",
-  });
-  expect(visibility).not.toBeChecked();
+it("warns when an inactive Farm's previously hidden Tracker is set to be visible", async () => {
+  api.getFarmTracker.mockResolvedValue({ ...profile, is_visible: false });
+  render(tree(<Tracker farmActive={false} />));
+  const checkbox = await screen.findByRole("checkbox", { name: visibility });
   expect(screen.queryByText(/Trang trại đã tắt hoạt động/)).not.toBeInTheDocument();
-  fireEvent.click(visibility);
+  fireEvent.click(checkbox);
   expect(screen.getByText(/Trang trại đã tắt hoạt động/)).toBeVisible();
 });
 
-it("hides the disable dialog outside Tracker and keeps the draft when returning", async () => {
-  mocks.profile.mockResolvedValue(profile);
-  const content = (isTabActive: boolean) => (
-    <AdminI18nProvider initialLocale="vi">
-      <ToastProvider>
-        <FarmTrackerProfileEditor farm={farm} isTabActive={isTabActive} />
-      </ToastProvider>
-    </AdminI18nProvider>
-  );
-  const rendered = render(content(true));
+it.each(["abc", "12abc", "-1", "+1", "1.5", "1e2", "1 2"])(
+  "keeps the previous signup count when either field receives %j",
+  async (value) => {
+    render(tree(<Tracker />));
+    await screen.findByLabelText(month);
+    for (const [label, previous] of [
+      [month, "3"],
+      [sixMonths, "12"],
+    ]) {
+      const input = screen.getByLabelText<HTMLInputElement>(label);
+      changeCount(label, value);
+      expect(input.value).toBe(previous);
+      expect(save()).toBeDisabled();
+    }
+    expect(api.updateFarmTracker).not.toHaveBeenCalled();
+  },
+);
 
-  fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
-    target: { value: "29" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Tắt Growth Tracker" }));
-  expect(screen.getByRole("dialog")).toBeVisible();
-
-  rendered.rerender(content(false));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  rendered.rerender(content(true));
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy" }));
-  expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(29);
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(mocks.farm).not.toHaveBeenCalled();
-  expect(mocks.disable).not.toHaveBeenCalled();
-});
-
-it("disables the profile only after confirmation and allows enabling again in place", async () => {
-  mocks.profile.mockResolvedValue(profile);
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  const disable = await screen.findByRole("button", { name: "Tắt Growth Tracker" });
-  fireEvent.click(disable);
-  const dialog = screen.getByRole("dialog", { name: "Tắt Growth Tracker" });
-  expect(
-    within(dialog).getByText(/Thông tin trang trại và sản phẩm vẫn được giữ lại/),
-  ).toBeVisible();
-  expect(mocks.disable).not.toHaveBeenCalled();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Hủy" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  fireEvent.click(disable);
-  fireEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "Tắt Growth Tracker" }),
-  );
-  expect(await screen.findByRole("button", { name: "Bật Growth Tracker" })).toBeVisible();
-  expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(0);
-  expect(mocks.disable).toHaveBeenCalledWith("farm-1");
-  expect(mocks.disable).toHaveBeenCalledTimes(1);
-  expect(mocks.saveFarm).not.toHaveBeenCalled();
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(mocks.replace).not.toHaveBeenCalled();
-});
-
-it("requires a profile reload and a new confirmation after an interrupted disable", async () => {
-  mocks.profile.mockResolvedValue(profile);
-  mocks.disable.mockRejectedValueOnce(new Error("network_error"));
-  view(<FarmTrackerProfileEditor farm={farm} />);
-
-  const label = "Tắt Growth Tracker";
-  fireEvent.click(await screen.findByRole("button", { name: label }));
-  fireEvent.click(
-    within(screen.getByRole("dialog", { name: label })).getByRole("button", { name: label }),
-  );
-
-  const recovery = await screen.findByRole("alert");
-  expect(screen.getByText("Đã bật Growth Tracker")).toBeVisible();
-  expect(screen.getByRole("button", { name: label })).toBeDisabled();
-  expect(mocks.disable).toHaveBeenCalledExactlyOnceWith("farm-1");
-
-  fireEvent.click(within(recovery).getByRole("button", { name: "Tải lại dữ liệu" }));
-  const disable = await screen.findByRole("button", { name: label });
-  expect(disable).toBeEnabled();
-  expect(mocks.disable).toHaveBeenCalledTimes(1);
-  fireEvent.click(disable);
-  expect(mocks.disable).toHaveBeenCalledTimes(1);
-  fireEvent.click(
-    within(screen.getByRole("dialog", { name: label })).getByRole("button", { name: label }),
-  );
-
-  expect(await screen.findByRole("button", { name: "Bật Growth Tracker" })).toBeVisible();
-  expect(mocks.disable.mock.calls).toEqual([["farm-1"], ["farm-1"]]);
-  expect(mocks.profile).toHaveBeenCalledTimes(2);
-  expect(mocks.farm).not.toHaveBeenCalled();
-  expect(mocks.saveFarm).not.toHaveBeenCalled();
-});
-
-it.each(["", "-1", "1.5", "1e2", "4294967296"])(
+it.each(["", "4294967296"])(
   "rejects an invalid signup count (%j) in either field before sending a request",
   async (value) => {
-    mocks.profile.mockResolvedValue(profile);
-    view(<FarmTrackerProfileEditor farm={farm} />);
-    const sixMonths = await screen.findByLabelText("Số người đăng ký 6 tháng");
-    const month = screen.getByLabelText("Số người đăng ký 1 tháng");
-    const save = screen.getByRole("button", { name: "Lưu Growth Tracker" });
-
-    for (const field of [sixMonths, month]) {
-      fireEvent.change(field, { target: { value } });
-      fireEvent.click(save);
-      expect(field).toHaveAttribute("aria-invalid", "true");
-      expect(field).toHaveAccessibleDescription(
+    render(tree(<Tracker />));
+    await screen.findByLabelText(month);
+    for (const label of [month, sixMonths]) {
+      changeCount(label, value);
+      expect(screen.getByLabelText(label)).toHaveAccessibleDescription(
         value
           ? "Số đăng ký phải là số nguyên từ 0 đến 4.294.967.295."
           : "Vui lòng nhập số đăng ký.",
       );
-      expect(mocks.update).not.toHaveBeenCalled();
-      fireEvent.change(field, { target: { value: "0" } });
-      expect(field).not.toHaveAttribute("aria-invalid", "true");
+      expect(save()).toBeDisabled();
+      fireEvent.submit(save().closest("form")!);
+      expect(api.updateFarmTracker).not.toHaveBeenCalled();
+      changeCount(label, "0");
+      expect(screen.getByLabelText(label)).not.toHaveAttribute("aria-invalid", "true");
     }
   },
 );
 
 it("submits zero and the maximum supported signup count as numbers", async () => {
-  mocks.profile.mockResolvedValue(profile);
-  mocks.update.mockResolvedValue({ ...profile, version: 5 });
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
-    target: { value: "4294967295" },
+  api.updateFarmTracker.mockResolvedValue({
+    ...profile,
+    signup_count: 4_294_967_295,
+    one_month_signup_count: 0,
+    version: 5,
   });
-  fireEvent.change(screen.getByLabelText("Số người đăng ký 1 tháng"), { target: { value: "0" } });
-  fireEvent.click(screen.getByRole("button", { name: "Lưu Growth Tracker" }));
-
-  await waitFor(() =>
-    expect(mocks.update).toHaveBeenCalledWith("farm-1", {
-      signup_count: 4_294_967_295,
-      one_month_signup_count: 0,
-      version: 4,
-      is_visible: true,
-    }),
-  );
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(sixMonths, "4294967295");
+  changeCount(month, "0");
+  fireEvent.click(save());
+  await waitFor(() => expect(save()).toBeDisabled());
+  expect(api.updateFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, {
+    signup_count: 4_294_967_295,
+    one_month_signup_count: 0,
+    version: 4,
+  });
 });
 
-it("preserves the profile draft after a version conflict until the user reloads it", async () => {
-  const fresh = { ...profile, signup_count: 24, one_month_signup_count: 8, version: 5 };
-  mocks.profile.mockResolvedValueOnce(profile).mockResolvedValueOnce(fresh);
-  mocks.update
-    .mockRejectedValueOnce(Object.assign(new Error("version_conflict"), { status: 409 }))
-    .mockResolvedValueOnce({ ...fresh, version: 6 });
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  const sixMonths = await screen.findByLabelText("Số người đăng ký 6 tháng");
-  const month = screen.getByLabelText("Số người đăng ký 1 tháng");
-  const save = screen.getByRole("button", { name: "Lưu Growth Tracker" });
-  fireEvent.change(sixMonths, { target: { value: "19" } });
-  fireEvent.change(month, { target: { value: "7" } });
-  fireEvent.click(screen.getByRole("checkbox", { name: "Hiển thị trên Growth Tracker công khai" }));
-  fireEvent.click(save);
+it("accepts the Farm write's exact Tracker increment while keeping a pending Tracker edit", async () => {
+  const bumped = { ...profile, version: 5 };
+  api.getFarmTracker.mockResolvedValueOnce(profile).mockResolvedValueOnce(bumped);
+  api.updateFarmTracker.mockResolvedValue({ ...bumped, one_month_signup_count: 7, version: 6 });
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(check());
+  await waitFor(() => expect(save()).toBeEnabled());
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  fireEvent.click(save());
+  await waitFor(() => expect(save()).toBeDisabled());
+  expect(api.updateFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, {
+    version: 5,
+    one_month_signup_count: 7,
+  });
+  expect(api.getFarmTracker).toHaveBeenCalledTimes(2);
+});
 
-  const warning = await screen.findByRole("alert");
-  expect(warning).toHaveTextContent("Hồ sơ Growth Tracker đã thay đổi");
-  expect(sixMonths).toHaveValue(19);
-  expect(month).toHaveValue(7);
+it("accepts only the identical Tracker revision after an external Farm rebase", async () => {
+  api.getFarmTracker
+    .mockResolvedValueOnce(profile)
+    .mockResolvedValueOnce(profile)
+    .mockResolvedValueOnce({ ...profile, version: 5 });
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(checkExternal());
+  await waitFor(() => expect(save()).toBeEnabled());
+  fireEvent.click(checkExternal());
   expect(
-    screen.getByRole("checkbox", { name: "Hiển thị trên Growth Tracker công khai" }),
-  ).not.toBeChecked();
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(save).toBeDisabled();
-  fireEvent.click(save);
-  expect(mocks.update).toHaveBeenCalledTimes(1);
-  expect(mocks.replace).not.toHaveBeenCalled();
+    await screen.findByRole("button", { name: "Dùng dữ liệu mới và giữ chỉnh sửa" }),
+  ).toBeVisible();
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(api.updateFarmTracker).not.toHaveBeenCalled();
+});
 
-  fireEvent.click(within(warning).getByRole("button", { name: "Tải lại dữ liệu" }));
-  expect(await screen.findByDisplayValue("24")).toBeVisible();
-  expect(screen.getByLabelText("Số người đăng ký 1 tháng")).toHaveValue(8);
-  fireEvent.click(screen.getByRole("button", { name: "Lưu Growth Tracker" }));
+it.each([
+  { ...profile, version: 6 },
+  { ...profile, version: 5, signup_count: 24 },
+  { ...profile, version: 4 },
+])("requires explicit review before using a divergent Tracker snapshot (%j)", async (latest) => {
+  api.getFarmTracker.mockResolvedValueOnce(profile).mockResolvedValueOnce(latest);
+  api.updateFarmTracker.mockResolvedValue({
+    ...latest,
+    one_month_signup_count: 7,
+    version: latest.version + 1,
+  });
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(check());
+  const review = await screen.findByRole("button", { name: "Dùng dữ liệu mới và giữ chỉnh sửa" });
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(screen.getByLabelText(sixMonths)).toHaveValue("12");
+  expect(api.updateFarmTracker).not.toHaveBeenCalled();
+  fireEvent.click(review);
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(screen.getByLabelText(sixMonths)).toHaveValue(String(latest.signup_count));
+  fireEvent.click(save());
+  await waitFor(() => expect(save()).toBeDisabled());
+  expect(api.updateFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, {
+    version: latest.version,
+    one_month_signup_count: 7,
+  });
+});
+
+it("preserves the Tracker draft after a conflict and checks current data before explicit review", async () => {
+  const fresh = { ...profile, signup_count: 24, version: 5 };
+  api.getFarmTracker.mockResolvedValueOnce(profile).mockResolvedValueOnce(fresh);
+  api.updateFarmTracker
+    .mockRejectedValueOnce(error("version_conflict", 409))
+    .mockResolvedValueOnce({ ...fresh, one_month_signup_count: 7, version: 6 });
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(save());
+  await screen.findByRole("alert");
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(api.getFarmTracker).toHaveBeenCalledTimes(1);
+  retry();
+  fireEvent.click(await screen.findByRole("button", { name: "Dùng dữ liệu mới và giữ chỉnh sửa" }));
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(screen.getByLabelText(sixMonths)).toHaveValue("24");
+  fireEvent.click(save());
   await waitFor(() =>
-    expect(mocks.update).toHaveBeenLastCalledWith("farm-1", {
-      signup_count: 24,
-      one_month_signup_count: 8,
+    expect(api.updateFarmTracker).toHaveBeenLastCalledWith(farmId, {
       version: 5,
-      is_visible: true,
+      one_month_signup_count: 7,
     }),
   );
 });
 
-it("queries the profile after an enable conflict and switches from enable to edit without another POST", async () => {
-  mocks.profile
-    .mockRejectedValueOnce(Object.assign(new Error("not_found"), { status: 404 }))
-    .mockResolvedValueOnce(profile);
-  mocks.enable.mockRejectedValueOnce(
-    Object.assign(new Error("growth_tracker_already_enabled"), { status: 409 }),
-  );
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Bật Growth Tracker" }));
-  const warning = await screen.findByRole("alert");
-  fireEvent.click(within(warning).getByRole("button", { name: "Tải lại dữ liệu" }));
-  expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeEnabled();
-  expect(mocks.enable).toHaveBeenCalledTimes(1);
-  expect(mocks.profile).toHaveBeenCalledTimes(2);
-});
-
-it.each([new Error("network_error"), Object.assign(new Error("request_timeout"), { status: 408 })])(
-  "locks writes until a read verifies the result of an interrupted save (%s)",
+it.each([new Error("network_error"), error("request_timeout", 408)])(
+  "checks the exact intent of an interrupted PATCH without retrying it (%s)",
   async (cause) => {
-    mocks.profile.mockResolvedValueOnce(profile).mockResolvedValueOnce({ ...profile, version: 5 });
-    mocks.update.mockRejectedValueOnce(cause);
-    view(<FarmTrackerProfileEditor farm={farm} />);
-    const save = await screen.findByRole("button", { name: "Lưu Growth Tracker" });
-    fireEvent.click(save);
-    const error = await screen.findByRole("alert");
-    expect(save).toBeDisabled();
-    fireEvent.click(save);
-    fireEvent.click(within(error).getByRole("button", { name: "Tải lại dữ liệu" }));
-    expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeEnabled();
-    expect(mocks.update).toHaveBeenCalledTimes(1);
-    expect(mocks.profile).toHaveBeenCalledTimes(2);
+    api.getFarmTracker.mockResolvedValueOnce(profile).mockResolvedValueOnce({
+      ...profile,
+      one_month_signup_count: 7,
+      version: 5,
+    });
+    api.updateFarmTracker.mockRejectedValueOnce(cause);
+    render(tree(<Tracker />));
+    await screen.findByLabelText(month);
+    changeCount(month, "7");
+    fireEvent.click(save());
+    await screen.findByRole("alert");
+    expect(save()).toBeDisabled();
+    retry();
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(save()).toBeDisabled();
+    expect(screen.getByLabelText(month)).toHaveValue("7");
+    expect(api.updateFarmTracker).toHaveBeenCalledTimes(1);
   },
 );
+
+it.each(["conflict", "uncertain"])(
+  "requires review of other signup values found after an interrupted create (%s)",
+  async (kind) => {
+    api.getFarmTracker.mockRejectedValueOnce(notFound()).mockResolvedValueOnce(profile);
+    api.enableFarmTracker.mockRejectedValueOnce(
+      kind === "conflict"
+        ? error("growth_tracker_already_enabled", 409)
+        : new Error("network_error"),
+    );
+    render(tree(<Tracker />));
+    await screen.findByLabelText(month);
+    changeCount(month, "7");
+    fireEvent.click(save());
+    await screen.findByRole("alert");
+    retry();
+    const review = await screen.findByRole("button", { name: "Dùng dữ liệu mới và giữ chỉnh sửa" });
+    expect(save()).toBeDisabled();
+    expect(screen.getByLabelText(month)).toHaveValue("7");
+    expect(screen.getByLabelText(sixMonths)).toHaveValue("0");
+    fireEvent.click(review);
+    expect(screen.getByLabelText(sixMonths)).toHaveValue("12");
+    expect(screen.getByLabelText(month)).toHaveValue("7");
+    expect(api.enableFarmTracker).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("can confirm an interrupted create from a verified matching profile", async () => {
+  api.getFarmTracker.mockRejectedValueOnce(notFound()).mockResolvedValueOnce({
+    ...profile,
+    signup_count: 0,
+    one_month_signup_count: 7,
+    is_visible: false,
+  });
+  api.enableFarmTracker.mockRejectedValueOnce(new Error("network_error"));
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(save());
+  await screen.findByRole("alert");
+  retry();
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(api.enableFarmTracker).toHaveBeenCalledTimes(1);
+});
+
+it.each(["POST", "PATCH"])(
+  "keeps an interrupted %s blocked while verification still sees the old state",
+  async (method) => {
+    const creating = method === "POST";
+    const write = creating ? api.enableFarmTracker : api.updateFarmTracker;
+    const latest = creating
+      ? { ...profile, signup_count: 0, one_month_signup_count: 7, is_visible: false }
+      : { ...profile, one_month_signup_count: 7, version: 5 };
+    if (creating)
+      api.getFarmTracker.mockRejectedValueOnce(notFound()).mockRejectedValueOnce(notFound());
+    else api.getFarmTracker.mockResolvedValueOnce(profile).mockResolvedValueOnce(profile);
+    api.getFarmTracker.mockResolvedValueOnce(latest);
+    write.mockRejectedValueOnce(new Error("network_error"));
+    render(tree(<Tracker />));
+    await screen.findByLabelText(month);
+    changeCount(month, "7");
+    fireEvent.click(save());
+    await screen.findByRole("alert");
+    retry();
+    expect(await screen.findByText(/vẫn ở trạng thái trước khi lưu/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Dùng dữ liệu mới và giữ chỉnh sửa" }),
+    ).not.toBeInTheDocument();
+    expect(save()).toBeDisabled();
+    expect(screen.getByLabelText(month)).toHaveValue("7");
+    retry();
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(save()).toBeDisabled();
+    expect(write).toHaveBeenCalledOnce();
+    expect(api.getFarmTracker).toHaveBeenCalledTimes(3);
+  },
+);
+
+it.each([
+  new Error("network_error"),
+  { ...profile, id: "other-farm", version: 5 },
+  { ...profile, one_month_signup_count: undefined, version: 5 },
+])("locks pending Tracker edits when the follow-up read is unverified (%j)", async (result) => {
+  api.getFarmTracker.mockResolvedValueOnce(profile);
+  if (result instanceof Error) api.getFarmTracker.mockRejectedValueOnce(result);
+  else api.getFarmTracker.mockResolvedValueOnce(result);
+  api.getFarmTracker.mockResolvedValueOnce({ ...profile, version: 5 });
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(check());
+  await screen.findByRole("alert");
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  retry();
+  await waitFor(() => expect(save()).toBeEnabled());
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(api.updateFarmTracker).not.toHaveBeenCalled();
+  expect(api.getFarmTracker).toHaveBeenCalledTimes(3);
+});
+
+it("treats a malformed mutation response as uncertain and requires confirmation", async () => {
+  api.getFarmTracker.mockResolvedValueOnce(profile).mockResolvedValueOnce({
+    ...profile,
+    one_month_signup_count: 7,
+    version: 5,
+  });
+  api.updateFarmTracker.mockResolvedValueOnce({ ...profile, version: 5 });
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(save());
+  await screen.findByRole("alert");
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  retry();
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(save()).toBeDisabled();
+  expect(api.updateFarmTracker).toHaveBeenCalledTimes(1);
+});
 
 it.each([
   ["unauthenticated", 401],
   ["forbidden", 403],
   ["session_changed", 409],
 ])("retires profile data when a write returns %s", async (message, status) => {
-  mocks.profile.mockResolvedValue(profile);
-  mocks.update.mockRejectedValueOnce(Object.assign(new Error(message), { status }));
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Lưu Growth Tracker" }));
+  const onAccessLost = vi.fn();
+  const rejection = error(message, status);
+  api.updateFarmTracker.mockRejectedValueOnce(rejection);
+  render(tree(<Tracker onAccessLost={onAccessLost} />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(save());
   expect(await screen.findByRole("alert")).toBeVisible();
-  expect(screen.queryByLabelText("Số người đăng ký 6 tháng")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Tắt Growth Tracker" })).not.toBeInTheDocument();
-  expect(mocks.profile).toHaveBeenCalledTimes(1);
+  expect(screen.queryByLabelText(sixMonths)).not.toBeInTheDocument();
+  expect(onAccessLost).toHaveBeenCalledExactlyOnceWith(rejection);
 });
 
-it("shows a read retry when loading fails without starting an enable mutation", async () => {
-  mocks.profile.mockRejectedValueOnce(new Error("network_error")).mockResolvedValueOnce(profile);
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  const error = await screen.findByRole("alert");
-  expect(screen.queryByRole("button", { name: "Bật Growth Tracker" })).not.toBeInTheDocument();
-  fireEvent.click(within(error).getByRole("button", { name: "Thử lại" }));
-  expect(await screen.findByDisplayValue("12")).toBeVisible();
-  expect(mocks.profile).toHaveBeenCalledTimes(2);
-  expect(mocks.enable).not.toHaveBeenCalled();
+it("preserves the Tracker draft after a CSRF rejection", async () => {
+  const onAccessLost = vi.fn();
+  api.updateFarmTracker.mockRejectedValueOnce(error("csrf_rejected", 403));
+  render(tree(<Tracker onAccessLost={onAccessLost} />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  fireEvent.click(save());
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.getByLabelText(month)).toHaveValue("7");
+  expect(save()).toBeEnabled();
+  expect(onAccessLost).not.toHaveBeenCalled();
 });
 
-it("blocks duplicate submits while the first profile write is pending", async () => {
-  mocks.profile.mockResolvedValue(profile);
+it("shows read retry without treating an initial network error as profile absence", async () => {
+  api.getFarmTracker
+    .mockRejectedValueOnce(new Error("network_error"))
+    .mockResolvedValueOnce(profile);
+  render(tree(<Tracker />));
+  await screen.findByRole("alert");
+  expect(screen.queryByLabelText(sixMonths)).not.toBeInTheDocument();
+  expect(save()).toBeDisabled();
+  retry("Thử lại");
+  expect(await screen.findByLabelText(sixMonths)).toHaveValue("12");
+  expect(api.getFarmTracker).toHaveBeenCalledTimes(2);
+  expect(api.enableFarmTracker).not.toHaveBeenCalled();
+});
+
+it("blocks duplicate submits while a profile write is pending", async () => {
   let finish!: (value: typeof profile) => void;
-  mocks.update.mockReturnValueOnce(new Promise<typeof profile>((resolve) => (finish = resolve)));
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  const save = await screen.findByRole("button", { name: "Lưu Growth Tracker" });
-  const form = save.closest("form")!;
+  api.updateFarmTracker.mockReturnValueOnce(
+    new Promise<typeof profile>((resolve) => (finish = resolve)),
+  );
+  render(tree(<Tracker />));
+  await screen.findByLabelText(month);
+  changeCount(month, "7");
+  const form = save().closest("form")!;
   await act(async () => {
     fireEvent.submit(form);
     fireEvent.submit(form);
   });
-  expect(mocks.update).toHaveBeenCalledTimes(1);
-  expect(save).toBeDisabled();
-  await act(async () => finish(profile));
-  expect(save).toBeEnabled();
+  expect(api.updateFarmTracker).toHaveBeenCalledTimes(1);
+  expect(save()).toBeDisabled();
+  await act(async () => finish({ ...profile, one_month_signup_count: 7, version: 5 }));
+  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText(month)).toBeEnabled();
 });
+
+it.each([false, true])(
+  "guards late Tracker denial against session change (%s)",
+  async (newSession) => {
+    let reject!: (cause: unknown) => void;
+    api.updateFarmTracker.mockReturnValueOnce(
+      new Promise<void>((_resolve, fail) => (reject = fail)),
+    );
+    const onAccessLost = vi.fn();
+    let client!: ReturnType<typeof useQueryClient>;
+    function CaptureClient() {
+      client = useQueryClient();
+      return null;
+    }
+    const rendered = render(
+      tree(
+        <>
+          <CaptureClient />
+          <Tracker onAccessLost={onAccessLost} />
+        </>,
+      ),
+    );
+    await screen.findByLabelText(month);
+    changeCount(month, "7");
+    fireEvent.click(save());
+    rendered.rerender(tree(<CaptureClient />, newSession ? "new" : "original"));
+    client.setQueryData(farmDetailKey(farmId), { id: farmId });
+    const cause = error("forbidden", 403);
+    await act(async () => reject(cause));
+    expect(farmAccess(client).error).toBe(newSession ? null : cause);
+    expect(client.getQueryData(farmDetailKey(farmId))).toEqual(
+      newSession ? { id: farmId } : undefined,
+    );
+    expect(onAccessLost).not.toHaveBeenCalled();
+  },
+);

@@ -98,7 +98,6 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
           childScreens: {
             new: t.breadcrumb.newFarm,
             record: t.breadcrumb.farmDetails,
-            edit: t.breadcrumb.edit,
           },
         },
       ],
@@ -286,6 +285,9 @@ export function resolveAdminBreadcrumbs(
     if (id && extra === undefined) {
       const createLabel = id === "new" ? labels.new : undefined;
       if (action === undefined) return [root, { label: createLabel ?? labels.record }];
+      if (!createLabel && activeItem.href === "/farms" && action === "edit") {
+        return [root, { label: labels.record }];
+      }
       if (!createLabel && action === "edit" && labels.edit) {
         const href = `${activeItem.href}/${id}`;
         if (isInternalAdminHref(href)) {

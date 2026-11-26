@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
 import { createRef, type Ref } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -8,28 +9,39 @@ import {
 } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
+import { FarmDetail } from "@/components/farm-detail";
 import { FarmEditor } from "@/components/farm-editor";
 import { ToastProvider } from "@/components/toast-provider";
-import type { Farm, MediaAsset } from "@/lib/types";
+import type { Farm, MediaAsset, TrackerFarm } from "@/lib/types";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   save: vi.fn(),
+  getTracker: vi.fn(),
+  createTracker: vi.fn(),
+  updateTracker: vi.fn(),
+  deleteTracker: vi.fn(),
   upload: vi.fn(),
   deleteImage: vi.fn(),
+  push: vi.fn(),
   replace: vi.fn(),
   refresh: vi.fn(),
   search: new URLSearchParams(),
 }));
 
-vi.mock("@/lib/farms-api", () => ({
+vi.mock("@/lib/farms-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/farms-api")>()),
   getFarm: mocks.get,
   saveFarm: mocks.save,
+  getFarmTracker: mocks.getTracker,
+  enableFarmTracker: mocks.createTracker,
+  updateFarmTracker: mocks.updateTracker,
+  disableFarmTracker: mocks.deleteTracker,
   uploadFarmImage: mocks.upload,
   deleteFarmImage: mocks.deleteImage,
 }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh }),
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace, refresh: mocks.refresh }),
   useSearchParams: () => mocks.search,
 }));
 
@@ -49,6 +61,24 @@ const farm: Farm = {
   version: 2,
   created_at: "2026-01-01",
   updated_at: "2026-10-15",
+};
+const tracker: TrackerFarm = {
+  id: farm.id,
+  name_vi: farm.name_vi,
+  name_en: farm.name_en,
+  location_vi: farm.location_vi,
+  location_en: farm.location_en,
+  description_vi: farm.description_vi,
+  description_en: farm.description_en,
+  image: null,
+  photos: [],
+  signup_count: 12,
+  one_month_signup_count: 3,
+  is_visible: true,
+  sort_order: 0,
+  version: 4,
+  created_at: farm.created_at,
+  updated_at: farm.updated_at,
 };
 
 function Breadcrumbs() {
@@ -74,12 +104,12 @@ function page(farmId?: string, session = "session-a", scope?: Ref<() => void>, e
       <ToastProvider>
         <AdminBreadcrumbProvider
           key={session}
-          pathname={farmId ? `/farms/${farmId}/edit` : "/farms/new"}
+          pathname={farmId ? `/farms/${farmId}` : "/farms/new"}
           search={mocks.search.toString()}
         >
           <Breadcrumbs />
           <AdminQueryProvider ref={scope}>
-            {editorOpen && <FarmEditor farmId={farmId} />}
+            {editorOpen && (farmId ? <FarmDetail farmId={farmId} /> : <FarmEditor />)}
           </AdminQueryProvider>
         </AdminBreadcrumbProvider>
       </ToastProvider>
@@ -87,9 +117,13 @@ function page(farmId?: string, session = "session-a", scope?: Ref<() => void>, e
   );
 }
 
-function renderEditor(farmId?: string) {
-  const rendered = render(page(farmId));
-  return { close: () => rendered.rerender(page(farmId, "session-a", undefined, false)) };
+function renderEditor(farmId?: string, scope?: Ref<() => void>) {
+  if (farmId) mocks.search.set("tab", "information");
+  const rendered = render(page(farmId, "session-a", scope));
+  return {
+    show: (id: string, session = "session-a") => rendered.rerender(page(id, session, scope)),
+    close: () => rendered.rerender(page(farmId, "session-a", scope, false)),
+  };
 }
 
 const crumbs = () => within(screen.getByRole("navigation"));
@@ -104,6 +138,25 @@ const cover: MediaAsset = {
 const album: MediaAsset = { ...cover, id: "album", url: "/album.webp" };
 const otherUpload: MediaAsset = { ...cover, id: "unconfirmed", url: "/unconfirmed.webp" };
 const problem = (message: string, status?: number) => Object.assign(new Error(message), { status });
+const month = () => screen.getByLabelText<HTMLInputElement>("Số người đăng ký 1 tháng");
+const sixMonths = () => screen.getByLabelText<HTMLInputElement>("Số người đăng ký 6 tháng");
+const visibility = () => screen.getByRole("checkbox", { name: /^Hiển thị trên Growth Tracker/ });
+const saveInformation = () => screen.getByRole("button", { name: "Lưu thay đổi" });
+const change = (input: HTMLElement, value: string) =>
+  fireEvent.change(input, { target: { value } });
+const click = async (element: HTMLElement) => act(async () => fireEvent.click(element));
+
+async function informationReady() {
+  await waitFor(() => expect(month()).toBeEnabled());
+  return saveInformation();
+}
+
+async function confirmDeactivation() {
+  await click(screen.getByRole("button", { name: "Tùy chọn khác" }));
+  await click(await screen.findByRole("menuitem", { name: "Ngừng hoạt động" }));
+  const dialog = await screen.findByRole("dialog");
+  await click(within(dialog).getByRole("button", { name: "Ngừng hoạt động" }));
+}
 
 function fillNewFarm() {
   fireEvent.change(screen.getByLabelText("Tên trang trại *"), { target: { value: farm.name_vi } });
@@ -127,8 +180,383 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.search = new URLSearchParams();
   mocks.get.mockResolvedValue(farm);
+  mocks.getTracker.mockRejectedValue(problem("not_found", 404));
 });
 afterEach(cleanup);
+
+it("uses the full information panel and groups the album and Tracker in one column", async () => {
+  renderEditor(farm.id);
+  const save = await informationReady();
+  const form = save.closest("form");
+  const photos = screen.getByRole("region", { name: "Ảnh trang trại" });
+
+  expect(form).toHaveStyle({ width: "100%" });
+  expect(form?.style.maxWidth).toBe("");
+  expect(form).toContainElement(photos);
+  expect(within(photos).getByLabelText("Chọn ảnh")).toBeInTheDocument();
+  expect(photos).not.toContainElement(month());
+  expect(photos.parentElement).toContainElement(month());
+  expect(form).toContainElement(month());
+});
+
+it("saves only changed Farm information in place without creating a Tracker profile", async () => {
+  mocks.save.mockResolvedValue({ ...farm, name_vi: "Tên mới", version: 3 });
+  renderEditor(farm.id);
+
+  const save = await informationReady();
+  expect(save).toBeDisabled();
+  expect(month().value).toBe("0");
+  expect(sixMonths().value).toBe("0");
+  expect(visibility()).not.toBeChecked();
+  expect(mocks.createTracker).not.toHaveBeenCalled();
+  change(screen.getByDisplayValue(farm.name_vi), "Tên mới");
+  await click(save);
+
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, { version: 2, name_vi: "Tên mới" });
+  expect(mocks.createTracker).not.toHaveBeenCalled();
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).not.toHaveBeenCalled();
+  expect(mocks.refresh).not.toHaveBeenCalled();
+  expect(screen.getByRole("heading", { name: "Tên mới", level: 1 })).toBeVisible();
+  expect(save).toBeDisabled();
+});
+
+it("patches only visibility without deleting the Tracker profile or changing its numbers", async () => {
+  mocks.getTracker.mockResolvedValue(tracker);
+  mocks.updateTracker.mockResolvedValue({ ...tracker, is_visible: false, version: 5 });
+  renderEditor(farm.id);
+  const save = await informationReady();
+
+  await click(visibility());
+  await click(save);
+
+  expect(mocks.updateTracker).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 4,
+    is_visible: false,
+  });
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.deleteTracker).not.toHaveBeenCalled();
+  expect(month().value).toBe("3");
+  expect(sixMonths().value).toBe("12");
+  expect(visibility()).not.toBeChecked();
+  expect(save).toBeDisabled();
+});
+
+it("creates a missing Tracker only after saving a deliberate change", async () => {
+  mocks.createTracker.mockResolvedValue({
+    ...tracker,
+    signup_count: 0,
+    one_month_signup_count: 2,
+    is_visible: false,
+    version: 8,
+  });
+  renderEditor(farm.id);
+  const save = await informationReady();
+  change(month(), "2");
+
+  expect(mocks.createTracker).not.toHaveBeenCalled();
+  await click(save);
+  expect(mocks.createTracker).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    one_month_signup_count: 2,
+    signup_count: 0,
+    is_visible: false,
+  });
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(save).toBeDisabled();
+});
+
+it("saves Tracker before Farm and reads the Tracker revision after Farm succeeds", async () => {
+  const tracked = { ...tracker, one_month_signup_count: 9, version: 5 };
+  const renamed = { ...farm, name_vi: "Tên mới", version: 3 };
+  let completeTracker!: (value: TrackerFarm) => void;
+  mocks.getTracker
+    .mockResolvedValueOnce(tracker)
+    .mockResolvedValueOnce({ ...tracked, name_vi: renamed.name_vi, version: 6 });
+  mocks.updateTracker.mockReturnValueOnce(
+    new Promise<TrackerFarm>((resolve) => {
+      completeTracker = resolve;
+    }),
+  );
+  mocks.save.mockResolvedValueOnce(renamed);
+  renderEditor(farm.id);
+  const save = await informationReady();
+
+  change(month(), "9");
+  change(screen.getByDisplayValue(farm.name_vi), renamed.name_vi);
+  await click(save);
+  expect(mocks.updateTracker).toHaveBeenNthCalledWith(1, farm.id, {
+    version: 4,
+    one_month_signup_count: 9,
+  });
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.getTracker).toHaveBeenCalledTimes(1);
+
+  await act(async () => completeTracker(tracked));
+  await waitFor(() => expect(save).toBeDisabled());
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 2,
+    name_vi: renamed.name_vi,
+  });
+  expect(mocks.getTracker).toHaveBeenCalledTimes(2);
+  expect(mocks.getTracker.mock.calls[1]?.[0]).toBe(farm.id);
+  expect(mocks.getTracker.mock.invocationCallOrder[1]).toBeGreaterThan(
+    mocks.save.mock.invocationCallOrder[0],
+  );
+
+  mocks.updateTracker.mockResolvedValueOnce({
+    ...tracked,
+    name_vi: renamed.name_vi,
+    signup_count: 15,
+    version: 7,
+  });
+  change(sixMonths(), "15");
+  await click(saveInformation());
+  expect(mocks.updateTracker).toHaveBeenNthCalledWith(2, farm.id, {
+    version: 6,
+    signup_count: 15,
+  });
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(saveInformation()).toBeDisabled();
+});
+
+it("preserves a successful Tracker write while the rejected Farm draft is corrected", async () => {
+  const tracked = { ...tracker, one_month_signup_count: 9, version: 5 };
+  const renamed = { ...farm, name_vi: "Tên đã sửa", version: 3 };
+  mocks.getTracker
+    .mockResolvedValueOnce(tracker)
+    .mockResolvedValueOnce({ ...tracked, name_vi: renamed.name_vi, version: 6 });
+  mocks.updateTracker.mockResolvedValueOnce(tracked);
+  mocks.save.mockRejectedValueOnce(problem("validation_error", 400)).mockResolvedValueOnce(renamed);
+  renderEditor(farm.id);
+  const save = await informationReady();
+
+  change(month(), "9");
+  change(screen.getByDisplayValue(farm.name_vi), "Tên bị từ chối");
+  await click(save);
+
+  expect(screen.getByRole("alert")).toBeVisible();
+  expect(screen.getByDisplayValue("Tên bị từ chối")).toBeVisible();
+  expect(month().value).toBe("9");
+  expect(mocks.updateTracker).toHaveBeenCalledTimes(1);
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+
+  change(screen.getByDisplayValue("Tên bị từ chối"), renamed.name_vi);
+  await click(saveInformation());
+  expect(mocks.updateTracker).toHaveBeenCalledTimes(1);
+  expect(mocks.save).toHaveBeenNthCalledWith(2, farm.id, {
+    version: 2,
+    name_vi: renamed.name_vi,
+  });
+  expect(saveInformation()).toBeDisabled();
+});
+
+it("stops both-dirty save when the Tracker write is uncertain", async () => {
+  mocks.getTracker.mockResolvedValueOnce(tracker);
+  mocks.updateTracker.mockRejectedValueOnce(problem("request_timeout"));
+  renderEditor(farm.id);
+  const save = await informationReady();
+
+  change(month(), "9");
+  change(screen.getByDisplayValue(farm.name_vi), "Tên nháp");
+  await click(save);
+
+  expect(screen.getByRole("alert")).toBeVisible();
+  expect(screen.getByDisplayValue("Tên nháp")).toBeVisible();
+  expect(month().value).toBe("9");
+  expect(saveInformation()).toBeDisabled();
+  await act(async () => fireEvent.submit(save.closest("form")!));
+  expect(mocks.updateTracker).toHaveBeenCalledTimes(1);
+  expect(mocks.save).not.toHaveBeenCalled();
+});
+
+it("retains the confirmed Farm change when the follow-up Tracker read fails", async () => {
+  const renamed = { ...farm, name_vi: "Tên mới", version: 3 };
+  mocks.getTracker
+    .mockResolvedValueOnce(tracker)
+    .mockRejectedValueOnce(problem("server_error", 502));
+  mocks.save.mockResolvedValueOnce(renamed);
+  renderEditor(farm.id);
+  const save = await informationReady();
+
+  change(screen.getByDisplayValue(farm.name_vi), renamed.name_vi);
+  await click(save);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Growth Tracker/);
+  expect(screen.getByRole("heading", { name: renamed.name_vi, level: 1 })).toBeVisible();
+  expect(screen.getByDisplayValue(renamed.name_vi)).toBeVisible();
+  expect(crumbs().getByText(renamed.name_vi)).toBeVisible();
+  expect(saveInformation()).toBeDisabled();
+  await act(async () => fireEvent.submit(save.closest("form")!));
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+});
+
+it("keeps the dirty form after deactivation and saves against the verified revisions", async () => {
+  const inactive = { ...farm, is_active: false, version: 3 };
+  const tracked = { ...tracker, one_month_signup_count: 9, version: 6 };
+  const renamed = { ...inactive, name_vi: "Tên nháp", version: 4 };
+  mocks.getTracker
+    .mockResolvedValueOnce(tracker)
+    .mockResolvedValueOnce({ ...tracker, version: 5 })
+    .mockResolvedValueOnce({ ...tracked, name_vi: renamed.name_vi, version: 7 });
+  mocks.updateTracker.mockResolvedValueOnce(tracked);
+  mocks.save.mockResolvedValueOnce(inactive).mockResolvedValueOnce(renamed);
+  mocks.search = new URLSearchParams(filters);
+  renderEditor(farm.id);
+  await informationReady();
+
+  change(month(), "9");
+  change(screen.getByDisplayValue(farm.name_vi), renamed.name_vi);
+  await confirmDeactivation();
+
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, { version: 2, is_active: false });
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+  expect(within(screen.getByRole("banner")).getByText("Ngừng hoạt động")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Thông tin" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByDisplayValue(renamed.name_vi)).toBeVisible();
+  expect(month().value).toBe("9");
+  expect(mocks.push).not.toHaveBeenCalled();
+  expect(mocks.replace).not.toHaveBeenCalled();
+  expect(mocks.refresh).not.toHaveBeenCalled();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+
+  await waitFor(() => expect(saveInformation()).toBeEnabled());
+  await click(saveInformation());
+  expect(mocks.updateTracker).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 5,
+    one_month_signup_count: 9,
+  });
+  expect(mocks.save).toHaveBeenNthCalledWith(2, farm.id, {
+    version: 3,
+    name_vi: renamed.name_vi,
+  });
+  expect(saveInformation()).toBeDisabled();
+});
+
+it("keeps the Tracker draft locked when deactivation discovers a concurrent Tracker change", async () => {
+  mocks.getTracker
+    .mockResolvedValueOnce(tracker)
+    .mockResolvedValueOnce({ ...tracker, signup_count: 15, version: 6 });
+  mocks.save.mockResolvedValueOnce({ ...farm, is_active: false, version: 3 });
+  renderEditor(farm.id);
+  const save = await informationReady();
+  change(month(), "9");
+  await confirmDeactivation();
+
+  expect(
+    await screen.findByRole("button", { name: "Dùng dữ liệu mới và giữ chỉnh sửa" }),
+  ).toBeVisible();
+  expect(within(screen.getByRole("banner")).getByText("Ngừng hoạt động")).toBeVisible();
+  expect(month().value).toBe("9");
+  expect(sixMonths().value).toBe("12");
+  expect(saveInformation()).toBeDisabled();
+  await act(async () => fireEvent.submit(save.closest("form")!));
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+});
+
+it("keeps both writes locked after a toggle timeout until a newer read confirms the status", async () => {
+  const inactive = { ...farm, is_active: false, version: farm.version + 1 };
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValueOnce(inactive);
+  mocks.getTracker.mockResolvedValueOnce(tracker).mockResolvedValueOnce({
+    ...tracker,
+    version: tracker.version + 1,
+  });
+  mocks.save.mockRejectedValueOnce(problem("request_timeout", 408));
+  renderEditor(farm.id);
+  await informationReady();
+  change(screen.getByDisplayValue(farm.name_vi), "Tên chưa lưu");
+  await confirmDeactivation();
+
+  const recover = () => screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" });
+  expect(await screen.findByText("Chưa thể xác nhận trang trại đã được lưu.")).toBeVisible();
+  expect(saveInformation()).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Tùy chọn khác" })).toBeDisabled();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+
+  await click(recover());
+  expect(await screen.findByText(/Máy chủ vẫn trả về phiên bản cũ/)).toBeVisible();
+  expect(saveInformation()).toBeDisabled();
+
+  await click(recover());
+  await waitFor(() => expect(saveInformation()).toBeEnabled());
+  expect(within(screen.getByRole("banner")).getByText("Ngừng hoạt động")).toBeVisible();
+  expect(screen.getByDisplayValue("Tên chưa lưu")).toBeVisible();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: farm.version,
+    is_active: false,
+  });
+  expect(mocks.get).toHaveBeenCalledTimes(3);
+  expect(mocks.getTracker).toHaveBeenCalledTimes(2);
+  expect(mocks.updateTracker).not.toHaveBeenCalled();
+});
+
+it("retains the draft for review when a background Farm read finds a concurrent edit", async () => {
+  const latest = { ...farm, name_vi: "Tên được sửa ở nơi khác", version: 3 };
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
+  renderEditor(farm.id);
+  const save = await informationReady();
+  change(screen.getByDisplayValue(farm.description_vi), "Mô tả nháp");
+
+  try {
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(latest.name_vi);
+    expect(screen.getByDisplayValue("Mô tả nháp")).toBeVisible();
+    expect(saveInformation()).toBeDisabled();
+    await act(async () => fireEvent.submit(save.closest("form")!));
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.updateTracker).not.toHaveBeenCalled();
+  } finally {
+    focusManager.setFocused(undefined);
+  }
+});
+
+it("compares normalized bilingual values and the ordered album to the baseline", async () => {
+  mocks.get.mockResolvedValue({ ...farm, image: cover, photos: [cover, album] });
+  renderEditor(farm.id);
+  const save = await informationReady();
+
+  change(screen.getByDisplayValue(farm.name_vi), ` ${farm.name_vi} `);
+  expect(save).toBeDisabled();
+  await click(screen.getByRole("tab", { name: /English/ }));
+  expect(save).toBeDisabled();
+  expect(screen.getByLabelText("Tên trang trại *")).toHaveValue(farm.name_en);
+  change(screen.getByDisplayValue(farm.name_en), "English draft");
+  expect(save).toBeEnabled();
+  change(screen.getByDisplayValue("English draft"), farm.name_en);
+  expect(save).toBeDisabled();
+  change(screen.getByDisplayValue(farm.name_en), "English draft");
+  change(month(), "4294967296");
+  expect(save).toBeDisabled();
+  change(month(), "0");
+  expect(save).toBeEnabled();
+  change(screen.getByDisplayValue("English draft"), farm.name_en);
+  expect(save).toBeDisabled();
+
+  await click(screen.getByRole("button", { name: "Chọn ảnh số 2" }));
+  await click(screen.getByRole("button", { name: /Đặt làm đại diện/ }));
+  expect(save).toBeEnabled();
+  await click(screen.getByRole("button", { name: "Hoàn tác" }));
+  expect(save).toBeDisabled();
+  expect(mocks.deleteImage).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  await click(screen.getByRole("button", { name: "Chọn ảnh số 2" }));
+  await click(screen.getByRole("button", { name: /Đặt làm đại diện/ }));
+  mocks.save.mockResolvedValueOnce({ ...farm, image: album, photos: [album, cover], version: 3 });
+  await click(save);
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 2,
+    photo_ids: [album.id, cover.id],
+  });
+  expect(save).toBeDisabled();
+});
 
 it("keeps create navigation in the filtered Farm list context", async () => {
   mocks.search = new URLSearchParams(filters);
@@ -146,55 +574,72 @@ it("keeps create navigation in the filtered Farm list context", async () => {
   expect(mocks.get).not.toHaveBeenCalled();
 
   fillNewFarm();
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Tạo trang trại" })));
+  const create = screen.getByRole("button", { name: "Tạo trang trại" });
+  const form = create.closest("form")!;
+  await click(create);
 
   expect(mocks.replace).toHaveBeenCalledWith(`/farms/farm-1?${filters}`);
+  expect(create).toBeDisabled();
+  await act(async () => fireEvent.submit(form));
+  expect(mocks.save).toHaveBeenCalledTimes(1);
 });
 
-it("keeps the saved Farm name in the edit breadcrumb while typing and returns to the same detail tab", async () => {
-  const detailQuery = `${filters}&tab=information`;
-  mocks.search = new URLSearchParams(`${detailQuery}&view=tracker`);
-  mocks.save.mockResolvedValue({ ...farm, version: 3 });
-  render(page(farm.id));
+it("keeps the persisted Farm name in the breadcrumb until inline save succeeds", async () => {
+  mocks.search = new URLSearchParams(`${filters}&view=tracker`);
+  mocks.save.mockResolvedValue({ ...farm, name_vi: "Tên nháp", version: 3 });
+  renderEditor(farm.id);
+  const save = await informationReady();
 
-  expect(await crumbs().findByRole("link", { name: farm.name_vi })).toHaveAttribute(
-    "href",
-    `/farms/farm-1?${detailQuery}`,
-  );
+  expect(crumbs().getByText(farm.name_vi)).toBeVisible();
   expect(crumbs().getByRole("link", { name: "Danh sách trang trại" })).toHaveAttribute(
     "href",
     `/farms?${filters}`,
   );
-  expect(crumbs().getByText("Chỉnh sửa")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Hủy" })).toHaveAttribute(
-    "href",
-    `/farms/farm-1?${detailQuery}`,
-  );
-  expect(screen.getAllByRole("link")).toHaveLength(3);
+  expect(crumbs().queryByText("Chỉnh sửa")).not.toBeInTheDocument();
   expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
 
-  fireEvent.change(screen.getByLabelText("Tên trang trại *"), { target: { value: "Tên nháp" } });
-  expect(crumbs().getByRole("link", { name: farm.name_vi })).toBeVisible();
+  change(screen.getByLabelText("Tên trang trại *"), "Tên nháp");
+  expect(crumbs().getByText(farm.name_vi)).toBeVisible();
   expect(crumbs().queryByText("Tên nháp")).not.toBeInTheDocument();
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" })));
-  expect(mocks.replace).toHaveBeenCalledWith(`/farms/farm-1?${detailQuery}`);
+  await click(save);
+  expect(crumbs().getByText("Tên nháp")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Thông tin" })).toHaveAttribute("aria-selected", "true");
+  expect(mocks.push).not.toHaveBeenCalled();
+  expect(mocks.replace).not.toHaveBeenCalled();
+  expect(mocks.refresh).not.toHaveBeenCalled();
   expect(mocks.get).toHaveBeenCalledTimes(1);
 });
 
 it.each([401, 403, 404])(
   "clears the Farm name and form after a %s save response",
   async (status) => {
-    mocks.save.mockRejectedValue(Object.assign(new Error("request_failed"), { status }));
-    render(page(farm.id));
+    mocks.save.mockRejectedValue(problem("request_failed", status));
+    renderEditor(farm.id);
+    const save = await informationReady();
 
-    expect(await crumbs().findByRole("link", { name: farm.name_vi })).toBeVisible();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" })));
-    expect(crumbs().getByRole("link", { name: "Chi tiết trang trại" })).toBeVisible();
-    expect(crumbs().queryByRole("link", { name: farm.name_vi })).not.toBeInTheDocument();
-    expect(screen.queryByDisplayValue(farm.name_vi)).not.toBeInTheDocument();
-    expect(screen.getByRole("alert")).toBeVisible();
+    expect(crumbs().getByText(farm.name_vi)).toBeVisible();
+    change(screen.getByDisplayValue(farm.name_vi), "Dữ liệu cần bảo vệ");
+    await click(save);
+    expect(await crumbs().findByText("Chi tiết trang trại")).toBeVisible();
+    expect(crumbs().queryByText(farm.name_vi)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Dữ liệu cần bảo vệ")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Lưu thay đổi" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toBeVisible();
   },
 );
+
+it("preserves the draft and access to Farm data when the write fails CSRF validation", async () => {
+  mocks.save.mockRejectedValueOnce(problem("csrf_rejected", 403));
+  renderEditor(farm.id);
+  const save = await informationReady();
+  change(screen.getByDisplayValue(farm.name_vi), "Tên nháp");
+  await click(save);
+
+  expect(crumbs().getByText(farm.name_vi)).toBeVisible();
+  expect(screen.getByRole("alert")).toBeVisible();
+  expect(screen.getByDisplayValue("Tên nháp")).toBeVisible();
+  expect(save).toBeEnabled();
+});
 
 it("does not apply a pending save after the protected session is replaced", async () => {
   let finishSave!: (value: Farm) => void;
@@ -207,47 +652,52 @@ it("does not apply a pending save after the protected session is replaced", asyn
       finishSave = resolve;
     }),
   );
-  const { rerender } = render(page(farm.id));
-  expect(await crumbs().findByRole("link", { name: farm.name_vi })).toBeVisible();
+  const editor = renderEditor(farm.id);
+  await informationReady();
+  expect(crumbs().getByText(farm.name_vi)).toBeVisible();
   fireEvent.change(screen.getByLabelText("Chọn ảnh"), {
     target: { files: [new File(["image"], "staged.webp", { type: "image/webp" })] },
   });
   await screen.findByText("1/12");
-  fireEvent.click(screen.getByRole("button", { name: "Lưu thay đổi" }));
+  await click(saveInformation());
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 2,
+    photo_ids: [asset.id],
+  });
 
   mocks.get.mockReturnValue(
     new Promise<Farm>((resolve) => {
       finishLoad = resolve;
     }),
   );
-  rerender(page(farm.id, "session-b"));
-  expect(crumbs().getByRole("link", { name: "Chi tiết trang trại" })).toBeVisible();
+  editor.show(farm.id, "session-b");
+  expect(crumbs().getByText("Chi tiết trang trại")).toBeVisible();
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 
   await act(async () => finishSave({ ...farm, image: asset, photos: [asset], version: 3 }));
   expect(mocks.deleteImage).not.toHaveBeenCalled();
   expect(mocks.replace).not.toHaveBeenCalled();
   expect(mocks.refresh).not.toHaveBeenCalled();
-  expect(crumbs().queryByRole("link", { name: farm.name_vi })).not.toBeInTheDocument();
+  expect(crumbs().queryByText(farm.name_vi)).not.toBeInTheDocument();
   await act(async () => finishLoad({ ...farm, name_vi: "Trang trại mới" }));
-  expect(crumbs().getByRole("link", { name: "Trang trại mới" })).toBeVisible();
+  expect(await crumbs().findByText("Trang trại mới")).toBeVisible();
 });
 
 it("hides the Farm draft and saved name if the query scope has retired before rerender", async () => {
   const scope = createRef<() => void>();
-  const { rerender } = render(page(farm.id, "session-a", scope));
+  const editor = renderEditor(farm.id, scope);
   fireEvent.change(await screen.findByDisplayValue(farm.name_vi), {
     target: { value: "Dữ liệu bản nháp cần bảo vệ" },
   });
   act(() => scope.current?.());
-  rerender(page(farm.id, "session-a", scope));
+  editor.show(farm.id);
 
   expect(screen.queryByDisplayValue("Dữ liệu bản nháp cần bảo vệ")).not.toBeInTheDocument();
-  expect(crumbs().queryByRole("link", { name: farm.name_vi })).not.toBeInTheDocument();
-  expect(crumbs().getByRole("link", { name: "Chi tiết trang trại" })).toBeVisible();
+  expect(crumbs().queryByText(farm.name_vi)).not.toBeInTheDocument();
+  expect(crumbs().getByText("Chi tiết trang trại")).toBeVisible();
 });
 
-it("ignores an old load when the editor opens a different Farm", async () => {
+it("ignores an old load when the detail opens a different Farm", async () => {
   let finishOldLoad!: (value: Farm) => void;
   mocks.get.mockReturnValueOnce(
     new Promise<Farm>((resolve) => {
@@ -257,29 +707,38 @@ it("ignores an old load when the editor opens a different Farm", async () => {
   const nextFarm = { ...farm, id: "farm-2", name_vi: "Nông trại mới" };
   mocks.get.mockResolvedValueOnce(nextFarm);
 
-  const { rerender } = render(page(farm.id));
-  expect(crumbs().getByRole("link", { name: "Chi tiết trang trại" })).toBeVisible();
+  const editor = renderEditor(farm.id);
+  expect(crumbs().getByText("Chi tiết trang trại")).toBeVisible();
   const oldSignal: AbortSignal = mocks.get.mock.calls[0][1];
-  rerender(page(nextFarm.id));
+  editor.show(nextFarm.id);
 
-  expect(await crumbs().findByRole("link", { name: nextFarm.name_vi })).toBeVisible();
+  expect(await crumbs().findByText(nextFarm.name_vi)).toBeVisible();
   expect(oldSignal.aborted).toBe(true);
   await act(async () => finishOldLoad(farm));
-  expect(crumbs().getByRole("link", { name: nextFarm.name_vi })).toBeVisible();
+  expect(crumbs().getByText(nextFarm.name_vi)).toBeVisible();
   expect(screen.queryByDisplayValue(farm.name_vi)).not.toBeInTheDocument();
 });
 
-it("keeps save locked while the successful return navigation is pending", async () => {
-  mocks.save.mockResolvedValue({ ...farm, version: 3 });
-  render(page(farm.id));
-
-  const save = await screen.findByRole("button", { name: "Lưu thay đổi" });
-  await act(async () => fireEvent.click(save));
-  expect(mocks.replace).toHaveBeenCalledWith("/farms/farm-1");
+it("prevents duplicate saves while the inline write is pending and after the form is clean", async () => {
+  let finishSave!: (value: Farm) => void;
+  mocks.save.mockReturnValueOnce(
+    new Promise<Farm>((resolve) => {
+      finishSave = resolve;
+    }),
+  );
+  renderEditor(farm.id);
+  const save = await informationReady();
+  const form = save.closest("form")!;
+  change(screen.getByDisplayValue(farm.name_vi), "Tên nháp");
+  await click(save);
   expect(save).toBeDisabled();
-
-  await act(async () => fireEvent.submit(save.closest("form")!));
+  await act(async () => fireEvent.submit(form));
   expect(mocks.save).toHaveBeenCalledTimes(1);
+  await act(async () => finishSave({ ...farm, name_vi: "Tên nháp", version: 3 }));
+  expect(saveInformation()).toBeDisabled();
+  await act(async () => fireEvent.submit(form));
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -322,13 +781,11 @@ it("retains the edit draft and protects submitted photos through stale and faile
   mocks.save.mockRejectedValueOnce(problem("request_timeout"));
   mocks.deleteImage.mockResolvedValue(undefined);
   const editor = renderEditor(farm.id);
-  fireEvent.change(await screen.findByDisplayValue(farm.name_vi), {
-    target: { value: "Bản nháp sau timeout" },
-  });
+  const save = await informationReady();
+  change(screen.getByDisplayValue(farm.name_vi), "Bản nháp sau timeout");
   await uploadPhotos(cover, album);
 
-  const save = screen.getByRole("button", { name: "Lưu thay đổi" });
-  await act(async () => fireEvent.click(save));
+  await click(save);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" })),
@@ -362,16 +819,14 @@ it("requires explicit adoption of a newer Farm before saving again and preserves
   mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
   mocks.save
     .mockRejectedValueOnce(problem("network_error"))
-    .mockResolvedValueOnce({ ...latest, version: 4 });
+    .mockResolvedValueOnce({ ...latest, version: 4, description_vi: "Mô tả tiếp theo" });
   mocks.deleteImage.mockResolvedValue(undefined);
   const editor = renderEditor(farm.id);
-  fireEvent.change(await screen.findByDisplayValue(farm.name_vi), {
-    target: { value: "Giữ nguyên bản nháp" },
-  });
+  const save = await informationReady();
+  change(screen.getByDisplayValue(farm.name_vi), "Giữ nguyên bản nháp");
   await uploadPhotos(cover, album, otherUpload);
 
-  const save = screen.getByRole("button", { name: "Lưu thay đổi" });
-  await act(async () => fireEvent.click(save));
+  await click(save);
   await act(async () =>
     fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" })),
   );
@@ -381,16 +836,22 @@ it("requires explicit adoption of a newer Farm before saving again and preserves
   expect(mocks.save).toHaveBeenCalledTimes(1);
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Dùng phiên bản mới nhất" }));
+  await click(screen.getByRole("button", { name: "Dùng phiên bản mới nhất" }));
+  expect(screen.getByDisplayValue("Giữ nguyên bản nháp")).toBeVisible();
+  expect(screen.getByText("3/12")).toBeVisible();
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  await click(screen.getByRole("button", { name: "Hoàn tác" }));
   expect(screen.getByDisplayValue(latest.name_vi)).toBeVisible();
   expect(screen.getByText("2/12")).toBeVisible();
-  expect(save).toBeEnabled();
-  await act(async () => fireEvent.click(save));
-  expect(mocks.save).toHaveBeenLastCalledWith(
-    farm.id,
-    expect.objectContaining({ version: 3, photo_ids: [cover.id, album.id] }),
-  );
-  expect(mocks.replace).toHaveBeenCalledWith("/farms/farm-1");
+  expect(saveInformation()).toBeDisabled();
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  change(screen.getByDisplayValue(farm.description_vi), "Mô tả tiếp theo");
+  await click(saveInformation());
+  expect(mocks.save).toHaveBeenLastCalledWith(farm.id, {
+    version: 3,
+    description_vi: "Mô tả tiếp theo",
+  });
+  expect(mocks.replace).not.toHaveBeenCalled();
   editor.close();
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
@@ -399,7 +860,7 @@ it("allows another attempt and cleans unneeded photos after a definite validatio
   mocks.save.mockRejectedValueOnce(problem("validation_error", 400));
   mocks.deleteImage.mockResolvedValue(undefined);
   const editor = renderEditor(farm.id);
-  const save = await screen.findByRole("button", { name: "Lưu thay đổi" });
+  const save = await informationReady();
   await uploadPhotos(cover, album);
 
   await act(async () => fireEvent.click(save));
@@ -422,9 +883,10 @@ it("does not clean a submitted image during unmount or after the pending PATCH t
   );
   mocks.deleteImage.mockResolvedValue(undefined);
   const editor = renderEditor(farm.id);
-  const save = await screen.findByRole("button", { name: "Lưu thay đổi" });
+  const save = await informationReady();
   await uploadPhotos(cover);
-  fireEvent.click(save);
+  await click(save);
+  expect(mocks.save).toHaveBeenCalledTimes(1);
   fireEvent.submit(save.closest("form")!);
 
   editor.close();

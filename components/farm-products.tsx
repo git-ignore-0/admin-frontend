@@ -80,7 +80,8 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
   const savedAttempt = retained?.state.variables as AddAttempt | undefined;
   const supplyHref = (supply: SupplyContext) =>
     farmHref(params, { id: farm.id, tab: "products", supply });
-  const lastHref = page > lastPage ? supplyHref({ ...context, page: lastPage }) : null;
+  const lastHref =
+    isTabActive && page > lastPage ? supplyHref({ ...context, page: lastPage }) : null;
 
   useEffect(() => setDraft(search), [search]);
   useEffect(() => {

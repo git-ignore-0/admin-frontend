@@ -620,11 +620,3 @@ export function updateFarmTracker(
     body: JSON.stringify(payload),
   });
 }
-
-export function disableFarmTracker(farmId: string) {
-  return api(
-    `admin/farms/${farmId}/growth-tracker`,
-    { method: "DELETE" },
-    { response: "no-content" },
-  );
-}
