@@ -11,11 +11,12 @@ import { ADMIN_SESSION_CHANGED_EVENT } from "@/lib/client-api";
 const mocks = vi.hoisted(() => ({
   search: new URLSearchParams(),
   push: vi.fn(),
+  replace: vi.fn(),
   categories: vi.fn(),
   products: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mocks.push }),
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
   useSearchParams: () => mocks.search,
   usePathname: () => "/store-catalog/products",
 }));
@@ -27,6 +28,7 @@ vi.mock("@/lib/commerce-api", () => ({
 beforeEach(() => {
   mocks.search = new URLSearchParams("page=2&search=rau&status=draft");
   mocks.push.mockReset();
+  mocks.replace.mockReset();
   mocks.categories.mockReset();
   mocks.products.mockReset();
   mocks.categories.mockResolvedValue([]);
@@ -44,6 +46,35 @@ function renderList(element = <StoreProductList />) {
 }
 
 describe("store product filters", () => {
+  it("uses a single toolbar create action and preserves the applied list context in record links", async () => {
+    mocks.search = new URLSearchParams(
+      "search=rau%20c%E1%BA%A3i&status=discontinued&category_id=category-1&csa_eligible=false&page=2&returnTo=https://example.org",
+    );
+    mocks.products.mockResolvedValue(productPage("Rau cải", 2, 70));
+    renderList();
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: /quay lại/i })).not.toBeInTheDocument();
+    const create = screen.getAllByRole("link", { name: "Thêm sản phẩm" });
+    expect(create).toHaveLength(1);
+    const detail = await screen.findByRole("link", { name: "Rau cải" });
+
+    for (const [link, pathname] of [
+      [create[0], "/store-catalog/products/new"],
+      [detail, "/store-catalog/products/product-1"],
+    ] as const) {
+      const url = new URL((link as HTMLAnchorElement).href);
+      expect(url.pathname).toBe(pathname);
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        search: "rau cải",
+        status: "discontinued",
+        category_id: "category-1",
+        csa_eligible: "false",
+        page: "2",
+      });
+    }
+  });
+
   it("loads deep-linked filters and keeps changes in the URL for Back navigation", async () => {
     renderList();
     await waitFor(() =>
@@ -98,7 +129,7 @@ describe("store product filters", () => {
     expect(scrollRegion).toHaveAttribute("tabindex", "0");
     expect(within(table).getByRole("link", { name: "Rau muống" })).toHaveAttribute(
       "href",
-      "/store-catalog/products/product-1",
+      "/store-catalog/products/product-1?search=rau&status=draft&page=2",
     );
     expect(scrollRegion).not.toContainElement(divider);
     expect(scrollRegion).not.toContainElement(pager);
@@ -129,6 +160,38 @@ describe("store product filters", () => {
     expect(mocks.push).toHaveBeenCalledWith("/store-catalog/products", { scroll: false });
   });
 
+  it("replaces only the invalid page when a filtered result set shrinks", async () => {
+    mocks.search = new URLSearchParams(
+      "search=rau&status=discontinued&category_id=category-1&csa_eligible=false&page=4",
+    );
+    mocks.products
+      .mockResolvedValueOnce({ data: [], meta: { page: 4, page_size: 30, total: 32 } })
+      .mockResolvedValueOnce(productPage("Rau muống", 2, 32));
+    const view = renderList();
+    await waitFor(() =>
+      expect(mocks.replace).toHaveBeenCalledWith(
+        "/store-catalog/products?search=rau&category_id=category-1&status=discontinued&csa_eligible=false&page=2",
+        { scroll: false },
+      ),
+    );
+    mocks.search = new URLSearchParams(
+      new URL(mocks.replace.mock.calls[0][0], "https://example.org").search,
+    );
+    view.rerender(<StoreProductList />);
+    await screen.findByRole("link", { name: "Rau muống" });
+    expect(mocks.products).toHaveBeenLastCalledWith(
+      {
+        page: 2,
+        search: "rau",
+        category_id: "category-1",
+        status: "discontinued",
+        csa_eligible: false,
+      },
+      expect.any(AbortSignal),
+    );
+    expect(mocks.replace).toHaveBeenCalledTimes(1);
+  });
+
   it("shows product dates in the shared dd/MM/yyyy admin format", async () => {
     mocks.products.mockResolvedValue({
       data: [
@@ -153,6 +216,7 @@ describe("store product filters", () => {
   });
 
   it("distinguishes loading and a completed empty result with applied filters", async () => {
+    mocks.search = new URLSearchParams("search=rau&status=draft");
     const pending = Promise.withResolvers<{
       data: [];
       meta: { page: number; page_size: number; total: number };
@@ -163,7 +227,7 @@ describe("store product filters", () => {
     expect(screen.getByRole("status")).toHaveTextContent(copy.loading);
     expect(screen.queryByText(copy.noMatchingProducts)).not.toBeInTheDocument();
     await act(async () =>
-      pending.resolve({ data: [], meta: { page: 2, page_size: 30, total: 0 } }),
+      pending.resolve({ data: [], meta: { page: 1, page_size: 30, total: 0 } }),
     );
     expect(screen.getByText(copy.noMatchingProducts)).toBeVisible();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();

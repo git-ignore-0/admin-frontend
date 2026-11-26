@@ -3,6 +3,7 @@
 import {
   Anchor,
   Box,
+  Button,
   Divider,
   Group,
   Image,
@@ -14,13 +15,14 @@ import {
   Text,
 } from "@mantine/core";
 import NextImage from "next/image";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
+import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
 import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -29,6 +31,11 @@ import { listStoreCategories, listStoreProducts } from "@/lib/commerce-api";
 import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { categoryPath } from "@/lib/store-categories";
+import {
+  readStoreProductListContext,
+  STORE_PRODUCTS_PATH,
+  storeProductHref,
+} from "@/lib/store-product-navigation";
 import type { StoreCategory, StoreProduct } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
@@ -52,14 +59,7 @@ export function StoreProductList() {
   const copy = t.storeCatalog;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const search = searchParams.get("search") ?? "";
-  const categoryId = searchParams.get("category_id") ?? "";
-  const requestedStatus = searchParams.get("status");
-  const status =
-    requestedStatus === "draft" || requestedStatus === "discontinued" || requestedStatus === "all"
-      ? requestedStatus
-      : "active";
-  const csa = searchParams.get("csa_eligible") ?? "";
+  const { search, categoryId, status, csa, page } = readStoreProductListContext(searchParams);
   const activeFilterCount = [categoryId, status !== "active", csa].filter(Boolean).length;
   const hasAppliedFilters = Boolean(search || activeFilterCount);
   const [query, setQuery] = useState(search);
@@ -67,8 +67,6 @@ export function StoreProductList() {
   const [categoryError, setCategoryError] = useState<unknown>(null);
   const [categoryRetry, setCategoryRetry] = useState(0);
   const categoryRequest = useRef<AbortController | null>(null);
-  const requestedPage = Number(searchParams.get("page"));
-  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
 
   useEffect(() => setQuery(search), [search]);
 
@@ -81,7 +79,7 @@ export function StoreProductList() {
     params.delete("is_active");
     params.delete("is_published");
     const next = params.toString();
-    router.push(`/store-catalog/products${next ? `?${next}` : ""}`, { scroll: false });
+    router.push(`${STORE_PRODUCTS_PATH}${next ? `?${next}` : ""}`, { scroll: false });
   }
 
   useEffect(() => {
@@ -135,6 +133,14 @@ export function StoreProductList() {
     requestKey: JSON.stringify([search, categoryId, status, csa]),
     onPage: (next) => navigate({ page: next > 1 ? String(next) : "" }),
   });
+  const lastPage = meta ? Math.max(1, Math.ceil(meta.total / meta.page_size)) : page;
+
+  useEffect(() => {
+    if (loading || page <= lastPage) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("page", String(lastPage));
+    router.replace(storeProductHref(params), { scroll: false });
+  }, [lastPage, loading, page, router, searchParams]);
 
   function reloadProducts() {
     if (categoryRows === null && categoryRequest.current?.signal.aborted) {
@@ -172,7 +178,7 @@ export function StoreProductList() {
   const table = (
     <Table.ScrollContainer
       type="native"
-      minWidth={740}
+      minWidth={700}
       role="region"
       aria-label={copy.products}
       aria-hidden={initialLoading || undefined}
@@ -229,8 +235,8 @@ export function StoreProductList() {
                           style={{ overflowWrap: "anywhere" }}
                         >
                           <Anchor
-                            component={Link}
-                            href={`/store-catalog/products/${item.id}`}
+                            component={AdminNavigationLink}
+                            href={storeProductHref(searchParams, item.id)}
                             fw={600}
                           >
                             {name}
@@ -241,7 +247,9 @@ export function StoreProductList() {
                         </Stack>
                       </Group>
                     </Table.Td>
-                    <Table.Td>{labels.get(item.category_id) ?? item.category_slug}</Table.Td>
+                    <Table.Td style={{ overflowWrap: "anywhere" }}>
+                      {labels.get(item.category_id) ?? item.category_slug}
+                    </Table.Td>
                     <Table.Td>
                       {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
                         BigInt(item.retail_price_vnd),
@@ -269,8 +277,17 @@ export function StoreProductList() {
 
   return (
     <Stack component="section" aria-busy={loading} gap="md" miw={0}>
+      <PageHeading title={copy.products} visuallyHiddenTitle />
       <ListToolbar
         busy={loading}
+        primaryAction={
+          <Button
+            component={AdminNavigationLink}
+            href={storeProductHref(searchParams, undefined, "new")}
+          >
+            {copy.addProduct}
+          </Button>
+        }
         search={{
           label: copy.search,
           placeholder: copy.searchProduct,

@@ -3,21 +3,32 @@ import {
   Alert,
   Anchor,
   Button,
+  Divider,
+  Grid,
   Group,
   Input,
   Paper,
   Select,
   SimpleGrid,
   Stack,
-  Text,
   TextInput,
   Title,
+  useMantineTheme,
 } from "@mantine/core";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
+import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminImagePicker } from "@/components/admin-image-picker";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
@@ -26,7 +37,11 @@ import {
   emptyBilingualContent,
 } from "@/components/bilingual-content-fields";
 import { DataState } from "@/components/nfv-controls";
-import { ProductLifecycleStatus, ProductLockReasons } from "@/components/product-lifecycle-status";
+import { PageHeading } from "@/components/page-heading";
+import {
+  ProductLifecycleStatus,
+  ProductLockDisclosure,
+} from "@/components/product-lifecycle-status";
 import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
 import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import {
@@ -62,6 +77,7 @@ import {
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
 import { categoryPath } from "@/lib/store-categories";
+import { STORE_PRODUCTS_PATH, storeProductHref } from "@/lib/store-product-navigation";
 import type {
   MediaAsset,
   MembershipProduct,
@@ -84,6 +100,11 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   const { locale, t } = useAdminI18n();
   const copy = t.storeCatalog;
   const router = useRouter();
+  const search = useSearchParams();
+  const listHref = storeProductHref(search);
+  const parentHref = storeProductHref(search, productId);
+  const routePath = storeProductHref(null, productId, productId ? "edit" : "new");
+  const theme = useMantineTheme();
   const toast = useToast();
   const isCurrent = useIsAdminQueryScopeCurrent();
   const accessRevoked = useRef(false);
@@ -109,6 +130,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   const [loadRetry, setLoadRetry] = useState(0);
   const [groupRetry, setGroupRetry] = useState(0);
   const [sku, setSku] = useState("");
+  const [savedIdentity, setSavedIdentity] = useState<Pick<StoreProduct, "sku" | "translations">>();
   const [categoryId, setCategoryId] = useState("");
   const [originalCategoryId, setOriginalCategoryId] = useState("");
   const [unitSize, setUnitSize] = useState("");
@@ -224,6 +246,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
 
   const hydrate = useCallback(
     (item: StoreProductDetail) => {
+      setSavedIdentity({ sku: item.sku, translations: item.translations });
       hydrateIdentity(item);
       hydrateCsa(item);
       setCategoryId(item.category_id);
@@ -338,6 +361,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
       }
       setStatus(latest.status);
       setCapabilities(latest.capabilities);
+      setSavedIdentity({ sku: latest.sku, translations: latest.translations });
       setOriginalCategoryId(latest.category_id);
       if (!latest.capabilities.edit_identity.allowed) hydrateIdentity(latest);
       if (!latest.capabilities.edit_csa.allowed) hydrateCsa(latest);
@@ -391,12 +415,21 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   }
 
   async function cancel() {
-    if (!canAct()) return;
+    if (savingRef.current || !canAct()) return;
+    savingRef.current = true;
     try {
-      if (pendingImage.current) await discardPendingImage();
-      if (canAct()) router.back();
+      if (pendingImage.current) {
+        setBusy(true);
+        await discardPendingImage();
+      }
+      if (canAct()) router.replace(parentHref);
     } catch (caught) {
       if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
+    } finally {
+      if (canAct()) {
+        savingRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
@@ -514,7 +547,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
       pendingImage.current = null;
       if (!canAct()) return;
       toast(copy.success);
-      router.replace(`/store-catalog/products/${item.id}`);
+      router.replace(storeProductHref(search, item.id));
     } catch (caught) {
       const problem = caught instanceof Error ? (caught as ClientApiError) : null;
       const protectedData = isProtectedDataError(caught) || problem?.status === 404;
@@ -565,313 +598,395 @@ function ProductEditorForm({ productId }: { productId?: string }) {
     }
   }
 
-  if (accessError)
+  const sessionError = isCurrent() ? accessError : t.common.sessionChanged;
+  const recordName =
+    loaded && !sessionError && !loadError && savedIdentity
+      ? savedIdentity.translations
+          .find((entry) => entry.locale === locale && entry.name.trim())
+          ?.name.trim() ||
+        savedIdentity.translations.find((entry) => entry.name.trim())?.name.trim() ||
+        savedIdentity.sku
+      : "";
+  const pageTitle = productId ? copy.edit : copy.addProduct;
+  const recordLabel = recordName || t.breadcrumb.productDetails;
+  const breadcrumbItems = useMemo(
+    () => [
+      { label: copy.products, href: listHref },
+      ...(productId ? [{ label: recordLabel, href: parentHref }] : []),
+      { label: pageTitle },
+    ],
+    [copy.products, listHref, productId, recordLabel, parentHref, pageTitle],
+  );
+  const breadcrumb = (
+    <AdminBreadcrumbForRoute
+      pathname={routePath}
+      search={search?.toString() ?? ""}
+      items={breadcrumbItems}
+    />
+  );
+  const heading = recordName ? (
+    <Title order={1} miw={0} style={{ overflowWrap: "anywhere" }}>
+      {recordName}
+    </Title>
+  ) : (
+    <PageHeading title={pageTitle} visuallyHiddenTitle />
+  );
+
+  if (sessionError || loadError || !loaded)
     return (
-      <DataState
-        kind="error"
-        title={accessError}
-        action={{ label: t.common.reloadPage, onClick: () => window.location.reload() }}
-      />
-    );
-  if (loadError)
-    return (
-      <DataState
-        kind="error"
-        title={loadError}
-        action={{ label: t.common.retry, onClick: () => setLoadRetry((value) => value + 1) }}
-      />
-    );
-  if (!loaded) return <DataState kind="loading" title={copy.loading} />;
-  const leafCategories = categories.filter(isSelectableCategory);
-  return (
-    <form noValidate onSubmit={submit} ref={formRef}>
-      <Stack gap="md" mb="lg">
-        {(recovery || uncertainCreateSku || error) && (
-          <Alert color="danger" ref={errorRef} role="alert" tabIndex={-1}>
-            {recovery ? (
-              <Stack gap="sm" align="flex-start">
-                {recovery.reason.kind === "uncertain" && <span>{copy.productSaveUncertain}</span>}
-                <span>{copy.productCapabilitiesUnverified}</span>
-                <span>{requestErrorMessage(recovery.error, t)}</span>
-                <Button variant="default" type="button" disabled={busy} onClick={retryCapabilities}>
-                  {t.common.retry}
-                </Button>
-              </Stack>
-            ) : uncertainCreateSku ? (
-              <Stack gap="sm" align="flex-start">
-                <span>{copy.productCreateUncertain.replace("{sku}", uncertainCreateSku)}</span>
-                <Anchor
-                  component={Link}
-                  href={`/store-catalog/products?status=all&search=${encodeURIComponent(uncertainCreateSku)}`}
-                  target="_blank"
-                  rel="noopener"
-                >
-                  {copy.productSearchAttemptedSku}
-                </Anchor>
-                {error && <span>{error}</span>}
-              </Stack>
-            ) : (
-              error
-            )}
-          </Alert>
+      <>
+        {breadcrumb}
+        {heading}
+        {sessionError ? (
+          <DataState
+            kind="error"
+            title={sessionError}
+            action={{ label: t.common.reloadPage, onClick: () => window.location.reload() }}
+          />
+        ) : loadError ? (
+          <DataState
+            kind="error"
+            title={loadError}
+            action={{ label: t.common.retry, onClick: () => setLoadRetry((value) => value + 1) }}
+          />
+        ) : (
+          <DataState kind="loading" title={copy.loading} />
         )}
-        <Paper component="section" p="md">
-          <Stack gap="md">
-            <Title order={2}>{copy.products}</Title>
-            <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="md">
-              <TextInput
-                label={copy.sku}
-                description={copy.skuHelp}
-                inputWrapperOrder={["label", "input", "description", "error"]}
-                required
-                disabled={busy || identityLocked}
-                maxLength={80}
-                name="sku"
-                placeholder={copy.skuPlaceholder}
-                value={sku}
-                onChange={(event) => setSku(event.target.value)}
-              />
-              <Select
-                label={copy.productCategory}
-                description={copy.categoryHelp}
-                inputWrapperOrder={["label", "input", "description", "error"]}
-                required
-                role="combobox"
-                disabled={busy}
-                data-focus-field="category_id"
-                name="category_id"
-                value={categoryId}
-                onChange={(selection) => setCategoryId(selection ?? "")}
-                data={[
-                  { value: "", label: copy.selectLeaf },
-                  ...leafCategories.map((category) => ({
-                    value: category.id,
-                    label: categoryPath(category, categories, locale),
-                  })),
-                ]}
-              />
-              <TextInput
-                label={copy.unitVi}
-                required
-                disabled={busy || identityLocked}
-                maxLength={40}
-                name="unit_label_vi"
-                placeholder={copy.unitViPlaceholder}
-                value={unitVi}
-                onChange={(event) => setUnitVi(event.target.value)}
-              />
-              <TextInput
-                label={copy.unitEn}
-                required
-                disabled={busy || identityLocked}
-                maxLength={40}
-                name="unit_label_en"
-                placeholder={copy.unitEnPlaceholder}
-                value={unitEn}
-                onChange={(event) => setUnitEn(event.target.value)}
-              />
-              <TextInput
-                label={copy.unitSize}
-                description={copy.unitSizeHelp}
-                inputWrapperOrder={["label", "input", "description", "error"]}
-                required
-                disabled={busy || identityLocked}
-                inputMode="decimal"
-                name="unit_size"
-                placeholder={copy.unitSizePlaceholder}
-                value={unitSize}
-                onChange={(event) => setUnitSize(sanitizeDecimalInput(event.target.value))}
-              />
-              <TextInput
-                label={copy.price}
-                required
-                disabled={busy}
-                inputMode="numeric"
-                name="retail_price_vnd"
-                value={price}
-                onChange={(event) => setPrice(sanitizeIntegerInput(event.target.value))}
-              />
-            </SimpleGrid>
-            {identityLocked && capabilities && (
-              <Alert color="warning">
-                <Text size="sm">{copy.productLocked}</Text>
-                <ProductLockReasons reasons={capabilities.edit_identity.reasons} />
-              </Alert>
-            )}
-          </Stack>
-        </Paper>
-        <BilingualContentFields
-          busy={busy}
-          completionLabels={{ complete: copy.complete, incomplete: copy.incomplete }}
-          defaultLocale={locale}
-          descriptionLabel={copy.shortDescription}
-          languageLabels={{ vi: t.common.vietnamese, en: t.common.english }}
-          renderAfterDescription={(language) => (
-            <Stack gap="xs" miw={0}>
-              <Input.Label labelElement="div" size="sm">
-                {copy.descriptionLabel}
-              </Input.Label>
-              <LazyRichTextEditor
-                key={language}
-                ariaLabel={copy.descriptionLabel}
-                disabled={busy}
-                imageAlt=""
-                variant="product"
-                value={longDescriptions[language]}
-                onChange={(document) =>
-                  setLongDescriptions((current) => ({
-                    ...current,
-                    [language]: document,
-                  }))
-                }
-              />
-            </Stack>
-          )}
-          nameLabel={copy.productName}
-          onChange={setContent}
-          requireNames={selling}
-          title={copy.translationSection}
-          value={content}
-        />
-        <Paper component="section" p="md">
-          <Stack gap="md">
-            <Title order={2}>{copy.saleType}</Title>
-            <Select
-              aria-label={copy.saleType}
-              role="combobox"
-              disabled={busy || csaLocked}
-              value={csa ? "yes" : "no"}
-              onChange={(selection) => {
-                const enabled = (selection ?? "") === "yes";
-                setCsa(enabled);
-                if (!enabled) {
-                  setGroupId("");
-                  setQuotaCost("");
-                }
-              }}
-              data={[
-                { value: "no", label: copy.retailOnly },
-                { value: "yes", label: copy.csaSaleOption },
-              ]}
-            />
-            {csa && (
-              <>
-                <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="md">
-                  <Select
-                    label={copy.quotaGroup}
-                    required
-                    role="combobox"
-                    disabled={busy || csaLocked || groupLoading}
-                    data-focus-field="csa_quota_group_id"
-                    name="csa_quota_group_id"
-                    value={groupId}
-                    onChange={(selection) => setGroupId(selection ?? "")}
-                    data={[
-                      { value: "", label: copy.quotaGroup },
-                      ...groups.map((group) => ({
-                        value: group.id,
-                        label:
-                          localizedCatalogTranslation(group.translations, locale)?.name ||
-                          group.name,
-                      })),
-                    ]}
-                  />
-                  <TextInput
-                    label={copy.quotaCost}
-                    required
-                    disabled={busy || csaLocked}
-                    inputMode="decimal"
-                    name="csa_quota_cost"
-                    value={quotaCost}
-                    onChange={(event) => setQuotaCost(event.target.value.replace(/,/g, "."))}
-                  />
-                </SimpleGrid>
-                {groupError && (
-                  <Alert color="danger" role="alert">
-                    <Stack gap="sm" align="flex-start">
-                      {groupError}
-                      <Button
-                        variant="default"
-                        onClick={() => setGroupRetry((value) => value + 1)}
-                        type="button"
-                      >
-                        {t.common.retry}
-                      </Button>
-                    </Stack>
-                  </Alert>
-                )}
-                {moreGroups && (
-                  <Button
-                    variant="default"
-                    disabled={groupLoading}
-                    onClick={() => setGroupPage((value) => value + 1)}
-                    type="button"
-                    w="fit-content"
-                  >
-                    {t.common.next}
-                  </Button>
-                )}
-              </>
-            )}
-            {csaLocked && capabilities && (
-              <Alert color="warning">
-                <Text size="sm">{copy.productCsaLocked}</Text>
-                <ProductLockReasons reasons={capabilities.edit_csa.reasons} />
-              </Alert>
-            )}
-          </Stack>
-        </Paper>
-        <Paper component="section" p="md">
-          <Stack gap="md">
-            <Title order={2}>{copy.image}</Title>
-            <AdminImagePicker
-              items={
-                selectedImage && previewUrl
-                  ? [{ id: "selected-image", src: previewUrl, alt: copy.imagePreviewAlt }]
-                  : image
-                    ? [
-                        {
-                          id: image.id,
-                          src: mediaUrlForWidth(image, 160),
-                          alt: copy.imagePreviewAlt,
-                        },
-                      ]
-                    : []
-              }
-              maxItems={1}
-              busy={busy}
-              fileName={selectedImage?.name}
-              help={copy.imageHelp}
-              labels={{
-                choose: copy.chooseImage,
-                replace: locale === "vi" ? "Thay ảnh" : "Replace image",
-                empty: copy.noImage,
-                remove: copy.removeImage,
-              }}
-              onChooseFiles={(files) => {
-                const file = files[0];
-                if (!isSupportedImageFile(file)) return fail(copy.imageTypeError);
-                setSelectedImage(file);
-              }}
-              onRemove={removeImage}
-            />
-          </Stack>
-        </Paper>
-        <Paper component="section" p="md">
-          <Group gap="xs" justify="space-between">
-            <Title order={2}>{copy.status}</Title>
+      </>
+    );
+
+  const leafCategories = categories.filter(isSelectableCategory);
+  const groupOptions = groups.map((group) => ({
+    value: group.id,
+    label: localizedCatalogTranslation(group.translations, locale)?.name || group.name,
+  }));
+  return (
+    <>
+      {breadcrumb}
+      <form noValidate onSubmit={submit} ref={formRef}>
+        <Stack gap="md" mb="lg">
+          <Group component="header" gap="sm">
+            {heading}
             <ProductLifecycleStatus status={status} />
           </Group>
-        </Paper>
-        <Group component="footer" justify="flex-end" gap="xs">
-          <Button variant="default" disabled={busy} onClick={cancel} type="button">
-            {copy.cancel}
-          </Button>
-          <Button disabled={busy || recovery !== null} type="submit">
-            {busy ? copy.saving : copy.save}
-          </Button>
-        </Group>
-      </Stack>
-    </form>
+          {(recovery || uncertainCreateSku || error) && (
+            <Alert color="danger" ref={errorRef} role="alert" tabIndex={-1}>
+              {recovery ? (
+                <Stack gap="sm" align="flex-start">
+                  {recovery.reason.kind === "uncertain" && <span>{copy.productSaveUncertain}</span>}
+                  <span>{copy.productCapabilitiesUnverified}</span>
+                  <span>{requestErrorMessage(recovery.error, t)}</span>
+                  <Button
+                    variant="default"
+                    type="button"
+                    disabled={busy}
+                    onClick={retryCapabilities}
+                  >
+                    {t.common.retry}
+                  </Button>
+                </Stack>
+              ) : uncertainCreateSku ? (
+                <Stack gap="sm" align="flex-start">
+                  <span>{copy.productCreateUncertain.replace("{sku}", uncertainCreateSku)}</span>
+                  <Anchor
+                    component={Link}
+                    href={`${STORE_PRODUCTS_PATH}?status=all&search=${encodeURIComponent(uncertainCreateSku)}`}
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    {copy.productSearchAttemptedSku}
+                  </Anchor>
+                  {error && <span>{error}</span>}
+                </Stack>
+              ) : (
+                error
+              )}
+            </Alert>
+          )}
+          <Grid type="container" breakpoints={theme.breakpoints} gutter="md" align="flex-start">
+            <Grid.Col span={{ base: 12, md: 7 }}>
+              <Stack gap="md" miw={0}>
+                <BilingualContentFields
+                  busy={busy}
+                  completionLabels={{ complete: copy.complete, incomplete: copy.incomplete }}
+                  defaultLocale={locale}
+                  descriptionLabel={copy.shortDescription}
+                  languageLabels={{ vi: t.common.vietnamese, en: t.common.english }}
+                  renderAfterDescription={(language) => (
+                    <Stack gap="xs" miw={0}>
+                      <Input.Label labelElement="div" size="sm">
+                        {copy.descriptionLabel}
+                      </Input.Label>
+                      <LazyRichTextEditor
+                        key={language}
+                        ariaLabel={copy.descriptionLabel}
+                        disabled={busy}
+                        imageAlt=""
+                        variant="product"
+                        value={longDescriptions[language]}
+                        onChange={(document) =>
+                          setLongDescriptions((current) => ({
+                            ...current,
+                            [language]: document,
+                          }))
+                        }
+                      />
+                    </Stack>
+                  )}
+                  nameLabel={copy.productName}
+                  onChange={setContent}
+                  requireNames={selling}
+                  title={copy.productContent}
+                  value={content}
+                />
+                <Paper component="section" p="md">
+                  <Stack gap="md">
+                    <Title order={2}>{copy.salesInformation}</Title>
+                    <SimpleGrid type="container" cols={{ base: 1, "32rem": 2 }} spacing="md">
+                      <TextInput
+                        label={copy.price}
+                        required
+                        disabled={busy}
+                        inputMode="numeric"
+                        name="retail_price_vnd"
+                        value={price}
+                        onChange={(event) => setPrice(sanitizeIntegerInput(event.target.value))}
+                      />
+                      {csaLocked ? (
+                        <TextInput
+                          label={copy.saleType}
+                          value={csa ? copy.csaSaleOption : copy.retailOnly}
+                          disabled={busy}
+                          readOnly
+                        />
+                      ) : (
+                        <Select
+                          label={copy.saleType}
+                          role="combobox"
+                          disabled={busy}
+                          value={csa ? "yes" : "no"}
+                          onChange={(selection) => {
+                            const enabled = (selection ?? "") === "yes";
+                            setCsa(enabled);
+                            if (!enabled) {
+                              setGroupId("");
+                              setQuotaCost("");
+                            }
+                          }}
+                          data={[
+                            { value: "no", label: copy.retailOnly },
+                            { value: "yes", label: copy.csaSaleOption },
+                          ]}
+                        />
+                      )}
+                    </SimpleGrid>
+                    {csa && (
+                      <>
+                        <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="md">
+                          {csaLocked ? (
+                            <TextInput
+                              label={copy.quotaGroup}
+                              value={
+                                groupOptions.find((group) => group.value === groupId)?.label ?? ""
+                              }
+                              disabled={busy}
+                              readOnly
+                            />
+                          ) : (
+                            <Select
+                              label={copy.quotaGroup}
+                              required
+                              role="combobox"
+                              disabled={busy || groupLoading}
+                              data-focus-field="csa_quota_group_id"
+                              name="csa_quota_group_id"
+                              value={groupId}
+                              onChange={(selection) => setGroupId(selection ?? "")}
+                              data={[{ value: "", label: copy.quotaGroup }, ...groupOptions]}
+                            />
+                          )}
+                          <TextInput
+                            label={copy.quotaCost}
+                            required
+                            disabled={busy}
+                            readOnly={csaLocked}
+                            inputMode="decimal"
+                            name="csa_quota_cost"
+                            value={quotaCost}
+                            onChange={(event) =>
+                              setQuotaCost(event.target.value.replace(/,/g, "."))
+                            }
+                          />
+                        </SimpleGrid>
+                        {groupError && (
+                          <Alert color="danger" role="alert">
+                            <Stack gap="sm" align="flex-start">
+                              {groupError}
+                              <Button
+                                variant="default"
+                                onClick={() => setGroupRetry((value) => value + 1)}
+                                type="button"
+                              >
+                                {t.common.retry}
+                              </Button>
+                            </Stack>
+                          </Alert>
+                        )}
+                        {moreGroups && (
+                          <Button
+                            variant="default"
+                            disabled={groupLoading}
+                            onClick={() => setGroupPage((value) => value + 1)}
+                            type="button"
+                            w="fit-content"
+                          >
+                            {t.common.next}
+                          </Button>
+                        )}
+                      </>
+                    )}
+                    {csaLocked && capabilities && (
+                      <ProductLockDisclosure
+                        summary={copy.productCsaLocked}
+                        reasons={capabilities.edit_csa.reasons}
+                      />
+                    )}
+                  </Stack>
+                </Paper>
+              </Stack>
+            </Grid.Col>
+
+            <Grid.Col span={{ base: 12, md: 5 }}>
+              <Paper p="md">
+                <Stack gap="md">
+                  <Stack component="section" gap="md">
+                    <Title order={2}>{copy.basicInformation}</Title>
+                    <Select
+                      label={copy.productCategory}
+                      description={copy.categoryHelp}
+                      inputWrapperOrder={["label", "input", "description", "error"]}
+                      required
+                      role="combobox"
+                      disabled={busy}
+                      data-focus-field="category_id"
+                      name="category_id"
+                      value={categoryId}
+                      onChange={(selection) => setCategoryId(selection ?? "")}
+                      data={[
+                        { value: "", label: copy.selectLeaf },
+                        ...leafCategories.map((category) => ({
+                          value: category.id,
+                          label: categoryPath(category, categories, locale),
+                        })),
+                      ]}
+                    />
+                    <TextInput
+                      label={copy.sku}
+                      description={identityLocked ? undefined : copy.skuHelp}
+                      inputWrapperOrder={["label", "input", "description", "error"]}
+                      required
+                      disabled={busy}
+                      readOnly={identityLocked}
+                      maxLength={80}
+                      name="sku"
+                      placeholder={copy.skuPlaceholder}
+                      value={sku}
+                      onChange={(event) => setSku(event.target.value)}
+                    />
+                    <TextInput
+                      label={copy.unitSize}
+                      description={identityLocked ? undefined : copy.unitSizeHelp}
+                      inputWrapperOrder={["label", "input", "description", "error"]}
+                      required
+                      disabled={busy}
+                      readOnly={identityLocked}
+                      inputMode="decimal"
+                      name="unit_size"
+                      placeholder={copy.unitSizePlaceholder}
+                      value={unitSize}
+                      onChange={(event) => setUnitSize(sanitizeDecimalInput(event.target.value))}
+                    />
+                    <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="md">
+                      <TextInput
+                        label={copy.unitVi}
+                        required
+                        disabled={busy}
+                        readOnly={identityLocked}
+                        maxLength={40}
+                        name="unit_label_vi"
+                        placeholder={copy.unitViPlaceholder}
+                        value={unitVi}
+                        onChange={(event) => setUnitVi(event.target.value)}
+                      />
+                      <TextInput
+                        label={copy.unitEn}
+                        required
+                        disabled={busy}
+                        readOnly={identityLocked}
+                        maxLength={40}
+                        name="unit_label_en"
+                        placeholder={copy.unitEnPlaceholder}
+                        value={unitEn}
+                        onChange={(event) => setUnitEn(event.target.value)}
+                      />
+                    </SimpleGrid>
+                    {identityLocked && capabilities && (
+                      <ProductLockDisclosure
+                        summary={copy.productLocked}
+                        reasons={capabilities.edit_identity.reasons}
+                      />
+                    )}
+                  </Stack>
+                  <Divider />
+                  <Stack component="section" gap="sm">
+                    <Title order={2}>{copy.image}</Title>
+                    <AdminImagePicker
+                      items={
+                        selectedImage && previewUrl
+                          ? [{ id: "selected-image", src: previewUrl, alt: copy.imagePreviewAlt }]
+                          : image
+                            ? [
+                                {
+                                  id: image.id,
+                                  src: mediaUrlForWidth(image, 160),
+                                  alt: copy.imagePreviewAlt,
+                                },
+                              ]
+                            : []
+                      }
+                      maxItems={1}
+                      busy={busy}
+                      fileName={selectedImage?.name}
+                      help={copy.imageHelp}
+                      labels={{
+                        choose: copy.chooseImage,
+                        replace: copy.replaceImage,
+                        empty: copy.noImage,
+                        remove: copy.removeImage,
+                      }}
+                      onChooseFiles={(files) => {
+                        const file = files[0];
+                        if (!isSupportedImageFile(file)) return fail(copy.imageTypeError);
+                        setSelectedImage(file);
+                      }}
+                      onRemove={removeImage}
+                    />
+                  </Stack>
+                </Stack>
+              </Paper>
+            </Grid.Col>
+          </Grid>
+
+          <Group component="footer" justify="flex-end" gap="xs">
+            <Button variant="default" disabled={busy} onClick={cancel} type="button">
+              {copy.cancel}
+            </Button>
+            <Button loading={busy} disabled={busy || recovery !== null} type="submit">
+              {busy ? copy.saving : copy.save}
+            </Button>
+          </Group>
+        </Stack>
+      </form>
+    </>
   );
 }

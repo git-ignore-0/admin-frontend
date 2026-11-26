@@ -1,27 +1,47 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Alert, Button, Flex, Group, Image, Paper, Stack, Text, Title } from "@mantine/core";
 
-import { ProductLifecycleStatus, ProductLockReasons } from "@/components/product-lifecycle-status";
-
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Flex,
+  Group,
+  Image,
+  Menu,
+  Paper,
+  Skeleton,
+  Stack,
+  Tabs,
+  Text,
+  Title,
+  VisuallyHidden,
+} from "@mantine/core";
+import { IconDots } from "@tabler/icons-react";
 import NextImage from "next/image";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DetailPageHeading } from "@/components/detail-page-heading";
 import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
+import { PageHeading } from "@/components/page-heading";
+import {
+  ProductLifecycleStatus,
+  ProductLockDisclosure,
+} from "@/components/product-lifecycle-status";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
-import { descriptionDocument } from "@/lib/store-product-description";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { deleteStoreProduct, getStoreProduct, transitionStoreProduct } from "@/lib/commerce-api";
 import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import { formatDecimalInput } from "@/lib/numeric-input";
+import { descriptionDocument, descriptionText } from "@/lib/store-product-description";
+import { storeProductHref } from "@/lib/store-product-navigation";
 import type { StoreProductDetail as ProductDetail } from "@/lib/types";
 
 export function StoreProductDetail({ productId }: { productId: string }) {
@@ -31,13 +51,101 @@ export function StoreProductDetail({ productId }: { productId: string }) {
 type Notice =
   "statusConflict" | "productTransitionInvalid" | "productDeleteBlocked" | "productResultUncertain";
 
+function ProductContent({ item, name }: { item: ProductDetail; name: string }) {
+  const { locale, t } = useAdminI18n();
+  const copy = t.storeCatalog;
+  const contentHeadingId = useId();
+  const [selected, setSelected] = useState<"vi" | "en" | null>(null);
+  const translations = (["vi", "en"] as const).map((language) => {
+    const translation = item.translations.find((entry) => entry.locale === language);
+    const document = translation
+      ? descriptionDocument(translation.description, translation.description_document)
+      : null;
+    return {
+      language,
+      name: translation?.name?.trim(),
+      shortDescription: translation?.short_description,
+      document: document && descriptionText(document).trim() ? document : null,
+    };
+  });
+  const available = translations.filter(
+    (entry) => entry.name || entry.shortDescription?.trim() || entry.document,
+  );
+  const active =
+    selected ??
+    available.find((entry) => entry.language === locale)?.language ??
+    available[0]?.language ??
+    locale;
+
+  return (
+    <Paper component="section" aria-labelledby={contentHeadingId} p="md" withBorder>
+      <Stack gap="sm">
+        <Title id={contentHeadingId} order={2} size="h2">
+          {copy.productContent}
+        </Title>
+        <Tabs
+          value={active}
+          onChange={(value) => {
+            if (value === "vi" || value === "en") setSelected(value);
+          }}
+          keepMounted={false}
+        >
+          <Tabs.List aria-label={t.common.language}>
+            <Tabs.Tab value="vi">{t.common.vietnamese}</Tabs.Tab>
+            <Tabs.Tab value="en">{t.common.english}</Tabs.Tab>
+          </Tabs.List>
+          {translations.map(({ language, name: translatedName, shortDescription, document }) => {
+            const showName = translatedName && translatedName !== name;
+            return (
+              <Tabs.Panel
+                key={language}
+                value={language}
+                pt="sm"
+                style={{ overflowWrap: "anywhere" }}
+              >
+                <Stack gap="xs" lang={language}>
+                  {showName && (
+                    <Title order={3} size="md" fw={600}>
+                      {translatedName}
+                    </Title>
+                  )}
+                  {shortDescription?.trim() && (
+                    <Text style={{ whiteSpace: "pre-wrap" }}>{shortDescription}</Text>
+                  )}
+                  {document && (
+                    <LazyRichTextEditor
+                      readOnly
+                      variant="product"
+                      imageAlt=""
+                      ariaLabel={copy.descriptionLabel}
+                      value={document}
+                      onChange={() => undefined}
+                    />
+                  )}
+                  {!showName && !shortDescription?.trim() && !document && (
+                    <Text size="sm" c="dimmed" lang={locale}>
+                      {copy.productContentMissing}
+                    </Text>
+                  )}
+                </Stack>
+              </Tabs.Panel>
+            );
+          })}
+        </Tabs>
+      </Stack>
+    </Paper>
+  );
+}
+
 function ProductDetailContent({ productId }: { productId: string }) {
   const { locale, t } = useAdminI18n();
   const isCurrent = useIsAdminQueryScopeCurrent();
   const copy = t.storeCatalog;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const listHref = storeProductHref(searchParams);
   const toast = useToast();
-  const [item, setItem] = useState<ProductDetail | null>(null);
+  const [loadedItem, setItem] = useState<ProductDetail | null>(null);
   const [loadError, setLoadError] = useState<{ cause: unknown } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<"delete" | "transition" | null>(null);
@@ -46,6 +154,9 @@ function ProductDetailContent({ productId }: { productId: string }) {
   const [retry, setRetry] = useState(0);
   const inFlight = useRef(false);
   const mounted = useRef(false);
+  const moreActionsTrigger = useRef<HTMLButtonElement>(null);
+  const transitionTrigger = useRef<HTMLButtonElement>(null);
+  const identityHeadingId = useId();
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -63,6 +174,24 @@ function ProductDetailContent({ productId }: { productId: string }) {
       });
     return () => controller.abort();
   }, [productId, retry, isCurrent]);
+
+  const item = !loadError && isCurrent() ? loadedItem : null;
+  const name =
+    item?.translations.find((entry) => entry.locale === locale && entry.name.trim())?.name.trim() ??
+    item?.translations.find((entry) => entry.name.trim())?.name.trim() ??
+    item?.sku ??
+    t.breadcrumb.productDetails;
+  const breadcrumbItems = useMemo(
+    () => [{ label: copy.products, href: listHref }, { label: name }],
+    [copy.products, listHref, name],
+  );
+  const breadcrumb = (
+    <AdminBreadcrumbForRoute
+      pathname={storeProductHref(null, productId)}
+      search={searchParams?.toString() ?? ""}
+      items={breadcrumbItems}
+    />
+  );
 
   function reload() {
     setItem(null);
@@ -97,7 +226,7 @@ function ProductDetailContent({ productId }: { productId: string }) {
         if (!mounted.current || !isCurrent()) return;
         setItem(null);
         toast(copy.deleted);
-        router.replace("/store-catalog/products");
+        router.replace(listHref);
       } else {
         const updated = await transitionStoreProduct(item.id, item.status, target);
         if (!mounted.current || !isCurrent()) return;
@@ -144,159 +273,172 @@ function ProductDetailContent({ productId }: { productId: string }) {
     }
   }
 
-  if (loadError)
+  if (!item)
     return (
-      <DataState
-        kind="error"
-        title={
-          (loadError.cause as ClientApiError | undefined)?.status === 404
-            ? copy.productNotFound
-            : requestErrorMessage(loadError.cause, t)
-        }
-        action={{ label: t.common.retry, onClick: reload }}
-      />
-    );
-  if (!item) return <DataState kind="loading" title={copy.loading} />;
-  const name =
-    item.translations.find((value) => value.locale === locale)?.name ||
-    item.translations[0]?.name ||
-    item.sku;
-  return (
-    <>
-      <Stack gap="md">
-        <DetailPageHeading
-          backHref="/store-catalog/products"
-          backLabel={copy.products}
-          title={name}
-          description={`${item.sku} · /${item.slug}`}
-          bottomSpacing={0}
-        />
-        <Paper p="md" withBorder>
-          <Flex gap="lg" wrap="wrap" align="flex-start">
-            {item.primary_image && (
-              <Image
-                component={NextImage}
-                alt={name}
-                src={mediaUrlForWidth(item.primary_image, 640)}
-                width={320}
-                height={220}
-                w="100%"
-                maw={320}
-                h="auto"
-                radius="md"
-                unoptimized
-              />
-            )}
-            <Stack gap="md" flex="1 1 24rem" miw={0}>
-              <RecordDetailFields>
-                <RecordDetailField label={copy.status}>
-                  <ProductLifecycleStatus status={item.status} />
-                </RecordDetailField>
-                <RecordDetailField label={copy.category}>{item.category_slug}</RecordDetailField>
-                <RecordDetailField label={copy.unitSize}>
-                  {formatDecimalInput(item.unit_size)}{" "}
-                  {locale === "vi" ? item.unit_label_vi : item.unit_label_en}
-                </RecordDetailField>
-                <RecordDetailField label={copy.price}>
-                  {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
-                    BigInt(item.retail_price_vnd),
-                  )}{" "}
-                  ₫
-                </RecordDetailField>
-                <RecordDetailField label={copy.saleType}>
-                  {item.csa_quota_group ? copy.csaSaleOption : copy.retailOnly}
-                </RecordDetailField>
-                {item.csa_quota_group && (
-                  <>
-                    <RecordDetailField label={copy.quotaGroup}>
-                      {localizedCatalogTranslation(item.csa_quota_group.translations, locale)
-                        ?.name || item.csa_quota_group.name}
-                    </RecordDetailField>
-                    <RecordDetailField label={copy.quotaCost}>
-                      {String(item.csa_quota_cost)}
-                    </RecordDetailField>
-                  </>
-                )}
-              </RecordDetailFields>
-              {notice && notice !== "productDeleteBlocked" && (
-                <Alert
-                  color={notice === "productResultUncertain" ? "warning" : "info"}
-                  role="status"
-                >
-                  {copy[notice]}
-                </Alert>
-              )}
-              {item.capabilities ? (
-                <Stack gap="sm">
-                  <Group gap="xs">
-                    <Button
-                      component={Link}
-                      href={`/store-catalog/products/${item.id}/edit`}
-                      disabled={busy}
-                    >
-                      {copy.edit}
-                    </Button>
-                    <Button
-                      variant="default"
-                      disabled={busy}
-                      onClick={() => setDialog("transition")}
-                    >
-                      {transitionLabel}
-                    </Button>
-                  </Group>
-                  {item.capabilities.delete.allowed ? (
-                    <>
-                      {notice === "productDeleteBlocked" && (
-                        <Alert color="warning" role="status">
-                          {copy.productDeleteBlocked}
-                        </Alert>
-                      )}
-                      <Group gap="xs">
-                        <Button
-                          variant="subtle"
-                          color="danger"
-                          disabled={busy}
-                          onClick={() => setDialog("delete")}
-                        >
-                          {copy.delete}
-                        </Button>
-                      </Group>
-                    </>
-                  ) : (
-                    <Alert color="neutral">
-                      {copy.productDeleteBlocked}
-                      <ProductLockReasons reasons={item.capabilities.delete.reasons} />
-                    </Alert>
-                  )}
-                </Stack>
-              ) : (
-                <Alert color="warning">{copy.lifecycleUnavailable}</Alert>
-              )}
-            </Stack>
-          </Flex>
-        </Paper>
-        {item.translations.length > 0 && (
-          <Paper p="md" withBorder>
-            <Stack gap="md">
-              {item.translations.map((value) => (
-                <Stack component="section" gap="xs" key={value.locale}>
-                  <Title order={2} size="md" fw={600}>
-                    {value.locale.toUpperCase()}: {value.name}
-                  </Title>
-                  {value.short_description && <Text>{value.short_description}</Text>}
-                  <LazyRichTextEditor
-                    readOnly
-                    variant="product"
-                    imageAlt=""
-                    ariaLabel={copy.descriptionLabel}
-                    value={descriptionDocument(value.description, value.description_document)}
-                    onChange={() => undefined}
-                  />
-                </Stack>
-              ))}
+      <>
+        {breadcrumb}
+        <PageHeading title={t.breadcrumb.productDetails} visuallyHiddenTitle />
+        {loadError ? (
+          <RecoveryAlert
+            message={
+              (loadError.cause as ClientApiError | undefined)?.status === 404
+                ? copy.productNotFound
+                : requestErrorMessage(loadError.cause, t)
+            }
+            retryLabel={t.common.retry}
+            onRetry={reload}
+          />
+        ) : (
+          <Paper withBorder p="md">
+            <VisuallyHidden role="status">{copy.loading}</VisuallyHidden>
+            <Stack gap="sm" aria-hidden>
+              <Skeleton h="lg" w="60%" maw="16rem" />
+              <Skeleton h="md" w="40%" maw="10rem" />
             </Stack>
           </Paper>
         )}
+      </>
+    );
+
+  const unitLabel =
+    locale === "vi"
+      ? item.unit_label_vi || item.unit_label_en
+      : item.unit_label_en || item.unit_label_vi;
+  const editIsPrimary = item.status === "active";
+  return (
+    <>
+      {breadcrumb}
+      <Stack gap="md">
+        <Paper component="section" aria-labelledby={identityHeadingId} p="md" withBorder>
+          <Stack gap="md">
+            <Flex gap="md" wrap="wrap" align="flex-start">
+              {item.primary_image && (
+                <Image
+                  component={NextImage}
+                  alt={name}
+                  src={mediaUrlForWidth(item.primary_image, 192)}
+                  width={96}
+                  height={96}
+                  w={96}
+                  h={96}
+                  maw="100%"
+                  flex="0 0 auto"
+                  radius="md"
+                  unoptimized
+                />
+              )}
+              <Stack gap="xs" flex="1 1 9rem" miw={0} style={{ overflowWrap: "anywhere" }}>
+                <Title id={identityHeadingId} order={1} size="h1">
+                  {name}
+                </Title>
+                <Group gap="xs" align="baseline">
+                  {name !== item.sku && (
+                    <Text size="sm" c="dimmed">
+                      SKU {item.sku}
+                    </Text>
+                  )}
+                  <ProductLifecycleStatus status={item.status} />
+                </Group>
+                <Group gap="xs" align="baseline">
+                  <Text size="lg" fw={600}>
+                    {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
+                      BigInt(item.retail_price_vnd),
+                    )}{" "}
+                    ₫
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    / {formatDecimalInput(item.unit_size)} {unitLabel}
+                  </Text>
+                </Group>
+              </Stack>
+            </Flex>
+            <RecordDetailFields>
+              <RecordDetailField label={copy.category}>{item.category_slug}</RecordDetailField>
+              <RecordDetailField label={copy.slug}>/{item.slug}</RecordDetailField>
+              <RecordDetailField label={copy.saleType}>
+                {item.csa_quota_group ? copy.csaSaleOption : copy.retailOnly}
+              </RecordDetailField>
+              {item.csa_quota_group && (
+                <>
+                  <RecordDetailField label={copy.quotaGroup}>
+                    {localizedCatalogTranslation(item.csa_quota_group.translations, locale)?.name ||
+                      item.csa_quota_group.name}
+                  </RecordDetailField>
+                  <RecordDetailField label={copy.quotaCost}>
+                    {String(item.csa_quota_cost)}
+                  </RecordDetailField>
+                </>
+              )}
+            </RecordDetailFields>
+            {notice && (
+              <Alert
+                color={
+                  notice === "productResultUncertain" || notice === "productDeleteBlocked"
+                    ? "warning"
+                    : "info"
+                }
+                role="status"
+              >
+                {notice === "productDeleteBlocked" ? copy.productDeleteConflict : copy[notice]}
+              </Alert>
+            )}
+            {item.capabilities ? (
+              <>
+                <Group component="footer" gap="xs">
+                  <Button
+                    component={AdminNavigationLink}
+                    href={storeProductHref(searchParams, item.id, "edit")}
+                    variant={editIsPrimary ? "filled" : "default"}
+                    disabled={busy}
+                    aria-disabled={busy || undefined}
+                    tabIndex={busy ? -1 : undefined}
+                    onClick={(event) => {
+                      if (inFlight.current) event.preventDefault();
+                    }}
+                  >
+                    {copy.edit}
+                  </Button>
+                  <Button
+                    ref={transitionTrigger}
+                    variant={editIsPrimary ? "default" : "filled"}
+                    disabled={busy}
+                    onClick={() => setDialog("transition")}
+                  >
+                    {transitionLabel}
+                  </Button>
+                  {item.capabilities.delete.allowed && (
+                    <Menu position="bottom-end" shadow="sm">
+                      <Menu.Target>
+                        <ActionIcon
+                          ref={moreActionsTrigger}
+                          variant="default"
+                          aria-label={t.common.moreActions}
+                          disabled={busy}
+                        >
+                          <IconDots size={18} aria-hidden />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item color="danger" onClick={() => setDialog("delete")}>
+                          {copy.delete}
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                </Group>
+                {!item.capabilities.delete.allowed && (
+                  <ProductLockDisclosure
+                    summary={copy.productDeleteBlocked}
+                    reasons={item.capabilities.delete.reasons}
+                  />
+                )}
+              </>
+            ) : (
+              <Alert color="warning">{copy.lifecycleUnavailable}</Alert>
+            )}
+          </Stack>
+        </Paper>
+        <ProductContent item={item} name={name} />
       </Stack>
       {dialog && (
         <ConfirmationDialog
@@ -308,6 +450,7 @@ function ProductDetailContent({ productId }: { productId: string }) {
           confirmLabel={dialog === "delete" ? copy.delete : transitionLabel}
           danger={dialog === "delete" || target === "discontinued"}
           error={dialogError}
+          returnFocusRef={dialog === "delete" ? moreActionsTrigger : transitionTrigger}
           onCancel={() => {
             setDialog(null);
             setDialogError("");

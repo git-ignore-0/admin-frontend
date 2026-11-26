@@ -720,7 +720,7 @@ it("explains when a Product was deactivated after catalog selection", async () =
   view(<FarmProducts farmId="farm-1" />);
   fireEvent.click(await screen.findByRole("button", { name: "Thêm sản phẩm" }));
   const dialog = screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" });
-  fireEvent.change(await within(dialog).findByLabelText("Số lượng đơn vị"), {
+  fireEvent.change(await within(dialog).findByLabelText("Số lượng đơn vị bán"), {
     target: { value: "1" },
   });
   fireEvent.click(await within(dialog).findByRole("button", { name: "Thêm sản phẩm" }));
@@ -752,9 +752,11 @@ it("links a catalog Product together with the first current-week stock batch", a
     expect(await within(addDialog).findByRole("combobox", { name: "Sản phẩm" })).toHaveValue(
       "Rau muống · RAU-01",
     );
+    expect(await within(addDialog).findByText("Đơn vị bán")).toBeVisible();
+    expect(within(addDialog).getByText("Tổng số lượng")).toBeVisible();
     expect(await within(addDialog).findByText("0.5 kg")).toBeVisible();
-    expect(within(addDialog).getByLabelText("Số lượng đơn vị")).toHaveAccessibleDescription(
-      "Nhập số phần theo đúng quy cách bán của sản phẩm.",
+    expect(within(addDialog).getByLabelText("Số lượng đơn vị bán")).toHaveAccessibleDescription(
+      "Ví dụ: với đơn vị bán 500 g, nhập 3 để tính tổng 1,5 kg.",
     );
     expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("26/10/2026");
     expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("01/11/2026");
@@ -769,7 +771,7 @@ it("links a catalog Product together with the first current-week stock batch", a
     fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
       target: { value: "01/11/2026" },
     });
-    fireEvent.change(within(addDialog).getByLabelText("Số lượng đơn vị"), {
+    fireEvent.change(within(addDialog).getByLabelText("Số lượng đơn vị bán"), {
       target: { value: "10" },
     });
     expect(within(addDialog).getByText("5 kg")).toBeVisible();
@@ -804,8 +806,8 @@ it("paginates the Farm product catalog during search and preserves the stock dra
     target: { value: "Rau" },
   });
   fireEvent.click(dialog.getByRole("button", { name: "Tìm kiếm" }));
-  await dialog.findByLabelText("Số lượng đơn vị");
-  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị"), { target: { value: "12" } });
+  await dialog.findByLabelText("Số lượng đơn vị bán");
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "12" } });
   const pages = dialog.getByRole("navigation", { name: "Trang 1/3" });
   fireEvent.click(within(pages).getByRole("button", { name: "3" }));
 
@@ -817,7 +819,7 @@ it("paginates the Farm product catalog during search and preserves the stock dra
     ),
   );
   expect(dialog.getByRole("combobox", { name: "Sản phẩm" })).toHaveValue("Rau cải · RAU-03");
-  expect(await dialog.findByLabelText("Số lượng đơn vị")).toHaveDisplayValue("12");
+  expect(await dialog.findByLabelText("Số lượng đơn vị bán")).toHaveDisplayValue("12");
   expect(mocks.add).not.toHaveBeenCalled();
 });
 
@@ -891,7 +893,7 @@ it("lists stock batches and only allows editing an active or upcoming batch", as
   fireEvent.click(screen.getAllByRole("button", { name: "Sửa thông tin" })[0]);
   const dialog = screen.getByRole("dialog", { name: "Sửa đợt hàng" });
   expect(within(dialog).getByLabelText("Ngày bắt đầu")).toBeDisabled();
-  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị"), {
+  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị bán"), {
     target: { value: "12" },
   });
   fireEvent.click(within(dialog).getByRole("button", { name: "Lưu thay đổi" }));
@@ -1050,7 +1052,9 @@ it("retires old Farm inventory and actions when the summary reload is denied aft
   view(<FarmProducts farmId="farm-1" />);
   fireEvent.click(await screen.findByRole("button", { name: "Thêm đợt hàng" }));
   const dialog = screen.getByRole("dialog", { name: "Thêm đợt hàng" });
-  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị"), { target: { value: "10" } });
+  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị bán"), {
+    target: { value: "10" },
+  });
   fireEvent.click(within(dialog).getByRole("button", { name: "Thêm đợt hàng" }));
   await waitFor(() => expect(mocks.linked).toHaveBeenCalledTimes(2));
   await waitFor(() => {
@@ -1104,7 +1108,7 @@ it("keeps impossible and incomplete date drafts, then submits manually entered I
   const start = dialog.getByRole("textbox", { name: "Ngày bắt đầu" });
   const end = dialog.getByRole("textbox", { name: "Ngày kết thúc" });
   const submit = dialog.getByRole("button", { name: "Thêm đợt hàng" });
-  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị"), { target: { value: "5" } });
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "5" } });
   fireEvent.change(start, { target: { value: "31022027" } });
   fireEvent.change(end, { target: { value: "03/11/202" } });
   fireEvent.blur(end);
@@ -1138,6 +1142,12 @@ it("selects a date from the Foundation calendar and closes an open calendar duri
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit details" }));
   const dialog = within(screen.getByRole("dialog", { name: "Edit stock batch" }));
+  expect(dialog.getByText("Selling unit")).toBeVisible();
+  expect(
+    dialog.getByRole("spinbutton", { name: "Number of selling units" }),
+  ).toHaveAccessibleDescription(
+    "For example, enter 3 for a total of 1.5 kg when the selling unit is 500 g.",
+  );
   const start = dialog.getByRole("textbox", { name: "Start date" });
   const end = dialog.getByRole("textbox", { name: "End date" });
   expect(start).toBeDisabled();
@@ -1216,7 +1226,7 @@ it("enforces existing batch boundaries for stopped inventory and reports a reser
 
   fireEvent.click(await screen.findByRole("button", { name: "Sửa thông tin" }));
   const edit = within(screen.getByRole("dialog", { name: "Sửa đợt hàng" }));
-  const quantity = edit.getByLabelText("Số lượng đơn vị");
+  const quantity = edit.getByLabelText("Số lượng đơn vị bán");
   const end = edit.getByLabelText("Ngày kết thúc");
   const save = edit.getByRole("button", { name: "Lưu thay đổi" });
   fireEvent.change(quantity, { target: { value: "11" } });
@@ -1267,7 +1277,7 @@ it.each([
     fireEvent.click(screen.getByRole("button", { name: open }));
     const dialog = within(screen.getByRole("dialog", { name: dialogName }));
     if (action === "createBatch") {
-      fireEvent.change(dialog.getByLabelText("Số lượng đơn vị"), { target: { value: "10" } });
+      fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "10" } });
     }
     const button = dialog.getByRole("button", { name: submit });
     act(() => {
@@ -1287,7 +1297,9 @@ it("guards against duplicate add calls while the response is pending", async () 
   await waitFor(() => expect(open).toBeEnabled());
   fireEvent.click(open);
   const dialog = within(screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" }));
-  fireEvent.change(await dialog.findByLabelText("Số lượng đơn vị"), { target: { value: "10" } });
+  fireEvent.change(await dialog.findByLabelText("Số lượng đơn vị bán"), {
+    target: { value: "10" },
+  });
   const submit = dialog.getByRole("button", { name: "Thêm sản phẩm" });
   act(() => {
     submit.click();
@@ -1368,7 +1380,7 @@ it("adds an overlapping stock batch using the shared date-range form", async () 
   view(<FarmProducts farmId="farm-1" />);
   fireEvent.click(await screen.findByRole("button", { name: "Thêm đợt hàng" }));
   const dialog = screen.getByRole("dialog", { name: "Thêm đợt hàng" });
-  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị"), {
+  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị bán"), {
     target: { value: "10" },
   });
   fireEvent.click(within(dialog).getByRole("button", { name: "Thêm đợt hàng" }));

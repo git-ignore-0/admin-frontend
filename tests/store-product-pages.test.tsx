@@ -3,12 +3,19 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Editor } from "@tiptap/react";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
 import { StoreProductDetail } from "@/components/store-product-detail";
 import { StoreProductEditor } from "@/components/store-product-editor";
+import ProductRouteLoading from "@/app/(admin)/store-catalog/products/loading";
 import { adminDictionaries } from "@/lib/admin-i18n";
 
 const mocks = vi.hoisted(() => ({
   locale: "vi" as "vi" | "en",
+  search: new URLSearchParams(),
+  pathname: "/store-catalog/products",
   categories: vi.fn(),
   groups: vi.fn(),
   product: vi.fn(),
@@ -46,10 +53,14 @@ vi.mock("@/components/admin-query-provider", () => ({
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh, back: vi.fn() }),
+  useSearchParams: () => mocks.search,
+  usePathname: () => mocks.pathname,
 }));
 
 beforeEach(() => {
   mocks.locale = "vi";
+  mocks.search = new URLSearchParams();
+  mocks.pathname = "/store-catalog/products";
   Object.values(mocks).forEach((mock) => {
     if (typeof mock === "function") mock.mockReset();
   });
@@ -150,24 +161,158 @@ async function fillBase() {
     target: { value: "rau-01" },
   });
   selectOption(screen.getByRole("combobox", { name: /Danh mục sản phẩm/ }), "leaf");
-  fireEvent.change(screen.getByLabelText(/Khối lượng \/ số lượng/), {
+  fireEvent.change(screen.getByLabelText(/Số lượng mỗi đơn vị bán/), {
     target: { value: "0.500" },
   });
-  fireEvent.change(screen.getByLabelText(/Đơn vị bán \(tiếng Việt\)/), {
+  fireEvent.change(screen.getByLabelText(/Tên đơn vị \(tiếng Việt\)/), {
     target: { value: "kg" },
   });
-  fireEvent.change(screen.getByLabelText(/Đơn vị bán \(tiếng Anh\)/), {
+  fireEvent.change(screen.getByLabelText(/Tên đơn vị \(tiếng Anh\)/), {
     target: { value: "kg" },
   });
-  fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "90000" } });
+  fireEvent.change(screen.getByLabelText(/Giá mỗi đơn vị bán/), { target: { value: "90000" } });
 }
 
+function ProductTrail() {
+  const items = useAdminBreadcrumbs([]);
+  return (
+    <nav aria-label="Product trail">
+      {items.map(({ label, href }) =>
+        href ? (
+          <a key={label} href={href}>
+            {label}
+          </a>
+        ) : (
+          <span key={label}>{label}</span>
+        ),
+      )}
+    </nav>
+  );
+}
+
+it("retains Product ancestor links in the route loading fallback", () => {
+  mocks.locale = "en";
+  mocks.pathname = "/store-catalog/products/product-1/edit";
+  mocks.search = new URLSearchParams("search=spinach&status=discontinued&page=2");
+  render(
+    <AdminBreadcrumbProvider pathname={mocks.pathname} search={mocks.search.toString()}>
+      <ProductTrail />
+      <ProductRouteLoading />
+    </AdminBreadcrumbProvider>,
+  );
+  const trail = within(screen.getByRole("navigation", { name: "Product trail" }));
+  expect(trail.getByRole("link", { name: "Products" })).toHaveAttribute(
+    "href",
+    "/store-catalog/products?search=spinach&status=discontinued&page=2",
+  );
+  expect(trail.getByRole("link", { name: "Product details" })).toHaveAttribute(
+    "href",
+    "/store-catalog/products/product-1?search=spinach&status=discontinued&page=2",
+  );
+  expect(trail.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Edit" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Loading page");
+  expect(mocks.product).not.toHaveBeenCalled();
+});
+
 describe("store product editor", () => {
+  it.each([
+    [undefined, "", "/store-catalog/products"],
+    [
+      undefined,
+      "?search=rau&category_id=leaf&status=draft&csa_eligible=false&page=2",
+      "/store-catalog/products",
+    ],
+    ["product-1", "", "/store-catalog/products/product-1"],
+    [
+      "product-1",
+      "?search=rau&category_id=leaf&status=draft&csa_eligible=false&page=2",
+      "/store-catalog/products/product-1",
+    ],
+  ])(
+    "cancels from the %s editor to a stable destination with its list context",
+    async (id, query, path) => {
+      mocks.search = new URLSearchParams(query);
+      mocks.product.mockResolvedValue(storedProduct);
+      render(<StoreProductEditor productId={id} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Hủy" }));
+      await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith(`${path}${query}`));
+      expect(mocks.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a single create heading and a contextual parent breadcrumb", async () => {
+    mocks.search = new URLSearchParams("search=rau&page=2");
+    render(
+      <AdminBreadcrumbProvider
+        pathname="/store-catalog/products/new"
+        search={mocks.search.toString()}
+      >
+        <ProductTrail />
+        <StoreProductEditor />
+      </AdminBreadcrumbProvider>,
+    );
+    await screen.findByRole("button", { name: /^Lưu$/ });
+    const trail = within(screen.getByRole("navigation", { name: "Product trail" }));
+    expect(trail.getByRole("link", { name: "Sản phẩm" })).toHaveAttribute(
+      "href",
+      "/store-catalog/products?search=rau&page=2",
+    );
+    expect(trail.getByText("Thêm sản phẩm")).toBeVisible();
+    expect(trail.queryByRole("link", { name: "Thêm sản phẩm" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Thêm sản phẩm");
+    expect(screen.queryByRole("link", { name: /quay lại/i })).not.toBeInTheDocument();
+    expect(mocks.product).not.toHaveBeenCalled();
+  });
+
+  it("uses a localized edit breadcrumb during loading and clears the product name after access is lost", async () => {
+    let finish!: (value: typeof storedProduct) => void;
+    mocks.search = new URLSearchParams("search=rau&page=2");
+    mocks.product.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    mocks.save.mockRejectedValue(Object.assign(new Error("forbidden"), { status: 403 }));
+    render(
+      <AdminBreadcrumbProvider
+        pathname="/store-catalog/products/product-1/edit"
+        search={mocks.search.toString()}
+      >
+        <ProductTrail />
+        <StoreProductEditor productId="product-1" />
+      </AdminBreadcrumbProvider>,
+    );
+    const trail = within(screen.getByRole("navigation", { name: "Product trail" }));
+    expect(trail.getByRole("link", { name: "Sản phẩm" })).toHaveAttribute(
+      "href",
+      "/store-catalog/products?search=rau&page=2",
+    );
+    expect(
+      trail.getByRole("link", { name: adminDictionaries.vi.breadcrumb.productDetails }),
+    ).toHaveAttribute("href", "/store-catalog/products/product-1?search=rau&page=2");
+    expect(trail.queryByRole("link", { name: "Chỉnh sửa" })).not.toBeInTheDocument();
+    await act(async () => finish(storedProduct));
+    expect(trail.getByRole("link", { name: "Rau muống" })).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Lưu$/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Hủy$/ })).toHaveLength(1);
+    expect(screen.getAllByText(adminDictionaries.vi.storeCatalog.productDraft)).toHaveLength(1);
+    fireEvent.change(screen.getByRole("textbox", { name: "Tên sản phẩm" }), {
+      target: { value: "Tên chưa lưu" },
+    });
+    expect(trail.getByRole("link", { name: "Rau muống" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^Lưu$/ }));
+    await waitFor(() => expect(trail.queryByText("Rau muống")).not.toBeInTheDocument());
+    expect(trail.getByText(adminDictionaries.vi.breadcrumb.productDetails)).toBeVisible();
+  });
+
   it("shows stored selling-unit quantities without insignificant zeroes", async () => {
     mocks.product.mockResolvedValue(storedProduct);
     const page = render(<StoreProductEditor productId="product-1" />);
 
-    expect(await screen.findByLabelText(/Khối lượng \/ số lượng/)).toHaveValue("0.5");
+    expect(await screen.findByLabelText(/Số lượng mỗi đơn vị bán/)).toHaveValue("0.5");
 
     page.unmount();
     render(<StoreProductDetail productId="product-1" />);
@@ -185,12 +330,12 @@ describe("store product editor", () => {
     });
     mocks.save.mockRejectedValue(Object.assign(new Error("product_unit_in_use"), { status: 409 }));
     render(<StoreProductEditor productId="product-1" />);
-    fireEvent.change(await screen.findByLabelText(/Khối lượng \/ số lượng/), {
+    fireEvent.change(await screen.findByLabelText(/Số lượng mỗi đơn vị bán/), {
       target: { value: "1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
-    expect(await screen.findByText(/SKU và quy cách đã được khóa/)).toBeVisible();
-    expect(screen.getByLabelText(/Khối lượng \/ số lượng/)).toBeDisabled();
+    expect(await screen.findByText(/Không thể thay đổi mã SKU và đơn vị bán/)).toBeVisible();
+    expect(screen.getByLabelText(/Số lượng mỗi đơn vị bán/)).toHaveAttribute("readonly");
     expect(mocks.save).toHaveBeenCalled();
   });
 
@@ -224,7 +369,7 @@ describe("store product editor", () => {
     fireEvent.change(await screen.findByLabelText(/Mã quản lý sản phẩm/), {
       target: { value: "RAU-DRAFT" },
     });
-    fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(screen.getByLabelText(/Giá mỗi đơn vị bán/), { target: { value: "95000" } });
     const editor = (await screen.findByLabelText("Mô tả chi tiết")) as HTMLElement & {
       editor: Editor;
     };
@@ -241,10 +386,14 @@ describe("store product editor", () => {
     expect(mocks.save).toHaveBeenCalledTimes(1);
 
     fireEvent.click(retry);
-    expect(await screen.findByDisplayValue("RAU-SERVER")).toBeDisabled();
-    expect(screen.getByDisplayValue("2")).toBeDisabled();
-    expect(screen.getByDisplayValue("Nhóm quota từ máy chủ")).toBeDisabled();
-    expect(screen.getByDisplayValue("3")).toBeDisabled();
+    expect(await screen.findByDisplayValue("RAU-SERVER")).toHaveAttribute("readonly");
+    expect(screen.getByDisplayValue("2")).toHaveAttribute("readonly");
+    const lockedQuotaGroup = screen.getByRole("textbox", { name: "Nhóm quota CSA" });
+    expect(lockedQuotaGroup).toHaveValue("Nhóm quota từ máy chủ");
+    expect(lockedQuotaGroup).toHaveAttribute("readonly");
+    fireEvent.click(lockedQuotaGroup);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("3")).toHaveAttribute("readonly");
     expect(screen.getByDisplayValue("95000")).toBeVisible();
     expect(screen.getByText("Đang bán")).toBeVisible();
     expect(screen.getByAltText(adminDictionaries.vi.storeCatalog.imagePreviewAlt)).toBeVisible();
@@ -301,7 +450,9 @@ describe("store product editor", () => {
       Object.assign(new Error("product_unit_in_use"), { status: 409 }),
     );
     render(<StoreProductEditor productId="product-1" />);
-    fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(await screen.findByLabelText(/Giá mỗi đơn vị bán/), {
+      target: { value: "95000" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
 
     expect(await screen.findByRole("button", { name: "Thử lại" })).toBeEnabled();
@@ -346,7 +497,9 @@ describe("store product editor", () => {
       Object.assign(new Error("validation_error"), { status: 400, field: "primary_image_id" }),
     );
     render(<StoreProductEditor productId="product-1" />);
-    fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(await screen.findByLabelText(/Giá mỗi đơn vị bán/), {
+      target: { value: "95000" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     expect(await screen.findByText("Đang bán")).toBeVisible();
     expect(screen.getByDisplayValue("95000")).toBeVisible();
@@ -371,7 +524,9 @@ describe("store product editor", () => {
       });
       mocks.save.mockRejectedValueOnce(reason);
       const { container, unmount } = render(<StoreProductEditor productId="product-1" />);
-      fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+      fireEvent.change(await screen.findByLabelText(/Giá mỗi đơn vị bán/), {
+        target: { value: "95000" },
+      });
       const editor = (await screen.findByLabelText("Mô tả chi tiết")) as HTMLElement & {
         editor: Editor;
       };
@@ -406,7 +561,9 @@ describe("store product editor", () => {
       .mockResolvedValueOnce(storedProduct);
     mocks.save.mockRejectedValueOnce(new Error("request_timeout"));
     const { container, unmount } = render(<StoreProductEditor productId="product-1" />);
-    fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(await screen.findByLabelText(/Giá mỗi đơn vị bán/), {
+      target: { value: "95000" },
+    });
     fireEvent.change(container.querySelector('input[type="file"]')!, {
       target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
     });
@@ -524,7 +681,7 @@ describe("store product editor", () => {
     });
     render(<StoreProductEditor />);
     selectOption(await screen.findByRole("combobox", { name: "Sale type" }), "yes");
-    const quotaGroup = await screen.findByRole("combobox", { name: /CSA benefit group/ });
+    const quotaGroup = await screen.findByRole("combobox", { name: /CSA quota group/ });
     await waitFor(() => expect(quotaGroup).toBeEnabled());
     fireEvent.click(quotaGroup);
     expect(await screen.findByRole("option", { name: "Vegetables" })).toBeInTheDocument();
@@ -539,12 +696,12 @@ describe("store product editor", () => {
     );
     expect(screen.getByPlaceholderText("VD: g, kg, mớ, bó, quả")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("VD: g, kg, bunch, piece")).toBeInTheDocument();
-    const unitVi = screen.getByLabelText(/Đơn vị bán \(tiếng Việt\)/);
-    const unitEn = screen.getByLabelText(/Đơn vị bán \(tiếng Anh\)/);
-    const unitSize = screen.getByLabelText(/Khối lượng \/ số lượng/);
+    const unitVi = screen.getByLabelText(/Tên đơn vị \(tiếng Việt\)/);
+    const unitEn = screen.getByLabelText(/Tên đơn vị \(tiếng Anh\)/);
+    const unitSize = screen.getByLabelText(/Số lượng mỗi đơn vị bán/);
     expect(unitVi.compareDocumentPosition(unitEn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
-      unitEn.compareDocumentPosition(unitSize) & Node.DOCUMENT_POSITION_FOLLOWING,
+      unitSize.compareDocumentPosition(unitVi) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -562,7 +719,7 @@ describe("store product editor", () => {
 
   it("keeps the full description inside the matching language tab", async () => {
     render(<StoreProductEditor />);
-    await screen.findByRole("heading", { name: "Nội dung song ngữ" });
+    await screen.findByRole("heading", { name: "Nội dung sản phẩm" });
     expect(screen.getByLabelText(/Tên sản phẩm/)).not.toBeRequired();
     expect(screen.getByLabelText(/Tên sản phẩm/)).toHaveAttribute("maxlength", "200");
 
@@ -601,7 +758,7 @@ describe("store product editor", () => {
     const editor = await screen.findByLabelText("Mô tả chi tiết");
     expect(editor).toHaveTextContent("<b>Rau tươi</b>");
     expect(editor.querySelector("b")).toBeNull();
-    fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(screen.getByLabelText(/Giá mỗi đơn vị bán/), { target: { value: "95000" } });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     const viTranslation = mocks.save.mock.calls[0][0].translations[0];
@@ -689,6 +846,7 @@ describe("store product editor", () => {
   });
 
   it("creates a retail-only draft and opens its detail", async () => {
+    mocks.search = new URLSearchParams("status=draft&page=2");
     mocks.save.mockResolvedValueOnce({ ...storedProduct, id: "draft-created" });
     render(<StoreProductEditor />);
     await fillBase();
@@ -705,16 +863,41 @@ describe("store product editor", () => {
     expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("is_active");
     expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("is_published");
     expect(mocks.save.mock.calls[0][1]).toBeUndefined();
-    expect(mocks.replace).toHaveBeenCalledWith("/store-catalog/products/draft-created");
+    expect(mocks.replace).toHaveBeenCalledWith(
+      "/store-catalog/products/draft-created?status=draft&page=2",
+    );
     expect(screen.queryByLabelText(/Đường dẫn/)).not.toBeInTheDocument();
+  });
+
+  it("saves edits and opens the same record with its list context", async () => {
+    mocks.search = new URLSearchParams("search=rau&status=active&csa_eligible=true&page=3");
+    mocks.product.mockResolvedValue(storedProduct);
+    mocks.save.mockResolvedValue(storedProduct);
+    render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByLabelText(/Giá mỗi đơn vị bán/), {
+      target: { value: "95000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() =>
+      expect(mocks.replace).toHaveBeenCalledWith(
+        "/store-catalog/products/product-1?search=rau&csa_eligible=true&page=3",
+      ),
+    );
+    expect(mocks.save).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ retail_price_vnd: "95000" }),
+      "product-1",
+    );
+    expect(mocks.transition).not.toHaveBeenCalled();
   });
 
   it("saves a CSA-eligible draft with a fractional point cost", async () => {
     render(<StoreProductEditor />);
     await fillBase();
     selectOption(screen.getByRole("combobox", { name: "Hình thức bán" }), "yes");
-    selectOption(await screen.findByRole("combobox", { name: /Nhóm quyền lợi CSA/ }), "quota");
-    fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: ".25" } });
+    selectOption(await screen.findByRole("combobox", { name: /Nhóm quota CSA/ }), "quota");
+    fireEvent.change(screen.getByLabelText(/Điểm CSA mỗi đơn vị bán/), {
+      target: { value: ".25" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][0]).toMatchObject({
@@ -729,8 +912,10 @@ describe("store product editor", () => {
       render(<StoreProductEditor />);
       await fillBase();
       selectOption(screen.getByRole("combobox", { name: "Hình thức bán" }), "yes");
-      selectOption(await screen.findByRole("combobox", { name: /Nhóm quyền lợi CSA/ }), "quota");
-      fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: cost } });
+      selectOption(await screen.findByRole("combobox", { name: /Nhóm quota CSA/ }), "quota");
+      fireEvent.change(screen.getByLabelText(/Điểm CSA mỗi đơn vị bán/), {
+        target: { value: cost },
+      });
       fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
       expect(await screen.findByRole("alert")).toBeVisible();
       expect(mocks.save).not.toHaveBeenCalled();
@@ -740,7 +925,7 @@ describe("store product editor", () => {
   it("loads and retains a fractional cost when editing", async () => {
     mocks.product.mockResolvedValue({ ...storedProduct, csa_quota_cost: 0.25 });
     render(<StoreProductEditor productId={storedProduct.id} />);
-    expect(await screen.findByLabelText(/Số điểm cần trừ/)).toHaveValue("0.25");
+    expect(await screen.findByLabelText(/Điểm CSA mỗi đơn vị bán/)).toHaveValue("0.25");
   });
 
   it("previews the selected primary image and releases its object URL when removed", async () => {
@@ -861,6 +1046,38 @@ describe("store product editor", () => {
 
     await waitFor(() =>
       expect(mocks.deleteImage).toHaveBeenCalledWith("image-1", { keepalive: true }),
+    );
+  });
+
+  it("keeps Cancel locked during a save and discards a safe pending image before leaving", async () => {
+    mocks.search = new URLSearchParams("status=draft&page=2");
+    const write = Promise.withResolvers<typeof storedProduct>();
+    const discard = Promise.withResolvers<void>();
+    mocks.save.mockReturnValueOnce(write.promise);
+    mocks.deleteImage.mockReturnValueOnce(discard.promise);
+    const { container } = render(<StoreProductEditor />);
+    await fillBase();
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+    });
+    const cancel = screen.getByRole("button", { name: "Hủy" });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(cancel).toBeDisabled();
+    fireEvent.click(cancel);
+    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(mocks.deleteImage).not.toHaveBeenCalled();
+
+    await act(async () =>
+      write.reject(Object.assign(new Error("validation_error"), { status: 400, field: "sku" })),
+    );
+    expect(cancel).toBeEnabled();
+    fireEvent.click(cancel);
+    expect(mocks.deleteImage).toHaveBeenCalledExactlyOnceWith("image-1");
+    expect(mocks.replace).not.toHaveBeenCalled();
+    await act(async () => discard.resolve());
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
+      "/store-catalog/products?status=draft&page=2",
     );
   });
 
@@ -1080,7 +1297,7 @@ describe("Store description link editing regression", () => {
     });
     render(<StoreProductEditor productId="product-1" />);
     await screen.findByLabelText("Mô tả chi tiết");
-    fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(screen.getByLabelText(/Giá mỗi đơn vị bán/), { target: { value: "95000" } });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][0].translations[0].description_document).toEqual(document);
@@ -1098,11 +1315,14 @@ it("locks identity and CSA fields from server capabilities without submitting th
     },
   });
   render(<StoreProductEditor productId="product-1" />);
-  expect(await screen.findByLabelText(/Mã quản lý sản phẩm/)).toBeDisabled();
-  expect(screen.getByLabelText(/Khối lượng \/ số lượng/)).toBeDisabled();
-  expect(screen.getByLabelText(/Số điểm cần trừ/)).toBeDisabled();
+  expect(await screen.findByLabelText(/Mã quản lý sản phẩm/)).toHaveAttribute("readonly");
+  expect(screen.getByLabelText(/Số lượng mỗi đơn vị bán/)).toHaveAttribute("readonly");
+  expect(screen.getByLabelText(/Điểm CSA mỗi đơn vị bán/)).toHaveAttribute("readonly");
+  const disclosures = screen.getAllByRole("button", { name: "Xem lý do" });
+  expect(disclosures).toHaveLength(2);
+  disclosures.forEach((disclosure) => fireEvent.click(disclosure));
   expect(screen.getAllByText(/Đợt mùa thu/)).toHaveLength(2);
-  fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+  fireEvent.change(screen.getByLabelText(/Giá mỗi đơn vị bán/), { target: { value: "95000" } });
   fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
   await waitFor(() => expect(mocks.save).toHaveBeenCalled());
   const payload = mocks.save.mock.calls[0][0];
@@ -1140,13 +1360,11 @@ describe("store product detail", () => {
     expect(category.nextElementSibling).toHaveProperty("tagName", "DD");
     expect(category.nextElementSibling).toHaveTextContent(storedProduct.category_slug);
     expect(screen.getAllByText(copy.productDraft)).toHaveLength(1);
-    expect(screen.getByText(copy.status, { selector: "dt" }).nextElementSibling).toHaveTextContent(
-      copy.productDraft,
-    );
+    expect(screen.queryByText(copy.status, { selector: "dt" })).not.toBeInTheDocument();
     const image = screen.getByRole("img", { name: "Rau muống" });
     expect(image).toHaveAttribute("src", expect.stringMatching(/\/product-640\.jpg$/));
-    expect(image).toHaveAttribute("width", "320");
-    expect(image).toHaveAttribute("height", "220");
+    expect(image).toHaveAttribute("width", "96");
+    expect(image).toHaveAttribute("height", "96");
     expect(screen.getByRole("link", { name: copy.edit })).toHaveAttribute(
       "href",
       "/store-catalog/products/product-1/edit",
@@ -1177,7 +1395,7 @@ describe("store product detail", () => {
     );
     render(<StoreProductDetail productId="product-1" />);
     const action = await screen.findByRole("button", { name: "Đưa lên bán" });
-    const description = screen.getByRole("heading", { name: /^VI: / });
+    const description = screen.getByRole("heading", { name: "Nội dung sản phẩm" });
     expect(
       action.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -1252,8 +1470,10 @@ describe("store product detail", () => {
     mocks.product.mockResolvedValueOnce(storedProduct).mockResolvedValueOnce(locked);
     mocks.remove.mockRejectedValue(Object.assign(new Error("product_in_use"), { status: 409 }));
     render(<StoreProductDetail productId="product-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Thao tác khác" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Xem lý do" }));
     expect(await screen.findByText(/DH-101/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
     expect(mocks.remove).toHaveBeenCalledTimes(1);
@@ -1265,7 +1485,8 @@ describe("store product detail", () => {
       .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
     mocks.remove.mockRejectedValue(Object.assign(new Error("product_in_use"), { status: 409 }));
     render(<StoreProductDetail productId="product-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Thao tác khác" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
     expect(await screen.findByRole("button", { name: "Thử lại" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "Chỉnh sửa" })).not.toBeInTheDocument();
@@ -1285,7 +1506,8 @@ describe("store product detail", () => {
       .mockResolvedValueOnce(storedProduct)
       .mockImplementationOnce(() => new Promise(() => {}));
     const view = render(<StoreProductDetail productId="product-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Thao tác khác" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
     view.rerender(<StoreProductDetail productId="product-2" />);
     expect(screen.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
@@ -1309,7 +1531,7 @@ describe("store product detail", () => {
       },
     });
     render(<StoreProductDetail productId="product-1" />);
-    const group = await screen.findByText("CSA benefit group", { selector: "dt" });
+    const group = await screen.findByText("CSA quota group", { selector: "dt" });
     expect(group.nextElementSibling).toHaveTextContent("Vegetables");
   });
   it("recovers from a transient detail error when retrying", async () => {
