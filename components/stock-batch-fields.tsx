@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, Paper, SegmentedControl, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
+import { SegmentedControl, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
 import { useId } from "react";
 import { AdminDateInput } from "@/components/admin-date-input";
 import { FormField } from "@/components/nfv-controls";
@@ -78,7 +78,7 @@ export function StockBatchFields({
   const total =
     Number.isSafeInteger(quantity) && quantity > 0
       ? formatStockQuantityTotal(quantity, unitSize, unitLabel)
-      : `— ${unitLabel}`;
+      : "—";
 
   function selectPreset(value: string) {
     if (disabled) return;
@@ -153,18 +153,16 @@ export function StockBatchFields({
           value={draft.quantity}
           onChange={(event) => onChange({ ...draft, quantity: event.currentTarget.value })}
         />
-        <Paper p="sm" bg="var(--surface-subtle)">
-          <RecordDetailFields>
-            <RecordDetailField label={labels.saleUnit}>
-              <Box fw={600}>
-                {formatDecimalInput(unitSize)} {unitLabel}
-              </Box>
-            </RecordDetailField>
-            <RecordDetailField label={labels.quantityTotal}>
-              <Box fw={600}>{total}</Box>
-            </RecordDetailField>
-          </RecordDetailFields>
-        </Paper>
+        <RecordDetailFields>
+          <RecordDetailField label={labels.saleUnit}>
+            <Text fw={600}>
+              {formatDecimalInput(unitSize)} {unitLabel}
+            </Text>
+          </RecordDetailField>
+          <RecordDetailField label={labels.quantityTotal}>
+            <Text fw={600}>{total}</Text>
+          </RecordDetailField>
+        </RecordDetailFields>
       </SimpleGrid>
     </Stack>
   );

@@ -292,7 +292,7 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
         >
           <Tabs.List mb="md" aria-label={c.detailSections}>
             {farmDetailTabs.map((value) => (
-              <Tabs.Tab key={value} value={value}>
+              <Tabs.Tab key={value} value={value} px="sm">
                 {labels[value]}
               </Tabs.Tab>
             ))}
@@ -301,9 +301,8 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
             {(visited.products || tab === "products") && (
               <FarmProducts
                 farmId={farm.id}
-                inStockCount={farm.in_stock_product_count}
-                outOfStockCount={farm.out_of_stock_product_count}
-                onInventoryChanged={reload}
+                farmActive={farm.is_active}
+                isTabActive={tab === "products"}
                 onAccessLost={retireRecord}
               />
             )}
@@ -364,7 +363,11 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
           </Tabs.Panel>
           <Tabs.Panel value="tracker">
             {(visited.tracker || tab === "tracker") && (
-              <FarmTrackerProfileEditor farm={farm} onAccessLost={retireRecord} />
+              <FarmTrackerProfileEditor
+                farm={farm}
+                isTabActive={tab === "tracker"}
+                onAccessLost={retireRecord}
+              />
             )}
           </Tabs.Panel>
         </Tabs>

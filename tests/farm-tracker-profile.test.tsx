@@ -154,6 +154,46 @@ it("keeps the draft and distinguishes inactive Farm from Tracker visibility when
   expect(mocks.farm).not.toHaveBeenCalled();
 });
 
+it("warns about an inactive farm when a hidden profile is set to become public", async () => {
+  mocks.profile.mockResolvedValue({ ...profile, is_visible: false });
+  view(<FarmTrackerProfileEditor farm={{ ...farm, is_active: false }} />);
+
+  const visibility = await screen.findByRole("checkbox", {
+    name: "Hiển thị trên Growth Tracker công khai",
+  });
+  expect(visibility).not.toBeChecked();
+  expect(screen.queryByText(/Trang trại đã tắt hoạt động/)).not.toBeInTheDocument();
+  fireEvent.click(visibility);
+  expect(screen.getByText(/Trang trại đã tắt hoạt động/)).toBeVisible();
+});
+
+it("hides the disable dialog outside Tracker and keeps the draft when returning", async () => {
+  mocks.profile.mockResolvedValue(profile);
+  const content = (isTabActive: boolean) => (
+    <AdminI18nProvider initialLocale="vi">
+      <ToastProvider>
+        <FarmTrackerProfileEditor farm={farm} isTabActive={isTabActive} />
+      </ToastProvider>
+    </AdminI18nProvider>
+  );
+  const rendered = render(content(true));
+
+  fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
+    target: { value: "29" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Tắt Growth Tracker" }));
+  expect(screen.getByRole("dialog")).toBeVisible();
+
+  rendered.rerender(content(false));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  rendered.rerender(content(true));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy" }));
+  expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(29);
+  expect(mocks.profile).toHaveBeenCalledTimes(1);
+  expect(mocks.farm).not.toHaveBeenCalled();
+  expect(mocks.disable).not.toHaveBeenCalled();
+});
+
 it("disables the profile only after confirmation and allows enabling again in place", async () => {
   mocks.profile.mockResolvedValue(profile);
   view(<FarmTrackerProfileEditor farm={farm} />);
@@ -177,6 +217,39 @@ it("disables the profile only after confirmation and allows enabling again in pl
   expect(mocks.saveFarm).not.toHaveBeenCalled();
   expect(mocks.profile).toHaveBeenCalledTimes(1);
   expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("requires a profile reload and a new confirmation after an interrupted disable", async () => {
+  mocks.profile.mockResolvedValue(profile);
+  mocks.disable.mockRejectedValueOnce(new Error("network_error"));
+  view(<FarmTrackerProfileEditor farm={farm} />);
+
+  const label = "Tắt Growth Tracker";
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: label })).getByRole("button", { name: label }),
+  );
+
+  const recovery = await screen.findByRole("alert");
+  expect(screen.getByText("Đã bật Growth Tracker")).toBeVisible();
+  expect(screen.getByRole("button", { name: label })).toBeDisabled();
+  expect(mocks.disable).toHaveBeenCalledExactlyOnceWith("farm-1");
+
+  fireEvent.click(within(recovery).getByRole("button", { name: "Tải lại dữ liệu" }));
+  const disable = await screen.findByRole("button", { name: label });
+  expect(disable).toBeEnabled();
+  expect(mocks.disable).toHaveBeenCalledTimes(1);
+  fireEvent.click(disable);
+  expect(mocks.disable).toHaveBeenCalledTimes(1);
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: label })).getByRole("button", { name: label }),
+  );
+
+  expect(await screen.findByRole("button", { name: "Bật Growth Tracker" })).toBeVisible();
+  expect(mocks.disable.mock.calls).toEqual([["farm-1"], ["farm-1"]]);
+  expect(mocks.profile).toHaveBeenCalledTimes(2);
+  expect(mocks.farm).not.toHaveBeenCalled();
+  expect(mocks.saveFarm).not.toHaveBeenCalled();
 });
 
 it.each(["", "-1", "1.5", "1e2", "4294967296"])(
@@ -282,20 +355,23 @@ it("queries the profile after an enable conflict and switches from enable to edi
   expect(mocks.profile).toHaveBeenCalledTimes(2);
 });
 
-it("locks writes until a read verifies the result of an interrupted save", async () => {
-  mocks.profile.mockResolvedValueOnce(profile).mockResolvedValueOnce({ ...profile, version: 5 });
-  mocks.update.mockRejectedValueOnce(new Error("network_error"));
-  view(<FarmTrackerProfileEditor farm={farm} />);
-  const save = await screen.findByRole("button", { name: "Lưu Growth Tracker" });
-  fireEvent.click(save);
-  const error = await screen.findByRole("alert");
-  expect(save).toBeDisabled();
-  fireEvent.click(save);
-  fireEvent.click(within(error).getByRole("button", { name: "Tải lại dữ liệu" }));
-  expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeEnabled();
-  expect(mocks.update).toHaveBeenCalledTimes(1);
-  expect(mocks.profile).toHaveBeenCalledTimes(2);
-});
+it.each([new Error("network_error"), Object.assign(new Error("request_timeout"), { status: 408 })])(
+  "locks writes until a read verifies the result of an interrupted save (%s)",
+  async (cause) => {
+    mocks.profile.mockResolvedValueOnce(profile).mockResolvedValueOnce({ ...profile, version: 5 });
+    mocks.update.mockRejectedValueOnce(cause);
+    view(<FarmTrackerProfileEditor farm={farm} />);
+    const save = await screen.findByRole("button", { name: "Lưu Growth Tracker" });
+    fireEvent.click(save);
+    const error = await screen.findByRole("alert");
+    expect(save).toBeDisabled();
+    fireEvent.click(save);
+    fireEvent.click(within(error).getByRole("button", { name: "Tải lại dữ liệu" }));
+    expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeEnabled();
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.profile).toHaveBeenCalledTimes(2);
+  },
+);
 
 it.each([
   ["unauthenticated", 401],

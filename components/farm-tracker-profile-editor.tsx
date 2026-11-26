@@ -5,9 +5,7 @@ import {
   Box,
   Button,
   Checkbox,
-  Divider,
   Group,
-  Loader,
   Paper,
   SimpleGrid,
   Stack,
@@ -19,7 +17,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { Status } from "@/components/nfv-controls";
+import { DataState, Status } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
@@ -65,9 +63,11 @@ function requireProfile(profile: TrackerFarm, farmId: string) {
 
 export function FarmTrackerProfileEditor({
   farm,
+  isTabActive = true,
   onAccessLost,
 }: {
   farm: Farm;
+  isTabActive?: boolean;
   onAccessLost?: (cause: unknown) => void;
 }) {
   const { locale, t } = useAdminI18n();
@@ -217,6 +217,7 @@ export function FarmTrackerProfileEditor({
         status === 409 || status === 404
           ? "conflict"
           : !status ||
+              status === 408 ||
               status >= 500 ||
               (cause instanceof Error && cause.message === "invalid_response")
             ? "uncertain"
@@ -260,16 +261,7 @@ export function FarmTrackerProfileEditor({
     });
   }
 
-  if (checking) {
-    return (
-      <Paper p="md" withBorder>
-        <Group role="status" gap="sm">
-          <Loader size="sm" />
-          <Text size="sm">{c.loading}</Text>
-        </Group>
-      </Paper>
-    );
-  }
+  if (checking) return <DataState kind="loading" title={c.loading} />;
   if (readError) {
     if (
       readError.cause instanceof Error &&
@@ -320,8 +312,6 @@ export function FarmTrackerProfileEditor({
             </RecordDetailField>
           </RecordDetailFields>
         )}
-        {!farm.is_active && <Alert color="warning">{c.inactive}</Alert>}
-        {profile && <Divider />}
         <Box component="form" onSubmit={submit} noValidate>
           <Stack gap="md">
             <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="sm">
@@ -362,6 +352,9 @@ export function FarmTrackerProfileEditor({
               onChange={(event) => setDraft({ ...draft, visible: event.currentTarget.checked })}
               disabled={!!busy}
             />
+            {!farm.is_active && (profile?.is_visible || draft.visible) && (
+              <Alert color="warning">{c.inactive}</Alert>
+            )}
             {writeError?.recovery ? (
               <RecoveryAlert
                 message={writeError.recovery === "conflict" ? c.conflict : c.uncertain}
@@ -405,7 +398,7 @@ export function FarmTrackerProfileEditor({
           </Stack>
         </Box>
       </Stack>
-      {confirming && (
+      {confirming && isTabActive && (
         <ConfirmationDialog
           busy={busy === "disable"}
           busyLabel={c.disabling}

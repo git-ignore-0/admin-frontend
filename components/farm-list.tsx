@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Alert,
   Anchor,
   Box,
   Button,
@@ -12,8 +11,8 @@ import {
   Select,
   Stack,
   Table,
-  Tabs,
   Text,
+  Tooltip,
 } from "@mantine/core";
 import NextImage from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -27,10 +26,6 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
-import {
-  TrackerFarmManager,
-  type TrackerFarmManagerHandle,
-} from "@/components/tracker-farm-manager";
 import { requestErrorMessage } from "@/lib/client-error";
 import { farmHref, readFarmListContext } from "@/lib/farm-navigation";
 import { listFarms } from "@/lib/farms-api";
@@ -39,54 +34,12 @@ import { mediaUrlForWidth } from "@/lib/media";
 import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function FarmList() {
-  const { t } = useAdminI18n();
-  const search = useSearchParams();
-  const router = useRouter();
-  const isCurrent = useIsAdminQueryScopeCurrent();
-  const tab = search?.get("tab") === "tracker" ? "tracker" : "farms";
-  const [opened, setOpened] = useState({ farms: tab === "farms", tracker: tab === "tracker" });
-  const tracker = useRef<TrackerFarmManagerHandle>(null);
-  useEffect(() => {
-    setOpened((current) => (current[tab] ? current : { ...current, [tab]: true }));
-  }, [tab]);
-
-  if (!isCurrent()) return null;
-
-  return (
-    <Stack gap="md" miw={0}>
-      <PageHeading title={t.common.farmList} visuallyHiddenTitle />
-      <Tabs
-        value={tab}
-        onChange={(value) => {
-          if (value !== "farms" && value !== "tracker") return;
-          const navigate = () =>
-            router.push(farmHref(search, { view: value, setup: false }), { scroll: false });
-          if (tab === "tracker" && tracker.current) tracker.current.requestNavigation(navigate);
-          else navigate();
-        }}
-      >
-        <Tabs.List mb="md" aria-label={t.common.farms}>
-          <Tabs.Tab value="farms">{t.common.farmList}</Tabs.Tab>
-          <Tabs.Tab value="tracker">{t.common.trackerFarms}</Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="farms">
-          {(tab === "farms" || opened.farms) && <FarmDirectory active={tab === "farms"} />}
-        </Tabs.Panel>
-        <Tabs.Panel value="tracker">
-          {(tab === "tracker" || opened.tracker) && <TrackerFarmManager ref={tracker} />}
-        </Tabs.Panel>
-      </Tabs>
-    </Stack>
-  );
-}
-
-function FarmDirectory({ active }: { active: boolean }) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const router = useRouter();
   const params = useSearchParams();
   const isCurrent = useIsAdminQueryScopeCurrent();
-  const { search, status, page, setup } = readFarmListContext(params);
+  const { search, status, page } = readFarmListContext(params);
   const [query, setQuery] = useState(search);
   const dictionary = useRef(t);
   dictionary.current = t;
@@ -111,6 +64,7 @@ function FarmDirectory({ active }: { active: boolean }) {
     fetchPage,
     getErrorMessage,
     controlledPage: page,
+    enabled: isCurrent(),
     requestKey: JSON.stringify([search, status]),
   });
   const lastPage = meta ? Math.max(1, Math.ceil(meta.total / meta.page_size)) : page;
@@ -121,28 +75,26 @@ function FarmDirectory({ active }: { active: boolean }) {
       if (value) next.set(key, value);
       else next.delete(key);
     }
-    return farmHref(next, { view: "farms" });
+    return farmHref(next);
   }
 
   useEffect(() => {
-    if (!active || loading || page <= lastPage) return;
+    if (!isCurrent() || loading || page <= lastPage) return;
     const next = new URLSearchParams(params?.toString());
     next.set("page", String(lastPage));
-    router.replace(farmHref(next, { view: "farms" }), { scroll: false });
-  }, [active, lastPage, loading, page, params, router]);
+    router.replace(farmHref(next), { scroll: false });
+  }, [isCurrent, lastPage, loading, page, params, router]);
 
   function clearFilters() {
     setQuery("");
     router.push(href({ search: "", is_active: "", page: "" }), { scroll: false });
   }
 
+  if (!isCurrent()) return null;
+
   return (
     <Stack gap="md" miw={0}>
-      {setup && (
-        <Alert color="info" title={c.chooseTrackerFarm}>
-          {c.chooseTrackerFarmHint}
-        </Alert>
-      )}
+      <PageHeading title={t.common.farmList} visuallyHiddenTitle />
       <ListToolbar
         busy={loading}
         primaryAction={
@@ -200,7 +152,7 @@ function FarmDirectory({ active }: { active: boolean }) {
         {!!items?.length && (
           <Table.ScrollContainer
             type="native"
-            minWidth={600}
+            minWidth={420}
             role="region"
             aria-label={c.list}
             tabIndex={0}
@@ -209,67 +161,87 @@ function FarmDirectory({ active }: { active: boolean }) {
             <Table aria-label={c.list} aria-busy={loading || undefined}>
               <Table.Thead>
                 <Table.Tr>
-                  {[c.name, c.status, c.availableStock, c.outOfStock].map((label) => (
-                    <Table.Th key={label} scope="col">
-                      {label}
-                    </Table.Th>
-                  ))}
+                  <Table.Th scope="col">{c.listFarmColumn}</Table.Th>
+                  <Table.Th scope="col">
+                    <Tooltip
+                      label={c.listProductCountHint}
+                      events={{ hover: true, focus: true, touch: true }}
+                      multiline
+                      w={220}
+                    >
+                      <span tabIndex={0}>{c.listProductsColumn}</span>
+                    </Tooltip>
+                  </Table.Th>
+                  <Table.Th scope="col">{c.status}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {items.map((farm) => (
-                  <Table.Tr key={farm.id}>
-                    <Table.Td>
-                      <Group wrap="nowrap" gap="sm" miw={0}>
-                        {farm.image && (
-                          <Image
-                            component={NextImage}
-                            alt=""
-                            src={mediaUrlForWidth(farm.image, 112)}
-                            width={56}
-                            height={48}
-                            w={56}
-                            h={48}
-                            flex="0 0 auto"
-                            radius="md"
-                            unoptimized
-                          />
-                        )}
-                        <Stack miw={0} gap={4} style={{ overflowWrap: "anywhere" }}>
-                          <Anchor
-                            component={AdminNavigationLink}
-                            fw={600}
-                            href={farmHref(params, {
-                              id: farm.id,
-                              tab: setup ? "tracker" : "products",
-                            })}
-                          >
-                            {locale === "vi" ? farm.name_vi : farm.name_en}
-                          </Anchor>
+                {items.map((farm) => {
+                  const inStock = farm.in_stock_product_count;
+                  const total = inStock + farm.out_of_stock_product_count;
+                  const productCount =
+                    total === 1 ? c.listProductCountSingular : c.listProductCount;
+
+                  return (
+                    <Table.Tr key={farm.id}>
+                      <Table.Td>
+                        <Group wrap="nowrap" gap="sm" miw={0}>
+                          {farm.image && (
+                            <Image
+                              component={NextImage}
+                              alt=""
+                              src={mediaUrlForWidth(farm.image, 112)}
+                              width={56}
+                              height={48}
+                              w={56}
+                              h={48}
+                              flex="0 0 auto"
+                              radius="md"
+                              unoptimized
+                            />
+                          )}
+                          <Stack miw={0} gap={4} style={{ overflowWrap: "anywhere" }}>
+                            <Anchor
+                              component={AdminNavigationLink}
+                              fw={600}
+                              href={farmHref(params, { id: farm.id, tab: "products" })}
+                            >
+                              {locale === "vi" ? farm.name_vi : farm.name_en}
+                            </Anchor>
+                            <Text size="sm" c="dimmed">
+                              {locale === "vi" ? farm.location_vi : farm.location_en}
+                            </Text>
+                          </Stack>
+                        </Group>
+                      </Table.Td>
+                      <Table.Td>
+                        {total > 0 ? (
+                          <Stack gap={4}>
+                            <Text inherit fw={600}>
+                              {productCount.replace("{count}", String(total))}
+                            </Text>
+                            <Text size="sm" c="dimmed">
+                              {inStock > 0
+                                ? c.listProductsInStock.replace("{count}", String(inStock))
+                                : c.listNoProductsInStock}
+                            </Text>
+                          </Stack>
+                        ) : (
                           <Text size="sm" c="dimmed">
-                            {locale === "vi" ? farm.location_vi : farm.location_en}
+                            {c.listNoProducts}
                           </Text>
-                        </Stack>
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Status
-                        domain="availability"
-                        status={farm.is_active ? "active" : "inactive"}
-                        label={farm.is_active ? c.active : c.inactive}
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      {c.inStockProducts.replace("{count}", String(farm.in_stock_product_count))}
-                    </Table.Td>
-                    <Table.Td>
-                      {c.outOfStockProducts.replace(
-                        "{count}",
-                        String(farm.out_of_stock_product_count),
-                      )}
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
+                        )}
+                      </Table.Td>
+                      <Table.Td>
+                        <Status
+                          domain="availability"
+                          status={farm.is_active ? "active" : "inactive"}
+                          label={farm.is_active ? c.active : c.inactive}
+                        />
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>

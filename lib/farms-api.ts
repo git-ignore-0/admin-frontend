@@ -1,7 +1,7 @@
 import { isoDateToAdminInput } from "@/lib/admin-date";
 import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
-import { invalidApiResponse } from "@/lib/client-error";
+import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import { parsePositiveDecimal } from "@/lib/numeric-input";
 import { api, apiEnvelope } from "@/lib/client-api";
 import type {
@@ -27,6 +27,8 @@ export type FarmInput = Pick<
   | "is_active"
 > & { photo_ids: string[]; version?: number };
 
+const farmIdentityFields = ["name_vi", "name_en", "location_vi", "location_en"] as const;
+
 export function listFarms(
   query: { search?: string; is_active?: boolean; page?: number } = {},
   signal?: AbortSignal,
@@ -40,14 +42,26 @@ export function listFarms(
 }
 
 export function getFarm(id: string, signal?: AbortSignal) {
-  return api<Farm>(`admin/farms/${id}`, { signal });
+  return api<Farm>(`admin/farms/${id}`, { signal }).then((data) => requireFarm(data, id));
 }
 
 export function saveFarm(id: string | undefined, payload: Partial<FarmInput>) {
   return api<Farm>(id ? `admin/farms/${id}` : "admin/farms", {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(payload),
-  }).then(requireResponseEntity);
+  }).then((data) => {
+    const farm = requireFarm(data, id);
+    const incompleteIdentity = farmIdentityFields.some(
+      (field) => (id === undefined || payload[field] !== undefined) && !nonempty(farm[field]),
+    );
+    if (
+      incompleteIdentity ||
+      (id && (payload.version === undefined || farm.version <= payload.version))
+    ) {
+      throw invalidApiResponse();
+    }
+    return farm;
+  });
 }
 
 export function deleteFarm(id: string) {
@@ -82,6 +96,47 @@ function integer(value: unknown, minimum = 0): boolean {
 
 function nonempty(value: unknown): boolean {
   return typeof value === "string" && Boolean(value.trim());
+}
+
+function isImageSource(value: unknown): boolean {
+  return (
+    isApiObject(value) && nonempty(value.url) && integer(value.width, 1) && integer(value.height, 1)
+  );
+}
+
+function isFarmImage(value: unknown): boolean {
+  return (
+    isApiObject(value) &&
+    uuid(value.id) &&
+    isImageSource(value) &&
+    Array.isArray(value.variants) &&
+    value.variants.every(isImageSource)
+  );
+}
+
+function requireFarm(data: Farm, id?: string) {
+  requireResponseEntity(data);
+  if (
+    !uuid(data.id, id) ||
+    !integer(data.version, 1) ||
+    typeof data.is_active !== "boolean" ||
+    !farmIdentityFields.every((field) => typeof data[field] === "string") ||
+    ![data.description_vi, data.description_en].every((value) => typeof value === "string") ||
+    ![data.in_stock_product_count, data.out_of_stock_product_count].every((value) =>
+      integer(value),
+    ) ||
+    ![data.created_at, data.updated_at].every(
+      (value) => typeof value === "string" && Number.isFinite(Date.parse(value)),
+    ) ||
+    !(data.image === null || isFarmImage(data.image)) ||
+    !Array.isArray(data.photos) ||
+    data.photos.length > 12 ||
+    !data.photos.every(isFarmImage) ||
+    new Set(data.photos.map((photo) => photo.id.toLowerCase())).size !== data.photos.length
+  ) {
+    throw invalidApiResponse();
+  }
+  return data;
 }
 
 function day(value: unknown): boolean {

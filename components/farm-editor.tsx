@@ -1,6 +1,7 @@
 "use client";
 import {
   Alert,
+  Anchor,
   Box,
   Button,
   Divider,
@@ -16,7 +17,15 @@ import {
   useMantineTheme,
 } from "@mantine/core";
 import { useRouter, useSearchParams } from "next/navigation";
-import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -47,6 +56,11 @@ type Form = {
   is_active: boolean;
   version?: number;
 };
+type SaveRecovery =
+  | { kind: "create"; search: string }
+  | { kind: "edit"; version: number; latest?: Farm; stale?: boolean; problem?: unknown };
+type UploadedPhotos = Map<string, "temporary" | "submitted">;
+
 const emptyForm: Form = {
   name_en: "",
   name_vi: "",
@@ -75,8 +89,27 @@ function farmUnavailable(caught: unknown) {
   return isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404;
 }
 
-function discardTemporaryPhotos(ids: Set<string>) {
-  for (const id of ids) void deleteFarmImage(id, { keepalive: true }).catch(() => undefined);
+function farmSaveRejected(problem: ClientApiError | null) {
+  return (
+    (problem?.status === 400 &&
+      ["validation_error", "invalid_request_body"].includes(problem.message)) ||
+    (problem?.status === 409 &&
+      ["version_conflict", "farm_product_changed", "stock_reserved"].includes(problem.message))
+  );
+}
+
+function forgetReferencedPhotos(uploads: UploadedPhotos, farm: Farm) {
+  for (const photo of farm.photos) uploads.delete(photo.id.toLowerCase());
+  if (farm.image) uploads.delete(farm.image.id.toLowerCase());
+}
+
+function discardTemporaryPhotos(uploads: UploadedPhotos) {
+  for (const [id, state] of uploads) {
+    if (state === "temporary") {
+      uploads.delete(id);
+      void deleteFarmImage(id, { keepalive: true }).catch(() => undefined);
+    }
+  }
 }
 
 export function FarmEditor({ farmId }: { farmId?: string }) {
@@ -102,66 +135,80 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
   const [error, setError] = useState("");
   const [photoError, setPhotoError] = useState("");
   const [conflict, setConflict] = useState(false);
+  const [recovery, setRecovery] = useState<SaveRecovery | null>(null);
+  const [checkingLatest, setCheckingLatest] = useState(false);
   const [activeLocale, setActiveLocale] = useState<AdminLocale>(locale);
   const [retry, setRetry] = useState(0);
   const translationRef = useRef(t);
   translationRef.current = t;
   const formRef = useRef<HTMLFormElement>(null);
   const pendingFocus = useRef<"name" | "location" | null>(null);
-  const temporaryIds = useRef(new Set<string>());
+  const uploadsRef = useRef<UploadedPhotos>(new Map());
+  const recoveryRequest = useRef<AbortController | null>(null);
+  const accessRevoked = useRef(false);
   const mounted = useRef(false);
   const saveLock = useRef(false);
   const uploadLock = useRef(false);
 
+  function canAct() {
+    return mounted.current && isCurrent() && !accessRevoked.current;
+  }
+
+  const hideFarm = useCallback(() => {
+    accessRevoked.current = true;
+    setSavedNames(undefined);
+    setForm(emptyForm);
+    setPhotoError("");
+    setConflict(false);
+  }, []);
+
+  const adoptFarm = useCallback((farm: Farm) => {
+    accessRevoked.current = false;
+    const uploads = uploadsRef.current;
+    forgetReferencedPhotos(uploads, farm);
+    for (const [id, state] of uploads) {
+      if (state === "temporary") {
+        void deleteFarmImage(id)
+          .then(() => uploads.delete(id))
+          .catch(() => undefined);
+      }
+    }
+    setForm(fromFarm(farm));
+    setSavedNames({ vi: farm.name_vi, en: farm.name_en });
+    setPhotoError("");
+    setConflict(false);
+  }, []);
+
   useLayoutEffect(() => {
-    const temp = temporaryIds.current;
+    const uploads = uploadsRef.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
-      // The pending save can still attach these uploads.
-      if (!saveLock.current) discardTemporaryPhotos(temp);
+      recoveryRequest.current?.abort();
+      if (isCurrent() && !accessRevoked.current) discardTemporaryPhotos(uploads);
     };
-  }, []);
+  }, [isCurrent]);
   useEffect(() => {
-    if (!farmId) return;
+    if (!farmId || !isCurrent()) return;
     const controller = new AbortController();
     setLoading(true);
     setError("");
     getFarm(farmId, controller.signal)
       .then((farm) => {
         if (controller.signal.aborted || !isCurrent()) return;
-        const retained = new Set([
-          ...farm.photos.map((photo) => photo.id),
-          ...(farm.image ? [farm.image.id] : []),
-        ]);
-        for (const id of temporaryIds.current) {
-          if (retained.has(id)) {
-            temporaryIds.current.delete(id);
-          } else {
-            void deleteFarmImage(id)
-              .then(() => temporaryIds.current.delete(id))
-              .catch(() => undefined);
-          }
-        }
-        setForm(fromFarm(farm));
-        setSavedNames({ vi: farm.name_vi, en: farm.name_en });
-        setConflict(false);
+        adoptFarm(farm);
       })
       .catch((caught) => {
         if (controller.signal.aborted || !isCurrent()) return;
         setSavedNames(undefined);
-        if (farmUnavailable(caught)) {
-          setForm(emptyForm);
-          setPhotoError("");
-          setConflict(false);
-        }
+        if (farmUnavailable(caught)) hideFarm();
         setError(requestErrorMessage(caught, translationRef.current));
       })
       .finally(() => {
         if (!controller.signal.aborted && isCurrent()) setLoading(false);
       });
     return () => controller.abort();
-  }, [farmId, isCurrent, retry]);
+  }, [adoptFarm, farmId, hideFarm, isCurrent, retry]);
   useEffect(() => {
     if (!pendingFocus.current) return;
     const selector =
@@ -171,7 +218,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
   }, [activeLocale, error]);
 
   async function upload(files: File[]) {
-    if (!files.length || uploadLock.current || saveLock.current || saving || !isCurrent()) return;
+    if (!files.length || uploadLock.current || saveLock.current || !canAct()) return;
     if (files.some((file) => !isSupportedImageFile(file))) {
       setPhotoError(c.photoInvalid);
       return;
@@ -187,20 +234,22 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
       for (const file of files) {
         try {
           const asset = await uploadFarmImage(file);
-          if (!mounted.current || !isCurrent()) {
-            void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
+          if (!canAct()) {
+            if (isCurrent() && !accessRevoked.current) {
+              void deleteFarmImage(asset.id, { keepalive: true }).catch(() => undefined);
+            }
             break;
           }
-          temporaryIds.current.add(asset.id);
+          uploadsRef.current.set(asset.id.toLowerCase(), "temporary");
           setForm((current) => ({ ...current, photos: [...current.photos, asset] }));
         } catch (caught) {
-          if (!mounted.current || !isCurrent()) break;
+          if (!canAct()) break;
           setPhotoError(requestErrorMessage(caught, translationRef.current));
         }
       }
     } finally {
       uploadLock.current = false;
-      if (mounted.current && isCurrent()) setUploading(false);
+      if (canAct()) setUploading(false);
     }
   }
 
@@ -222,24 +271,74 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
     });
   }
   function removePhoto(id: string) {
+    if (!canAct()) return;
     setForm((current) => ({
       ...current,
       photos: current.photos.filter((photo) => photo.id !== id),
     }));
-    if (temporaryIds.current.has(id)) {
+    const uploadId = id.toLowerCase();
+    if (uploadsRef.current.get(uploadId) === "temporary") {
       void deleteFarmImage(id)
-        .then(() => temporaryIds.current.delete(id))
+        .then(() => uploadsRef.current.delete(uploadId))
         .catch((caught) => {
-          if (mounted.current && isCurrent()) {
+          if (canAct()) {
             setPhotoError(requestErrorMessage(caught, translationRef.current));
           }
         });
     }
   }
 
+  async function checkLatestFarm() {
+    if (!farmId || recovery?.kind !== "edit" || recoveryRequest.current || !canAct()) return;
+    const controller = new AbortController();
+    recoveryRequest.current = controller;
+    setCheckingLatest(true);
+    try {
+      const latest = await getFarm(farmId, controller.signal);
+      if (!canAct() || controller.signal.aborted) return;
+      // PATCH compares its expected version under the Farm row lock. An equal or
+      // older read cannot establish that the earlier write has finished.
+      if (latest.version <= recovery.version) {
+        setRecovery({ kind: "edit", version: recovery.version, stale: true });
+        return;
+      }
+      // A newer snapshot can confirm references. Missing photos remain protected
+      // because the snapshot cannot identify which write attached them previously.
+      forgetReferencedPhotos(uploadsRef.current, latest);
+      setRecovery({ kind: "edit", version: recovery.version, latest });
+    } catch (caught) {
+      if (!canAct() || controller.signal.aborted) return;
+      if (farmUnavailable(caught)) {
+        hideFarm();
+        setError(requestErrorMessage(caught, translationRef.current));
+      } else {
+        setRecovery({ kind: "edit", version: recovery.version, problem: caught });
+      }
+    } finally {
+      recoveryRequest.current = null;
+      if (mounted.current && isCurrent() && !controller.signal.aborted) setCheckingLatest(false);
+    }
+  }
+
+  function adoptLatestFarm() {
+    if (recovery?.kind !== "edit" || !recovery.latest || !canAct()) return;
+    adoptFarm(recovery.latest);
+    setRecovery(null);
+    saveLock.current = false;
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saveLock.current || saving || uploadLock.current || conflict || !isCurrent()) return;
+    const version = form.version;
+    if (
+      saveLock.current ||
+      uploadLock.current ||
+      conflict ||
+      recovery ||
+      !canAct() ||
+      (farmId && version === undefined)
+    )
+      return;
     for (const language of ["vi", "en"] as const) {
       const missing = !form[`name_${language}`].trim()
         ? "name"
@@ -261,54 +360,66 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
     saveLock.current = true;
     setSaving(true);
     setError("");
-    let saved = false;
+    const photoIds = form.photos.map((photo) => photo.id);
+    const uploads = uploadsRef.current;
+    const submitted = photoIds
+      .map((id) => id.toLowerCase())
+      .filter((id) => uploads.get(id) === "temporary");
+    // Protect uploads before the request starts, even if this editor exits before it settles.
+    for (const id of submitted) uploads.set(id, "submitted");
+    const nameVi = form.name_vi.trim();
+    let result: Farm;
     try {
-      const result = await saveFarm(farmId, {
-        name_vi: form.name_vi.trim(),
+      result = await saveFarm(farmId, {
+        name_vi: nameVi,
         name_en: form.name_en.trim(),
         location_vi: form.location_vi.trim(),
         location_en: form.location_en.trim(),
         description_vi: form.description_vi,
         description_en: form.description_en,
         is_active: form.is_active,
-        photo_ids: form.photos.map((photo) => photo.id),
-        ...(farmId ? { version: form.version } : {}),
+        photo_ids: photoIds,
+        ...(farmId ? { version } : {}),
       });
-      saved = true;
-      for (const photo of form.photos) temporaryIds.current.delete(photo.id);
-      if (!mounted.current || !isCurrent()) {
-        discardTemporaryPhotos(temporaryIds.current);
-        return;
-      }
-      toast(locale === "vi" ? "Đã lưu trang trại." : "Farm saved.");
-      router.replace(farmHref(search, { id: result.id }));
-      router.refresh();
     } catch (caught) {
-      const status = (caught as ClientApiError | null)?.status;
-      if (!mounted.current || !isCurrent()) {
-        if (status && status >= 400 && status < 500 && status !== 408) {
-          discardTemporaryPhotos(temporaryIds.current);
-        }
+      const problem = caught instanceof Error ? (caught as ClientApiError) : null;
+      const unavailable = farmUnavailable(caught);
+      const rejected = !unavailable && farmSaveRejected(problem);
+      if (rejected) for (const id of submitted) uploads.set(id, "temporary");
+      if (!canAct()) {
+        if (rejected && isCurrent() && !accessRevoked.current) discardTemporaryPhotos(uploads);
         return;
       }
-      if (farmId && farmUnavailable(caught)) {
-        setSavedNames(undefined);
-        setForm(emptyForm);
-        setPhotoError("");
+      setSaving(false);
+      if (unavailable) {
+        hideFarm();
+      } else if (!rejected) {
+        setRecovery(
+          farmId && version !== undefined
+            ? { kind: "edit", version }
+            : { kind: "create", search: nameVi.slice(0, 200) },
+        );
+        return;
       }
-      if (status === 409) {
+      saveLock.current = false;
+      if (rejected && problem?.status === 409) {
         setConflict(true);
         setError(c.conflict);
       } else setError(requestErrorMessage(caught, translationRef.current));
-    } finally {
-      saveLock.current = false;
-      if (!saved && mounted.current && isCurrent()) setSaving(false);
+      return;
     }
+    forgetReferencedPhotos(uploads, result);
+    if (!canAct()) return;
+    toast(locale === "vi" ? "Đã lưu trang trại." : "Farm saved.");
+    router.replace(farmHref(search, { id: result.id }));
+    router.refresh();
   }
 
   const breadcrumbTitle = farmId ? t.breadcrumb.edit : t.breadcrumb.newFarm;
+  const sessionCurrent = isCurrent();
   const recordLabel =
-    (!loading &&
+    (sessionCurrent &&
+      !loading &&
       (savedNames?.[locale].trim() || savedNames?.[locale === "vi" ? "en" : "vi"].trim())) ||
     t.breadcrumb.farmDetails;
   const breadcrumbItems = useMemo(
@@ -338,13 +449,22 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
       aria-disabled={saving || undefined}
       tabIndex={saving ? -1 : undefined}
       onClick={(event) => {
-        if (saving || saveLock.current) event.preventDefault();
+        if (saving || (saveLock.current && !recovery)) event.preventDefault();
       }}
     >
       {c.cancel}
     </Button>
   );
 
+  if (!sessionCurrent)
+    return (
+      <>
+        {heading}
+        <Alert color="danger" role="alert">
+          {t.common.sessionChanged}
+        </Alert>
+      </>
+    );
   if (loading)
     return (
       <>
@@ -355,15 +475,21 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
         </Group>
       </>
     );
-  if (error && farmId && form.version === undefined)
+  if (error && (accessRevoked.current || (farmId && form.version === undefined)))
     return (
       <Stack gap="md">
         {heading}
-        <RecoveryAlert
-          message={error}
-          retryLabel={t.common.retry}
-          onRetry={() => setRetry((n) => n + 1)}
-        />
+        {farmId && !recovery ? (
+          <RecoveryAlert
+            message={error}
+            retryLabel={t.common.retry}
+            onRetry={() => setRetry((n) => n + 1)}
+          />
+        ) : (
+          <Alert color="danger" role="alert">
+            {error}
+          </Alert>
+        )}
         <Group justify="flex-end">{cancel}</Group>
       </Stack>
     );
@@ -373,12 +499,53 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
       {heading}
       <Box component="form" maw="72rem" mb="lg" noValidate onSubmit={submit} ref={formRef}>
         <Stack gap="md">
+          {recovery?.kind === "create" && (
+            <Alert color="warning" role="alert">
+              <Stack gap="sm" align="flex-start">
+                <Text size="sm">{c.createUncertain}</Text>
+                <Anchor
+                  component={AdminNavigationLink}
+                  href={farmHref(new URLSearchParams({ search: recovery.search }))}
+                  target="_blank"
+                  rel="noopener"
+                >
+                  {c.searchAttemptedFarm}
+                </Anchor>
+              </Stack>
+            </Alert>
+          )}
+          {recovery?.kind === "edit" &&
+            (recovery.latest ? (
+              <Alert color="warning" role="alert">
+                <Stack gap="sm" align="flex-start">
+                  <Text size="sm">{c.latestFarmAvailable}</Text>
+                  <Button variant="default" type="button" onClick={adoptLatestFarm}>
+                    {c.useLatestFarm}
+                  </Button>
+                </Stack>
+              </Alert>
+            ) : (
+              <RecoveryAlert
+                message={[
+                  c.saveUncertain,
+                  recovery.stale ? c.saveStillUncertain : "",
+                  recovery.problem ? requestErrorMessage(recovery.problem, t) : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                retryLabel={c.checkLatestFarm}
+                onRetry={checkLatestFarm}
+                loading={checkingLatest}
+              />
+            ))}
           {error &&
             (conflict ? (
               <RecoveryAlert
                 message={error}
                 retryLabel={c.reload}
-                onRetry={() => setRetry((n) => n + 1)}
+                onRetry={() => {
+                  if (!uploadLock.current) setRetry((n) => n + 1);
+                }}
                 loading={uploading}
               />
             ) : (
@@ -453,7 +620,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
                         alt: `${c.photos} ${index + 1}`,
                       }))}
                       maxItems={12}
-                      busy={uploading || saving}
+                      busy={uploading || saving || recovery !== null}
                       error={photoError}
                       help={c.photoHint}
                       labels={{
@@ -465,7 +632,11 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
                         moveEarlier: c.moveEarlier,
                         moveLater: c.moveLater,
                         remove: c.removePhoto,
-                        uploading: locale === "vi" ? "Đang tải ảnh…" : "Uploading images…",
+                        uploading: uploading
+                          ? locale === "vi"
+                            ? "Đang tải ảnh…"
+                            : "Uploading images…"
+                          : undefined,
                         select: locale === "vi" ? "Chọn ảnh số" : "Select image",
                       }}
                       onChooseFiles={upload}
@@ -494,7 +665,11 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
           </Grid>
           <Group component="footer" justify="flex-end" gap="xs">
             {cancel}
-            <Button type="submit" loading={saving} disabled={saving || uploading || conflict}>
+            <Button
+              type="submit"
+              loading={saving}
+              disabled={saving || uploading || conflict || recovery !== null}
+            >
               {saving ? c.saving : farmId ? c.save : c.create}
             </Button>
           </Group>

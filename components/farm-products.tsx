@@ -52,11 +52,14 @@ function firstBatchDraft(): StockBatchDraft {
   return { ...stockBatchDateDraft(stockBatchRangeForPreset("week")), quantity: "" };
 }
 
+function farmReadUnavailable(cause: unknown) {
+  return isProtectedDataError(cause) || (cause as ClientApiError | undefined)?.status === 404;
+}
+
 type FarmProductsProps = {
   farmId: string;
-  inStockCount?: number;
-  outOfStockCount?: number;
-  onInventoryChanged?: () => void;
+  farmActive?: boolean;
+  isTabActive?: boolean;
   onAccessLost?: (cause: unknown) => void;
 };
 
@@ -66,9 +69,8 @@ export function FarmProducts(props: FarmProductsProps) {
 
 function FarmProductsForFarm({
   farmId,
-  inStockCount = 0,
-  outOfStockCount = 0,
-  onInventoryChanged,
+  farmActive = true,
+  isTabActive = true,
   onAccessLost,
 }: FarmProductsProps) {
   const { locale, t } = useAdminI18n();
@@ -178,7 +180,6 @@ function FarmProductsForFarm({
     setMobileDetailOpen(false);
     setLinkConflict(hasHistory ? "protectedLink" : "changedLink");
     reloadLinks();
-    onInventoryChanged?.();
     return true;
   }
 
@@ -215,7 +216,7 @@ function FarmProductsForFarm({
       })
       .catch((caught) => {
         if (controller.signal.aborted || accessLost.current) return;
-        if (isProtectedDataError(caught)) {
+        if (farmReadUnavailable(caught)) {
           retireInventory(caught);
           return;
         }
@@ -259,7 +260,7 @@ function FarmProductsForFarm({
       })
       .catch((caught) => {
         if (controller.signal.aborted || accessLost.current) return;
-        if (isProtectedDataError(caught)) {
+        if (farmReadUnavailable(caught)) {
           retireInventory(caught);
           return;
         }
@@ -332,7 +333,6 @@ function FarmProductsForFarm({
       await addFarmProduct(farmId, selectedProduct, validated.value);
       if (!mounted.current || accessLost.current) return;
       reloadLinks();
-      onInventoryChanged?.();
       setAddOpen(false);
       setQuery("");
       setSearch("");
@@ -350,7 +350,6 @@ function FarmProductsForFarm({
         reloadCatalog();
         setBatchDraft(firstBatchDraft());
         setBatchErrors({});
-        onInventoryChanged?.();
       }
       setActionError(
         code === "product_inactive" || code === "product_not_selling"
@@ -374,7 +373,6 @@ function FarmProductsForFarm({
       const updated = await setFarmProductActive(farmId, row.product_id, !row.is_active);
       if (!mounted.current || accessLost.current) return;
       setLinks((current) => current?.map((item) => (item.id === row.id ? updated : item)) ?? null);
-      onInventoryChanged?.();
     } catch (caught) {
       if (!mounted.current || accessLost.current || retireIfDenied(caught)) return;
       if (recoverLinkConflict(caught)) return;
@@ -402,7 +400,6 @@ function FarmProductsForFarm({
         setLoading(true);
         setLinksPage((page) => page - 1);
       } else reloadLinks();
-      onInventoryChanged?.();
       setRemoveTarget(null);
     } catch (caught) {
       if (!mounted.current || accessLost.current || retireIfDenied(caught)) return;
@@ -435,7 +432,6 @@ function FarmProductsForFarm({
             accessLost.current = false;
             setAccessError("");
             reloadLinks();
-            onInventoryChanged?.();
           },
         }}
       />
@@ -445,12 +441,7 @@ function FarmProductsForFarm({
   return (
     <Stack component="section" className={classes.inventory} gap="md" aria-busy={loading}>
       <Group component="header" align="flex-start" justify="space-between" gap="sm">
-        <Stack gap="xs" miw={0}>
-          <Title order={2}>{c.products}</Title>
-          <Text size="sm" c="dimmed">
-            {c.selectProductHint}
-          </Text>
-        </Stack>
+        <Title order={2}>{c.products}</Title>
         <Button
           disabled={loading || busy || Boolean(error)}
           onClick={() => {
@@ -467,22 +458,20 @@ function FarmProductsForFarm({
           {c.addProduct}
         </Button>
       </Group>
-      {!error && (
-        <Group gap="sm" role="group" aria-label={c.availableStock}>
-          <Text size="sm" fw={600}>
-            {c.productsWithAvailableStock.replace("{count}", String(inStockCount))}
-          </Text>
-          <Text size="sm" c="dimmed">
-            {c.productsWithoutAvailableStock.replace("{count}", String(outOfStockCount))}
-          </Text>
-        </Group>
-      )}
       {linkConflict && (
         <Alert color="danger" role="alert">
           {c[linkConflict]}
         </Alert>
       )}
-      <Box className={classes.panes} data-detail-open={mobileDetailOpen || undefined}>
+      {actionError && !addOpen && (
+        <Alert color="danger" role="alert">
+          {actionError}
+        </Alert>
+      )}
+      <Box
+        className={classes.panes}
+        data-detail-open={(Boolean(selectedLink) && mobileDetailOpen) || undefined}
+      >
         <Paper className={classes.listPane} p="md" miw={0}>
           <Stack gap="md">
             <Box component="form" role="search" aria-label={c.searchLinked} onSubmit={searchLinks}>
@@ -492,7 +481,7 @@ function FarmProductsForFarm({
                   miw={0}
                   label={c.searchLinked}
                   type="search"
-                  placeholder={c.searchLinked}
+                  placeholder={c.productPlaceholder}
                   value={linkedQuery}
                   onChange={(event) => setLinkedQuery(event.currentTarget.value)}
                 />
@@ -526,7 +515,7 @@ function FarmProductsForFarm({
                   };
                   const stockLabel = c.availableUnits.replace(
                     "{count}",
-                    String(row.available_quantity),
+                    String(farmActive ? row.available_quantity : 0),
                   );
                   return (
                     <Button
@@ -609,69 +598,60 @@ function FarmProductsForFarm({
           component="section"
           aria-label={selectedLink ? `${c.stockBatches} ${selectedLink.sku}` : undefined}
           className={classes.detailPane}
+          hidden={!selectedLink}
           miw={0}
           p="md"
         >
-          <Stack gap="md">
-            {actionError && !addOpen && (
-              <Alert color="danger" role="alert">
-                {actionError}
-              </Alert>
-            )}
-            {selectedLink ? (
-              <FarmStockBatches
-                key={selectedLink.id}
-                farmId={farmId}
-                product={selectedLink}
-                detailHeadingRef={detailHeadingRef}
-                onBack={() => {
-                  restoreProductFocusRef.current = true;
-                  setMobileDetailOpen(false);
-                }}
-                onSummaryChanged={() => {
-                  reloadLinks();
-                  onInventoryChanged?.();
-                }}
-                onAccessLost={retireInventory}
-                summaryBusy={loading || busy}
-                actions={
-                  <Menu position="bottom-end" returnFocus>
-                    <Menu.Target>
-                      <ActionIcon
-                        variant="default"
+          {selectedLink ? (
+            <FarmStockBatches
+              key={selectedLink.id}
+              farmId={farmId}
+              farmActive={farmActive}
+              product={selectedLink}
+              isTabActive={isTabActive}
+              detailHeadingRef={detailHeadingRef}
+              onBack={() => {
+                restoreProductFocusRef.current = true;
+                setMobileDetailOpen(false);
+              }}
+              onStockChanged={reloadLinks}
+              onAccessLost={retireInventory}
+              productsBusy={loading || busy}
+              actions={
+                <Menu position="bottom-end" returnFocus>
+                  <Menu.Target>
+                    <ActionIcon
+                      variant="default"
+                      disabled={busy}
+                      aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
+                    >
+                      <IconDots aria-hidden="true" size={18} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item disabled={busy} onClick={() => void toggle(selectedLink)}>
+                      {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
+                    </Menu.Item>
+                    {!selectedLink.has_supply_history ? (
+                      <Menu.Item
+                        color="danger"
                         disabled={busy}
-                        aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
+                        onClick={() => {
+                          setRemoveTarget(selectedLink);
+                          setRemoveError("");
+                        }}
                       >
-                        <IconDots aria-hidden="true" size={18} />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item disabled={busy} onClick={() => void toggle(selectedLink)}>
-                        {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
+                        {c.removeLink}
                       </Menu.Item>
-                      {!selectedLink.has_supply_history ? (
-                        <Menu.Item
-                          color="danger"
-                          disabled={busy}
-                          onClick={() => {
-                            setRemoveTarget(selectedLink);
-                            setRemoveError("");
-                          }}
-                        >
-                          {c.removeLink}
-                        </Menu.Item>
-                      ) : null}
-                    </Menu.Dropdown>
-                  </Menu>
-                }
-              />
-            ) : !loading && !error ? (
-              <DataState kind="empty" title={c.linkedEmpty} />
-            ) : null}
-          </Stack>
+                    ) : null}
+                  </Menu.Dropdown>
+                </Menu>
+              }
+            />
+          ) : null}
         </Paper>
       </Box>
-      {addOpen && (
+      {addOpen && isTabActive && (
         <ConfirmationDialog
           title={c.addFromCatalog}
           size={640}
@@ -696,9 +676,6 @@ function FarmProductsForFarm({
           }}
           onConfirm={() => void add()}
         >
-          <Text size="sm" c="dimmed">
-            {c.addFromCatalogHint}
-          </Text>
           <Box
             component="form"
             role="search"
@@ -791,7 +768,7 @@ function FarmProductsForFarm({
           />
         </ConfirmationDialog>
       )}
-      {removeTarget && (
+      {removeTarget && isTabActive && (
         <ConfirmationDialog
           title={c.removeLink}
           size={400}

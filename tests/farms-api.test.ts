@@ -5,6 +5,7 @@ import {
   cancelFarmStockBatch,
   createFarmStockBatch,
   deleteFarmImage,
+  getFarm,
   listFarms,
   listFarmProducts,
   listAvailableFarmProducts,
@@ -22,6 +23,30 @@ const farmId = "11111111-1111-4111-8111-111111111111";
 const productId = "22222222-2222-4222-8222-222222222222";
 const linkId = "33333333-3333-4333-8333-333333333333";
 const batchId = "44444444-4444-4444-8444-444444444444";
+const farmImage = {
+  id: batchId,
+  url: "https://example.com/media/farms/photo.webp",
+  width: 240,
+  height: 180,
+  variants: [{ url: "https://example.com/media/farms/photo-small.webp", width: 120, height: 90 }],
+};
+const farm = {
+  id: farmId,
+  name_vi: "Nông trại Xanh",
+  name_en: "Green Farm",
+  location_vi: "Đà Lạt",
+  location_en: "Da Lat",
+  description_vi: "",
+  description_en: "",
+  image: farmImage,
+  photos: [farmImage],
+  is_active: true,
+  in_stock_product_count: 0,
+  out_of_stock_product_count: 2,
+  version: 4,
+  created_at: "2026-10-26T00:00:00Z",
+  updated_at: "2026-10-26T00:00:00Z",
+};
 const farmProduct = {
   id: linkId,
   farm_id: farmId,
@@ -168,19 +193,76 @@ it("queries only available Farm products with server-side search and pagination"
 });
 
 it("sends Farm version and photo IDs without sending tracker counts", async () => {
-  fetchMock.mockResolvedValue(Response.json({ data: { id: "farm-1" } }));
-  await saveFarm("farm-1", {
-    version: 3,
-    name_vi: "Nông trại Xanh",
-    photo_ids: ["photo-1"],
-  });
-  expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/admin/farms/farm-1");
+  fetchMock.mockResolvedValue(Response.json({ data: farm }));
+  await expect(
+    saveFarm(farmId, {
+      version: 3,
+      name_vi: "Nông trại Xanh",
+      photo_ids: [farmImage.id],
+    }),
+  ).resolves.toEqual(farm);
+  expect(fetchMock.mock.calls[0][0]).toBe(`/api/backend/admin/farms/${farmId}`);
   expect(fetchMock.mock.calls[0][1].method).toBe("PATCH");
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
     version: 3,
     name_vi: "Nông trại Xanh",
-    photo_ids: ["photo-1"],
+    photo_ids: [farmImage.id],
   });
+});
+
+it("accepts a valid Farm create response and a legacy cover without gallery entries", async () => {
+  const created = { ...farm, version: 1 };
+  const legacy = { ...farm, photos: [] };
+  fetchMock.mockResolvedValueOnce(Response.json({ data: created }, { status: 201 }));
+  fetchMock.mockResolvedValueOnce(Response.json({ data: legacy }));
+  await expect(saveFarm(undefined, { name_vi: created.name_vi })).resolves.toEqual(created);
+  await expect(getFarm(farmId)).resolves.toEqual(legacy);
+});
+
+it("accepts legacy incomplete translations when reading or changing only the Farm status", async () => {
+  const legacy = { ...farm, name_en: "", location_en: "" };
+  fetchMock.mockResolvedValueOnce(Response.json({ data: legacy }));
+  await expect(getFarm(farmId)).resolves.toEqual(legacy);
+
+  const deactivated = { ...legacy, is_active: false, version: 5 };
+  fetchMock.mockResolvedValueOnce(Response.json({ data: deactivated }));
+  await expect(saveFarm(farmId, { version: 4, is_active: false })).resolves.toEqual(deactivated);
+});
+
+it("rejects a successful Farm save that returns missing identification entered by the admin", async () => {
+  const data = { ...farm, name_en: "" };
+  fetchMock.mockResolvedValueOnce(Response.json({ data }));
+  await expect(saveFarm(farmId, { version: 3, name_en: "Green Farm" })).rejects.toThrow(
+    "invalid_response",
+  );
+  fetchMock.mockResolvedValueOnce(Response.json({ data }, { status: 201 }));
+  await expect(saveFarm(undefined, { name_en: "Green Farm" })).rejects.toThrow("invalid_response");
+});
+
+it.each([
+  { id: productId },
+  { version: 0 },
+  { version: "4" },
+  { photos: null },
+  { photos: [{ ...farmImage, id: "foreign" }] },
+  { image: { ...farmImage, variants: [null] } },
+  { description_en: null },
+  { name_vi: undefined },
+  { location_en: undefined },
+  { is_active: "true" },
+])("rejects malformed or mismatched Farm detail and PATCH responses (%j)", async (override) => {
+  const data = { ...farm, ...override };
+  fetchMock.mockResolvedValueOnce(Response.json({ data }));
+  await expect(getFarm(farmId)).rejects.toThrow("invalid_response");
+  fetchMock.mockResolvedValueOnce(Response.json({ data }));
+  await expect(saveFarm(farmId, { version: 3 })).rejects.toThrow("invalid_response");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("does not confirm a PATCH from a version at or below its expected version", async () => {
+  fetchMock.mockResolvedValueOnce(Response.json({ data: farm }));
+  await expect(saveFarm(farmId, { version: farm.version })).rejects.toThrow("invalid_response");
+  expect(fetchMock).toHaveBeenCalledOnce();
 });
 
 it("does not treat a Farm save with a missing record ID as authoritative", async () => {

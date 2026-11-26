@@ -1,16 +1,5 @@
 "use client";
-import {
-  Alert,
-  Button,
-  Divider,
-  Group,
-  Paper,
-  Select,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from "@mantine/core";
+import { Alert, Button, Divider, Group, Paper, Select, Stack, Text, Title } from "@mantine/core";
 
 import { ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -30,7 +19,6 @@ import {
 } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import {
-  formatStockQuantityTotal,
   stockBatchDateDraft,
   stockBatchRangeForPreset,
   validateStockBatchInput,
@@ -38,6 +26,7 @@ import {
   type StockBatchFieldErrors,
   type StockBatchPreset,
 } from "@/lib/farm-stock";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import type { FarmProduct, FarmStockBatch, PaginationMeta, StockBatchStatus } from "@/lib/types";
 
 import classes from "./farm-inventory.module.css";
@@ -57,23 +46,27 @@ function emptyDraft(): StockBatchDraft {
 
 type Props = {
   farmId: string;
+  farmActive: boolean;
   product: FarmProduct;
+  isTabActive: boolean;
   detailHeadingRef: RefObject<HTMLHeadingElement | null>;
   onBack: () => void;
-  onSummaryChanged: () => void;
+  onStockChanged: () => void;
   onAccessLost: (caught: unknown) => void;
-  summaryBusy: boolean;
+  productsBusy: boolean;
   actions?: ReactNode;
 };
 
 export function FarmStockBatches({
   farmId,
+  farmActive,
   product,
+  isTabActive,
   detailHeadingRef,
   onBack,
-  onSummaryChanged,
+  onStockChanged,
   onAccessLost,
-  summaryBusy,
+  productsBusy,
   actions,
 }: Props) {
   const { locale, t } = useAdminI18n();
@@ -143,7 +136,7 @@ export function FarmStockBatches({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [load, onAccessLost, page, retry]);
+  }, [load, onAccessLost, page, product.is_active, retry]);
 
   const statusLabels = useMemo(
     () => ({
@@ -155,7 +148,7 @@ export function FarmStockBatches({
     [c],
   );
   const canIncrease = product.product_status === "active";
-  const actionsBlocked = summaryBusy || loading || busy || Boolean(error) || reloadRequired;
+  const actionsBlocked = productsBusy || loading || busy || Boolean(error) || reloadRequired;
   const limits =
     !canIncrease && editor && editor !== "new"
       ? { start: editor.start_date, end: editor.end_date, quantity: editor.quantity_units }
@@ -168,7 +161,6 @@ export function FarmStockBatches({
       (endDate && endDate > limits.end) ||
       Number(draft.quantity) > limits.quantity),
   );
-  const productStockLabel = c.availableUnits.replace("{count}", String(product.available_quantity));
 
   function openNew() {
     if (actionsBlocked || !canIncrease) return;
@@ -206,7 +198,7 @@ export function FarmStockBatches({
       setCancelTarget(null);
       setActionError(t.storeCatalog.batchIncreaseBlocked);
       reloadFromFirstPage();
-      onSummaryChanged();
+      onStockChanged();
       return;
     }
     if (error.message === "stock_reserved") {
@@ -233,7 +225,7 @@ export function FarmStockBatches({
     setCancelTarget(null);
     setActionError("");
     reloadFromFirstPage();
-    onSummaryChanged();
+    onStockChanged();
   }
 
   function reloadFromFirstPage() {
@@ -272,7 +264,7 @@ export function FarmStockBatches({
       if (!mounted.current) return;
       setEditor(null);
       reloadFromFirstPage();
-      onSummaryChanged();
+      onStockChanged();
     } catch (caught) {
       if (mounted.current) handleMutationError(caught);
     } finally {
@@ -297,7 +289,7 @@ export function FarmStockBatches({
       if (!mounted.current) return;
       setCancelTarget(null);
       reloadFromFirstPage();
-      onSummaryChanged();
+      onStockChanged();
     } catch (caught) {
       if (mounted.current) handleMutationError(caught);
     } finally {
@@ -326,8 +318,8 @@ export function FarmStockBatches({
           >
             {c.stockBatches}: {locale === "vi" ? product.name_vi : product.name_en}
           </Title>
-          <Text size="sm" c="dimmed">
-            {c.stockBatchesHint}
+          <Text size="sm" c="dimmed" style={{ overflowWrap: "anywhere" }}>
+            {product.sku} · {c.saleUnit}: {formatDecimalInput(product.unit_size)} {unitLabel}
           </Text>
           <Group gap="xs">
             <ProductLifecycleStatus status={product.product_status} />
@@ -336,16 +328,14 @@ export function FarmStockBatches({
               status={product.is_active ? "active" : "inactive"}
               label={product.is_active ? c.productActive : c.productInactive}
             />
-            <Text size="sm">{productStockLabel}</Text>
           </Group>
         </Stack>
         {!error && (
           <Group gap="xs">
             <Button
-              size="xs"
               onClick={openNew}
               disabled={!canIncrease || actionsBlocked}
-              aria-describedby={!canIncrease && !summaryBusy ? "farm-stock-add-reason" : undefined}
+              aria-describedby={!canIncrease && !productsBusy ? "farm-stock-add-reason" : undefined}
             >
               {c.addBatch}
             </Button>
@@ -353,7 +343,7 @@ export function FarmStockBatches({
           </Group>
         )}
       </Group>
-      {!canIncrease && !summaryBusy && !error && (
+      {!canIncrease && !productsBusy && !error && (
         <Text size="sm" id="farm-stock-add-reason">
           {t.storeCatalog.batchIncreaseBlocked}
         </Text>
@@ -396,52 +386,47 @@ export function FarmStockBatches({
         <Stack gap="xs">
           {rows.map((batch) => {
             const editable = batch.status === "active" || batch.status === "upcoming";
+            const effectiveQuantity =
+              farmActive && product.is_active ? batch.available_quantity : 0;
             return (
               <Paper component="article" p="sm" key={batch.id}>
-                <SimpleGrid
-                  type="container"
-                  cols={{ base: 1, "25rem": 2, "40rem": 4 }}
-                  spacing="sm"
-                >
-                  <Stack gap={4}>
-                    <Text fw={600}>
+                <Stack gap="xs">
+                  <Group justify="space-between" gap="xs">
+                    <Text component="h4" fw={600}>
                       {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
                     </Text>
-                    <Text size="sm" c="dimmed">
-                      {c.batchInventory
-                        .replace("{initial}", String(batch.quantity_units))
-                        .replace("{sold}", String(batch.net_sold_quantity))
-                        .replace("{remaining}", String(batch.remaining_quantity))
-                        .replace("{available}", String(batch.available_quantity))}
-                    </Text>
-                  </Stack>
-                  <Text component="strong" fw={600}>
-                    {formatStockQuantityTotal(
-                      batch.remaining_quantity,
-                      product.unit_size,
-                      unitLabel,
-                    )}
-                  </Text>
-                  <Group align="flex-start" gap="xs">
                     <Status
                       domain="farm-stock"
                       status={batch.status}
                       label={statusLabels[batch.status]}
                     />
                   </Group>
-                  <Group gap="xs" align="flex-start">
-                    {editable ? (
-                      <>
+                  <Group justify="space-between" align="flex-end" gap="xs">
+                    <Stack gap={4} miw={0} flex="1 1 16rem">
+                      <Text size="sm" fw={600}>
+                        {c.batchRemaining.replace("{count}", String(batch.remaining_quantity))}
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        {c.batchInventory
+                          .replace("{initial}", String(batch.quantity_units))
+                          .replace("{sold}", String(batch.net_sold_quantity))}
+                      </Text>
+                      {effectiveQuantity !== batch.remaining_quantity && (
+                        <Text size="sm" c="dimmed">
+                          {c.batchEffectiveUnits.replace("{count}", String(effectiveQuantity))}
+                        </Text>
+                      )}
+                    </Stack>
+                    {editable && (
+                      <Group gap="xs">
                         <Button
-                          size="xs"
                           variant="subtle"
                           disabled={actionsBlocked}
                           onClick={() => openEdit(batch)}
                         >
-                          {c.edit}
+                          {c.editBatch}
                         </Button>
                         <Button
-                          size="xs"
                           variant="subtle"
                           disabled={actionsBlocked}
                           onClick={() => {
@@ -452,10 +437,10 @@ export function FarmStockBatches({
                         >
                           {c.cancelBatch}
                         </Button>
-                      </>
-                    ) : null}
+                      </Group>
+                    )}
                   </Group>
-                </SimpleGrid>
+                </Stack>
               </Paper>
             );
           })}
@@ -483,7 +468,7 @@ export function FarmStockBatches({
           />
         </>
       ) : null}
-      {editor && !error ? (
+      {editor && !error && isTabActive ? (
         <ConfirmationDialog
           title={editor === "new" ? c.addBatch : c.editBatch}
           size={640}
@@ -521,7 +506,7 @@ export function FarmStockBatches({
           />
         </ConfirmationDialog>
       ) : null}
-      {cancelTarget && !error ? (
+      {cancelTarget && !error && isTabActive ? (
         <ConfirmationDialog
           title={c.cancelBatch}
           size={400}

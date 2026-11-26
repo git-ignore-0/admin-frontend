@@ -26,7 +26,7 @@
 }
 
 @container farm-inventory (min-width: 56.25rem) {
-  .panes {
+  .panes:has(.detailPane:not([hidden])) {
     grid-template-columns: minmax(17.5rem, 1fr) minmax(0, 2fr);
   }
 
