@@ -1,7 +1,7 @@
 "use client";
 import { Alert, Group } from "@mantine/core";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { CSAOrderPanel } from "@/components/csa-order-panel";
@@ -23,7 +23,7 @@ import { StoreOrderStatusBadge } from "@/components/store-order-status";
 import { StoreOrderTotals, StoreRecipientSummary } from "@/components/store-order-summary";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import {
   formatStoreMoney,
   getStoreOrder,
@@ -46,6 +46,14 @@ import {
 } from "@/lib/store-orders-copy";
 import type { StoreOrder, StoreOrderAction, StoreOrderAllocationDraft } from "@/lib/types";
 
+type StoreOrderActionPayload = {
+  reason?: string;
+  note?: string;
+  reconciliation_note?: string;
+  amount_vnd?: string;
+  allocations?: StoreOrderAllocationDraft[] | { allocation_id: string; quantity: number }[];
+};
+
 function TimelineRow({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
   return (
@@ -57,7 +65,8 @@ function TimelineRow({ label, value }: { label: string; value: string | null | u
 }
 
 export function StoreOrderDetail({ orderId }: { orderId: string }) {
-  return <StoreOrderDetailContent key={orderId} orderId={orderId} />;
+  const routeId = orderId.toLowerCase();
+  return <StoreOrderDetailContent key={routeId} orderId={routeId} />;
 }
 
 function StoreOrderDetailContent({ orderId }: { orderId: string }) {
@@ -67,11 +76,13 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const latestCopy = useRef({ t, c });
   latestCopy.current = { t, c };
   const mounted = useRef(false);
-  const pendingIntent = useRef<{
+  const isMounted = useCallback(() => mounted.current, []);
+  const [pendingIntent, setPendingIntent] = useState<{
+    orderId: string;
     action: StoreOrderAction;
-    payload: Record<string, unknown>;
+    payload: StoreOrderActionPayload & { idempotency_key: string };
   } | null>(null);
-  const [unresolved, setUnresolved] = useState(false);
+  const unresolved = pendingIntent !== null;
   const [order, setOrder] = useState<StoreOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -99,13 +110,37 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const [restock, setRestock] = useState<Record<string, number>>({});
   const restockLedgerAtOpen = useRef<Record<string, number>>({});
 
+  const retireOrder = useCallback((discardIntent: boolean) => {
+    setOrder(null);
+    setDraft([]);
+    draftInitialized.current = false;
+    csaRevision.current = null;
+    expiryReloaded.current = null;
+    setAction(null);
+    setActionError("");
+    setActionConflict(false);
+    setReconciliationDialog(false);
+    setReconciliationChoice(null);
+    setConfirmed(false);
+    setReason("");
+    setNote("");
+    setRestock({});
+    restockLedgerAtOpen.current = {};
+    idempotencyKeys.current = new IdempotencyKeyStore();
+    if (discardIntent) {
+      setPendingIntent(null);
+    }
+    setReloadRequired(true);
+  }, []);
+
   const load = useCallback(async () => {
-    if (submitting.current) return;
+    if (!mounted.current || submitting.current) return;
     const current = ++requestId.current;
+    const isCurrent = () => mounted.current && current === requestId.current;
     setLoading(true);
     try {
-      const next = await getStoreOrder(orderId);
-      if (current !== requestId.current) return;
+      const next = await getStoreOrder(orderId, undefined, { shouldRedirectToLogin: isCurrent });
+      if (!isCurrent()) return;
       receivedAt.current = performance.now();
       setOrder(next);
       setError("");
@@ -122,20 +157,25 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         draftInitialized.current = true;
       }
     } catch (caught) {
-      if (current === requestId.current)
-        setError(requestErrorMessage(caught, latestCopy.current.t));
+      if (!isCurrent()) return;
+      const { message, status } = (caught ?? {}) as { message?: string; status?: number };
+      if (isProtectedDataError(caught) || status === 404) retireOrder(true);
+      else if (message === "invalid_response") retireOrder(false);
+      setError(requestErrorMessage(caught, latestCopy.current.t));
     } finally {
-      if (current === requestId.current) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [orderId]);
+  }, [orderId, retireOrder]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
-    void load();
     return () => {
       mounted.current = false;
       requestId.current += 1;
     };
+  }, []);
+  useEffect(() => {
+    void load();
   }, [load]);
 
   useEffect(() => {
@@ -185,10 +225,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     : actions;
   // An unresolved request may be replayed, but is not a new permission on this snapshot.
   const recoveryAction =
-    unresolved && pendingIntent.current && !visibleActions.includes(pendingIntent.current.action)
-      ? pendingIntent.current.action
-      : null;
-  const replaying = unresolved && pendingIntent.current?.action === action;
+    pendingIntent && !visibleActions.includes(pendingIntent.action) ? pendingIntent.action : null;
+  const replaying = pendingIntent?.orderId === orderId && pendingIntent.action === action;
   const primaryAction = getStoreOrderPrimaryAction(actions);
   visibleActions.sort((a, b) => Number(b === primaryAction) - Number(a === primaryAction));
   const allocationsValid =
@@ -212,11 +250,37 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     .sort((a, b) => Date.parse(a.value!) - Date.parse(b.value!));
 
   function openAction(next: StoreOrderAction) {
-    if (error || reloadRequired || submitting.current) return;
-    if (pendingIntent.current) {
-      if (pendingIntent.current.action === next) setAction(next);
+    if (
+      currentOrder.id.toLowerCase() !== orderId ||
+      loading ||
+      error ||
+      reloadRequired ||
+      submitting.current
+    )
+      return;
+    if (pendingIntent) {
+      if (pendingIntent.orderId !== orderId || pendingIntent.action !== next) return;
+      const {
+        reason: sentReason,
+        note: sentNote,
+        reconciliation_note,
+        allocations,
+      } = pendingIntent.payload;
+      setReason(sentReason ?? "");
+      setNote(sentNote ?? reconciliation_note ?? "");
+      if (next === "restock") {
+        setRestock(
+          Object.fromEntries(
+            (allocations ?? []).flatMap((row) =>
+              "allocation_id" in row ? [[row.allocation_id, row.quantity]] : [],
+            ),
+          ),
+        );
+      }
+      setAction(next);
       return;
     }
+    if (!actions.includes(next)) return;
     setAction(next);
     setReconciliationDialog(groupedReconciliation && next === "record-payment");
     setReconciliationChoice(null);
@@ -237,7 +301,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     );
   }
 
-  function actionPayload() {
+  function actionPayload(): StoreOrderActionPayload | null {
     if (!action) return null;
     if (action === "approve") return { allocations: draft };
     if (action === "cancel")
@@ -276,7 +340,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   function actionDisabled() {
     if (!action || loading || error || reloadRequired || (!actions.includes(action) && !replaying))
       return true;
-    if (unresolved && pendingIntent.current?.action === action) return false;
+    if (replaying) return false;
     if (reconciliationDialog && !reconciliationChoice) return true;
     if (action === "approve") return !allocationsValid;
     if (action === "cancel" || action === "close-refund-request") return !reason.trim();
@@ -295,29 +359,34 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   async function submitAction() {
     if (
       !action ||
+      currentOrder.id.toLowerCase() !== orderId ||
       submitting.current ||
       loading ||
       error ||
       reloadRequired ||
-      (!actions.includes(action) && !replaying)
+      (pendingIntent ? !replaying : !actions.includes(action))
     )
       return;
     const expiredNow =
       storeOrderHasDeadline(currentOrder) &&
       storeDeadlineRemainingMs(currentOrder, receivedAt.current, performance.now()) === 0;
     if (
-      !pendingIntent.current &&
+      !pendingIntent &&
       !getStoreOrderActions(currentOrder, { expired: expiredNow }).includes(action)
     ) {
       expiryReloaded.current = currentOrder.expires_at;
       void load();
       return;
     }
-    if ((action === "cancel" || action === "close-refund-request") && !reason.trim()) {
+    if (
+      !replaying &&
+      (action === "cancel" || action === "close-refund-request") &&
+      !reason.trim()
+    ) {
       setActionError(action === "cancel" ? c.cancelReasonRequired : c.closeRefundReasonRequired);
       return;
     }
-    if (action === "refund" && !note.trim()) {
+    if (!replaying && action === "refund" && !note.trim()) {
       setActionError(c.refundNoteRequired);
       return;
     }
@@ -330,33 +399,35 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       return;
     }
     if (actionDisabled()) return;
-    const payload = actionPayload();
+    const payload = pendingIntent?.payload ?? actionPayload();
     if (!payload) return;
     // Compare the ledger captured when opening this intent, not a background refresh.
     // Reopening after a confirmed restock creates a new key; retries retain their key.
     const restockRevision =
-      action === "restock"
+      !pendingIntent && action === "restock"
         ? Object.fromEntries(
             (currentOrder.allocations ?? [])
               .filter((row) => (restock[row.id] ?? 0) > 0)
               .map((row) => [row.id, restockLedgerAtOpen.current[row.id]]),
           )
         : undefined;
-    const key =
-      pendingIntent.current?.payload.idempotency_key ??
-      idempotencyKeys.current.forPayload(action, payload, restockRevision);
-    const intent = pendingIntent.current ?? {
+    const intent = pendingIntent ?? {
+      orderId,
       action,
-      payload: { idempotency_key: key, ...payload },
+      payload: {
+        idempotency_key: idempotencyKeys.current.forPayload(action, payload, restockRevision),
+        ...payload,
+      },
     };
-    pendingIntent.current = intent;
     discardPendingReads();
     submitting.current = true;
     setActionBusy(true);
     setActionError("");
     setActionConflict(false);
     try {
-      const updated = await mutateStoreOrder(currentOrder.id, intent.action, intent.payload);
+      const updated = await mutateStoreOrder(intent.orderId, intent.action, intent.payload, {
+        shouldRedirectToLogin: isMounted,
+      });
       if (!mounted.current) return;
       discardPendingReads();
       receivedAt.current = performance.now();
@@ -364,26 +435,38 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       setError("");
       setReloadRequired(false);
       idempotencyKeys.current.clear(action);
-      pendingIntent.current = null;
-      setUnresolved(false);
+      setPendingIntent(null);
       setAction(null);
       toast(latestCopy.current.c.mutationSuccess);
     } catch (caught) {
       if (!mounted.current) return;
       discardPendingReads();
-      const status = (caught as { status?: number }).status;
+      const { message, status } = (caught ?? {}) as { message?: string; status?: number };
+      if ((message !== "csrf_rejected" && isProtectedDataError(caught)) || status === 404) {
+        retireOrder(true);
+        setError(requestErrorMessage(caught, latestCopy.current.t));
+        return;
+      }
       const unknownResult =
         status === undefined ||
+        status === 408 ||
         status >= 500 ||
-        (caught instanceof Error && caught.message === "invalid_response");
-      setUnresolved(unknownResult);
-      if (!unknownResult) pendingIntent.current = null;
-      if (status === 409) {
+        message === "invalid_response" ||
+        message === "request_timeout" ||
+        message === "upstream_timeout" ||
+        (replaying && message === "csrf_rejected");
+      setPendingIntent(unknownResult ? intent : null);
+      if (!unknownResult && status === 409) {
         setReloadRequired(true);
         setActionConflict(true);
         setActionError(latestCopy.current.c.conflict);
       } else {
-        setActionError(requestErrorMessage(caught, latestCopy.current.t));
+        const { t: dictionary, c: copy } = latestCopy.current;
+        const feedback =
+          status === 408
+            ? dictionary.common.requestTimeout
+            : requestErrorMessage(caught, dictionary);
+        setActionError(unknownResult ? `${feedback} ${copy.mutationUncertain}` : feedback);
       }
     } finally {
       submitting.current = false;
@@ -433,7 +516,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           {c.refresh}
         </Button>
       </header>
-      {error || reloadRequired ? (
+      {!action && (error || reloadRequired) ? (
         <Alert color="red" role="alert">
           <Group gap="sm" justify="space-between">
             <span>{error ? `${error} ${c.staleSnapshot}` : c.conflictReloadRequired}</span>
@@ -566,7 +649,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                       loading ||
                       Boolean(error) ||
                       reloadRequired ||
-                      (unresolved && pendingIntent.current?.action !== item) ||
+                      (pendingIntent !== null && pendingIntent.action !== item) ||
                       (!unresolved && item === "approve" && !allocationsValid)
                     }
                     className={item === "cancel" ? "store-order-cancel" : undefined}

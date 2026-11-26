@@ -151,6 +151,8 @@ const copy = {
     restockInvalid: "Số lượng hoàn phải là số nguyên và không vượt lượng còn có thể hoàn.",
     approveAllocationInvalid: "Phải phân bổ đủ, không trùng và không vượt nguồn cho mọi sản phẩm.",
     mutationSuccess: "Đã cập nhật đơn hàng.",
+    mutationUncertain:
+      "Chưa xác định được kết quả. Nếu thử lại, hệ thống sẽ gửi lại đúng yêu cầu trước.",
     saving: "Đang xử lý…",
     cancelButton: "Đóng",
     retryRequest: "Thử lại yêu cầu trước",
@@ -337,6 +339,7 @@ const copy = {
     approveAllocationInvalid:
       "Every product must be fully allocated without duplicates or exceeding stock.",
     mutationSuccess: "Order updated.",
+    mutationUncertain: "The result is unconfirmed. Retrying will send the same request.",
     saving: "Processing…",
     cancelButton: "Close",
     retryRequest: "Retry previous request",

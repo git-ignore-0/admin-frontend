@@ -1,7 +1,9 @@
 import { formatAdminDate } from "@/lib/admin-date";
 import { requirePaginatedList } from "@/lib/api-response";
+import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
+import { csaRoundStatuses } from "@/lib/csa-rounds";
 import type {
   PaginationMeta,
   StoreOrder,
@@ -65,13 +67,27 @@ export function buildStoreOrderQuery(query: StoreOrderQuery) {
   return params.toString();
 }
 
+const paymentStatuses = ["not_required", "unconfirmed", "received", "refund_required", "refunded"];
+const selectionStates = [
+  "selecting",
+  "locked",
+  "reselecting",
+  "confirmed",
+  "cancelled",
+  "delivered",
+];
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID_PATH_SEGMENT.test(value);
+}
+
 function hasStoreOrderSummary(order: StoreOrder) {
   return (
     isApiObject(order) &&
     typeof order.id === "string" &&
     typeof order.reference_code === "string" &&
     storeOrderDisplayStatuses.includes(order.status) &&
-    typeof order.payment_status === "string" &&
+    paymentStatuses.includes(order.payment_status) &&
     typeof order.total_vnd === "string" &&
     typeof order.created_at === "string" &&
     typeof order.server_time === "string" &&
@@ -91,31 +107,223 @@ export async function listStoreOrders(query: StoreOrderQuery = {}) {
   return payload;
 }
 
-export function getStoreOrder(id: string, signal?: AbortSignal) {
-  const path = `admin/store-orders/${id}`;
-  return signal ? api<StoreOrder>(path, { signal }) : api<StoreOrder>(path);
+function stringFields(value: Record<string, unknown>, fields: string[]) {
+  return fields.every((field) => typeof value[field] === "string");
+}
+
+function count(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function optionalText(value: unknown) {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function isVnd(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/u.test(value);
+}
+
+function hasOrderLine(value: unknown): value is StoreOrder["lines"][number] {
+  return (
+    isApiObject(value) &&
+    isUuid(value.id) &&
+    isUuid(value.product_id) &&
+    stringFields(value, [
+      "sku",
+      "name",
+      "unit_size",
+      "unit_label",
+      "unit_price_vnd",
+      "cash_subtotal_vnd",
+    ]) &&
+    count(value.quantity) &&
+    value.quantity > 0 &&
+    count(value.quota_quantity) &&
+    count(value.cash_quantity) &&
+    (value.quota_group_id === null || isUuid(value.quota_group_id)) &&
+    (value.quota_cost === null ||
+      (typeof value.quota_cost === "number" && Number.isFinite(value.quota_cost))) &&
+    typeof value.quota_units === "number" &&
+    Number.isFinite(value.quota_units)
+  );
+}
+
+function hasOrderCSA(value: unknown, orderId: string) {
+  if (!isApiObject(value) || !isApiObject(value.round) || !isApiObject(value.selection))
+    return false;
+  const { round, selection } = value;
+  return (
+    isUuid(round.id) &&
+    stringFields(round, ["name", "opens_at", "closes_at", "delivery_date", "server_time"]) &&
+    csaRoundStatuses.some((status) => status === round.status) &&
+    isUuid(selection.id) &&
+    isUuid(selection.membership_id) &&
+    isUuid(selection.round_id) &&
+    selection.round_id.toLowerCase() === round.id.toLowerCase() &&
+    isUuid(selection.order_id) &&
+    selection.order_id.toLowerCase() === orderId &&
+    selectionStates.some((status) => status === selection.state) &&
+    count(selection.revision) &&
+    optionalText(selection.reopen_until) &&
+    typeof selection.server_time === "string" &&
+    Array.isArray(selection.lines) &&
+    selection.lines.every(
+      (line: unknown) =>
+        isApiObject(line) &&
+        isUuid(line.product_id) &&
+        count(line.quantity) &&
+        line.quantity > 0 &&
+        stringFields(line, ["name", "unit_size", "unit_label", "quota_cost"]),
+    )
+  );
+}
+
+function requireStoreOrderDetail(order: StoreOrder, orderId: string): StoreOrder {
+  if (
+    !hasStoreOrderSummary(order) ||
+    !isUuid(order.id) ||
+    order.id.toLowerCase() !== orderId ||
+    (order.workflow_version !== 1 && order.workflow_version !== 2) ||
+    (order.locale !== "vi" && order.locale !== "en") ||
+    ![null, "pending", "refunded"].includes(order.refund_status) ||
+    !isTimestamp(order.server_time) ||
+    (order.expires_at !== null && !isTimestamp(order.expires_at)) ||
+    !stringFields(order.shipping_address, ["province_code", "ward_code", "address"]) ||
+    ![order.subtotal_vnd, order.shipping_fee_vnd, order.total_vnd].every(isVnd) ||
+    ![
+      "delivery_date",
+      "shipping_discount_reason",
+      "discount_amount_vnd",
+      "transfer_reported_at",
+      "payment_received_at",
+      "refund_requested_at",
+      "refund_request_closed_at",
+      "approved_at",
+      "delivered_at",
+      "cancelled_at",
+      "refunded_at",
+      "reconciliation_note",
+      "refund_request_closed_reason",
+      "refund_note",
+      "cancellation_reason",
+    ].every((field) => optionalText((order as Record<string, unknown>)[field])) ||
+    (order.payment !== null &&
+      (!isApiObject(order.payment) ||
+        !paymentStatuses.includes(order.payment.status) ||
+        !stringFields(order.payment, [
+          "bank_bin",
+          "bank_name",
+          "account_number",
+          "account_name",
+          "transfer_content",
+        ]))) ||
+    (order.coupon != null && (!isApiObject(order.coupon) || !optionalText(order.coupon.code))) ||
+    (order.shipping_benefit != null &&
+      (!isApiObject(order.shipping_benefit) ||
+        !isUuid(order.shipping_benefit.round_id) ||
+        !isUuid(order.shipping_benefit.csa_order_id) ||
+        !optionalText(order.shipping_benefit.delivery_date) ||
+        !optionalText(order.shipping_benefit.delivery_at))) ||
+    (order.csa !== undefined && !hasOrderCSA(order.csa, orderId)) ||
+    !Array.isArray(order.lines) ||
+    !order.lines.every(hasOrderLine)
+  )
+    throw invalidApiResponse();
+
+  const lines = new Map(order.lines.map((line) => [line.id, line.product_id]));
+  const products = new Set(lines.values());
+  function stockRow(value: unknown): value is Record<string, unknown> {
+    return (
+      isApiObject(value) &&
+      isUuid(value.line_id) &&
+      lines.has(value.line_id) &&
+      isUuid(value.batch_id)
+    );
+  }
+  function batchRow(value: unknown): value is Record<string, unknown> {
+    return (
+      stockRow(value) &&
+      isUuid(value.product_id) &&
+      value.product_id === lines.get(String(value.line_id)) &&
+      isUuid(value.farm_id) &&
+      stringFields(value, ["farm_name", "start_date", "end_date"])
+    );
+  }
+  const { allocation_suggestion: suggestion, source_inventory: inventory, allocations } = order;
+  if (
+    !Array.isArray(suggestion) ||
+    !suggestion.every((row) => stockRow(row) && count(row.quantity) && row.quantity > 0) ||
+    !Array.isArray(allocations) ||
+    !allocations.every(
+      (row) =>
+        batchRow(row) &&
+        isUuid(row.id) &&
+        count(row.quantity) &&
+        row.quantity > 0 &&
+        count(row.restocked_quantity) &&
+        count(row.restock_remaining_quantity) &&
+        typeof row.restock_eligible === "boolean" &&
+        optionalText(row.restock_unavailable_reason),
+    ) ||
+    !isApiObject(inventory) ||
+    typeof inventory.refresh_required_before_approve !== "boolean" ||
+    !Array.isArray(inventory.candidates) ||
+    !inventory.candidates.every((row) => batchRow(row) && count(row.available_quantity)) ||
+    !Array.isArray(inventory.product_reservations) ||
+    !inventory.product_reservations.every(
+      (row) =>
+        isApiObject(row) &&
+        isUuid(row.product_id) &&
+        products.has(row.product_id) &&
+        count(row.reserved_quantity) &&
+        count(row.this_order_quantity) &&
+        count(row.other_orders_quantity),
+    )
+  )
+    throw invalidApiResponse();
+  return order;
+}
+
+type StoreOrderRequestOptions = { shouldRedirectToLogin?: () => boolean };
+
+export async function getStoreOrder(
+  id: string,
+  signal?: AbortSignal,
+  options?: StoreOrderRequestOptions,
+) {
+  if (!isUuid(id)) throw invalidApiResponse();
+  const orderId = id.toLowerCase();
+  const path = `admin/store-orders/${orderId}`;
+  const init = signal ? { signal } : undefined;
+  const order = options
+    ? await api<StoreOrder>(path, init, options)
+    : init
+      ? await api<StoreOrder>(path, init)
+      : await api<StoreOrder>(path);
+  return requireStoreOrderDetail(order, orderId);
 }
 
 export async function mutateStoreOrder(
   id: string,
   action: StoreOrderAction,
   payload: Record<string, unknown>,
+  options?: StoreOrderRequestOptions,
 ) {
-  const updated = await api<StoreOrder>(`admin/store-orders/${id}/${action}`, {
+  if (!isUuid(id)) throw invalidApiResponse();
+  const orderId = id.toLowerCase();
+  const path = `admin/store-orders/${orderId}/${action}`;
+  const init = {
     method: "POST",
     body: JSON.stringify(payload),
-  });
-  if (
-    !hasStoreOrderSummary(updated) ||
-    updated.id !== id ||
-    !Array.isArray(updated.lines) ||
-    !updated.lines.every(isApiObject) ||
-    (updated.allocations !== undefined && !Array.isArray(updated.allocations)) ||
-    (updated.csa !== undefined && !isApiObject(updated.csa.selection))
-  ) {
-    throw invalidApiResponse();
-  }
-  return updated;
+  };
+  const updated = options
+    ? await api<StoreOrder>(path, init, options)
+    : await api<StoreOrder>(path, init);
+  return requireStoreOrderDetail(updated, orderId);
 }
 
 export function formatStoreMoney(value: string, locale: AdminLocale) {

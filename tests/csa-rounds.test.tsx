@@ -15,6 +15,9 @@ import { api, apiEnvelope } from "@/lib/client-api";
 import { isAllowedBackendRequest } from "@/lib/backend-target";
 import { getRoundParticipants, validateRoundDates, validateReopenDeadline } from "@/lib/csa-rounds";
 
+import type { StoreOrder } from "@/lib/types";
+import type { CSASelection } from "@/lib/csa-rounds";
+import { storeOrderFixture } from "./store-orders-fixture";
 import { selectOption } from "./select-option";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
@@ -147,12 +150,9 @@ describe("CSA rounds", () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
   it("blocks reopening an allocated order", async () => {
-    vi.mocked(api).mockResolvedValue({
-      status: "pending_delivery",
-      approved_at: dates.closes_at,
-      server_time: dates.closes_at,
-      csa: { round: { delivery_date: dates.delivery_date }, selection: { id, state: "locked" } },
-    });
+    vi.mocked(api).mockResolvedValue(
+      reopenOrderFixture({ status: "pending_delivery", approved_at: dates.closes_at }),
+    );
     render(
       <AdminI18nProvider initialLocale="en">
         <CSAReopenDialog
@@ -205,6 +205,18 @@ const selection = {
   events: [],
 };
 
+function reopenOrderFixture(
+  overrides: Partial<StoreOrder> = {},
+  selected: Partial<CSASelection> = {},
+) {
+  return storeOrderFixture({
+    id,
+    server_time: dates.closes_at,
+    csa: { round, selection: { ...selection, ...selected } },
+    ...overrides,
+  });
+}
+
 it("locks editing when a published round already has a participant", async () => {
   vi.mocked(api).mockResolvedValue({ ...round, status: "open", can_edit: false });
   render(
@@ -219,12 +231,7 @@ it("locks editing when a published round already has a participant", async () =>
 it("reopens with a Vietnam deadline, blocks duplicate submissions and calls refresh", async () => {
   let resolve: (value: unknown) => void = () => {};
   vi.mocked(api)
-    .mockResolvedValueOnce({
-      status: "pending_review",
-      approved_at: null,
-      server_time: dates.closes_at,
-      csa: { round, selection },
-    })
+    .mockResolvedValueOnce(reopenOrderFixture())
     .mockImplementationOnce(
       () =>
         new Promise((done) => {
@@ -263,12 +270,7 @@ it("reopens with a Vietnam deadline, blocks duplicate submissions and calls refr
 
 it("keeps the deadline form when backend rejects the selected deadline", async () => {
   vi.mocked(api)
-    .mockResolvedValueOnce({
-      status: "pending_review",
-      approved_at: null,
-      server_time: dates.closes_at,
-      csa: { round, selection },
-    })
+    .mockResolvedValueOnce(reopenOrderFixture())
     .mockRejectedValueOnce(new Error("csa_reselection_deadline_invalid"));
   render(
     <AdminI18nProvider initialLocale="en">
@@ -600,15 +602,15 @@ it("translates expired CSA reselection cancellation in Store orders", () => {
 it("blocks extending an existing reselection after its own deadline passes", async () => {
   let elapsed = 1000;
   const monotonic = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
-  vi.mocked(api).mockResolvedValueOnce({
-    status: "pending_review",
-    approved_at: null,
-    server_time: "2026-11-21T18:00:00+07:00",
-    csa: {
-      round,
-      selection: { ...selection, state: "reselecting", reopen_until: "2026-11-21T18:01:00+07:00" },
-    },
-  });
+  vi.mocked(api).mockResolvedValueOnce(
+    reopenOrderFixture(
+      {},
+      {
+        state: "reselecting",
+        reopen_until: "2026-11-21T18:01:00+07:00",
+      },
+    ),
+  );
   const view = () => (
     <AdminI18nProvider initialLocale="en">
       <CSAReopenDialog
@@ -749,19 +751,9 @@ it("retains same-query rows on refresh failure and retries the same query", asyn
 
 it("requires refreshing a stale selection before another reopen request", async () => {
   vi.mocked(api)
-    .mockResolvedValueOnce({
-      status: "pending_review",
-      approved_at: null,
-      server_time: dates.closes_at,
-      csa: { round, selection },
-    })
+    .mockResolvedValueOnce(reopenOrderFixture())
     .mockRejectedValueOnce(Object.assign(new Error("csa_selection_stale"), { status: 409 }))
-    .mockResolvedValueOnce({
-      status: "pending_review",
-      approved_at: null,
-      server_time: dates.closes_at,
-      csa: { round, selection: { ...selection, revision: 3, state: "confirmed" } },
-    })
+    .mockResolvedValueOnce(reopenOrderFixture({}, { revision: 3, state: "confirmed" }))
     .mockResolvedValueOnce({});
   render(
     <AdminI18nProvider initialLocale="en">

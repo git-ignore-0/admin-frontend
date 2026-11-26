@@ -18,6 +18,14 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/store-orders/id",
 }));
 
+const batchA = "00000000-0000-4000-8000-0000000000a1";
+const batchB = "00000000-0000-4000-8000-0000000000a2";
+const farmA = "00000000-0000-4000-8000-0000000000b1";
+const allocationA = "00000000-0000-4000-8000-0000000000c1";
+const allocationB = "00000000-0000-4000-8000-0000000000c2";
+const lineB = "00000000-0000-4000-8000-0000000000d1";
+const productB = "00000000-0000-4000-8000-0000000000e1";
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -34,7 +42,7 @@ function pending() {
   const row = storeOrderFixture();
   return {
     ...row,
-    allocation_suggestion: [{ line_id: row.lines[0].id, batch_id: "batch-a", quantity: 3 }],
+    allocation_suggestion: [{ line_id: row.lines[0].id, batch_id: batchA, quantity: 3 }],
     source_inventory: {
       refresh_required_before_approve: true,
       product_reservations: [],
@@ -42,9 +50,9 @@ function pending() {
         {
           line_id: row.lines[0].id,
           product_id: row.lines[0].product_id,
-          farm_id: "farm-a",
+          farm_id: farmA,
           farm_name: "Vườn A",
-          batch_id: "batch-a",
+          batch_id: batchA,
           start_date: "2026-10-30",
           end_date: "2026-11-02",
           available_quantity: 3,
@@ -232,11 +240,11 @@ describe("Store order actions", () => {
       approved_at: "x",
       allocations: [
         {
-          id: "allocation-a",
+          id: allocationA,
           line_id: pending().lines[0].id,
           product_id: pending().lines[0].product_id,
-          batch_id: "batch-a",
-          farm_id: "farm-a",
+          batch_id: batchA,
+          farm_id: farmA,
           farm_name: "Vườn A",
           start_date: "2026-10-30",
           end_date: "2026-11-02",
@@ -251,7 +259,7 @@ describe("Store order actions", () => {
     view(item);
     const dialog = await open("Hoàn tồn");
     const quantity = within(dialog).getByLabelText(
-      "Số lượng hoàn · Rau muống (RAU-01) · Vườn A · batch batch-a",
+      `Số lượng hoàn · Rau muống (RAU-01) · Vườn A · batch ${batchA}`,
     );
     const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn" });
     expect(quantity).toHaveAttribute("max", "2");
@@ -268,19 +276,19 @@ describe("Store order actions", () => {
     const base = pending();
     const secondLine = {
       ...base.lines[0],
-      id: "line-b",
-      product_id: "product-b",
+      id: lineB,
+      product_id: productB,
       sku: "CA-02",
       name: "Cà chua",
       unit_size: "1",
     };
     const allocations = [
       {
-        id: "allocation-a",
+        id: allocationA,
         line_id: base.lines[0].id,
         product_id: base.lines[0].product_id,
-        batch_id: "batch-a",
-        farm_id: "farm-a",
+        batch_id: batchA,
+        farm_id: farmA,
         farm_name: "Vườn A",
         start_date: "2026-10-30",
         end_date: "2026-11-02",
@@ -291,11 +299,11 @@ describe("Store order actions", () => {
         restock_unavailable_reason: null,
       },
       {
-        id: "allocation-b",
+        id: allocationB,
         line_id: secondLine.id,
         product_id: secondLine.product_id,
-        batch_id: "batch-b",
-        farm_id: "farm-a",
+        batch_id: batchB,
+        farm_id: farmA,
         farm_name: "Vườn A",
         start_date: "2026-10-31",
         end_date: "2026-11-03",
@@ -321,10 +329,10 @@ describe("Store order actions", () => {
     expect(within(dialog).getByText("Rau muống")).toBeVisible();
     expect(within(dialog).getByText("Cà chua")).toBeVisible();
     const first = within(dialog).getByLabelText(
-      "Số lượng hoàn · Rau muống (RAU-01) · Vườn A · batch batch-a",
+      `Số lượng hoàn · Rau muống (RAU-01) · Vườn A · batch ${batchA}`,
     );
     const second = within(dialog).getByLabelText(
-      "Số lượng hoàn · Cà chua (CA-02) · Vườn A · batch batch-b",
+      `Số lượng hoàn · Cà chua (CA-02) · Vườn A · batch ${batchB}`,
     );
     fireEvent.change(first, { target: { value: "1" } });
     expect(second).toHaveValue(0);
@@ -333,7 +341,7 @@ describe("Store order actions", () => {
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
     const [, init] = vi.mocked(api).mock.calls[1];
     expect(JSON.parse(String(init?.body)).allocations).toEqual([
-      { allocation_id: "allocation-a", quantity: 1 },
+      { allocation_id: allocationA, quantity: 1 },
     ]);
   });
 
@@ -346,11 +354,11 @@ describe("Store order actions", () => {
       approved_at: "x",
       allocations: [
         {
-          id: "allocation-a",
+          id: allocationA,
           line_id: base.lines[0].id,
           product_id: base.lines[0].product_id,
-          batch_id: "batch-a",
-          farm_id: "farm-a",
+          batch_id: batchA,
+          farm_id: farmA,
           farm_name: "Vườn A",
           start_date: "2026-10-30",
           end_date: "2026-11-02",
@@ -420,7 +428,7 @@ describe("Store order actions", () => {
         allocation_suggestion: [{ ...item.allocation_suggestion[0], quantity: 1 }],
         source_inventory: {
           ...item.source_inventory,
-          candidates: [{ ...candidate, batch_id: "batch-b" }],
+          candidates: [{ ...candidate, batch_id: batchB }],
         },
       });
 
@@ -437,7 +445,9 @@ describe("Store order actions", () => {
       expect(within(editor).getByRole("combobox")).toHaveAttribute("aria-invalid", "true"),
     );
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
-    expect(vi.mocked(api).mock.calls).toEqual([
+    expect(
+      vi.mocked(api).mock.calls.map(([path, init]) => [path, ...(init ? [init] : [])]),
+    ).toEqual([
       [`admin/store-orders/${item.id}`],
       [`admin/store-orders/${item.id}/approve`, expect.objectContaining({ method: "POST" })],
       [`admin/store-orders/${item.id}`],
@@ -480,11 +490,11 @@ describe("Store order actions", () => {
 function cancelledSources(): StoreOrder {
   const item = pending();
   const source = {
-    id: "a",
+    id: allocationA,
     line_id: item.lines[0].id,
     product_id: item.lines[0].product_id,
-    batch_id: "batch-a",
-    farm_id: "farm-a",
+    batch_id: batchA,
+    farm_id: farmA,
     farm_name: "Vườn A",
     start_date: "2026-10-01",
     end_date: "2026-10-02",
@@ -539,8 +549,8 @@ it("allows only eligible allocations in a mixed-source restock", async () => {
   const item = cancelledSources();
   item.allocations!.push({
     ...item.allocations![0],
-    id: "b",
-    batch_id: "batch-b",
+    id: allocationB,
+    batch_id: batchB,
     farm_name: "Vườn B",
     restock_eligible: true,
     restock_unavailable_reason: null,
@@ -559,6 +569,6 @@ it("allows only eligible allocations in a mixed-source restock", async () => {
   fireEvent.click(confirm);
   await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
   expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body)).allocations).toEqual([
-    { allocation_id: "b", quantity: 1 },
+    { allocation_id: allocationB, quantity: 1 },
   ]);
 });

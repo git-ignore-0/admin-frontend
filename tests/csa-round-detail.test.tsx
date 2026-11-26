@@ -1,3 +1,4 @@
+import { storeOrderFixture } from "@/tests/store-orders-fixture";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -359,12 +360,26 @@ it.each([
 it("checks the latest order only when a member drawer is opened and gates reopening accordingly", async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.startsWith("admin/store-orders/")
-      ? {
+      ? storeOrderFixture({
+          id,
           status: "pending_delivery",
           approved_at: round.server_time,
           server_time: round.server_time,
-          csa: { selection: { id, state: "locked" }, round },
-        }
+          csa: {
+            selection: {
+              id,
+              state: "locked",
+              round_id: id,
+              membership_id: rootId,
+              order_id: id,
+              revision: 1,
+              server_time: round.server_time,
+              reopen_until: null,
+              lines: [],
+            },
+            round: { ...round, status: "closed" },
+          },
+        })
       : { ...round, status: "closed" },
   );
   vi.mocked(apiEnvelope).mockResolvedValue({
@@ -397,25 +412,26 @@ it.each(["Escape", "save"])(
       round_id: id,
       membership_id: membershipId,
       customer_name: "Member A",
-      state: "locked",
+      state: "locked" as const,
       order_id: id,
       reopen_until: null,
       revision: 1,
       server_time: round.server_time,
       lines: [],
     };
-    const closedRound = { ...round, status: "closed" };
+    const closedRound = { ...round, status: "closed" as const };
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === `admin/csa-selections/${id}/reopen`) return {};
       if (path === `admin/memberships/${membershipId}?locale=en`)
         return { id: membershipId, status: "active" };
       if (path === `admin/store-orders/${id}`) {
-        return {
+        return storeOrderFixture({
+          id,
           status: "pending_review",
           approved_at: null,
           server_time: round.server_time,
           csa: { selection: person, round: closedRound },
-        };
+        });
       }
       return closedRound;
     });
@@ -486,12 +502,26 @@ it.each(["active", "revoked"])(
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === membershipPath) return { id: membershipId, status: membershipStatus };
       if (path.startsWith("admin/store-orders/")) {
-        return {
+        return storeOrderFixture({
+          id,
           status: "pending_review",
           approved_at: null,
           server_time: round.server_time,
-          csa: { selection: { id, membership_id: membershipId, state: "locked" }, round },
-        };
+          csa: {
+            selection: {
+              id,
+              membership_id: membershipId,
+              state: "locked",
+              round_id: id,
+              order_id: id,
+              revision: 1,
+              server_time: round.server_time,
+              reopen_until: null,
+              lines: [],
+            },
+            round: { ...round, status: "closed" },
+          },
+        });
       }
       return { ...round, status: "closed" };
     });

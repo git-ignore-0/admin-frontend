@@ -16,6 +16,12 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/store-orders/11111111-1111-4111-8111-111111111111",
 }));
 
+const batchA = "00000000-0000-4000-8000-0000000000a1";
+const batchB = "00000000-0000-4000-8000-0000000000a2";
+const farmA = "00000000-0000-4000-8000-0000000000b1";
+const farmB = "00000000-0000-4000-8000-0000000000b2";
+const allocationA = "00000000-0000-4000-8000-0000000000c1";
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -32,8 +38,8 @@ function detailOrder() {
   return {
     ...item,
     allocation_suggestion: [
-      { line_id: item.lines[0].id, batch_id: "batch-a", quantity: 2 },
-      { line_id: item.lines[0].id, batch_id: "batch-b", quantity: 1 },
+      { line_id: item.lines[0].id, batch_id: batchA, quantity: 2 },
+      { line_id: item.lines[0].id, batch_id: batchB, quantity: 1 },
     ],
     source_inventory: {
       refresh_required_before_approve: true,
@@ -49,9 +55,9 @@ function detailOrder() {
         {
           line_id: item.lines[0].id,
           product_id: item.lines[0].product_id,
-          farm_id: "farm-a",
+          farm_id: farmA,
           farm_name: "Vườn A",
-          batch_id: "batch-a",
+          batch_id: batchA,
           start_date: "2026-10-29",
           end_date: "2026-11-01",
           available_quantity: 2,
@@ -59,9 +65,9 @@ function detailOrder() {
         {
           line_id: item.lines[0].id,
           product_id: item.lines[0].product_id,
-          farm_id: "farm-b",
+          farm_id: farmB,
           farm_name: "Vườn B",
-          batch_id: "batch-b",
+          batch_id: batchB,
           start_date: "2026-10-30",
           end_date: "2026-11-02",
           available_quantity: 2,
@@ -219,11 +225,11 @@ describe("Store order detail", () => {
       cancelled_at: "2026-10-31T10:02:00Z",
       allocations: [
         {
-          id: "allocation-a",
+          id: allocationA,
           line_id: item.lines[0].id,
           product_id: item.lines[0].product_id,
-          batch_id: "batch-a",
-          farm_id: "farm-a",
+          batch_id: batchA,
+          farm_id: farmA,
           farm_name: "Vườn A",
           start_date: "2026-10-29",
           end_date: "2026-11-01",
@@ -267,7 +273,7 @@ describe("Store order detail", () => {
     const first = detailOrder();
     const refreshed = {
       ...detailOrder(),
-      allocation_suggestion: [{ line_id: first.lines[0].id, batch_id: "batch-b", quantity: 3 }],
+      allocation_suggestion: [{ line_id: first.lines[0].id, batch_id: batchB, quantity: 3 }],
     };
     vi.mocked(api).mockResolvedValueOnce(first).mockResolvedValueOnce(refreshed);
     view();
@@ -320,7 +326,7 @@ describe("Store order detail", () => {
       source_inventory: {
         ...first.source_inventory,
         candidates: first.source_inventory.candidates.filter(
-          (candidate) => candidate.batch_id !== "batch-a",
+          (candidate) => candidate.batch_id !== batchA,
         ),
       },
     };
@@ -346,7 +352,7 @@ describe("Store order detail", () => {
       source_inventory: {
         ...first.source_inventory,
         candidates: first.source_inventory.candidates.map((candidate) =>
-          candidate.batch_id === "batch-a" ? { ...candidate, available_quantity: 1 } : candidate,
+          candidate.batch_id === batchA ? { ...candidate, available_quantity: 1 } : candidate,
         ),
       },
     };
@@ -375,7 +381,7 @@ describe("Store order detail", () => {
     first.unmount();
 
     const duplicate = detailOrder();
-    duplicate.allocation_suggestion[0].batch_id = "batch-b";
+    duplicate.allocation_suggestion[0].batch_id = batchB;
     vi.mocked(api).mockResolvedValueOnce(duplicate);
     view();
     const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });

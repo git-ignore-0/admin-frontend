@@ -19,14 +19,14 @@ afterEach(() => {
   vi.useRealTimers();
   vi.mocked(api).mockReset();
 });
-const renderOrder = () =>
-  render(
-    <AdminI18nProvider initialLocale="vi">
-      <ToastProvider>
-        <StoreOrderDetail orderId="id" />
-      </ToastProvider>
-    </AdminI18nProvider>,
-  );
+const orderTree = (id: string) => (
+  <AdminI18nProvider initialLocale="vi">
+    <ToastProvider>
+      <StoreOrderDetail orderId={id} />
+    </ToastProvider>
+  </AdminI18nProvider>
+);
+const renderOrder = (id = storeOrderFixture().id) => render(orderTree(id));
 
 it("pending delivery never polls an inactive expiry and blocks refresh during delivery", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -82,12 +82,12 @@ function restockOrder() {
     approved_at: "2026-11-01T00:00:00Z",
     allocations: [
       {
-        id: "allocation",
+        id: "00000000-0000-4000-8000-0000000000c1",
         line_id: storeOrderFixture().lines[0].id,
-        batch_id: "batch",
+        batch_id: "00000000-0000-4000-8000-0000000000a1",
         quantity: 3,
-        product_id: "product",
-        farm_id: "farm",
+        product_id: storeOrderFixture().lines[0].product_id,
+        farm_id: "00000000-0000-4000-8000-0000000000b1",
         farm_name: "Farm",
         start_date: "2026-11-01",
         end_date: "2026-11-05",
@@ -194,4 +194,207 @@ it.each([
   fireEvent.click(confirm);
   const second = JSON.parse(String(vi.mocked(api).mock.calls[3][1]?.body));
   expect(second.idempotency_key).toBe(first.idempotency_key);
+});
+
+const otherOrder = storeOrderFixture({
+  id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  reference_code: "OTHER-ORDER",
+  shipping_address: { ...storeOrderFixture().shipping_address, recipient_name: "Other recipient" },
+  expires_at: null,
+});
+
+function cancelOrder() {
+  fireEvent.click(screen.getByRole("button", { name: "Hủy đơn" }));
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Lý do hủy"), { target: { value: "Hết hàng" } });
+  return within(dialog).getByRole("button", { name: "Hủy đơn" });
+}
+
+it.each([otherOrder, { ...storeOrderFixture(), lines: [null] }])(
+  "rejects an untrusted initial detail response before rendering controls",
+  async (response) => {
+    vi.mocked(api).mockResolvedValueOnce(response);
+    renderOrder(storeOrderFixture().id);
+    await screen.findByRole("alert");
+    expect(screen.queryByText("Other recipient")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hủy đơn" })).not.toBeInTheDocument();
+    expect(api).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([
+  ["403", Object.assign(new Error("forbidden"), { status: 403 })],
+  ["401", Object.assign(new Error("session_expired"), { status: 401 })],
+  ["404", Object.assign(new Error("not_found"), { status: 404 })],
+  ["bad identity", otherOrder],
+])(
+  "hides the previous order after a refresh returns %s and reads again explicitly",
+  async (_, result) => {
+    const item = storeOrderFixture({ expires_at: null });
+    vi.mocked(api).mockResolvedValueOnce(item);
+    if (result instanceof Error) vi.mocked(api).mockRejectedValueOnce(result);
+    else vi.mocked(api).mockResolvedValueOnce(result);
+    vi.mocked(api).mockResolvedValueOnce(item);
+    renderOrder(item.id);
+    await screen.findByText("Nguyễn An");
+    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+    expect(screen.queryByText("Other recipient")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hủy đơn" })).not.toBeInTheDocument();
+    expect(api).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
+    expect(await screen.findByText("Nguyễn An")).toBeVisible();
+    expect(api).toHaveBeenCalledTimes(3);
+  },
+);
+
+it.each([
+  ["forbidden", 403],
+  ["session_changed", 409],
+])("retires protected data after %s while cancelling", async (message, status) => {
+  const item = storeOrderFixture({ expires_at: null });
+  vi.mocked(api)
+    .mockResolvedValueOnce(item)
+    .mockRejectedValueOnce(Object.assign(new Error(message), { status }));
+  renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  fireEvent.click(cancelOrder());
+  await screen.findByRole("alert");
+  expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Lý do hủy")).not.toBeInTheDocument();
+  expect(api).toHaveBeenCalledTimes(2);
+});
+
+it("does not retire readable order details when a write fails the CSRF check", async () => {
+  const item = storeOrderFixture({ expires_at: null });
+  vi.mocked(api)
+    .mockResolvedValueOnce(item)
+    .mockRejectedValueOnce(Object.assign(new Error("csrf_rejected"), { status: 403 }));
+  renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  fireEvent.click(cancelOrder());
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible();
+  expect(screen.getByText("Nguyễn An")).toBeInTheDocument();
+});
+
+it.each([
+  ["HTTP 408", Object.assign(new Error("request_failed"), { status: 408 })],
+  ["HTTP 502", Object.assign(new Error("unavailable"), { status: 502 })],
+  ["wrong response identity", otherOrder],
+  ["invalid response body", { ...storeOrderFixture(), lines: [null] }],
+])("keeps a single cancel intent for an explicit replay after %s", async (_, outcome) => {
+  const item = storeOrderFixture({ expires_at: null });
+  vi.mocked(api).mockResolvedValueOnce(item);
+  if (outcome instanceof Error) vi.mocked(api).mockRejectedValueOnce(outcome);
+  else vi.mocked(api).mockResolvedValueOnce(outcome);
+  vi.mocked(api).mockResolvedValueOnce({ ...item, status: "cancelled" });
+  renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  const confirm = cancelOrder();
+  fireEvent.click(confirm);
+  const dialog = screen.getByRole("dialog");
+  await within(dialog).findByRole("alert");
+  expect(within(dialog).getByLabelText("Lý do hủy")).toBeDisabled();
+  expect(screen.queryByText("Other recipient")).not.toBeInTheDocument();
+  expect(api).toHaveBeenCalledTimes(2);
+  fireEvent.click(confirm);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const [first, second] = vi.mocked(api).mock.calls.slice(1);
+  expect(first[0]).toBe(`admin/store-orders/${item.id}/cancel`);
+  expect(second[0]).toBe(first[0]);
+  expect(second[1]?.body).toBe(first[1]?.body);
+});
+
+it("keeps a stale readable snapshot after a network read error but blocks actions", async () => {
+  const item = storeOrderFixture({ expires_at: null });
+  vi.mocked(api).mockResolvedValueOnce(item).mockRejectedValueOnce(new Error("network_error"));
+  renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  await screen.findByRole("alert");
+  expect(screen.getByText("Nguyễn An")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeDisabled();
+});
+
+it.each([401, 403])("shows an initial HTTP %i without protected details", async (status) => {
+  vi.mocked(api).mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status }));
+  renderOrder();
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Hủy đơn" })).not.toBeInTheDocument();
+});
+
+it("ignores an obsolete GET after switching order routes", async () => {
+  const item = storeOrderFixture({ expires_at: null });
+  let complete!: (order: StoreOrder) => void;
+  vi.mocked(api)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    )
+    .mockResolvedValueOnce(otherOrder);
+  const view = renderOrder(item.id);
+  await waitFor(() => expect(complete).toBeTypeOf("function"));
+  const options = vi.mocked(api).mock.calls[0][2];
+  view.rerender(orderTree(otherOrder.id));
+  await screen.findByText("Other recipient");
+  expect(options?.shouldRedirectToLogin?.()).toBe(false);
+  await act(async () => complete(item));
+  expect(screen.getByText("Other recipient")).toBeVisible();
+  expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+  expect(api).toHaveBeenCalledTimes(2);
+});
+
+it("only lets a newer verified read restore the same route after access loss", async () => {
+  const item = storeOrderFixture({ expires_at: null });
+  const response = { ...item, reference_code: "VERIFIED-ORDER" };
+  vi.mocked(api)
+    .mockResolvedValueOnce(item)
+    .mockRejectedValueOnce(Object.assign(new Error("session_changed"), { status: 409 }))
+    .mockResolvedValueOnce(response);
+  renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  await screen.findByRole("alert");
+  expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
+  expect(await screen.findByRole("heading", { name: "VERIFIED-ORDER" })).toBeVisible();
+});
+
+it("preserves only the exact submitted intent across a bad read and CSRF rejection of its replay", async () => {
+  const item = storeOrderFixture({ expires_at: null });
+  vi.mocked(api)
+    .mockResolvedValueOnce(item)
+    .mockRejectedValueOnce(Object.assign(new Error("request_failed"), { status: 408 }))
+    .mockResolvedValueOnce(otherOrder)
+    .mockResolvedValueOnce(item)
+    .mockRejectedValueOnce(Object.assign(new Error("csrf_rejected"), { status: 403 }))
+    .mockResolvedValueOnce({ ...item, status: "cancelled" });
+  renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  fireEvent.click(cancelOrder());
+  await within(screen.getByRole("dialog")).findByRole("alert");
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  await screen.findByRole("alert");
+  expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Hủy đơn" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByLabelText("Lý do hủy")).toHaveValue("Hết hàng");
+  const replay = within(dialog).getByRole("button", { name: "Hủy đơn" });
+  fireEvent.click(replay);
+  await within(dialog).findByRole("alert");
+  expect(within(dialog).getByLabelText("Lý do hủy")).toBeDisabled();
+  fireEvent.click(replay);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const attempts = vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(attempts).toHaveLength(3);
+  expect(new Set(attempts.map(([, init]) => init?.body)).size).toBe(1);
 });
