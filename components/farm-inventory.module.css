@@ -1,0 +1,43 @@
+.inventory {
+  container: farm-inventory / inline-size;
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mantine-spacing-md);
+}
+
+.productLabel {
+  width: 100%;
+  height: auto;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.productRow[aria-pressed="true"]:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--surface-selected);
+}
+
+.mobileBack {
+  align-self: flex-start;
+}
+
+@container farm-inventory (min-width: 56.25rem) {
+  .panes {
+    grid-template-columns: minmax(17.5rem, 1fr) minmax(0, 2fr);
+  }
+
+  .mobileBack {
+    display: none;
+  }
+}
+
+@container farm-inventory (width < 56.25rem) {
+  .panes[data-detail-open="true"] .listPane,
+  .panes:not([data-detail-open="true"]) .detailPane {
+    display: none;
+  }
+}

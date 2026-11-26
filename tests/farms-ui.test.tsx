@@ -678,9 +678,8 @@ it("keeps product action failures visible in the detail pane", async () => {
   fireEvent.click(screen.getByLabelText("Tùy chọn khác: Rau muống"));
   fireEvent.click(screen.getByRole("menuitem", { name: "Ngừng cung cấp" }));
 
-  const detail = document.querySelector(".farm-product-detail-pane");
-  expect(detail).not.toBeNull();
-  expect(await within(detail as HTMLElement).findByRole("alert")).toBeVisible();
+  const detail = screen.getByRole("region", { name: "Các đợt hàng RAU-01" });
+  expect(await within(detail).findByRole("alert")).toBeVisible();
 });
 
 it("moves focus into and back from the mobile product detail", async () => {
@@ -754,6 +753,9 @@ it("links a catalog Product together with the first current-week stock batch", a
       "Rau muống · RAU-01",
     );
     expect(await within(addDialog).findByText("0.5 kg")).toBeVisible();
+    expect(within(addDialog).getByLabelText("Số lượng đơn vị")).toHaveAccessibleDescription(
+      "Nhập số phần theo đúng quy cách bán của sản phẩm.",
+    );
     expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("2026-10-26");
     expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("2026-11-01");
     fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {

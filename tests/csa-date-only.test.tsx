@@ -363,7 +363,13 @@ it.each([
         />
       </AdminI18nProvider>,
     );
-    expect(await screen.findByText(warning)).toBeVisible();
+    const explanation = await screen.findByRole("note");
+    expect(explanation).toBeVisible();
+    expect(explanation).toHaveTextContent(warning);
+    expect(within(screen.getByRole("dialog")).getByLabelText(/deadline/i)).toHaveAttribute(
+      "type",
+      "datetime-local",
+    );
     expect(
       screen.queryByText(
         state === "locked" ? /Extending the deadline preserves/ : /Reopening releases/,

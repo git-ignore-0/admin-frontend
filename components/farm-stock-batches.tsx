@@ -1,11 +1,22 @@
 "use client";
-import { Alert, Button, Group, Text } from "@mantine/core";
+import {
+  Alert,
+  Button,
+  Divider,
+  Group,
+  Paper,
+  Select,
+  SimpleGrid,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
 
 import { ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DataState, FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { DataState, Status } from "@/components/nfv-controls";
 import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { Pagination } from "@/components/pagination";
 import { StockBatchFields } from "@/components/stock-batch-fields";
@@ -27,6 +38,8 @@ import {
   type StockBatchPreset,
 } from "@/lib/farm-stock";
 import type { FarmProduct, FarmStockBatch, PaginationMeta, StockBatchStatus } from "@/lib/types";
+
+import classes from "./farm-inventory.module.css";
 
 const conflictCodes = new Set([
   "version_conflict",
@@ -290,21 +303,23 @@ export function FarmStockBatches({
   }
 
   return (
-    <section className="farm-stock-batches" aria-label={`${c.stockBatches} ${product.sku}`}>
+    <Stack gap="md">
       <Button
         aria-label={c.backToProducts}
-        className="farm-stock-mobile-back"
+        className={classes.mobileBack}
         variant="subtle"
         onClick={onBack}
       >
         ← {c.backToProducts}
       </Button>
-      <div className="farm-stock-batches-heading">
-        <div>
-          <h3 ref={detailHeadingRef} tabIndex={-1}>
+      <Group align="flex-start" justify="space-between" gap="sm">
+        <Stack gap="xs" miw={0}>
+          <Title order={3} ref={detailHeadingRef} tabIndex={-1}>
             {c.stockBatches}: {locale === "vi" ? product.name_vi : product.name_en}
-          </h3>
-          <p>{c.stockBatchesHint}</p>
+          </Title>
+          <Text size="sm" c="dimmed">
+            {c.stockBatchesHint}
+          </Text>
           <Group gap="xs">
             <ProductLifecycleStatus status={product.product_status} />
             <Status
@@ -314,9 +329,9 @@ export function FarmStockBatches({
             />
             <Text size="sm">{productStockLabel}</Text>
           </Group>
-        </div>
+        </Stack>
         {!error && (
-          <div className="farm-stock-batches-actions">
+          <Group gap="xs">
             <Button
               size="xs"
               onClick={openNew}
@@ -326,16 +341,16 @@ export function FarmStockBatches({
               {c.addBatch}
             </Button>
             {!actionsBlocked && actions}
-          </div>
+          </Group>
         )}
-      </div>
+      </Group>
       {!canIncrease && !summaryBusy && !error && (
         <Text size="sm" id="farm-stock-add-reason">
           {t.storeCatalog.batchIncreaseBlocked}
         </Text>
       )}
       {actionError && !editor && !cancelTarget && (
-        <Alert color="red" role="alert">
+        <Alert color="danger" role="alert">
           {actionError}
           {reloadRequired && (
             <Button ml="xs" size="xs" variant="default" onClick={reloadAfterConflict}>
@@ -344,22 +359,21 @@ export function FarmStockBatches({
           )}
         </Alert>
       )}
-      <div className="farm-stock-batches-filter">
-        <FormField label={c.batchStatus}>
-          <FormSelect
-            value={status}
-            onChange={(value) => {
-              if (status !== (value ?? "") || page !== 1) setLoading(true);
-              setPage(1);
-              setStatus((value ?? "") as StockBatchStatus | "");
-            }}
-            data={[
-              { value: "", label: c.batchStatusAll },
-              ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
-            ]}
-          />
-        </FormField>
-      </div>
+      <Select
+        role="combobox"
+        label={c.batchStatus}
+        maw="15rem"
+        value={status}
+        onChange={(value) => {
+          if (status !== (value ?? "") || page !== 1) setLoading(true);
+          setPage(1);
+          setStatus((value ?? "") as StockBatchStatus | "");
+        }}
+        data={[
+          { value: "", label: c.batchStatusAll },
+          ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
+        ]}
+      />
       {error ? (
         <DataState
           kind="error"
@@ -370,82 +384,100 @@ export function FarmStockBatches({
       ) : loading ? (
         <DataState kind="loading" title={c.loading} compact />
       ) : rows?.length ? (
-        <div className="farm-stock-batch-list">
+        <Stack gap="xs">
           {rows.map((batch) => {
             const editable = batch.status === "active" || batch.status === "upcoming";
             return (
-              <article className="farm-stock-batch-row" key={batch.id}>
-                <div>
-                  <strong>
-                    {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
-                  </strong>
-                  <span>
-                    {c.batchInventory
-                      .replace("{initial}", String(batch.quantity_units))
-                      .replace("{sold}", String(batch.net_sold_quantity))
-                      .replace("{remaining}", String(batch.remaining_quantity))
-                      .replace("{available}", String(batch.available_quantity))}
-                  </span>
-                </div>
-                <strong>
-                  {formatStockQuantityTotal(batch.remaining_quantity, product.unit_size, unitLabel)}
-                </strong>
-                <Status
-                  domain="farm-stock"
-                  status={batch.status}
-                  label={statusLabels[batch.status]}
-                />
-                <div className="farm-stock-batch-row-actions">
-                  {editable ? (
-                    <>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        disabled={actionsBlocked}
-                        onClick={() => openEdit(batch)}
-                      >
-                        {c.edit}
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        disabled={actionsBlocked}
-                        onClick={() => {
-                          if (actionsBlocked) return;
-                          setActionError("");
-                          setCancelTarget(batch);
-                        }}
-                      >
-                        {c.cancelBatch}
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-              </article>
+              <Paper component="article" p="sm" key={batch.id}>
+                <SimpleGrid
+                  type="container"
+                  cols={{ base: 1, "25rem": 2, "40rem": 4 }}
+                  spacing="sm"
+                >
+                  <Stack gap={4}>
+                    <Text fw={600}>
+                      {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      {c.batchInventory
+                        .replace("{initial}", String(batch.quantity_units))
+                        .replace("{sold}", String(batch.net_sold_quantity))
+                        .replace("{remaining}", String(batch.remaining_quantity))
+                        .replace("{available}", String(batch.available_quantity))}
+                    </Text>
+                  </Stack>
+                  <Text component="strong" fw={600}>
+                    {formatStockQuantityTotal(
+                      batch.remaining_quantity,
+                      product.unit_size,
+                      unitLabel,
+                    )}
+                  </Text>
+                  <Group align="flex-start" gap="xs">
+                    <Status
+                      domain="farm-stock"
+                      status={batch.status}
+                      label={statusLabels[batch.status]}
+                    />
+                  </Group>
+                  <Group gap="xs" align="flex-start">
+                    {editable ? (
+                      <>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          disabled={actionsBlocked}
+                          onClick={() => openEdit(batch)}
+                        >
+                          {c.edit}
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          disabled={actionsBlocked}
+                          onClick={() => {
+                            if (actionsBlocked) return;
+                            setActionError("");
+                            setCancelTarget(batch);
+                          }}
+                        >
+                          {c.cancelBatch}
+                        </Button>
+                      </>
+                    ) : null}
+                  </Group>
+                </SimpleGrid>
+              </Paper>
             );
           })}
-        </div>
+        </Stack>
       ) : (
         <DataState kind="empty" title={c.batchEmpty} compact />
       )}
       {!loading && !error && meta.total > meta.page_size ? (
-        <Pagination
-          page={page}
-          total={meta.total}
-          pageSize={meta.page_size}
-          onPage={(page) => {
-            setLoading(true);
-            setPage(page);
-          }}
-          disabled={loading}
-          previousLabel={t.common.previous}
-          nextLabel={t.common.next}
-          summary={t.common.pagination}
-        />
+        <>
+          <Divider />
+          <Pagination
+            page={page}
+            total={meta.total}
+            pageSize={meta.page_size}
+            onPage={(page) => {
+              setLoading(true);
+              setPage(page);
+            }}
+            disabled={loading}
+            previousLabel={t.common.previous}
+            nextLabel={t.common.next}
+            summary={t.common.pagination}
+            resultCountLabel={t.common.resultCount}
+            resultCountSingularLabel={t.common.resultCountSingular}
+          />
+        </>
       ) : null}
       {editor && !error ? (
         <ConfirmationDialog
           title={editor === "new" ? c.addBatch : c.editBatch}
+          size={640}
           busy={busy}
           busyLabel={c.saving}
           cancelLabel={c.cancel}
@@ -483,6 +515,7 @@ export function FarmStockBatches({
       {cancelTarget && !error ? (
         <ConfirmationDialog
           title={c.cancelBatch}
+          size={400}
           busy={busy}
           busyLabel={c.saving}
           cancelLabel={c.cancel}
@@ -495,13 +528,13 @@ export function FarmStockBatches({
           onCancel={() => !busy && setCancelTarget(null)}
           onConfirm={() => void cancel()}
         >
-          <p>
+          <Text>
             {c.cancelBatchConfirm
               .replace("{start}", formatAdminDate(cancelTarget.start_date))
               .replace("{end}", formatAdminDate(cancelTarget.end_date))}
-          </p>
+          </Text>
         </ConfirmationDialog>
       ) : null}
-    </section>
+    </Stack>
   );
 }

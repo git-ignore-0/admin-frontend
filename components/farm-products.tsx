@@ -1,17 +1,31 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Stack, Alert, ActionIcon, Button, Menu, Text } from "@mantine/core";
-
+import {
+  ActionIcon,
+  Alert,
+  Box,
+  Button,
+  Divider,
+  Group,
+  Menu,
+  Paper,
+  Select,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { IconDots } from "@tabler/icons-react";
-
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FarmStockBatches } from "@/components/farm-stock-batches";
-import { FormInput, FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { ListState } from "@/components/list-state";
+import { DataState, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
+import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { StockBatchFields } from "@/components/stock-batch-fields";
 import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { getStoreProduct } from "@/lib/commerce-api";
@@ -32,6 +46,7 @@ import {
 } from "@/lib/farm-stock";
 import { formatDecimalInput } from "@/lib/numeric-input";
 import type { AvailableFarmProduct, FarmProduct, PaginationMeta, StoreProduct } from "@/lib/types";
+import classes from "./farm-inventory.module.css";
 
 function firstBatchDraft(): StockBatchDraft {
   return { ...stockBatchRangeForPreset("week"), quantity: "" };
@@ -428,21 +443,14 @@ function FarmProductsForFarm({
   }
 
   return (
-    <section
-      className={`farm-products${mobileDetailOpen ? " mobile-detail-open" : ""}`}
-      aria-busy={loading}
-    >
-      {!error && (
-        <div className="farm-stock-summary" aria-label={c.availableStock}>
-          <span>{c.productsWithAvailableStock.replace("{count}", String(inStockCount))}</span>
-          <span>{c.productsWithoutAvailableStock.replace("{count}", String(outOfStockCount))}</span>
-        </div>
-      )}
-      <div className="farm-products-heading">
-        <div>
-          <h2>{c.products}</h2>
-          <p>{c.selectProductHint}</p>
-        </div>
+    <Stack component="section" className={classes.inventory} gap="md" aria-busy={loading}>
+      <Group component="header" align="flex-start" justify="space-between" gap="sm">
+        <Stack gap="xs" miw={0}>
+          <Title order={2}>{c.products}</Title>
+          <Text size="sm" c="dimmed">
+            {c.selectProductHint}
+          </Text>
+        </Stack>
         <Button
           disabled={loading || busy || Boolean(error)}
           onClick={() => {
@@ -458,191 +466,225 @@ function FarmProductsForFarm({
         >
           {c.addProduct}
         </Button>
-      </div>
+      </Group>
+      {!error && (
+        <SimpleGrid
+          type="container"
+          cols={{ base: 1, "34rem": 2 }}
+          spacing="sm"
+          role="group"
+          aria-label={c.availableStock}
+        >
+          <Paper p="sm">
+            <Text fw={600}>
+              {c.productsWithAvailableStock.replace("{count}", String(inStockCount))}
+            </Text>
+          </Paper>
+          <Paper p="sm">
+            <Text fw={600}>
+              {c.productsWithoutAvailableStock.replace("{count}", String(outOfStockCount))}
+            </Text>
+          </Paper>
+        </SimpleGrid>
+      )}
       {linkConflict && (
-        <Alert color="red" role="alert" mt="sm">
+        <Alert color="danger" role="alert">
           {c[linkConflict]}
         </Alert>
       )}
-      <div className="farm-products-layout">
-        <div className="farm-product-list-pane">
-          <form
-            className="farm-product-picker farm-linked-search"
-            role="search"
-            onSubmit={searchLinks}
-          >
-            <FormField label={c.searchLinked} className="nfv-field">
-              <FormInput
-                type="search"
-                placeholder={c.searchLinked}
-                value={linkedQuery}
-                onChange={(event) => setLinkedQuery(event.target.value)}
-              />
-            </FormField>
-            <Button variant="default" type="submit" disabled={loading}>
-              {c.searchButton}
-            </Button>
-          </form>
-          {error && (
-            <Alert color="red" role="alert">
-              <Stack gap="sm" align="flex-start">
-                {error}
-                <Button variant="default" onClick={reloadLinks}>
-                  {t.common.retry}
+      <Box className={classes.panes} data-detail-open={mobileDetailOpen || undefined}>
+        <Paper className={classes.listPane} p="md" miw={0}>
+          <Stack gap="md">
+            <Box component="form" role="search" aria-label={c.searchLinked} onSubmit={searchLinks}>
+              <Group align="end" gap="xs">
+                <TextInput
+                  flex="1 1 12rem"
+                  miw={0}
+                  label={c.searchLinked}
+                  type="search"
+                  placeholder={c.searchLinked}
+                  value={linkedQuery}
+                  onChange={(event) => setLinkedQuery(event.currentTarget.value)}
+                />
+                <Button variant="default" type="submit" disabled={loading}>
+                  {c.searchButton}
                 </Button>
-              </Stack>
-            </Alert>
-          )}
-          {loading && <DataState kind="loading" title={c.loading} />}
-          {!loading && !error && links?.length === 0 && (
-            <DataState kind="empty" title={linkedSearch ? c.noLinkedMatch : c.linkedEmpty} />
-          )}
-          {!loading && !error && visibleLinks.length > 0 && (
-            <div className="farm-product-options">
-              {visibleLinks.map((row) => {
-                const name = locale === "vi" ? row.name_vi : row.name_en;
-                const unit = `${formatDecimalInput(row.unit_size)} ${locale === "vi" ? row.unit_label_vi : row.unit_label_en}`;
-                const supplyLabel = row.is_active ? c.productActive : c.productInactive;
-                const lifecycleLabels = {
-                  draft: t.storeCatalog.productDraft,
-                  active: t.storeCatalog.selling,
-                  discontinued: t.storeCatalog.discontinued,
-                };
-                const stockLabel = c.availableUnits.replace(
-                  "{count}",
-                  String(row.available_quantity),
-                );
-                return (
-                  <Button
-                    ref={(node) => {
-                      if (node) productButtonRefs.current.set(row.product_id, node);
-                      else productButtonRefs.current.delete(row.product_id);
-                    }}
-                    className="farm-product-option"
-                    variant="default"
-                    fullWidth
-                    h="auto"
-                    styles={{
-                      inner: { width: "100%" },
-                      label: {
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: "7px 12px",
-                        width: "100%",
-                        textAlign: "left",
-                        whiteSpace: "normal",
-                      },
-                    }}
-                    type="button"
-                    disabled={busy}
-                    key={row.id}
-                    aria-label={`${name}, ${lifecycleLabels[row.product_status]}, ${supplyLabel}, ${stockLabel}`}
-                    aria-pressed={openProduct === row.product_id}
-                    onClick={() => {
-                      setActionError("");
-                      setLinkConflict(null);
-                      setOpenProduct(row.product_id);
-                      setMobileDetailOpen(true);
-                    }}
-                  >
-                    <span style={{ display: "grid", minWidth: 0, gap: 3 }}>
-                      <strong>{name}</strong>
-                      <small>{row.sku}</small>
-                      <ProductLifecycleStatus status={row.product_status} />
-                    </span>
-                    <small style={{ gridColumn: 1 }}>{unit}</small>
-                    <Stack component="span" align="flex-end" gap={2}>
-                      <Status
-                        domain="farm-stock"
-                        status={row.is_active ? "active" : "inactive"}
-                        label={supplyLabel}
-                      />
-                      <Text component="span" size="xs">
-                        {stockLabel}
-                      </Text>
-                    </Stack>
-                  </Button>
-                );
-              })}
-            </div>
-          )}
-          {!loading && !error && linksMeta.total > linksMeta.page_size && (
-            <Pagination
-              page={linksPage}
-              total={linksMeta.total}
-              pageSize={linksMeta.page_size}
-              onPage={(page) => {
-                setLoading(true);
-                setLinksPage(page);
-              }}
-              disabled={loading}
-              previousLabel={t.common.previous}
-              nextLabel={t.common.next}
-              summary={t.common.pagination}
+              </Group>
+            </Box>
+            <ListState
+              embedded
+              empty={c.linkedEmpty}
+              noResults={linkedSearch ? c.noLinkedMatch : undefined}
+              error={error}
+              hasData={!loading && !error && visibleLinks.length > 0}
+              isEmpty={links?.length === 0}
+              loading={loading}
+              loadingLabel={c.loading}
+              onRetry={reloadLinks}
+              retryLabel={t.common.retry}
             />
-          )}
-        </div>
-        <div className="farm-product-detail-pane">
-          {actionError && !addOpen && (
-            <Alert color="red" role="alert">
-              {actionError}
-            </Alert>
-          )}
-          {selectedLink ? (
-            <FarmStockBatches
-              key={selectedLink.id}
-              farmId={farmId}
-              product={selectedLink}
-              detailHeadingRef={detailHeadingRef}
-              onBack={() => {
-                restoreProductFocusRef.current = true;
-                setMobileDetailOpen(false);
-              }}
-              onSummaryChanged={() => {
-                reloadLinks();
-                onInventoryChanged?.();
-              }}
-              onAccessLost={retireInventory}
-              summaryBusy={loading || busy}
-              actions={
-                <Menu position="bottom-end" returnFocus>
-                  <Menu.Target>
-                    <ActionIcon
+            {!loading && !error && visibleLinks.length > 0 && (
+              <Stack gap="xs">
+                {visibleLinks.map((row) => {
+                  const name = locale === "vi" ? row.name_vi : row.name_en;
+                  const unit = `${formatDecimalInput(row.unit_size)} ${locale === "vi" ? row.unit_label_vi : row.unit_label_en}`;
+                  const supplyLabel = row.is_active ? c.productActive : c.productInactive;
+                  const lifecycleLabels = {
+                    draft: t.storeCatalog.productDraft,
+                    active: t.storeCatalog.selling,
+                    discontinued: t.storeCatalog.discontinued,
+                  };
+                  const stockLabel = c.availableUnits.replace(
+                    "{count}",
+                    String(row.available_quantity),
+                  );
+                  return (
+                    <Button
+                      ref={(node) => {
+                        if (node) productButtonRefs.current.set(row.product_id, node);
+                        else productButtonRefs.current.delete(row.product_id);
+                      }}
+                      classNames={{ root: classes.productRow, label: classes.productLabel }}
                       variant="default"
+                      fullWidth
+                      h="auto"
+                      px="md"
+                      py="sm"
+                      type="button"
                       disabled={busy}
-                      aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
+                      key={row.id}
+                      aria-label={`${name}, ${lifecycleLabels[row.product_status]}, ${supplyLabel}, ${stockLabel}`}
+                      aria-pressed={openProduct === row.product_id}
+                      onClick={() => {
+                        setActionError("");
+                        setLinkConflict(null);
+                        setOpenProduct(row.product_id);
+                        setMobileDetailOpen(true);
+                      }}
                     >
-                      <IconDots aria-hidden="true" size={18} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    <Menu.Item disabled={busy} onClick={() => void toggle(selectedLink)}>
-                      {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
-                    </Menu.Item>
-                    {!selectedLink.has_supply_history ? (
-                      <Menu.Item
-                        color="red"
+                      <Stack component="span" gap="xs">
+                        <Stack component="span" gap={4}>
+                          <Text component="strong" fw={600}>
+                            {name}
+                          </Text>
+                          <Group component="span" gap="xs" c="dimmed">
+                            <Text component="span" size="sm">
+                              {row.sku}
+                            </Text>
+                            <Text component="span" size="sm">
+                              {unit}
+                            </Text>
+                          </Group>
+                        </Stack>
+                        <Group component="span" gap="xs">
+                          <ProductLifecycleStatus status={row.product_status} />
+                          <Status
+                            domain="farm-stock"
+                            status={row.is_active ? "active" : "inactive"}
+                            label={supplyLabel}
+                          />
+                        </Group>
+                        <Text component="span" size="sm" c="dimmed">
+                          {stockLabel}
+                        </Text>
+                      </Stack>
+                    </Button>
+                  );
+                })}
+              </Stack>
+            )}
+            {!loading && !error && linksMeta.total > linksMeta.page_size && (
+              <>
+                <Divider />
+                <Pagination
+                  page={linksPage}
+                  total={linksMeta.total}
+                  pageSize={linksMeta.page_size}
+                  onPage={(page) => {
+                    setLoading(true);
+                    setLinksPage(page);
+                  }}
+                  disabled={loading}
+                  previousLabel={t.common.previous}
+                  nextLabel={t.common.next}
+                  summary={t.common.pagination}
+                  resultCountLabel={t.common.resultCount}
+                  resultCountSingularLabel={t.common.resultCountSingular}
+                />
+              </>
+            )}
+          </Stack>
+        </Paper>
+        <Paper
+          component="section"
+          aria-label={selectedLink ? `${c.stockBatches} ${selectedLink.sku}` : undefined}
+          className={classes.detailPane}
+          miw={0}
+          p="md"
+        >
+          <Stack gap="md">
+            {actionError && !addOpen && (
+              <Alert color="danger" role="alert">
+                {actionError}
+              </Alert>
+            )}
+            {selectedLink ? (
+              <FarmStockBatches
+                key={selectedLink.id}
+                farmId={farmId}
+                product={selectedLink}
+                detailHeadingRef={detailHeadingRef}
+                onBack={() => {
+                  restoreProductFocusRef.current = true;
+                  setMobileDetailOpen(false);
+                }}
+                onSummaryChanged={() => {
+                  reloadLinks();
+                  onInventoryChanged?.();
+                }}
+                onAccessLost={retireInventory}
+                summaryBusy={loading || busy}
+                actions={
+                  <Menu position="bottom-end" returnFocus>
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="default"
                         disabled={busy}
-                        onClick={() => {
-                          setRemoveTarget(selectedLink);
-                          setRemoveError("");
-                        }}
+                        aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
                       >
-                        {c.removeLink}
+                        <IconDots aria-hidden="true" size={18} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item disabled={busy} onClick={() => void toggle(selectedLink)}>
+                        {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
                       </Menu.Item>
-                    ) : null}
-                  </Menu.Dropdown>
-                </Menu>
-              }
-            />
-          ) : !loading && !error ? (
-            <DataState kind="empty" title={c.linkedEmpty} />
-          ) : null}
-        </div>
-      </div>
+                      {!selectedLink.has_supply_history ? (
+                        <Menu.Item
+                          color="danger"
+                          disabled={busy}
+                          onClick={() => {
+                            setRemoveTarget(selectedLink);
+                            setRemoveError("");
+                          }}
+                        >
+                          {c.removeLink}
+                        </Menu.Item>
+                      ) : null}
+                    </Menu.Dropdown>
+                  </Menu>
+                }
+              />
+            ) : !loading && !error ? (
+              <DataState kind="empty" title={c.linkedEmpty} />
+            ) : null}
+          </Stack>
+        </Paper>
+      </Box>
       {addOpen && (
         <ConfirmationDialog
           title={c.addFromCatalog}
+          size={640}
           busy={busy}
           busyLabel={c.saving}
           cancelLabel={c.cancel}
@@ -664,60 +706,64 @@ function FarmProductsForFarm({
           }}
           onConfirm={() => void add()}
         >
-          <p className="nfv-field-hint">{c.addFromCatalogHint}</p>
-          <form className="farm-product-picker" onSubmit={searchProducts} role="search">
-            <FormField label={c.productSearch}>
-              <FormInput
+          <Text size="sm" c="dimmed">
+            {c.addFromCatalogHint}
+          </Text>
+          <Box
+            component="form"
+            role="search"
+            aria-label={c.productSearch}
+            onSubmit={searchProducts}
+          >
+            <Group align="end" gap="xs">
+              <TextInput
+                flex="1 1 12rem"
+                miw={0}
+                label={c.productSearch}
                 type="search"
                 placeholder={c.productPlaceholder}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => setQuery(event.currentTarget.value)}
               />
-            </FormField>
-            <Button variant="default" type="submit" disabled={busy || catalogLoading}>
-              {c.searchButton}
-            </Button>
-          </form>
+              <Button variant="default" type="submit" disabled={busy || catalogLoading}>
+                {c.searchButton}
+              </Button>
+            </Group>
+          </Box>
           {catalogError && (
-            <Alert color="red" role="alert">
-              <Stack gap="sm" align="flex-start">
-                {catalogError}{" "}
-                <Button variant="default" onClick={reloadCatalog}>
-                  {t.common.retry}
-                </Button>
-              </Stack>
-            </Alert>
+            <RecoveryAlert
+              message={catalogError}
+              retryLabel={t.common.retry}
+              onRetry={reloadCatalog}
+            />
           )}
           {detailError && (
-            <Alert color="red" role="alert">
-              <Stack gap="sm" align="flex-start">
-                {detailError}{" "}
-                <Button variant="default" onClick={reloadCatalog}>
-                  {t.common.retry}
-                </Button>
-              </Stack>
-            </Alert>
-          )}
-          <FormField label={c.productColumn}>
-            <FormSelect
-              value={selectedProduct}
-              onChange={(value) => {
-                if (!value || value === selectedProduct) return;
-                setActionError("");
-                setSelectedDetail(null);
-                setSelected(value ?? "");
-              }}
-              disabled={busy || catalogLoading || !catalog.length}
-              data={
-                catalog.length
-                  ? catalog.map((product) => ({
-                      value: product.id,
-                      label: `${locale === "vi" ? product.name_vi : product.name_en} · ${product.sku}`,
-                    }))
-                  : [{ value: "", label: catalogLoading ? c.loading : c.noCatalogMatch }]
-              }
+            <RecoveryAlert
+              message={detailError}
+              retryLabel={t.common.retry}
+              onRetry={reloadCatalog}
             />
-          </FormField>
+          )}
+          <Select
+            role="combobox"
+            label={c.productColumn}
+            value={selectedProduct}
+            onChange={(value) => {
+              if (!value || value === selectedProduct) return;
+              setActionError("");
+              setSelectedDetail(null);
+              setSelected(value ?? "");
+            }}
+            disabled={busy || catalogLoading || !catalog.length}
+            data={
+              catalog.length
+                ? catalog.map((product) => ({
+                    value: product.id,
+                    label: `${locale === "vi" ? product.name_vi : product.name_en} · ${product.sku}`,
+                  }))
+                : [{ value: "", label: catalogLoading ? c.loading : c.noCatalogMatch }]
+            }
+          />
           {selectedIsSelling && selectedDetail ? (
             <StockBatchFields
               draft={batchDraft}
@@ -750,12 +796,15 @@ function FarmProductsForFarm({
             previousLabel={t.common.previous}
             nextLabel={t.common.next}
             summary={t.common.pagination}
+            resultCountLabel={t.common.resultCount}
+            resultCountSingularLabel={t.common.resultCountSingular}
           />
         </ConfirmationDialog>
       )}
       {removeTarget && (
         <ConfirmationDialog
           title={c.removeLink}
+          size={400}
           busy={busy}
           busyLabel={c.saving}
           cancelLabel={c.cancel}
@@ -766,9 +815,9 @@ function FarmProductsForFarm({
           onCancel={() => !busy && setRemoveTarget(null)}
           onConfirm={() => void remove(removeTarget)}
         >
-          <p>{c.productRemovePrompt.replace("{sku}", removeTarget.sku)}</p>
+          <Text>{c.productRemovePrompt.replace("{sku}", removeTarget.sku)}</Text>
         </ConfirmationDialog>
       )}
-    </section>
+    </Stack>
   );
 }

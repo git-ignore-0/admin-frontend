@@ -1,6 +1,7 @@
 "use client";
 
-import { FormInput, FormField, Tabs } from "@/components/nfv-controls";
+import { Box, Paper, SegmentedControl, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import {
   formatStockQuantityTotal,
   stockBatchRangeForPreset,
@@ -80,76 +81,81 @@ export function StockBatchFields({
   }
 
   return (
-    <div className="stock-batch-fields">
-      {!startDisabled && !limits ? (
-        <div className="stock-batch-presets">
-          <span className="nfv-field-label">{labels.batchRange}</span>
-          <Tabs
-            label={labels.batchRange}
+    <Stack gap="md">
+      {!startDisabled && !limits && (
+        <Stack gap="xs" align="flex-start">
+          <Text size="sm" fw={600}>
+            {labels.batchRange}
+          </Text>
+          <SegmentedControl
+            aria-label={labels.batchRange}
             value={preset}
             onChange={selectPreset}
             disabled={disabled}
-            items={[
+            maw="100%"
+            styles={{ root: { flexWrap: "wrap" } }}
+            data={[
               { value: "week", label: labels.currentWeek },
               { value: "month", label: labels.currentMonth },
               { value: "custom", label: labels.customRange },
             ]}
           />
-        </div>
-      ) : null}
-      <div className="stock-batch-date-grid">
-        <FormField label={labels.startDate} error={errorMessage(errors.start_date, labels)}>
-          <FormInput
-            disabled={disabled || startDisabled}
-            min={limits?.start}
-            type="date"
-            value={draft.start_date}
-            onChange={(event) => {
-              onPresetChange("custom");
-              onChange({ ...draft, start_date: event.target.value });
-            }}
-          />
-        </FormField>
-        <FormField label={labels.endDate} error={errorMessage(errors.end_date, labels)}>
-          <FormInput
-            type="date"
-            value={draft.end_date}
-            disabled={disabled}
-            max={limits?.end}
-            onChange={(event) => {
-              onPresetChange("custom");
-              onChange({ ...draft, end_date: event.target.value });
-            }}
-          />
-        </FormField>
-      </div>
-      <div className="stock-batch-quantity-grid">
-        <div>
-          <FormField label={labels.quantityUnits} error={errorMessage(errors.quantity, labels)}>
-            <FormInput
-              inputMode="numeric"
-              disabled={disabled}
-              min="1"
-              max={limits?.quantity}
-              step="1"
-              type="number"
-              value={draft.quantity}
-              onChange={(event) => onChange({ ...draft, quantity: event.target.value })}
-            />
-          </FormField>
-          <p className="nfv-field-hint">{labels.saleUnitHint}</p>
-        </div>
-        <dl className="stock-batch-totals">
-          <div>
-            <dt>{labels.saleUnit}</dt>
-            <dd>{`${formatDecimalInput(unitSize)} ${unitLabel}`}</dd>
-          </div>
-          <div>
-            <dt>{labels.quantityTotal}</dt>
-            <dd>{total}</dd>
-          </div>
-        </dl>
-      </div>
-    </div>
+        </Stack>
+      )}
+      <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="sm">
+        <TextInput
+          label={labels.startDate}
+          error={errorMessage(errors.start_date, labels)}
+          disabled={disabled || startDisabled}
+          min={limits?.start}
+          type="date"
+          value={draft.start_date}
+          onChange={(event) => {
+            onPresetChange("custom");
+            onChange({ ...draft, start_date: event.currentTarget.value });
+          }}
+        />
+        <TextInput
+          label={labels.endDate}
+          error={errorMessage(errors.end_date, labels)}
+          type="date"
+          value={draft.end_date}
+          disabled={disabled}
+          max={limits?.end}
+          onChange={(event) => {
+            onPresetChange("custom");
+            onChange({ ...draft, end_date: event.currentTarget.value });
+          }}
+        />
+      </SimpleGrid>
+      <SimpleGrid type="container" cols={{ base: 1, "34rem": 2 }} spacing="sm">
+        <TextInput
+          label={labels.quantityUnits}
+          error={errorMessage(errors.quantity, labels)}
+          description={labels.saleUnitHint}
+          inputWrapperOrder={["label", "input", "description", "error"]}
+          inputMode="numeric"
+          disabled={disabled}
+          min="1"
+          max={limits?.quantity}
+          step="1"
+          type="number"
+          value={draft.quantity}
+          onChange={(event) => onChange({ ...draft, quantity: event.currentTarget.value })}
+        />
+        <Paper p="sm" bg="var(--surface-subtle)">
+          <RecordDetailFields>
+            <RecordDetailField label={labels.saleUnit}>
+              <Box fw={600}>
+                {formatDecimalInput(unitSize)} {unitLabel}
+              </Box>
+            </RecordDetailField>
+            <RecordDetailField label={labels.quantityTotal}>
+              <Box fw={600}>{total}</Box>
+            </RecordDetailField>
+          </RecordDetailFields>
+        </Paper>
+      </SimpleGrid>
+    </Stack>
   );
 }

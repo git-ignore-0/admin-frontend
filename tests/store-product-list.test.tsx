@@ -52,7 +52,9 @@ describe("store product filters", () => {
         expect.any(AbortSignal),
       ),
     );
-    selectOption(screen.getByLabelText("Hình thức bán"), "true");
+    await screen.findByText("70 kết quả");
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc (1)" }));
+    selectOption(screen.getByRole("combobox", { name: "Hình thức bán" }), "true");
     expect(mocks.push).toHaveBeenCalledWith(
       "/store-catalog/products?search=rau&status=draft&csa_eligible=true",
       { scroll: false },
@@ -68,7 +70,10 @@ describe("store product filters", () => {
         expect.any(AbortSignal),
       ),
     );
-    selectOption(screen.getByLabelText("Trạng thái"), "all");
+    await screen.findByText("70 kết quả");
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
+    expect(screen.getByRole("combobox", { name: "Trạng thái" })).toHaveValue("Đang bán");
+    selectOption(screen.getByRole("combobox", { name: "Trạng thái" }), "all");
     expect(mocks.push).toHaveBeenCalledWith("/store-catalog/products?status=all", {
       scroll: false,
     });
@@ -80,6 +85,48 @@ describe("store product filters", () => {
         expect.any(AbortSignal),
       ),
     );
+  });
+
+  it("keeps the pager with the results but outside the horizontally scrollable table", async () => {
+    mocks.products.mockResolvedValue(productPage("Rau muống", 2, 70));
+    renderList();
+    const scrollRegion = await screen.findByRole("region", { name: "Sản phẩm" });
+    const table = within(scrollRegion).getByRole("table");
+    const pager = screen.getByRole("navigation", { name: "Trang 2/3" });
+    const divider = screen.getByRole("separator");
+
+    expect(scrollRegion).toHaveAttribute("tabindex", "0");
+    expect(within(table).getByRole("link", { name: "Rau muống" })).toHaveAttribute(
+      "href",
+      "/store-catalog/products/product-1",
+    );
+    expect(scrollRegion).not.toContainElement(divider);
+    expect(scrollRegion).not.toContainElement(pager);
+    expect(scrollRegion.parentElement).toContainElement(divider);
+    expect(scrollRegion.parentElement).toContainElement(pager);
+    expect(screen.getAllByText("70 kết quả")).toHaveLength(1);
+
+    fireEvent.click(within(pager).getByRole("button", { name: "Sau" }));
+    expect(mocks.push).toHaveBeenCalledWith(
+      "/store-catalog/products?page=3&search=rau&status=draft",
+      {
+        scroll: false,
+      },
+    );
+    expect(mocks.products).toHaveBeenCalledTimes(1);
+    expect(mocks.categories).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the search, applied filters and page from the filter popover", async () => {
+    mocks.search = new URLSearchParams(
+      "page=2&search=rau&category_id=category-1&status=draft&csa_eligible=false",
+    );
+    renderList();
+    await screen.findByText("70 kết quả");
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc (3)" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa bộ lọc" }));
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(mocks.push).toHaveBeenCalledWith("/store-catalog/products", { scroll: false });
   });
 
   it("shows product dates in the shared dd/MM/yyyy admin format", async () => {

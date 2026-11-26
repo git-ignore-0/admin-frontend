@@ -1,8 +1,10 @@
 "use client";
+import { Alert, Box, TextInput } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DataState, FormField, FormInput } from "@/components/nfv-controls";
+import { DataState } from "@/components/nfv-controls";
+import { RecordDetailField } from "@/components/record-detail-fields";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDate } from "@/lib/admin-date";
@@ -134,6 +136,7 @@ export function CSAReopenDialog({
   return (
     <ConfirmationDialog
       title={c.reopen}
+      size={480}
       cancelLabel={c.cancel}
       confirmLabel={c.confirm}
       busyLabel={c.busy}
@@ -155,24 +158,28 @@ export function CSAReopenDialog({
         <DataState kind="loading" title={c.loading} />
       ) : (
         <>
-          <p>{extending ? c.extendReselectionHint : c.reopenHint}</p>
-          <p>
-            <strong>{c.delivery}:</strong> {formatAdminDate(actualDelivery)}
-          </p>
-          <FormField label={c.deadline}>
-            <FormInput
-              type="datetime-local"
-              required
-              step={60}
-              value={deadline}
-              disabled={busy || !eligible}
-              max={csaDeadlineInputMax(actualDelivery)}
-              onChange={(e) => {
-                setDeadline(e.target.value);
-                setError(null);
-              }}
-            />
-          </FormField>
+          <Alert color={extending ? "info" : "warning"} role="note">
+            {extending ? c.extendReselectionHint : c.reopenHint}
+          </Alert>
+          <Box component="dl" m={0}>
+            <RecordDetailField label={c.delivery}>
+              <time dateTime={actualDelivery}>{formatAdminDate(actualDelivery)}</time>
+            </RecordDetailField>
+          </Box>
+          <TextInput
+            label={c.deadline}
+            type="datetime-local"
+            required
+            withAsterisk={false}
+            step={60}
+            value={deadline}
+            disabled={busy || !eligible}
+            max={csaDeadlineInputMax(actualDelivery)}
+            onChange={(e) => {
+              setDeadline(e.target.value);
+              setError(null);
+            }}
+          />
         </>
       )}
     </ConfirmationDialog>

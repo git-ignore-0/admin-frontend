@@ -149,7 +149,7 @@ async function fillBase() {
   fireEvent.change(screen.getByLabelText(/Mã quản lý sản phẩm/), {
     target: { value: "rau-01" },
   });
-  selectOption(screen.getByLabelText(/Danh mục sản phẩm/), "leaf");
+  selectOption(screen.getByRole("combobox", { name: /Danh mục sản phẩm/ }), "leaf");
   fireEvent.change(screen.getByLabelText(/Khối lượng \/ số lượng/), {
     target: { value: "0.500" },
   });
@@ -494,7 +494,7 @@ describe("store product editor", () => {
     ]);
     mocks.product.mockResolvedValue(storedProduct);
     render(<StoreProductEditor productId="product-1" />);
-    fireEvent.click(await screen.findByLabelText(/Danh mục sản phẩm/));
+    fireEvent.click(await screen.findByRole("combobox", { name: /Danh mục sản phẩm/ }));
     expect(await screen.findByRole("option", { name: "Rau lá" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
@@ -523,17 +523,17 @@ describe("store product editor", () => {
       meta: { page: 1, page_size: 30, total: 1 },
     });
     render(<StoreProductEditor />);
-    selectOption(await screen.findByLabelText("Sale type"), "yes");
-    const quotaGroup = await screen.findByLabelText(/CSA benefit group/);
+    selectOption(await screen.findByRole("combobox", { name: "Sale type" }), "yes");
+    const quotaGroup = await screen.findByRole("combobox", { name: /CSA benefit group/ });
     await waitFor(() => expect(quotaGroup).toBeEnabled());
     fireEvent.click(quotaGroup);
     expect(await screen.findByRole("option", { name: "Vegetables" })).toBeInTheDocument();
   });
   it("explains SKU and selling-unit fields with examples", async () => {
     render(<StoreProductEditor />);
-    expect(await screen.findByPlaceholderText("VD: RAU-MUONG-500G")).toHaveAccessibleDescription(
-      /Mã duy nhất để quản lý sản phẩm/,
-    );
+    const sku = await screen.findByPlaceholderText("VD: RAU-MUONG-500G");
+    expect(sku).toBeRequired();
+    expect(sku).toHaveAccessibleDescription(/Mã duy nhất để quản lý sản phẩm/);
     expect(screen.getByPlaceholderText("VD: 500 hoặc 1")).toHaveAccessibleDescription(
       /Chỉ nhập phần số/,
     );
@@ -550,12 +550,12 @@ describe("store product editor", () => {
 
   it("shows only selectable categories with their full hierarchy", async () => {
     render(<StoreProductEditor />);
-    fireEvent.click(await screen.findByLabelText(/Danh mục sản phẩm/));
+    fireEvent.click(await screen.findByRole("combobox", { name: /Danh mục sản phẩm/ }));
     expect(
       await screen.findByRole("option", { name: "Thực phẩm → Rau → Rau lá" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Thực phẩm" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/Danh mục sản phẩm/)).toHaveAccessibleDescription(
+    expect(screen.getByRole("combobox", { name: /Danh mục sản phẩm/ })).toHaveAccessibleDescription(
       /Chọn cấp cụ thể nhất/,
     );
   });
@@ -712,8 +712,8 @@ describe("store product editor", () => {
   it("saves a CSA-eligible draft with a fractional point cost", async () => {
     render(<StoreProductEditor />);
     await fillBase();
-    selectOption(screen.getByLabelText("Hình thức bán"), "yes");
-    selectOption(await screen.findByLabelText(/Nhóm quyền lợi CSA/), "quota");
+    selectOption(screen.getByRole("combobox", { name: "Hình thức bán" }), "yes");
+    selectOption(await screen.findByRole("combobox", { name: /Nhóm quyền lợi CSA/ }), "quota");
     fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: ".25" } });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
@@ -728,8 +728,8 @@ describe("store product editor", () => {
     async (cost) => {
       render(<StoreProductEditor />);
       await fillBase();
-      selectOption(screen.getByLabelText("Hình thức bán"), "yes");
-      selectOption(await screen.findByLabelText(/Nhóm quyền lợi CSA/), "quota");
+      selectOption(screen.getByRole("combobox", { name: "Hình thức bán" }), "yes");
+      selectOption(await screen.findByRole("combobox", { name: /Nhóm quyền lợi CSA/ }), "quota");
       fireEvent.change(screen.getByLabelText(/Số điểm cần trừ/), { target: { value: cost } });
       fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
       expect(await screen.findByRole("alert")).toBeVisible();
@@ -1120,6 +1120,39 @@ it("locks identity and CSA fields from server capabilities without submitting th
 });
 
 describe("store product detail", () => {
+  it("groups record labels and values semantically and keeps one lifecycle badge", async () => {
+    mocks.product.mockResolvedValue({
+      ...storedProduct,
+      primary_image_id: "image-1",
+      primary_image: {
+        id: "image-1",
+        url: "/product.jpg",
+        width: 1280,
+        height: 880,
+        variants: [{ url: "/product-640.jpg", width: 640, height: 440 }],
+      },
+    });
+    render(<StoreProductDetail productId="product-1" />);
+
+    const copy = adminDictionaries.vi.storeCatalog;
+    const category = await screen.findByText(copy.category, { selector: "dt" });
+    expect(category.parentElement?.parentElement?.tagName).toBe("DL");
+    expect(category.nextElementSibling).toHaveProperty("tagName", "DD");
+    expect(category.nextElementSibling).toHaveTextContent(storedProduct.category_slug);
+    expect(screen.getAllByText(copy.productDraft)).toHaveLength(1);
+    expect(screen.getByText(copy.status, { selector: "dt" }).nextElementSibling).toHaveTextContent(
+      copy.productDraft,
+    );
+    const image = screen.getByRole("img", { name: "Rau muống" });
+    expect(image).toHaveAttribute("src", expect.stringMatching(/\/product-640\.jpg$/));
+    expect(image).toHaveAttribute("width", "320");
+    expect(image).toHaveAttribute("height", "220");
+    expect(screen.getByRole("link", { name: copy.edit })).toHaveAttribute(
+      "href",
+      "/store-catalog/products/product-1/edit",
+    );
+  });
+
   it("discontinues through the transition action and displays the new status", async () => {
     mocks.product.mockResolvedValue({ ...storedProduct, status: "active" });
     mocks.transition.mockResolvedValue({ ...storedProduct, status: "discontinued" });
@@ -1276,7 +1309,8 @@ describe("store product detail", () => {
       },
     });
     render(<StoreProductDetail productId="product-1" />);
-    expect(await screen.findByText(/CSA benefit group: Vegetables/)).toBeInTheDocument();
+    const group = await screen.findByText("CSA benefit group", { selector: "dt" });
+    expect(group.nextElementSibling).toHaveTextContent("Vegetables");
   });
   it("recovers from a transient detail error when retrying", async () => {
     mocks.product
@@ -1294,6 +1328,7 @@ it("focuses the visible category select when its required selection is missing",
   render(<StoreProductEditor />);
   await fillBase();
   const category = screen.getByRole("combobox", { name: /Danh mục sản phẩm/ });
+  expect(category).toBeRequired();
   expect(new FormData(category.closest("form")!).get("category_id")).toBe("leaf");
   selectOption(category, "");
   expect(new FormData(category.closest("form")!).get("category_id")).toBe("");

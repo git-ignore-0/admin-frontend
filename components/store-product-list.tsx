@@ -1,18 +1,29 @@
 "use client";
-import { Stack, Alert, Button, Table } from "@mantine/core";
 
-import { FormField, FormSelect } from "@/components/nfv-controls";
-
-import Image from "next/image";
+import {
+  Anchor,
+  Box,
+  Divider,
+  Group,
+  Image,
+  Paper,
+  Select,
+  Skeleton,
+  Stack,
+  Table,
+  Text,
+} from "@mantine/core";
+import NextImage from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
-import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { Pagination } from "@/components/pagination";
+import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { formatAdminDate } from "@/lib/admin-date";
 import { listStoreCategories, listStoreProducts } from "@/lib/commerce-api";
 import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
@@ -20,6 +31,17 @@ import { mediaUrlForWidth } from "@/lib/media";
 import { categoryPath } from "@/lib/store-categories";
 import type { StoreCategory, StoreProduct } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
+
+const filterSelectProps = {
+  role: "combobox",
+  withScrollArea: false,
+  comboboxProps: {
+    withinPortal: false,
+    floatingStrategy: "fixed",
+    middlewares: { size: { padding: 8 } },
+    styles: { dropdown: { overflowY: "auto" } },
+  },
+} as const;
 
 function booleanFilter(value: string) {
   return value === "true" ? true : value === "false" ? false : undefined;
@@ -38,7 +60,8 @@ export function StoreProductList() {
       ? requestedStatus
       : "active";
   const csa = searchParams.get("csa_eligible") ?? "";
-  const hasAppliedFilters = Boolean(search || categoryId || status !== "active" || csa);
+  const activeFilterCount = [categoryId, status !== "active", csa].filter(Boolean).length;
+  const hasAppliedFilters = Boolean(search || activeFilterCount);
   const [query, setQuery] = useState(search);
   const [categoryRows, setCategories] = useState<StoreCategory[] | null>(null);
   const [categoryError, setCategoryError] = useState<unknown>(null);
@@ -120,33 +143,165 @@ export function StoreProductList() {
     reload();
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (query.trim() === search && page === 1) reloadProducts();
-    else navigate({ search: query.trim(), page: "" });
+  function submit(value: string) {
+    const applied = value.trim();
+    if (applied === search && page === 1) reloadProducts();
+    else navigate({ search: applied, page: "" });
   }
+
+  function clearFilters() {
+    setQuery("");
+    navigate({ search: "", category_id: "", status: "", csa_eligible: "", page: "" });
+  }
+
   const categories = categoryRows ?? [];
   const categoryOptions = categories.map((item) => ({
     value: item.id,
     label: categoryPath(item, categories, locale),
   }));
   const labels = new Map(categoryOptions.map(({ value, label }) => [value, label]));
+  const initialLoading = items === null && loading;
+  const columns = [
+    copy.productName,
+    copy.category,
+    copy.price,
+    copy.saleType,
+    copy.status,
+    copy.updatedAt,
+  ];
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={740}
+      role="region"
+      aria-label={copy.products}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+      style={{ outlineOffset: -2 }}
+    >
+      <Table aria-label={copy.products} aria-busy={loading || undefined} withRowBorders>
+        <Table.Thead>
+          <Table.Tr>
+            {columns.map((label) => (
+              <Table.Th key={label} scope="col">
+                {label}
+              </Table.Th>
+            ))}
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading
+            ? Array.from({ length: 5 }, (_, row) => (
+                <Table.Tr key={row}>
+                  {columns.map((column) => (
+                    <Table.Td key={column}>
+                      <Skeleton height={column === copy.productName ? 48 : 16} width="72%" />
+                    </Table.Td>
+                  ))}
+                </Table.Tr>
+              ))
+            : items?.map((item) => {
+                const name =
+                  item.translations.find((value) => value.locale === locale)?.name ||
+                  item.translations[0]?.name ||
+                  item.sku;
+                return (
+                  <Table.Tr key={item.id}>
+                    <Table.Td>
+                      <Group gap="sm" wrap="nowrap" miw={0}>
+                        {item.primary_image && (
+                          <Image
+                            component={NextImage}
+                            alt=""
+                            src={mediaUrlForWidth(item.primary_image, 96)}
+                            width={48}
+                            height={48}
+                            w={48}
+                            h={48}
+                            radius="md"
+                            flex="0 0 auto"
+                            unoptimized
+                          />
+                        )}
+                        <Stack
+                          gap="calc(var(--mantine-spacing-xs) / 2)"
+                          miw={0}
+                          style={{ overflowWrap: "anywhere" }}
+                        >
+                          <Anchor
+                            component={Link}
+                            href={`/store-catalog/products/${item.id}`}
+                            fw={600}
+                          >
+                            {name}
+                          </Anchor>
+                          <Text size="sm" c="dimmed">
+                            {item.sku}
+                          </Text>
+                        </Stack>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>{labels.get(item.category_id) ?? item.category_slug}</Table.Td>
+                    <Table.Td>
+                      {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
+                        BigInt(item.retail_price_vnd),
+                      )}{" "}
+                      ₫
+                    </Table.Td>
+                    <Table.Td>
+                      {item.csa_quota_group_id ? copy.csaEligible : copy.retailOnly}
+                    </Table.Td>
+                    <Table.Td>
+                      <ProductLifecycleStatus status={item.status} />
+                    </Table.Td>
+                    <Table.Td>
+                      <Text component="time" dateTime={item.updated_at} size="sm" c="dimmed">
+                        {formatAdminDate(item.updated_at)}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
-    <section aria-busy={loading}>
+    <Stack component="section" aria-busy={loading} gap="md" miw={0}>
       <ListToolbar
         busy={loading}
-        clearLabel={t.common.clearFilters}
-        filter={
-          <>
-            <FormField label={copy.category} className="field">
-              <FormSelect
+        search={{
+          label: copy.search,
+          placeholder: copy.searchProduct,
+          value: query,
+          appliedValue: search,
+          formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
+          onChange: setQuery,
+          onSubmit: submit,
+          clearLabel: t.common.clearFilters,
+          onClear: clearFilters,
+        }}
+        filterPopover={{
+          label: t.users.filter,
+          activeCount: activeFilterCount,
+          clearLabel: t.common.clearFilters,
+          clearDisabled: !query && !hasAppliedFilters,
+          onClear: clearFilters,
+          children: (
+            <>
+              <Select
+                {...filterSelectProps}
+                label={copy.category}
+                disabled={loading}
                 value={categoryId}
                 onChange={(selection) => navigate({ category_id: selection ?? "", page: "" })}
                 data={[{ value: "", label: copy.all }, ...categoryOptions]}
               />
-            </FormField>
-            <FormField label={copy.status} className="field">
-              <FormSelect
+              <Select
+                {...filterSelectProps}
+                label={copy.status}
+                disabled={loading}
                 value={status}
                 onChange={(selection) =>
                   navigate({ status: selection === "active" ? "" : (selection ?? ""), page: "" })
@@ -158,9 +313,10 @@ export function StoreProductList() {
                   { value: "discontinued", label: copy.discontinued },
                 ]}
               />
-            </FormField>
-            <FormField label={copy.saleType} className="field">
-              <FormSelect
+              <Select
+                {...filterSelectProps}
+                label={copy.saleType}
+                disabled={loading}
                 value={csa}
                 onChange={(selection) => navigate({ csa_eligible: selection ?? "", page: "" })}
                 data={[
@@ -169,132 +325,57 @@ export function StoreProductList() {
                   { value: "false", label: copy.retailOnly },
                 ]}
               />
-            </FormField>
-          </>
-        }
-        hasFilters={Boolean(query || hasAppliedFilters)}
-        onClear={() => {
-          setQuery("");
-          navigate({
-            search: "",
-            category_id: "",
-            status: "",
-            csa_eligible: "",
-            page: "",
-          });
+            </>
+          ),
         }}
-        onQueryChange={setQuery}
-        onSubmit={submit}
-        placeholder={copy.searchProduct}
-        query={query}
-        resultCount={meta?.total}
-        resultCountLabel={t.common.resultCount}
-        resultCountSingularLabel={t.common.resultCountSingular}
-        searchLabel={copy.search}
-        searchSubmitLabel={copy.search}
       />
-      {categoryError != null && (
-        <Alert color="red" role="alert">
-          <Stack gap="sm" align="flex-start">
-            {requestErrorMessage(categoryError, t)}{" "}
-            <Button variant="default" onClick={() => setCategoryRetry((value) => value + 1)}>
-              {t.common.retry}
-            </Button>
-          </Stack>
-        </Alert>
-      )}
-      <ListState
-        empty={copy.noProducts}
-        error={error}
-        hasData={items !== null}
-        isEmpty={items?.length === 0}
-        loading={loading}
-        loadingLabel={copy.loading}
-        noResults={hasAppliedFilters ? copy.noMatchingProducts : undefined}
-        onRetry={reloadProducts}
-        refreshingLabel={copy.refreshing}
-        retryLabel={t.common.retry}
-      />
-      {items && items.length > 0 && (
-        <Table.ScrollContainer type="native" minWidth={0} className="table-wrap">
-          <Table role="table" className="store-product-table">
-            <Table.Thead role="rowgroup">
-              <Table.Tr role="row">
-                <Table.Th role="columnheader">{copy.productName}</Table.Th>
-                <Table.Th role="columnheader">{copy.category}</Table.Th>
-                <Table.Th role="columnheader">{copy.price}</Table.Th>
-                <Table.Th role="columnheader">{copy.saleType}</Table.Th>
-                <Table.Th role="columnheader">{copy.status}</Table.Th>
-                <Table.Th role="columnheader">{copy.updatedAt}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody role="rowgroup">
-              {items.map((item) => {
-                const name =
-                  item.translations.find((value) => value.locale === locale)?.name ||
-                  item.translations[0]?.name ||
-                  item.sku;
-                return (
-                  <Table.Tr role="row" key={item.id}>
-                    <Table.Td role="cell" data-label={copy.productName}>
-                      <div className="store-product-identity">
-                        {item.primary_image && (
-                          <Image
-                            alt=""
-                            src={mediaUrlForWidth(item.primary_image, 96)}
-                            width={48}
-                            height={48}
-                            unoptimized
-                          />
-                        )}
-                        <div>
-                          <Link
-                            className="csa-list-primary-link"
-                            href={`/store-catalog/products/${item.id}`}
-                          >
-                            {name}
-                          </Link>
-                          <small className="table-secondary">{item.sku}</small>
-                        </div>
-                      </div>
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={copy.category}>
-                      {labels.get(item.category_id) ?? item.category_slug}
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={copy.price}>
-                      {new Intl.NumberFormat(locale === "vi" ? "vi-VN" : "en-US").format(
-                        BigInt(item.retail_price_vnd),
-                      )}{" "}
-                      ₫
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={copy.saleType}>
-                      {item.csa_quota_group_id ? copy.csaEligible : copy.retailOnly}
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={copy.status}>
-                      <ProductLifecycleStatus status={item.status} />
-                    </Table.Td>
-                    <Table.Td role="cell" data-label={copy.updatedAt}>
-                      {formatAdminDate(item.updated_at)}
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-      {meta && (
-        <Pagination
-          disabled={loading}
-          nextLabel={t.common.next}
-          onPage={setPage}
-          page={meta.page}
-          pageSize={meta.page_size}
-          previousLabel={t.common.previous}
-          summary={t.common.pagination}
-          total={meta.total}
-        />
-      )}
-    </section>
+      <Paper w="100%" miw={0} style={{ overflow: "hidden" }}>
+        {categoryError != null && (
+          <Box p="md">
+            <RecoveryAlert
+              message={requestErrorMessage(categoryError, t)}
+              retryLabel={t.common.retry}
+              onRetry={() => setCategoryRetry((value) => value + 1)}
+            />
+          </Box>
+        )}
+        {Boolean(items?.length) && table}
+        <Box p={error || (loading && items !== null) ? "md" : undefined}>
+          <ListState
+            embedded
+            empty={copy.noProducts}
+            error={error}
+            hasData={items !== null}
+            isEmpty={items?.length === 0}
+            loading={loading}
+            loadingLabel={copy.loading}
+            loadingPlaceholder={initialLoading ? table : undefined}
+            noResults={hasAppliedFilters ? copy.noMatchingProducts : undefined}
+            onRetry={reloadProducts}
+            refreshingLabel={copy.refreshing}
+            retryLabel={t.common.retry}
+          />
+        </Box>
+        {meta && (
+          <>
+            <Divider />
+            <Box px="md" py="sm">
+              <Pagination
+                disabled={loading}
+                nextLabel={t.common.next}
+                onPage={setPage}
+                page={meta.page}
+                pageSize={meta.page_size}
+                previousLabel={t.common.previous}
+                resultCountLabel={t.common.resultCount}
+                resultCountSingularLabel={t.common.resultCountSingular}
+                summary={t.common.pagination}
+                total={meta.total}
+              />
+            </Box>
+          </>
+        )}
+      </Paper>
+    </Stack>
   );
 }
