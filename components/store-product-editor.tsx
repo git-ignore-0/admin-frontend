@@ -2,6 +2,7 @@
 import { DataState, FormField, FormInput, FormSelect } from "@/components/nfv-controls";
 import { Alert, Button, Stack } from "@mantine/core";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -63,6 +64,9 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   return <ProductEditorForm key={productId ?? "new"} productId={productId} />;
 }
 
+type CapabilityRefreshReason =
+  { kind: "rejected"; problem: ClientApiError } | { kind: "uncertain" };
+
 function ProductEditorForm({ productId }: { productId?: string }) {
   const { locale, t } = useAdminI18n();
   const copy = t.storeCatalog;
@@ -74,7 +78,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   const savingRef = useRef(false);
   const mountedRef = useRef(false);
   const saveInFlightRef = useRef(false);
-  const pendingImageIdRef = useRef<string | null>(null);
+  const pendingImage = useRef<{ id: string; mayBeReferenced: boolean } | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const translationRef = useRef(t);
@@ -104,7 +108,6 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   const [image, setImage] = useState<MediaAsset | null>(null);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
-  const [pendingImageId, setPendingImageId] = useState<string | null>(null);
   const [status, setStatus] = useState<ProductStatus>("draft");
   const [capabilities, setCapabilities] = useState<ProductCapabilities>();
   const identityLocked = capabilities?.edit_identity.allowed === false;
@@ -120,8 +123,9 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [accessError, setAccessError] = useState("");
+  const [uncertainCreateSku, setUncertainCreateSku] = useState("");
   const [recovery, setRecovery] = useState<{
-    problem: ClientApiError;
+    reason: CapabilityRefreshReason;
     error: unknown;
   } | null>(null);
 
@@ -129,24 +133,21 @@ function ProductEditorForm({ productId }: { productId?: string }) {
     return mountedRef.current && !accessRevoked.current && isCurrent();
   }
 
-  function setPendingImage(next: string | null) {
-    pendingImageIdRef.current = next;
-    setPendingImageId(next);
-  }
+  const cleanUpOnExit = useCallback(() => {
+    const upload = pendingImage.current;
+    if (!upload || upload.mayBeReferenced || !isCurrent() || accessRevoked.current) return;
+    pendingImage.current = null;
+    void deleteStoreProductImage(upload.id, { keepalive: true }).catch(() => undefined);
+  }, [isCurrent]);
 
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       recoveryRequest.current?.abort();
-      if (saveInFlightRef.current || !isCurrent() || accessRevoked.current) return;
-      const imageId = pendingImageIdRef.current;
-      if (imageId) {
-        void deleteStoreProductImage(imageId, { keepalive: true }).catch(() => undefined);
-        pendingImageIdRef.current = null;
-      }
+      if (!saveInFlightRef.current) cleanUpOnExit();
     };
-  }, [isCurrent]);
+  }, [cleanUpOnExit]);
 
   useEffect(() => {
     if (!selectedImage || typeof URL.createObjectURL !== "function") {
@@ -312,7 +313,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
     );
   }
 
-  async function refreshCapabilities(problem: ClientApiError) {
+  async function refreshCapabilities(reason: CapabilityRefreshReason) {
     if (!productId || !canAct()) return;
     const controller = new AbortController();
     recoveryRequest.current = controller;
@@ -327,12 +328,18 @@ function ProductEditorForm({ productId }: { productId?: string }) {
       setOriginalCategoryId(latest.category_id);
       if (!latest.capabilities.edit_identity.allowed) hydrateIdentity(latest);
       if (!latest.capabilities.edit_csa.allowed) hydrateCsa(latest);
+      const upload = pendingImage.current;
+      if (upload && upload.id.toLowerCase() === latest.primary_image_id?.toLowerCase()) {
+        pendingImage.current = null;
+        setImage(latest.primary_image);
+      }
       setRecovery(null);
-      if (problem.message === "validation_error") showSaveError(problem);
+      if (reason.kind === "uncertain") fail(copy.productSaveUncertain);
+      else if (reason.problem.message === "validation_error") showSaveError(reason.problem);
       else fail(copy.statusConflict);
     } catch (caught) {
       if (!canAct() || controller.signal.aborted || hideProtectedData(caught)) return;
-      setRecovery({ problem, error: caught });
+      setRecovery({ reason, error: caught });
       fail("");
     } finally {
       if (recoveryRequest.current === controller) recoveryRequest.current = null;
@@ -344,7 +351,7 @@ function ProductEditorForm({ productId }: { productId?: string }) {
     savingRef.current = true;
     setBusy(true);
     try {
-      await refreshCapabilities(recovery.problem);
+      await refreshCapabilities(recovery.reason);
     } finally {
       if (canAct()) {
         savingRef.current = false;
@@ -353,34 +360,31 @@ function ProductEditorForm({ productId }: { productId?: string }) {
     }
   }
 
+  async function discardPendingImage() {
+    const upload = pendingImage.current;
+    if (upload && !upload.mayBeReferenced) await deleteStoreProductImage(upload.id);
+    pendingImage.current = null;
+  }
+
   async function removeImage() {
     if (!canAct()) return;
     setSelectedImage(null);
-    if (pendingImageId) {
-      try {
-        await deleteStoreProductImage(pendingImageId);
-        if (!canAct()) return;
-        setPendingImage(null);
-        setImage(null);
-      } catch (caught) {
-        if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
-      }
-    } else setImage(null);
+    try {
+      if (pendingImage.current) await discardPendingImage();
+      if (canAct()) setImage(null);
+    } catch (caught) {
+      if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
+    }
   }
 
   async function cancel() {
     if (!canAct()) return;
-    if (pendingImageId) {
-      try {
-        await deleteStoreProductImage(pendingImageId);
-        if (!canAct()) return;
-        setPendingImage(null);
-      } catch (caught) {
-        if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
-        return;
-      }
+    try {
+      if (pendingImage.current) await discardPendingImage();
+      if (canAct()) router.back();
+    } catch (caught) {
+      if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
     }
-    router.back();
   }
 
   function isSelectableCategory(item: StoreCategory) {
@@ -457,14 +461,11 @@ function ProductEditorForm({ productId }: { productId?: string }) {
     savingRef.current = true;
     setBusy(true);
     setError("");
+    const submittedSku = sku.trim().toUpperCase();
     try {
       let savedImage = image;
       if (selectedImage) {
-        if (pendingImageId) {
-          await deleteStoreProductImage(pendingImageId);
-          if (!canAct()) return;
-          setPendingImage(null);
-        }
+        if (pendingImage.current) await discardPendingImage();
         if (!canAct()) return;
         savedImage = await uploadStoreProductImage(selectedImage);
         if (!canAct()) {
@@ -474,13 +475,13 @@ function ProductEditorForm({ productId }: { productId?: string }) {
         }
         setImage(savedImage);
         setSelectedImage(null);
-        setPendingImage(savedImage.id);
+        pendingImage.current = { id: savedImage.id, mayBeReferenced: false };
       }
       saveInFlightRef.current = true;
       const item = await saveStoreProduct(
         {
           ...(!identityLocked && {
-            sku: sku.trim().toUpperCase(),
+            sku: submittedSku,
             unit_size: String(parsedSize.value),
             unit_label_vi: unitVi.trim(),
             unit_label_en: unitEn.trim(),
@@ -497,36 +498,49 @@ function ProductEditorForm({ productId }: { productId?: string }) {
         productId,
       );
       saveInFlightRef.current = false;
-      pendingImageIdRef.current = null;
+      pendingImage.current = null;
       if (!canAct()) return;
-      setPendingImage(null);
       toast(copy.success);
       router.replace(`/store-catalog/products/${item.id}`);
     } catch (caught) {
-      saveInFlightRef.current = false;
-      if (!canAct()) {
-        const imageId = pendingImageIdRef.current;
-        if (imageId && isCurrent() && !isProtectedDataError(caught)) {
-          pendingImageIdRef.current = null;
-          void deleteStoreProductImage(imageId, { keepalive: true }).catch(() => undefined);
-        }
-        return;
-      }
-      if (hideProtectedData(caught)) return;
-
       const problem = caught instanceof Error ? (caught as ClientApiError) : null;
+      const protectedData = isProtectedDataError(caught) || problem?.status === 404;
       const locked =
         problem?.status === 409 &&
         ["product_unit_in_use", "product_csa_hold_in_use"].includes(problem.message);
+      const validation = problem?.status === 400 && problem.message === "validation_error";
+      const definiteRejection =
+        validation ||
+        locked ||
+        (problem?.status === 400 && problem.message === "invalid_request_body") ||
+        (problem?.status === 409 && problem.message === "product_transition_required");
+      const uncertain = saveInFlightRef.current && !protectedData && !definiteRejection;
+      // The write can still attach the upload after a lost response or an early recovery GET.
+      if (uncertain && pendingImage.current) pendingImage.current.mayBeReferenced = true;
+      saveInFlightRef.current = false;
+      if (!canAct()) {
+        if (!protectedData) cleanUpOnExit();
+        return;
+      }
+      if (hideProtectedData(caught)) return;
+      if (uncertain) {
+        if (productId) await refreshCapabilities({ kind: "uncertain" });
+        else {
+          setUncertainCreateSku(submittedSku);
+          fail("");
+        }
+        return;
+      }
+
       // A form opened before publication may now be subject to selling validation.
       const sellingValidation =
         !selling &&
-        problem?.message === "validation_error" &&
+        validation &&
         ["category_id", "retail_price_vnd", "translations", "primary_image_id"].includes(
           problem.field ?? "",
         );
       if (productId && problem && (locked || sellingValidation)) {
-        await refreshCapabilities(problem);
+        await refreshCapabilities({ kind: "rejected", problem });
       } else {
         showSaveError(caught);
       }
@@ -558,15 +572,28 @@ function ProductEditorForm({ productId }: { productId?: string }) {
   const leafCategories = categories.filter(isSelectableCategory);
   return (
     <form className="catalog-editor" noValidate onSubmit={submit} ref={formRef}>
-      {(recovery || error) && (
+      {(recovery || uncertainCreateSku || error) && (
         <Alert color="red" ref={errorRef} role="alert" tabIndex={-1}>
           {recovery ? (
             <Stack gap="sm" align="flex-start">
+              {recovery.reason.kind === "uncertain" && <span>{copy.productSaveUncertain}</span>}
               <span>{copy.productCapabilitiesUnverified}</span>
               <span>{requestErrorMessage(recovery.error, t)}</span>
               <Button variant="default" type="button" disabled={busy} onClick={retryCapabilities}>
                 {t.common.retry}
               </Button>
+            </Stack>
+          ) : uncertainCreateSku ? (
+            <Stack gap="sm" align="flex-start">
+              <span>{copy.productCreateUncertain.replace("{sku}", uncertainCreateSku)}</span>
+              <Link
+                href={`/store-catalog/products?status=all&search=${encodeURIComponent(uncertainCreateSku)}`}
+                target="_blank"
+                rel="noopener"
+              >
+                {copy.productSearchAttemptedSku}
+              </Link>
+              {error && <span>{error}</span>}
             </Stack>
           ) : (
             error

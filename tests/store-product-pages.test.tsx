@@ -356,6 +356,114 @@ describe("store product editor", () => {
     expect(mocks.save).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    new Error("network_error"),
+    Object.assign(new Error("upstream_timeout"), { status: 504 }),
+    Object.assign(new Error("invalid_response"), { status: 200 }),
+  ])(
+    "checks the product after an uncertain PATCH and keeps its referenced image",
+    async (reason) => {
+      const savedImage = { id: "image-1", url: "/image", width: 10, height: 10, variants: [] };
+      mocks.product.mockResolvedValueOnce(storedProduct).mockResolvedValueOnce({
+        ...storedProduct,
+        primary_image_id: savedImage.id,
+        primary_image: savedImage,
+      });
+      mocks.save.mockRejectedValueOnce(reason);
+      const { container, unmount } = render(<StoreProductEditor productId="product-1" />);
+      fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+      const editor = (await screen.findByLabelText("Mô tả chi tiết")) as HTMLElement & {
+        editor: Editor;
+      };
+      act(() => editor.editor.commands.setContent("<p><strong>Bản đang sửa</strong></p>", true));
+      fireEvent.change(container.querySelector('input[type="file"]')!, {
+        target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(/Có thể sản phẩm đã được lưu/i);
+      expect(screen.getByRole("button", { name: "Lưu" })).toBeEnabled();
+      expect(screen.getByDisplayValue("95000")).toBeVisible();
+      expect(editor.querySelector("strong")).toHaveTextContent("Bản đang sửa");
+      expect(screen.getByAltText(adminDictionaries.vi.storeCatalog.imagePreviewAlt)).toBeVisible();
+      expect(mocks.product).toHaveBeenCalledTimes(2);
+      expect(mocks.product.mock.calls[1][0]).toBe("product-1");
+      expect(mocks.save).toHaveBeenCalledTimes(1);
+      expect(mocks.toast).not.toHaveBeenCalled();
+      expect(mocks.replace).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Bỏ ảnh" }));
+      expect(screen.getByText("Chưa chọn ảnh")).toBeVisible();
+      unmount();
+      expect(mocks.deleteImage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks PATCH until a failed verification is retried with GET", async () => {
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockRejectedValueOnce(new Error("network_error"))
+      .mockResolvedValueOnce(storedProduct);
+    mocks.save.mockRejectedValueOnce(new Error("request_timeout"));
+    const { container, unmount } = render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+
+    const retry = await screen.findByRole("button", { name: "Thử lại" });
+    expect(screen.getByRole("alert")).toHaveTextContent(/Có thể sản phẩm đã được lưu/i);
+    expect(screen.getByRole("button", { name: "Lưu" })).toBeDisabled();
+    fireEvent.submit(container.querySelector("form")!);
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Lưu" })).toBeEnabled());
+    expect(screen.getByDisplayValue("95000")).toBeVisible();
+    expect(screen.getByAltText(adminDictionaries.vi.storeCatalog.imagePreviewAlt)).toBeVisible();
+    expect(mocks.product.mock.calls.map(([id]) => id)).toEqual([
+      "product-1",
+      "product-1",
+      "product-1",
+    ]);
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+    unmount();
+    expect(mocks.deleteImage).not.toHaveBeenCalled();
+  });
+
+  it("protects the pending upload when switching products during uncertain PATCH recovery", async () => {
+    const latest = {
+      ...storedProduct,
+      primary_image_id: "image-1",
+      primary_image: { id: "image-1", url: "/image", width: 10, height: 10, variants: [] },
+    };
+    let finishRecovery!: (value: typeof latest) => void;
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockReturnValueOnce(new Promise((resolve) => (finishRecovery = resolve)))
+      .mockResolvedValueOnce({ ...storedProduct, id: "product-2", sku: "RAU-02" });
+    mocks.save.mockRejectedValueOnce(new Error("network_error"));
+    const page = render(<StoreProductEditor productId="product-1" />);
+    await screen.findByDisplayValue("RAU-01");
+    fireEvent.change(page.container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.product).toHaveBeenCalledTimes(2));
+    const signal = mocks.product.mock.calls[1][1] as AbortSignal;
+
+    page.rerender(<StoreProductEditor productId="product-2" />);
+    expect(signal.aborted).toBe(true);
+    expect(await screen.findByDisplayValue("RAU-02")).toBeEnabled();
+    await act(async () => finishRecovery(latest));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteImage).not.toHaveBeenCalled();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
   it("keeps unsaved product edits when the Admin language changes", async () => {
     mocks.product.mockResolvedValue(storedProduct);
     const page = render(<StoreProductEditor productId="product-1" />);
@@ -503,7 +611,9 @@ describe("store product editor", () => {
 
   it("keeps formatted content in both language payloads and preserves it after API rejection", async () => {
     mocks.product.mockResolvedValue(storedProduct);
-    mocks.save.mockRejectedValue(new Error("request_failed"));
+    mocks.save.mockRejectedValue(
+      Object.assign(new Error("validation_error"), { status: 400, field: "unit_size" }),
+    );
     render(<StoreProductEditor productId="product-1" />);
     const viEditor = await screen.findByLabelText("Mô tả chi tiết");
     act(() =>
@@ -658,9 +768,11 @@ describe("store product editor", () => {
     expect(screen.queryByLabelText("Xuất bản")).not.toBeInTheDocument();
   });
 
-  it("retains a successful upload when product save fails and retries without another upload", async () => {
+  it("shows definite product validation and reuses the upload on a deliberate retry", async () => {
     mocks.save
-      .mockRejectedValueOnce(new Error("request_failed"))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("validation_error"), { status: 400, field: "sku" }),
+      )
       .mockResolvedValueOnce({ id: "saved" });
     const { container } = render(<StoreProductEditor />);
     await fillBase();
@@ -669,11 +781,43 @@ describe("store product editor", () => {
       target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
     });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
-    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Mã quản lý sản phẩm/);
+    await waitFor(() => expect(screen.getByLabelText(/Mã quản lý sản phẩm/)).toHaveFocus());
+    expect(mocks.save).toHaveBeenCalledTimes(1);
     expect(mocks.save.mock.calls[0][0].primary_image_id).toBe("image-1");
+    expect(mocks.product).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns about the attempted SKU after an uncertain draft creation", async () => {
+    mocks.save.mockRejectedValueOnce(Object.assign(new Error("invalid_response"), { status: 201 }));
+    const { container, unmount } = render(<StoreProductEditor />);
+    await fillBase();
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent(/SKU RAU-01.*trước khi tạo lại/i);
+    expect(within(warning).getByRole("link")).toHaveAttribute(
+      "href",
+      "/store-catalog/products?status=all&search=RAU-01",
+    );
+    fireEvent.change(screen.getByLabelText(/Mã quản lý sản phẩm/), {
+      target: { value: "RAU-CHANGED" },
+    });
+    expect(warning).toHaveTextContent("RAU-01");
+    expect(screen.getByAltText(adminDictionaries.vi.storeCatalog.imagePreviewAlt)).toBeVisible();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(mocks.product).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(mocks.replace).not.toHaveBeenCalled();
+    unmount();
+    expect(mocks.deleteImage).not.toHaveBeenCalled();
   });
 
   it("clears a transient load error after retrying", async () => {
@@ -701,7 +845,9 @@ describe("store product editor", () => {
   });
 
   it("cleans up an uploaded pending image when the editor is left after a save failure", async () => {
-    mocks.save.mockRejectedValueOnce(new Error("request_failed"));
+    mocks.save.mockRejectedValueOnce(
+      Object.assign(new Error("validation_error"), { status: 400, field: "sku" }),
+    );
     const { container, unmount } = render(<StoreProductEditor />);
     await fillBase();
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -756,10 +902,30 @@ describe("store product editor", () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
     unmount();
     expect(mocks.deleteImage).not.toHaveBeenCalled();
-    rejectSave(new Error("request_failed"));
+    rejectSave(Object.assign(new Error("validation_error"), { status: 400, field: "sku" }));
     await waitFor(() =>
       expect(mocks.deleteImage).toHaveBeenCalledWith("image-1", { keepalive: true }),
     );
+  });
+
+  it("leaves the image intact if a pending PATCH times out after leaving", async () => {
+    let rejectSave!: (reason: Error) => void;
+    mocks.product.mockResolvedValueOnce(storedProduct);
+    mocks.save.mockReturnValueOnce(new Promise((_resolve, reject) => (rejectSave = reject)));
+    const { container, unmount } = render(<StoreProductEditor productId="product-1" />);
+    await screen.findByDisplayValue("RAU-01");
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => rejectSave(new Error("request_timeout")));
+
+    expect(mocks.deleteImage).not.toHaveBeenCalled();
+    expect(mocks.product).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(mocks.replace).not.toHaveBeenCalled();
   });
 
   it("keeps the image if a pending save succeeds after leaving", async () => {

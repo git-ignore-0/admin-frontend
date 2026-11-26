@@ -150,10 +150,7 @@ export function FarmStockBatches({
       draft.end_date > limits.end ||
       Number(draft.quantity) > limits.quantity),
   );
-  const productStockLabel =
-    product.available_quantity > 0
-      ? c.remainingUnits.replace("{count}", String(product.available_quantity))
-      : c.outOfStock;
+  const productStockLabel = c.availableUnits.replace("{count}", String(product.available_quantity));
 
   function openNew() {
     if (actionsBlocked || !canIncrease) return;

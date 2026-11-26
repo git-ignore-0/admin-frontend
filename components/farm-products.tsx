@@ -86,6 +86,7 @@ function FarmProductsForFarm({
   const [catalogError, setCatalogError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [linkConflict, setLinkConflict] = useState<"protectedLink" | "changedLink" | null>(null);
   const [removeTarget, setRemoveTarget] = useState<FarmProduct | null>(null);
   const [removeError, setRemoveError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -106,6 +107,7 @@ function FarmProductsForFarm({
       setSelectedDetail(null);
       setAddOpen(false);
       setRemoveTarget(null);
+      setLinkConflict(null);
       setActionError("");
     },
     [t],
@@ -141,6 +143,20 @@ function FarmProductsForFarm({
   function retireIfDenied(caught: unknown) {
     if (!isProtectedDataError(caught)) return false;
     retireInventory(caught);
+    return true;
+  }
+
+  function recoverLinkConflict(caught: unknown) {
+    if (!(caught instanceof Error)) return false;
+    const { message, status } = caught as ClientApiError;
+    const hasHistory = message === "farm_product_has_supply";
+    if (!hasHistory && message !== "farm_product_changed" && status !== 404) return false;
+    setRemoveTarget(null);
+    setLinks(null);
+    setMobileDetailOpen(false);
+    setLinkConflict(hasHistory ? "protectedLink" : "changedLink");
+    reloadLinks();
+    onInventoryChanged?.();
     return true;
   }
 
@@ -337,6 +353,7 @@ function FarmProductsForFarm({
     if (mutation.current || loading || error || accessLost.current) return;
     mutation.current = true;
     setBusy(true);
+    setLinkConflict(null);
     setActionError("");
     try {
       const updated = await setFarmProductActive(farmId, row.product_id, !row.is_active);
@@ -345,6 +362,7 @@ function FarmProductsForFarm({
       onInventoryChanged?.();
     } catch (caught) {
       if (!mounted.current || accessLost.current || retireIfDenied(caught)) return;
+      if (recoverLinkConflict(caught)) return;
       if (mutationMayHaveSucceeded(caught)) reloadLinks();
       setActionError(
         caught instanceof Error && caught.message === "stock_reserved"
@@ -360,6 +378,7 @@ function FarmProductsForFarm({
     if (mutation.current || loading || error || accessLost.current) return;
     mutation.current = true;
     setBusy(true);
+    setLinkConflict(null);
     setRemoveError("");
     try {
       await removeFarmProduct(farmId, row.product_id);
@@ -372,14 +391,9 @@ function FarmProductsForFarm({
       setRemoveTarget(null);
     } catch (caught) {
       if (!mounted.current || accessLost.current || retireIfDenied(caught)) return;
+      if (recoverLinkConflict(caught)) return;
       if (mutationMayHaveSucceeded(caught)) reloadLinks();
-      let message = requestErrorMessage(caught, t);
-      if (caught instanceof Error && caught.message === "farm_product_has_supply") {
-        message = c.protectedLink;
-      } else if (caught instanceof Error && caught.message === "farm_product_changed") {
-        message = c.changedLink;
-      }
-      setRemoveError(message);
+      setRemoveError(requestErrorMessage(caught, t));
     } finally {
       mutation.current = false;
       if (mounted.current) setBusy(false);
@@ -419,9 +433,9 @@ function FarmProductsForFarm({
       aria-busy={loading}
     >
       {!error && (
-        <div className="farm-stock-summary" aria-label={c.currentStock}>
-          <span>{c.inStockProducts.replace("{count}", String(inStockCount))}</span>
-          <span>{c.outOfStockProducts.replace("{count}", String(outOfStockCount))}</span>
+        <div className="farm-stock-summary" aria-label={c.availableStock}>
+          <span>{c.productsWithAvailableStock.replace("{count}", String(inStockCount))}</span>
+          <span>{c.productsWithoutAvailableStock.replace("{count}", String(outOfStockCount))}</span>
         </div>
       )}
       <div className="farm-products-heading">
@@ -433,6 +447,7 @@ function FarmProductsForFarm({
           disabled={loading || busy || Boolean(error)}
           onClick={() => {
             setActionError("");
+            setLinkConflict(null);
             setCatalogLoading(true);
             setSelectedDetail(null);
             setBatchPreset("week");
@@ -444,6 +459,11 @@ function FarmProductsForFarm({
           {c.addProduct}
         </Button>
       </div>
+      {linkConflict && (
+        <Alert color="red" role="alert" mt="sm">
+          {c[linkConflict]}
+        </Alert>
+      )}
       <div className="farm-products-layout">
         <div className="farm-product-list-pane">
           <form
@@ -488,10 +508,10 @@ function FarmProductsForFarm({
                   active: t.storeCatalog.selling,
                   discontinued: t.storeCatalog.discontinued,
                 };
-                const stockLabel =
-                  row.available_quantity > 0
-                    ? c.remainingUnits.replace("{count}", String(row.available_quantity))
-                    : c.outOfStock;
+                const stockLabel = c.availableUnits.replace(
+                  "{count}",
+                  String(row.available_quantity),
+                );
                 return (
                   <Button
                     ref={(node) => {
@@ -520,6 +540,7 @@ function FarmProductsForFarm({
                     aria-pressed={openProduct === row.product_id}
                     onClick={() => {
                       setActionError("");
+                      setLinkConflict(null);
                       setOpenProduct(row.product_id);
                       setMobileDetailOpen(true);
                     }}

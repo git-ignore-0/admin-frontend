@@ -827,6 +827,11 @@ const vi = {
     noMatchingProducts: "Không có sản phẩm khớp bộ lọc.",
     productCapabilitiesUnverified:
       "Chưa thể xác minh quyền sửa sản phẩm. Hãy tải lại thông tin trước khi lưu.",
+    productSaveUncertain:
+      "Có thể sản phẩm đã được lưu. Hãy kiểm tra thông tin sản phẩm trước khi lưu lại. Các chỉnh sửa vẫn còn trong biểu mẫu.",
+    productCreateUncertain:
+      "Có thể bản nháp đã được tạo. Hãy tìm SKU {sku} trong danh sách sản phẩm trước khi tạo lại.",
+    productSearchAttemptedSku: "Tìm SKU đã gửi (mở thẻ mới)",
     productTransitionInvalid:
       "Không thể chuyển sang trạng thái đã chọn. Hãy kiểm tra trạng thái hiện tại.",
     productResultUncertain:
@@ -2411,6 +2416,11 @@ const en: AdminDictionary = {
     noMatchingProducts: "No products match these filters.",
     productCapabilitiesUnverified:
       "Product editing permissions could not be verified. Refresh the product before saving.",
+    productSaveUncertain:
+      "The product may have been saved. Check the product details before saving again. Your edits are still in the form.",
+    productCreateUncertain:
+      "The draft may have been created. Search the product list for SKU {sku} before creating it again.",
+    productSearchAttemptedSku: "Find the submitted SKU (opens in a new tab)",
     productTransitionInvalid: "This transition is unavailable. Review the current status.",
     productResultUncertain:
       "The result could not be confirmed. Review the refreshed product before deciding what to do next.",
