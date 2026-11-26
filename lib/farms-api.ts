@@ -27,17 +27,20 @@ export type FarmInput = Pick<
   | "is_active"
 > & { photo_ids: string[]; version?: number };
 
-export function listFarms(query: { search?: string; is_active?: boolean; page?: number } = {}) {
+export function listFarms(
+  query: { search?: string; is_active?: boolean; page?: number } = {},
+  signal?: AbortSignal,
+) {
   const params = new URLSearchParams({ page: String(query.page ?? 1) });
   if (query.search) params.set("search", query.search);
   if (query.is_active !== undefined) params.set("is_active", String(query.is_active));
-  return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`).then((payload) =>
+  return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`, { signal }).then((payload) =>
     requirePaginatedList(payload, requireResponseEntity),
   );
 }
 
-export function getFarm(id: string) {
-  return api<Farm>(`admin/farms/${id}`);
+export function getFarm(id: string, signal?: AbortSignal) {
+  return api<Farm>(`admin/farms/${id}`, { signal });
 }
 
 export function saveFarm(id: string | undefined, payload: Partial<FarmInput>) {
@@ -240,8 +243,8 @@ export function cancelFarmStockBatch(
   ).then((data) => requireStockBatch(data, linkId, batchId));
 }
 
-export function getFarmTracker(farmId: string) {
-  return api<TrackerFarm>(`admin/farms/${farmId}/growth-tracker`);
+export function getFarmTracker(farmId: string, signal?: AbortSignal) {
+  return api<TrackerFarm>(`admin/farms/${farmId}/growth-tracker`, { signal });
 }
 
 export function enableFarmTracker(

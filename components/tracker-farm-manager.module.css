@@ -1,0 +1,7 @@
+.dragHandle:where(:not(:disabled)) {
+  cursor: grab;
+}
+
+.dragHandle:where(:not(:disabled)):active {
+  cursor: grabbing;
+}

@@ -9,7 +9,6 @@ import {
   Menu,
   Paper,
   Select,
-  SimpleGrid,
   Stack,
   Text,
   TextInput,
@@ -58,6 +57,7 @@ type FarmProductsProps = {
   inStockCount?: number;
   outOfStockCount?: number;
   onInventoryChanged?: () => void;
+  onAccessLost?: (cause: unknown) => void;
 };
 
 export function FarmProducts(props: FarmProductsProps) {
@@ -69,9 +69,14 @@ function FarmProductsForFarm({
   inStockCount = 0,
   outOfStockCount = 0,
   onInventoryChanged,
+  onAccessLost,
 }: FarmProductsProps) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
+  const dictionary = useRef(t);
+  const detailUnavailable = useRef(c.productDetailUnavailable);
+  dictionary.current = t;
+  detailUnavailable.current = c.productDetailUnavailable;
   const [links, setLinks] = useState<FarmProduct[] | null>(null);
   const [linksMeta, setLinksMeta] = useState<PaginationMeta>({ page: 1, page_size: 20, total: 0 });
   const [linksPage, setLinksPage] = useState(1);
@@ -114,7 +119,7 @@ function FarmProductsForFarm({
   const retireInventory = useCallback(
     (caught: unknown) => {
       accessLost.current = true;
-      setAccessError(requestErrorMessage(caught, t));
+      setAccessError(requestErrorMessage(caught, dictionary.current));
       setLinks(null);
       setOpenProduct("");
       setMobileDetailOpen(false);
@@ -125,8 +130,9 @@ function FarmProductsForFarm({
       setRemoveTarget(null);
       setLinkConflict(null);
       setActionError("");
+      onAccessLost?.(caught);
     },
-    [t],
+    [onAccessLost],
   );
 
   useEffect(() => {
@@ -216,13 +222,13 @@ function FarmProductsForFarm({
         setLinks(null);
         setMobileDetailOpen(false);
         setRemoveTarget(null);
-        setError(requestErrorMessage(caught, t));
+        setError(requestErrorMessage(caught, dictionary.current));
       })
       .finally(() => {
         if (!controller.signal.aborted && !accessLost.current) setLoading(false);
       });
     return () => controller.abort();
-  }, [accessError, loadLinks, linksPage, retry, retireInventory, t]);
+  }, [accessError, loadLinks, linksPage, retry, retireInventory]);
 
   useEffect(() => {
     if (mobileDetailOpen) {
@@ -258,13 +264,13 @@ function FarmProductsForFarm({
           return;
         }
         setCatalog([]);
-        setCatalogError(requestErrorMessage(caught, t));
+        setCatalogError(requestErrorMessage(caught, dictionary.current));
       })
       .finally(() => {
         if (!controller.signal.aborted && !accessLost.current) setCatalogLoading(false);
       });
     return () => controller.abort();
-  }, [accessError, addOpen, catalogPage, farmId, search, catalogRetry, retireInventory, t]);
+  }, [accessError, addOpen, catalogPage, farmId, search, catalogRetry, retireInventory]);
 
   const selectedProduct = catalog.some((product) => product.id === selected)
     ? selected
@@ -286,20 +292,13 @@ function FarmProductsForFarm({
       .catch((caught) => {
         if (controller.signal.aborted || accessLost.current) return;
         if (isProtectedDataError(caught)) retireInventory(caught);
-        else setDetailError(c.productDetailUnavailable);
+        else setDetailError(detailUnavailable.current);
       })
       .finally(() => {
         if (!controller.signal.aborted && !accessLost.current) setDetailLoading(false);
       });
     return () => controller.abort();
-  }, [
-    accessError,
-    addOpen,
-    c.productDetailUnavailable,
-    catalogLoading,
-    retireInventory,
-    selectedProduct,
-  ]);
+  }, [accessError, addOpen, catalogLoading, retireInventory, selectedProduct]);
 
   const selectedIsSelling =
     selectedDetail?.id === selectedProduct && selectedDetail.status === "active";
@@ -469,24 +468,14 @@ function FarmProductsForFarm({
         </Button>
       </Group>
       {!error && (
-        <SimpleGrid
-          type="container"
-          cols={{ base: 1, "34rem": 2 }}
-          spacing="sm"
-          role="group"
-          aria-label={c.availableStock}
-        >
-          <Paper p="sm">
-            <Text fw={600}>
-              {c.productsWithAvailableStock.replace("{count}", String(inStockCount))}
-            </Text>
-          </Paper>
-          <Paper p="sm">
-            <Text fw={600}>
-              {c.productsWithoutAvailableStock.replace("{count}", String(outOfStockCount))}
-            </Text>
-          </Paper>
-        </SimpleGrid>
+        <Group gap="sm" role="group" aria-label={c.availableStock}>
+          <Text size="sm" fw={600}>
+            {c.productsWithAvailableStock.replace("{count}", String(inStockCount))}
+          </Text>
+          <Text size="sm" c="dimmed">
+            {c.productsWithoutAvailableStock.replace("{count}", String(outOfStockCount))}
+          </Text>
+        </Group>
       )}
       {linkConflict && (
         <Alert color="danger" role="alert">

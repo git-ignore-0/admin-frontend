@@ -78,6 +78,8 @@ export function FarmStockBatches({
 }: Props) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
+  const dictionary = useRef(t);
+  dictionary.current = t;
   const unitLabel = locale === "vi" ? product.unit_label_vi : product.unit_label_en;
   const [rows, setRows] = useState<FarmStockBatch[] | null>(null);
   const [meta, setMeta] = useState<PaginationMeta>({ page: 1, page_size: 20, total: 0 });
@@ -135,13 +137,13 @@ export function FarmStockBatches({
         setRows(null);
         setEditor(null);
         setCancelTarget(null);
-        setError(requestErrorMessage(caught, t));
+        setError(requestErrorMessage(caught, dictionary.current));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [load, onAccessLost, page, retry, t]);
+  }, [load, onAccessLost, page, retry]);
 
   const statusLabels = useMemo(
     () => ({
@@ -316,7 +318,12 @@ export function FarmStockBatches({
       </Button>
       <Group align="flex-start" justify="space-between" gap="sm">
         <Stack gap="xs" miw={0}>
-          <Title order={3} ref={detailHeadingRef} tabIndex={-1}>
+          <Title
+            order={3}
+            ref={detailHeadingRef}
+            tabIndex={-1}
+            style={{ overflowWrap: "anywhere" }}
+          >
             {c.stockBatches}: {locale === "vi" ? product.name_vi : product.name_en}
           </Title>
           <Text size="sm" c="dimmed">

@@ -1,172 +1,186 @@
 "use client";
-import { Alert, Button, Checkbox, Stack, TextInput } from "@mantine/core";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useRef, useState } from "react";
+
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Divider,
+  Group,
+  Loader,
+  Paper,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { DataState, FormField, FormInput, FormSelect } from "@/components/nfv-controls";
-import { PageHeading } from "@/components/page-heading";
-import { Pagination } from "@/components/pagination";
-import { requestErrorMessage } from "@/lib/client-error";
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { Status } from "@/components/nfv-controls";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
+import { RecoveryAlert } from "@/components/recovery-alert";
+import { useToast } from "@/components/toast-provider";
 import {
+  type ClientApiError,
+  invalidApiResponse,
+  isProtectedDataError,
+  isRequestCanceled,
+  requestErrorMessage,
+} from "@/lib/client-error";
+import {
+  disableFarmTracker,
   enableFarmTracker,
-  getFarm,
   getFarmTracker,
-  listFarms,
   updateFarmTracker,
 } from "@/lib/farms-api";
-import type { Farm, PaginationMeta, TrackerFarm } from "@/lib/types";
+import { trackerMilestone } from "@/lib/tracker-milestone";
+import type { Farm, TrackerFarm } from "@/lib/types";
 
 const MAX_COUNT = 4_294_967_295;
+const emptyDraft = { month: "0", sixMonths: "0", visible: true };
+
 function validCount(value: string) {
   return /^(0|[1-9]\d*)$/.test(value) && Number(value) <= MAX_COUNT;
 }
 
-export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
+function requireProfile(profile: TrackerFarm, farmId: string) {
+  if (
+    profile?.id !== farmId ||
+    !Number.isInteger(profile.version) ||
+    profile.version < 1 ||
+    !Number.isInteger(profile.signup_count) ||
+    !validCount(String(profile.signup_count)) ||
+    (profile.one_month_signup_count !== undefined &&
+      (!Number.isInteger(profile.one_month_signup_count) ||
+        !validCount(String(profile.one_month_signup_count)))) ||
+    typeof profile.is_visible !== "boolean"
+  ) {
+    throw invalidApiResponse();
+  }
+  return profile;
+}
+
+export function FarmTrackerProfileEditor({
+  farm,
+  onAccessLost,
+}: {
+  farm: Farm;
+  onAccessLost?: (cause: unknown) => void;
+}) {
   const { locale, t } = useAdminI18n();
-  const router = useRouter();
-  const [farms, setFarms] = useState<Farm[]>([]);
-  const [meta, setMeta] = useState<PaginationMeta>({ page: 1, page_size: 20, total: 0 });
-  const [page, setPage] = useState(1);
-  const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(farmId ?? "");
-  const [farm, setFarm] = useState<Farm | null>(null);
+  const toast = useToast();
   const [profile, setProfile] = useState<TrackerFarm | null>(null);
+  const [draft, setDraft] = useState(emptyDraft);
   const [checking, setChecking] = useState(true);
-  const [listLoading, setListLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [conflictedFarmId, setConflictedFarmId] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [readError, setReadError] = useState<{ cause: unknown } | null>(null);
+  const [writeError, setWriteError] = useState<{
+    cause: unknown;
+    recovery?: "conflict" | "uncertain";
+  } | null>(null);
+  const [busy, setBusy] = useState<"save" | "disable" | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [showCountErrors, setShowCountErrors] = useState(false);
-  const [error, setError] = useState("");
-  const [listError, setListError] = useState("");
-  const [farmError, setFarmError] = useState("");
-  const [profileError, setProfileError] = useState("");
-  const [listRetry, setListRetry] = useState(0);
-  const [farmRetry, setFarmRetry] = useState(0);
-  const [profileRetry, setProfileRetry] = useState(0);
-  const translationRef = useRef(t);
-  translationRef.current = t;
-  const [count, setCount] = useState("0");
-  const [monthCount, setMonthCount] = useState("0");
-  const [visible, setVisible] = useState(true);
-  const conflict = conflictedFarmId === selectedId;
+  const requestScope = useRef<AbortController | null>(null);
+  const pendingWrite = useRef(false);
+  const monthRef = useRef<HTMLInputElement>(null);
+  const sixMonthsRef = useRef<HTMLInputElement>(null);
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const disableRef = useRef<HTMLButtonElement>(null);
+  const tracker = t.trackerFarms;
   const c =
     locale === "vi"
       ? {
-          new: "Bật Growth Tracker",
-          edit: "Lưu Growth Tracker",
-          select: "Chọn trang trại",
-          search: "Tìm Farm",
-          find: "Tìm kiếm",
-          empty: "Chưa có Farm nào. Hãy tạo trang trại trước.",
+          title: "Hồ sơ Growth Tracker",
+          enable: "Bật Growth Tracker",
+          save: "Lưu Growth Tracker",
+          enabled: "Đã bật Growth Tracker",
+          disabled: "Chưa bật Growth Tracker",
           month: "Số người đăng ký 1 tháng",
           sixMonths: "Số người đăng ký 6 tháng",
-          visible: "Hiển thị trên Growth Tracker công khai",
-          farmEdit: "Sửa thông tin trang trại",
-          already: "Farm này đã có Growth Tracker.",
-          existing: "Mở profile hiện có",
+          visibility: "Hiển thị công khai",
+          visible: "Cho phép hiển thị",
           loading: "Đang tải Growth Tracker…",
           required: "Vui lòng nhập số đăng ký.",
           invalid: "Số đăng ký phải là số nguyên từ 0 đến 4.294.967.295.",
-          conflict: "Profile đã được sửa ở nơi khác. Hãy tải lại trước khi lưu.",
+          conflict: "Hồ sơ Growth Tracker đã thay đổi. Tải lại dữ liệu trước khi tiếp tục.",
+          uncertain: "Chưa xác nhận được kết quả. Tải lại dữ liệu để kiểm tra trước khi tiếp tục.",
           reload: "Tải lại dữ liệu",
-          inactive: "Farm đang tắt hoạt động nên sẽ không xuất hiện công khai dù profile được bật.",
+          inactive:
+            "Trang trại đã tắt hoạt động nên sẽ không xuất hiện công khai dù hồ sơ cho phép hiển thị.",
+          disabling: "Đang tắt Growth Tracker…",
+          saved: "Đã lưu Growth Tracker.",
         }
       : {
-          new: "Enable Growth Tracker",
-          edit: "Save Growth Tracker",
-          select: "Select a farm",
-          search: "Search farms",
-          find: "Search",
-          empty: "No farms yet. Create a farm first.",
+          title: "Growth Tracker profile",
+          enable: "Enable Growth Tracker",
+          save: "Save Growth Tracker",
+          enabled: "Growth Tracker enabled",
+          disabled: "Growth Tracker not enabled",
           month: "1-month signup count",
           sixMonths: "6-month signup count",
-          visible: "Visible on the public Growth Tracker",
-          farmEdit: "Edit farm details",
-          already: "This farm already has a Growth Tracker profile.",
-          existing: "Open existing profile",
+          visibility: "Public visibility",
+          visible: "Visibility enabled",
           loading: "Loading Growth Tracker…",
           required: "Enter a signup count.",
           invalid: "Signup counts must be integers from 0 to 4,294,967,295.",
-          conflict: "The profile was changed elsewhere. Reload before saving.",
+          conflict: "The Growth Tracker profile has changed. Reload the data before continuing.",
+          uncertain:
+            "The result could not be confirmed. Reload the data to check before continuing.",
           reload: "Reload data",
           inactive:
-            "This farm is inactive, so it will not appear publicly even when the profile is visible.",
+            "This farm is inactive, so it will not appear publicly even when profile visibility is enabled.",
+          disabling: "Disabling Growth Tracker…",
+          saved: "Growth Tracker saved.",
         };
 
-  useEffect(() => {
-    if (farmId) {
-      let live = true;
-      setFarmError("");
-      getFarm(farmId)
-        .then((row) => live && setFarm(row))
-        .catch(
-          (caught) => live && setFarmError(requestErrorMessage(caught, translationRef.current)),
-        );
-      return () => {
-        live = false;
-      };
-    }
-    let live = true;
-    setListLoading(true);
-    setListError("");
-    listFarms({ page, search })
-      .then((result) => {
-        if (!live) return;
-        setFarms(result.data);
-        setMeta(result.meta ?? { page, page_size: 20, total: result.data.length });
-      })
-      .catch((caught) => live && setListError(requestErrorMessage(caught, translationRef.current)))
-      .finally(() => live && setListLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [farmId, page, search, listRetry, farmRetry]);
+  function hydrate(row: TrackerFarm | null) {
+    setProfile(row);
+    setDraft(
+      row
+        ? {
+            month: String(row.one_month_signup_count ?? 0),
+            sixMonths: String(row.signup_count),
+            visible: row.is_visible,
+          }
+        : emptyDraft,
+    );
+    setShowCountErrors(false);
+    setWriteError(null);
+  }
 
   useEffect(() => {
-    if (!selectedId) {
-      setFarm(null);
-      setProfile(null);
-      setChecking(false);
-      return;
-    }
-    let live = true;
-    setChecking(true);
-    setProfileError("");
-    getFarmTracker(selectedId)
+    const controller = new AbortController();
+    requestScope.current = controller;
+    getFarmTracker(farm.id, controller.signal)
       .then((row) => {
-        if (!live) return;
-        setProfile(row);
-        setCount(String(row.signup_count));
-        setMonthCount(String(row.one_month_signup_count ?? 0));
-        setVisible(row.is_visible);
-        setConflictedFarmId(null);
-        setShowCountErrors(false);
+        if (!controller.signal.aborted) hydrate(requireProfile(row, farm.id));
       })
-      .catch((caught) => {
-        if (!live) return;
-        if ((caught as { status?: number }).status === 404) {
-          setProfile(null);
-          setCount("0");
-          setMonthCount("0");
-          setVisible(true);
-          setConflictedFarmId(null);
-          setShowCountErrors(false);
-        } else setProfileError(requestErrorMessage(caught, translationRef.current));
+      .catch((cause) => {
+        if (controller.signal.aborted || isRequestCanceled(cause, controller.signal)) return;
+        if ((cause as ClientApiError | null)?.status === 404) hydrate(null);
+        else {
+          if (isProtectedDataError(cause)) {
+            hydrate(null);
+            onAccessLost?.(cause);
+          }
+          setReadError({ cause });
+        }
       })
-      .finally(() => live && setChecking(false));
-    return () => {
-      live = false;
-    };
-  }, [selectedId, profileRetry]);
+      .finally(() => {
+        if (!controller.signal.aborted) setChecking(false);
+      });
+    return () => controller.abort();
+  }, [farm.id, onAccessLost, retry]);
 
-  function searchFarms(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setPage(1);
-    setSearch(query.trim());
-    if (search === query.trim() && page === 1) setListRetry((n) => n + 1);
+  function reload() {
+    if (pendingWrite.current || checking) return;
+    setChecking(true);
+    setReadError(null);
+    setRetry((value) => value + 1);
   }
 
   function countError(value: string) {
@@ -174,203 +188,246 @@ export function FarmTrackerProfileEditor({ farmId }: { farmId?: string }) {
     return value ? c.invalid : c.required;
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedId || saving || checking || conflict) return;
-    setError("");
-    if (!validCount(count) || !validCount(monthCount)) {
-      setShowCountErrors(true);
+  const locked = !!busy || Boolean(writeError?.recovery);
+
+  async function mutate(action: "save" | "disable", execute: () => Promise<TrackerFarm | null>) {
+    const scope = requestScope.current;
+    if (!scope || scope.signal.aborted || pendingWrite.current || checking || readError || locked)
       return;
-    }
-    setSaving(true);
+    pendingWrite.current = true;
+    setBusy(action);
+    setWriteError(null);
     try {
-      const values = {
-        signup_count: Number(count),
-        one_month_signup_count: Number(monthCount),
-        is_visible: visible,
-      };
-      if (profile) await updateFarmTracker(selectedId, { ...values, version: profile.version });
-      else await enableFarmTracker(selectedId, values);
-      router.replace("/tracker-farms");
-      router.refresh();
-    } catch (caught) {
-      if ((caught as { status?: number }).status === 409) setConflictedFarmId(selectedId);
-      else setError(requestErrorMessage(caught, t));
+      const row = await execute();
+      if (scope.signal.aborted) return;
+      hydrate(row);
+      setConfirming(false);
+      toast(action === "disable" ? tracker.deleted : c.saved);
+    } catch (cause) {
+      if (scope.signal.aborted) return;
+      const status = (cause as ClientApiError | null)?.status;
+      if (isProtectedDataError(cause) || (status === 404 && action === "save" && !profile)) {
+        hydrate(null);
+        setReadError({ cause });
+        setConfirming(false);
+        onAccessLost?.(cause);
+        return;
+      }
+      const recovery =
+        status === 409 || status === 404
+          ? "conflict"
+          : !status ||
+              status >= 500 ||
+              (cause instanceof Error && cause.message === "invalid_response")
+            ? "uncertain"
+            : undefined;
+      if (recovery) setConfirming(false);
+      setWriteError({ cause, recovery });
     } finally {
-      setSaving(false);
+      pendingWrite.current = false;
+      if (!scope.signal.aborted) setBusy(null);
     }
   }
 
-  return (
-    <>
-      <PageHeading
-        title={farmId ? t.common.trackerFarms : c.new}
-        backHref="/tracker-farms"
-        backLabel={t.common.trackerFarms}
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (locked || confirming) return;
+    const validMonth = validCount(draft.month);
+    const validSixMonths = validCount(draft.sixMonths);
+    if (!validMonth || !validSixMonths) {
+      setShowCountErrors(true);
+      (validMonth ? sixMonthsRef : monthRef).current?.focus();
+      return;
+    }
+    const values = {
+      signup_count: Number(draft.sixMonths),
+      one_month_signup_count: Number(draft.month),
+      is_visible: draft.visible,
+    };
+    void mutate("save", async () => {
+      const row = profile
+        ? await updateFarmTracker(farm.id, { ...values, version: profile.version })
+        : await enableFarmTracker(farm.id, values);
+      return requireProfile(row, farm.id);
+    });
+  }
+
+  function confirmDisable() {
+    if (!profile || !confirming) return;
+    void mutate("disable", async () => {
+      await disableFarmTracker(farm.id);
+      return null;
+    });
+  }
+
+  if (checking) {
+    return (
+      <Paper p="md" withBorder>
+        <Group role="status" gap="sm">
+          <Loader size="sm" />
+          <Text size="sm">{c.loading}</Text>
+        </Group>
+      </Paper>
+    );
+  }
+  if (readError) {
+    if (
+      readError.cause instanceof Error &&
+      ["session_changed", "session_expired"].includes(readError.cause.message)
+    ) {
+      return (
+        <Alert color="danger" role="alert">
+          {t.common.sessionChanged}
+        </Alert>
+      );
+    }
+    return (
+      <RecoveryAlert
+        message={requestErrorMessage(readError.cause, t)}
+        retryLabel={t.common.retry}
+        onRetry={reload}
       />
-      <section className="panel farm-tracker-profile">
-        {!farmId && (
-          <>
-            <form className="farm-product-picker" role="search" onSubmit={searchFarms}>
-              <FormField label={c.search} className="field">
-                <FormInput
-                  type="search"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </FormField>
-              <Button variant="default" type="submit">
-                {c.find}
-              </Button>
-            </form>
-            <FormField label={c.select} className="field">
-              <FormSelect
-                value={selectedId}
-                onChange={(selection) => {
-                  const id = selection ?? "";
-                  setFarm(farms.find((row) => row.id === id) ?? null);
-                  setSelectedId(id);
-                }}
-                disabled={!farms.length && !farm}
-                data={[
-                  { value: "", label: c.select },
-                  ...(farm && !farms.some((row) => row.id === farm.id)
-                    ? [{ value: farm.id, label: locale === "vi" ? farm.name_vi : farm.name_en }]
-                    : []),
-                  ...farms.map((row) => ({
-                    value: row.id,
-                    label: locale === "vi" ? row.name_vi : row.name_en,
-                  })),
-                ]}
+    );
+  }
+
+  const errorMessage = writeError ? requestErrorMessage(writeError.cause, t) : undefined;
+  const name = locale === "vi" ? farm.name_vi : farm.name_en;
+
+  return (
+    <Paper p="md" withBorder>
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-start" gap="sm">
+          <Title order={2} size="md" fw={600}>
+            {c.title}
+          </Title>
+          <Status
+            domain="availability"
+            status={profile ? "active" : "inactive"}
+            label={profile ? c.enabled : c.disabled}
+          />
+        </Group>
+        {profile && (
+          <RecordDetailFields>
+            <RecordDetailField label={tracker.milestone}>
+              {tracker[trackerMilestone(profile.signup_count)]}
+            </RecordDetailField>
+            <RecordDetailField label={c.visibility}>
+              <Status
+                domain="visibility"
+                status={profile.is_visible ? "visible" : "hidden"}
+                label={profile.is_visible ? c.visible : tracker.hidden}
               />
-            </FormField>
-            {!farms.length && !farm && !listError && (
-              <p className="empty">
-                {c.empty} <Link href="/farms/new">{t.common.farmList}</Link>
-              </p>
-            )}
-            <Pagination
-              page={page}
-              total={meta.total}
-              pageSize={meta.page_size}
-              onPage={setPage}
-              disabled={listLoading}
-              previousLabel={t.common.previous}
-              nextLabel={t.common.next}
-              summary={t.common.pagination}
-            />
-          </>
+            </RecordDetailField>
+          </RecordDetailFields>
         )}
-        {farm && (
-          <div className="farm-profile-reference">
-            <h2>{locale === "vi" ? farm.name_vi : farm.name_en}</h2>
-            <p>{locale === "vi" ? farm.location_vi : farm.location_en}</p>
-            <Link href={`/farms/${farm.id}/edit`}>{c.farmEdit}</Link>
-            {!farm.is_active && <p className="field-help">{c.inactive}</p>}
-          </div>
-        )}
-        {listError && (
-          <Alert color="red" role="alert">
-            <Stack gap="sm" align="flex-start">
-              {listError}
-              <Button variant="default" type="button" onClick={() => setListRetry((n) => n + 1)}>
-                {t.common.retry}
-              </Button>
-            </Stack>
-          </Alert>
-        )}
-        {farmError && (
-          <Alert color="red" role="alert">
-            <Stack gap="sm" align="flex-start">
-              {farmError}
-              <Button variant="default" type="button" onClick={() => setFarmRetry((n) => n + 1)}>
-                {t.common.retry}
-              </Button>
-            </Stack>
-          </Alert>
-        )}
-        {profileError && (
-          <Alert color="red" role="alert">
-            <Stack gap="sm" align="flex-start">
-              {profileError}
-              <Button variant="default" type="button" onClick={() => setProfileRetry((n) => n + 1)}>
-                {t.common.retry}
-              </Button>
-            </Stack>
-          </Alert>
-        )}
-        {checking ? (
-          <DataState kind="loading" title={c.loading} />
-        ) : (
-          selectedId &&
-          !farmError &&
-          !profileError &&
-          (!farmId && profile ? (
-            <p>
-              {c.already} <Link href={`/tracker-farms/${selectedId}`}>{c.existing}</Link>
-            </p>
-          ) : (
-            <form className="form-grid" onSubmit={submit} noValidate>
+        {!farm.is_active && <Alert color="warning">{c.inactive}</Alert>}
+        {profile && <Divider />}
+        <Box component="form" onSubmit={submit} noValidate>
+          <Stack gap="md">
+            <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="sm">
               <TextInput
-                label={c.sixMonths}
-                inputMode="numeric"
-                type="number"
-                min="0"
-                step="1"
-                max={MAX_COUNT}
-                value={count}
-                error={countError(count)}
-                onChange={(event) => setCount(event.currentTarget.value)}
-                required
-                withAsterisk={false}
-              />
-              <TextInput
+                ref={monthRef}
                 label={c.month}
                 inputMode="numeric"
                 type="number"
-                min="0"
-                step="1"
+                min={0}
+                step={1}
                 max={MAX_COUNT}
-                value={monthCount}
-                error={countError(monthCount)}
-                onChange={(event) => setMonthCount(event.currentTarget.value)}
+                value={draft.month}
+                error={countError(draft.month)}
+                onChange={(event) => setDraft({ ...draft, month: event.currentTarget.value })}
+                disabled={!!busy}
                 required
                 withAsterisk={false}
               />
-              <Checkbox
-                className="full"
-                label={c.visible}
-                checked={visible}
-                onChange={(event) => setVisible(event.currentTarget.checked)}
+              <TextInput
+                ref={sixMonthsRef}
+                label={c.sixMonths}
+                inputMode="numeric"
+                type="number"
+                min={0}
+                step={1}
+                max={MAX_COUNT}
+                value={draft.sixMonths}
+                error={countError(draft.sixMonths)}
+                onChange={(event) => setDraft({ ...draft, sixMonths: event.currentTarget.value })}
+                disabled={!!busy}
+                required
+                withAsterisk={false}
               />
-              {error && (
-                <Alert color="red" className="full" role="alert">
-                  {error}
+            </SimpleGrid>
+            <Checkbox
+              label={tracker.visibleToggle}
+              checked={draft.visible}
+              onChange={(event) => setDraft({ ...draft, visible: event.currentTarget.checked })}
+              disabled={!!busy}
+            />
+            {writeError?.recovery ? (
+              <RecoveryAlert
+                message={writeError.recovery === "conflict" ? c.conflict : c.uncertain}
+                retryLabel={c.reload}
+                onRetry={reload}
+              />
+            ) : (
+              errorMessage &&
+              !confirming && (
+                <Alert color="danger" role="alert">
+                  {errorMessage}
                 </Alert>
-              )}
-              {conflict && (
-                <Alert color="red" className="full" role="alert">
-                  <Stack gap="sm" align="flex-start">
-                    {c.conflict}
-                    <Button
-                      variant="default"
-                      type="button"
-                      onClick={() => setProfileRetry((n) => n + 1)}
-                    >
-                      {c.reload}
-                    </Button>
-                  </Stack>
-                </Alert>
-              )}
-              <div className="catalog-editor-actions full">
-                <Button type="submit" disabled={saving || conflict}>
-                  {profile ? c.edit : c.new}
+              )
+            )}
+            <Group justify={profile ? "space-between" : "flex-end"} gap="xs">
+              {profile && (
+                <Button
+                  ref={disableRef}
+                  variant="subtle"
+                  color="danger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  disabled={locked}
+                  onClick={() => {
+                    setWriteError(null);
+                    setConfirming(true);
+                  }}
+                >
+                  {tracker.confirmDelete}
                 </Button>
-              </div>
-            </form>
-          ))
-        )}
-      </section>
-    </>
+              )}
+              <Button
+                ref={saveRef}
+                type="submit"
+                disabled={locked || confirming}
+                loading={busy === "save"}
+              >
+                {profile ? c.save : c.enable}
+              </Button>
+            </Group>
+          </Stack>
+        </Box>
+      </Stack>
+      {confirming && (
+        <ConfirmationDialog
+          busy={busy === "disable"}
+          busyLabel={c.disabling}
+          cancelLabel={tracker.cancel}
+          confirmLabel={tracker.confirmDelete}
+          danger
+          error={errorMessage}
+          fallbackFocusRef={saveRef}
+          returnFocusRef={disableRef}
+          size="25rem"
+          title={tracker.deleteTitle}
+          onCancel={() => {
+            setWriteError(null);
+            setConfirming(false);
+          }}
+          onConfirm={confirmDisable}
+        >
+          <Text style={{ overflowWrap: "anywhere" }}>
+            {tracker.deleteBody.replace("{name}", name)}
+          </Text>
+        </ConfirmationDialog>
+      )}
+    </Paper>
   );
 }

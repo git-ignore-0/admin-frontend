@@ -1,5 +1,4 @@
-import { selectOption } from "./select-option";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -13,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   profile: vi.fn(),
   enable: vi.fn(),
   update: vi.fn(),
+  disable: vi.fn(),
+  saveFarm: vi.fn(),
   replace: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -22,6 +23,8 @@ vi.mock("@/lib/farms-api", () => ({
   getFarmTracker: mocks.profile,
   enableFarmTracker: mocks.enable,
   updateFarmTracker: mocks.update,
+  disableFarmTracker: mocks.disable,
+  saveFarm: mocks.saveFarm,
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh }),
@@ -38,6 +41,8 @@ const farm = {
   image: null,
   photos: [],
   is_active: true,
+  in_stock_product_count: 0,
+  out_of_stock_product_count: 0,
   version: 1,
   created_at: "",
   updated_at: "",
@@ -61,131 +66,124 @@ beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
   mocks.farms.mockResolvedValue({ data: [farm], meta: { page: 1, page_size: 20, total: 1 } });
   mocks.farm.mockResolvedValue(farm);
+  mocks.disable.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
 
-it("enables Growth Tracker for an existing Farm without resubmitting shared fields", async () => {
+it("enables Growth Tracker for the current Farm and stays on its tab", async () => {
   mocks.profile.mockRejectedValue(Object.assign(new Error("not_found"), { status: 404 }));
   mocks.enable.mockResolvedValue(profile);
-  view(<FarmTrackerProfileEditor />);
-  const farmSelect = await screen.findByRole("combobox", { name: "Chọn trang trại" });
-  await waitFor(() => expect(farmSelect).toBeEnabled());
-  fireEvent.click(farmSelect);
-  expect(await screen.findByRole("option", { name: "Nông trại Xanh" })).toBeVisible();
-  fireEvent.keyDown(farmSelect, { key: "Escape" });
-  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("Chọn trang trại");
-  expect(screen.queryByLabelText("Số người đăng ký 6 tháng")).not.toBeInTheDocument();
-  selectOption(screen.getByRole("combobox", { name: "Chọn trang trại" }), "farm-1");
-  fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
-    target: { value: "12" },
-  });
+  view(<FarmTrackerProfileEditor farm={farm} />);
+
+  const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
+  expect(screen.getByText("Chưa bật Growth Tracker")).toBeVisible();
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  fireEvent.change(count, { target: { value: "12" } });
   fireEvent.click(screen.getByRole("button", { name: "Bật Growth Tracker" }));
-  await waitFor(() =>
-    expect(mocks.enable).toHaveBeenCalledWith("farm-1", {
-      signup_count: 12,
-      one_month_signup_count: 0,
-      is_visible: true,
-    }),
-  );
-  expect(mocks.replace).toHaveBeenCalledWith("/tracker-farms");
+
+  expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeVisible();
+  expect(screen.getByLabelText("Số người đăng ký 1 tháng")).toHaveValue(3);
+  expect(mocks.enable).toHaveBeenCalledWith("farm-1", {
+    signup_count: 12,
+    one_month_signup_count: 0,
+    is_visible: true,
+  });
+  expect(mocks.profile).toHaveBeenCalledWith("farm-1", expect.any(AbortSignal));
+  expect(mocks.profile).toHaveBeenCalledTimes(1);
+  expect(mocks.farm).not.toHaveBeenCalled();
+  expect(mocks.farms).not.toHaveBeenCalled();
+  expect(mocks.replace).not.toHaveBeenCalled();
+  expect(mocks.refresh).not.toHaveBeenCalled();
 });
 
-it("edits only profile counts and visibility with optimistic version", async () => {
+it("edits counts and visibility with the current optimistic version and hydrates the response", async () => {
   mocks.profile.mockResolvedValue(profile);
-  mocks.update.mockResolvedValue({ ...profile, version: 5 });
-  view(<FarmTrackerProfileEditor farmId="farm-1" />);
-  expect(await screen.findByDisplayValue("12")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Sửa thông tin trang trại" })).toHaveAttribute(
-    "href",
-    "/farms/farm-1/edit",
-  );
-  fireEvent.change(screen.getByLabelText("Số người đăng ký 1 tháng"), { target: { value: "4" } });
-  fireEvent.click(screen.getByRole("button", { name: "Lưu Growth Tracker" }));
+  const updated = { ...profile, signup_count: 23, is_visible: false, version: 5 };
+  mocks.update.mockResolvedValue(updated);
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  const month = await screen.findByLabelText("Số người đăng ký 1 tháng");
+  expect(screen.getByText("Đã bật Growth Tracker")).toBeVisible();
+  expect(screen.getByText("Bắt đầu phát triển")).toBeVisible();
+  expect(screen.getByText("Cho phép hiển thị")).toBeVisible();
+  fireEvent.change(month, { target: { value: "4" } });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Hiển thị trên Growth Tracker công khai" }));
+  const save = screen.getByRole("button", { name: "Lưu Growth Tracker" });
+  fireEvent.click(save);
+  expect(await screen.findByDisplayValue("23")).toBeVisible();
+  expect(screen.getByText("Chăm lo cho gia đình")).toBeVisible();
+  expect(screen.getByText("Đã ẩn")).toBeVisible();
+  expect(mocks.update).toHaveBeenCalledWith("farm-1", {
+    version: 4,
+    signup_count: 12,
+    one_month_signup_count: 4,
+    is_visible: false,
+  });
+  fireEvent.click(save);
   await waitFor(() =>
-    expect(mocks.update).toHaveBeenCalledWith("farm-1", {
-      version: 4,
-      signup_count: 12,
-      one_month_signup_count: 4,
-      is_visible: true,
+    expect(mocks.update).toHaveBeenLastCalledWith("farm-1", {
+      version: 5,
+      signup_count: 23,
+      one_month_signup_count: 3,
+      is_visible: false,
     }),
   );
+  expect(mocks.profile).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).not.toHaveBeenCalled();
 });
 
-it("keeps unsaved Growth Tracker counts when the Admin language changes", async () => {
+it("keeps the draft and distinguishes inactive Farm from Tracker visibility when the locale changes", async () => {
   mocks.profile.mockResolvedValue(profile);
   view(
     <>
       <LanguageSwitcher />
-      <FarmTrackerProfileEditor farmId="farm-1" />
+      <FarmTrackerProfileEditor farm={{ ...farm, is_active: false }} />
     </>,
   );
-  fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
+  expect(await screen.findByText(/Trang trại đã tắt hoạt động/)).toBeVisible();
+  expect(screen.getByText("Cho phép hiển thị")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Số người đăng ký 6 tháng"), {
     target: { value: "29" },
   });
   fireEvent.click(screen.getByRole("radio", { name: "EN" }));
   expect(screen.getByLabelText("6-month signup count")).toHaveValue(29);
   expect(screen.getByLabelText("1-month signup count")).toHaveValue(3);
+  expect(screen.getByText(/This farm is inactive/)).toBeVisible();
   expect(mocks.profile).toHaveBeenCalledTimes(1);
-  expect(mocks.farm).toHaveBeenCalledTimes(1);
+  expect(mocks.farm).not.toHaveBeenCalled();
 });
 
-it("keeps an unsaved profile draft when the Farm search and page change", async () => {
-  mocks.profile.mockRejectedValue(Object.assign(new Error("not_found"), { status: 404 }));
-  const lastPage = { data: [], meta: { page: 3, page_size: 20, total: 41 } };
-  let finishPage!: (page: typeof lastPage) => void;
-  const pendingPage = new Promise<typeof lastPage>((resolve) => {
-    finishPage = resolve;
-  });
-  mocks.farms.mockImplementation(({ page, search }) =>
-    page === 3
-      ? pendingPage
-      : Promise.resolve({
-          data: page === 1 && !search ? [farm] : [],
-          meta: { page, page_size: 20, total: search ? 21 : 41 },
-        }),
-  );
-  view(<FarmTrackerProfileEditor />);
-  selectOption(await screen.findByRole("combobox", { name: "Chọn trang trại" }), "farm-1");
-  const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
-  fireEvent.change(count, { target: { value: "19" } });
-  fireEvent.change(screen.getByLabelText("Số người đăng ký 1 tháng"), {
-    target: { value: "7" },
-  });
-  const pages = screen.getByRole("navigation", { name: "Trang 1/3" });
-  expect(within(pages).getByRole("button", { name: "Trước" })).toBeDisabled();
-  fireEvent.click(within(pages).getByRole("button", { name: "3" }));
-  await waitFor(() => expect(mocks.farms).toHaveBeenCalledWith({ page: 3, search: "" }));
-  const pendingPagination = screen.getByRole("navigation", { name: "Trang 3/3" });
-  expect(pendingPagination).toHaveAttribute("aria-busy", "true");
-  expect(within(pendingPagination).getByRole("button", { name: "Trước" })).toBeDisabled();
-  finishPage(lastPage);
-  await waitFor(() => expect(pendingPagination).toHaveAttribute("aria-busy", "false"));
+it("disables the profile only after confirmation and allows enabling again in place", async () => {
+  mocks.profile.mockResolvedValue(profile);
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  const disable = await screen.findByRole("button", { name: "Tắt Growth Tracker" });
+  fireEvent.click(disable);
+  const dialog = screen.getByRole("dialog", { name: "Tắt Growth Tracker" });
   expect(
-    within(screen.getByRole("navigation", { name: "Trang 3/3" })).getByRole("button", {
-      name: "Sau",
-    }),
-  ).toBeDisabled();
-  expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(19);
-  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("Nông trại Xanh");
-  fireEvent.change(screen.getByRole("searchbox", { name: "Tìm Farm" }), {
-    target: { value: "khác" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
-  await waitFor(() => expect(mocks.farms).toHaveBeenCalledWith({ page: 1, search: "khác" }));
-  const searchPages = await screen.findByRole("navigation", { name: "Trang 1/2" });
-  fireEvent.click(within(searchPages).getByRole("button", { name: "Sau" }));
-  await waitFor(() => expect(mocks.farms).toHaveBeenCalledWith({ page: 2, search: "khác" }));
-  expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(19);
-  expect(screen.getByLabelText("Số người đăng ký 1 tháng")).toHaveValue(7);
-  expect(screen.getByRole("combobox", { name: "Chọn trang trại" })).toHaveValue("Nông trại Xanh");
+    within(dialog).getByText(/Thông tin trang trại và sản phẩm vẫn được giữ lại/),
+  ).toBeVisible();
+  expect(mocks.disable).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Hủy" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(disable);
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Tắt Growth Tracker" }),
+  );
+  expect(await screen.findByRole("button", { name: "Bật Growth Tracker" })).toBeVisible();
+  expect(screen.getByLabelText("Số người đăng ký 6 tháng")).toHaveValue(0);
+  expect(mocks.disable).toHaveBeenCalledWith("farm-1");
+  expect(mocks.disable).toHaveBeenCalledTimes(1);
+  expect(mocks.saveFarm).not.toHaveBeenCalled();
   expect(mocks.profile).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).not.toHaveBeenCalled();
 });
 
 it.each(["", "-1", "1.5", "1e2", "4294967296"])(
   "rejects an invalid signup count (%j) in either field before sending a request",
   async (value) => {
     mocks.profile.mockResolvedValue(profile);
-    view(<FarmTrackerProfileEditor farmId="farm-1" />);
+    view(<FarmTrackerProfileEditor farm={farm} />);
     const sixMonths = await screen.findByLabelText("Số người đăng ký 6 tháng");
     const month = screen.getByLabelText("Số người đăng ký 1 tháng");
     const save = screen.getByRole("button", { name: "Lưu Growth Tracker" });
@@ -209,7 +207,7 @@ it.each(["", "-1", "1.5", "1e2", "4294967296"])(
 it("submits zero and the maximum supported signup count as numbers", async () => {
   mocks.profile.mockResolvedValue(profile);
   mocks.update.mockResolvedValue({ ...profile, version: 5 });
-  view(<FarmTrackerProfileEditor farmId="farm-1" />);
+  view(<FarmTrackerProfileEditor farm={farm} />);
   fireEvent.change(await screen.findByLabelText("Số người đăng ký 6 tháng"), {
     target: { value: "4294967295" },
   });
@@ -232,7 +230,7 @@ it("preserves the profile draft after a version conflict until the user reloads 
   mocks.update
     .mockRejectedValueOnce(Object.assign(new Error("version_conflict"), { status: 409 }))
     .mockResolvedValueOnce({ ...fresh, version: 6 });
-  view(<FarmTrackerProfileEditor farmId="farm-1" />);
+  view(<FarmTrackerProfileEditor farm={farm} />);
   const sixMonths = await screen.findByLabelText("Số người đăng ký 6 tháng");
   const month = screen.getByLabelText("Số người đăng ký 1 tháng");
   const save = screen.getByRole("button", { name: "Lưu Growth Tracker" });
@@ -242,7 +240,7 @@ it("preserves the profile draft after a version conflict until the user reloads 
   fireEvent.click(save);
 
   const warning = await screen.findByRole("alert");
-  expect(warning).toHaveTextContent("Profile đã được sửa ở nơi khác");
+  expect(warning).toHaveTextContent("Hồ sơ Growth Tracker đã thay đổi");
   expect(sixMonths).toHaveValue(19);
   expect(month).toHaveValue(7);
   expect(
@@ -266,4 +264,78 @@ it("preserves the profile draft after a version conflict until the user reloads 
       is_visible: true,
     }),
   );
+});
+
+it("queries the profile after an enable conflict and switches from enable to edit without another POST", async () => {
+  mocks.profile
+    .mockRejectedValueOnce(Object.assign(new Error("not_found"), { status: 404 }))
+    .mockResolvedValueOnce(profile);
+  mocks.enable.mockRejectedValueOnce(
+    Object.assign(new Error("growth_tracker_already_enabled"), { status: 409 }),
+  );
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Bật Growth Tracker" }));
+  const warning = await screen.findByRole("alert");
+  fireEvent.click(within(warning).getByRole("button", { name: "Tải lại dữ liệu" }));
+  expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeEnabled();
+  expect(mocks.enable).toHaveBeenCalledTimes(1);
+  expect(mocks.profile).toHaveBeenCalledTimes(2);
+});
+
+it("locks writes until a read verifies the result of an interrupted save", async () => {
+  mocks.profile.mockResolvedValueOnce(profile).mockResolvedValueOnce({ ...profile, version: 5 });
+  mocks.update.mockRejectedValueOnce(new Error("network_error"));
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  const save = await screen.findByRole("button", { name: "Lưu Growth Tracker" });
+  fireEvent.click(save);
+  const error = await screen.findByRole("alert");
+  expect(save).toBeDisabled();
+  fireEvent.click(save);
+  fireEvent.click(within(error).getByRole("button", { name: "Tải lại dữ liệu" }));
+  expect(await screen.findByRole("button", { name: "Lưu Growth Tracker" })).toBeEnabled();
+  expect(mocks.update).toHaveBeenCalledTimes(1);
+  expect(mocks.profile).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  ["unauthenticated", 401],
+  ["forbidden", 403],
+  ["session_changed", 409],
+])("retires profile data when a write returns %s", async (message, status) => {
+  mocks.profile.mockResolvedValue(profile);
+  mocks.update.mockRejectedValueOnce(Object.assign(new Error(message), { status }));
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Lưu Growth Tracker" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.queryByLabelText("Số người đăng ký 6 tháng")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Tắt Growth Tracker" })).not.toBeInTheDocument();
+  expect(mocks.profile).toHaveBeenCalledTimes(1);
+});
+
+it("shows a read retry when loading fails without starting an enable mutation", async () => {
+  mocks.profile.mockRejectedValueOnce(new Error("network_error")).mockResolvedValueOnce(profile);
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  const error = await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Bật Growth Tracker" })).not.toBeInTheDocument();
+  fireEvent.click(within(error).getByRole("button", { name: "Thử lại" }));
+  expect(await screen.findByDisplayValue("12")).toBeVisible();
+  expect(mocks.profile).toHaveBeenCalledTimes(2);
+  expect(mocks.enable).not.toHaveBeenCalled();
+});
+
+it("blocks duplicate submits while the first profile write is pending", async () => {
+  mocks.profile.mockResolvedValue(profile);
+  let finish!: (value: typeof profile) => void;
+  mocks.update.mockReturnValueOnce(new Promise<typeof profile>((resolve) => (finish = resolve)));
+  view(<FarmTrackerProfileEditor farm={farm} />);
+  const save = await screen.findByRole("button", { name: "Lưu Growth Tracker" });
+  const form = save.closest("form")!;
+  await act(async () => {
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+  });
+  expect(mocks.update).toHaveBeenCalledTimes(1);
+  expect(save).toBeDisabled();
+  await act(async () => finish(profile));
+  expect(save).toBeEnabled();
 });

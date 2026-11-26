@@ -618,14 +618,13 @@ describe("admin sidebar navigation", () => {
       "/store-orders",
       "/store-catalog/products",
       "/store-catalog/categories",
+      "/farms",
       "/csa-rounds",
       "/csa-purchase-requests",
       "/csa-customers",
       "/membership-catalog/packages",
       "/membership-catalog/products",
       "/csa-terms",
-      "/farms",
-      "/tracker-farms",
       "/csa-coupons",
       "/users",
       "/rewards",
@@ -637,11 +636,14 @@ describe("admin sidebar navigation", () => {
       "/settings",
     ]);
     expect(new Set(routes).size).toBe(routes.length);
+    expect(
+      sections.find((section) => section.key === "farms")?.items.map((item) => item.label),
+    ).toEqual(["Farm list"]);
     expect(sections.map((section) => section.key)).toEqual([
       "overview",
       "store",
-      "csa",
       "farms",
+      "csa",
       "promotions",
       "community",
       "website",
@@ -650,6 +652,8 @@ describe("admin sidebar navigation", () => {
   });
   it.each([
     ["/farms/a", "/farms", "farms"],
+    ["/tracker-farms", "/farms", "farms"],
+    ["/tracker-farms/a", "/farms", "farms"],
     ["/store-orders/a", "/store-orders", "store"],
     ["/store-catalog/products/new", "/store-catalog/products", "store"],
     ["/membership-catalog/packages/a/edit", "/membership-catalog/packages", "csa"],

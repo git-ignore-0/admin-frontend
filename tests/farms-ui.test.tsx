@@ -1,11 +1,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useSyncExternalStore } from "react";
 
 import { FarmList } from "@/components/farm-list";
 import { FarmEditor } from "@/components/farm-editor";
 import { FarmProducts } from "@/components/farm-products";
 import { FarmDetail } from "@/components/farm-detail";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ToastProvider } from "@/components/toast-provider";
 import type {
@@ -14,6 +20,7 @@ import type {
   FarmProduct,
   FarmStockBatch,
   MediaAsset,
+  TrackerFarm,
 } from "@/lib/types";
 
 const mocks = vi.hoisted(() => ({
@@ -34,6 +41,9 @@ const mocks = vi.hoisted(() => ({
   available: vi.fn(),
   removeFarm: vi.fn(),
   tracker: vi.fn(),
+  enableTracker: vi.fn(),
+  updateTracker: vi.fn(),
+  disableTracker: vi.fn(),
   replace: vi.fn(),
   push: vi.fn(),
   refresh: vi.fn(),
@@ -43,6 +53,9 @@ vi.mock("@/lib/farms-api", () => ({
   listFarms: mocks.list,
   getFarm: mocks.get,
   getFarmTracker: mocks.tracker,
+  enableFarmTracker: mocks.enableTracker,
+  updateFarmTracker: mocks.updateTracker,
+  disableFarmTracker: mocks.disableTracker,
   saveFarm: mocks.save,
   deleteFarm: mocks.removeFarm,
   uploadFarmImage: mocks.upload,
@@ -59,8 +72,19 @@ vi.mock("@/lib/farms-api", () => ({
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace, push: mocks.push, refresh: mocks.refresh }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => useSyncExternalStore(subscribeRoute, readSearch),
 }));
+
+let search = new URLSearchParams();
+const readSearch = () => search;
+function subscribeRoute(listener: () => void) {
+  window.addEventListener("test:farm-navigation", listener);
+  return () => window.removeEventListener("test:farm-navigation", listener);
+}
+function setRoute(href: string) {
+  search = new URL(href, "https://admin.example.test").searchParams;
+  window.dispatchEvent(new Event("test:farm-navigation"));
+}
 
 const farm = {
   id: "farm-1",
@@ -79,6 +103,13 @@ const farm = {
   created_at: "2026-01-01",
   updated_at: "2026-10-15",
 } as Farm;
+const trackerProfile: TrackerFarm = {
+  ...farm,
+  signup_count: 24,
+  one_month_signup_count: 8,
+  is_visible: true,
+  sort_order: 0,
+};
 const product: AvailableFarmProduct = {
   id: "product-1",
   sku: "RAU-01",
@@ -128,12 +159,17 @@ function photoFile(name: string) {
 function view(node: React.ReactNode, locale: "vi" | "en" = "vi") {
   return render(
     <AdminI18nProvider initialLocale={locale}>
-      <ToastProvider>{node}</ToastProvider>
+      <ToastProvider>
+        <AdminQueryProvider>{node}</AdminQueryProvider>
+      </ToastProvider>
     </AdminI18nProvider>,
   );
 }
 beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
+  search = new URLSearchParams();
+  mocks.push.mockImplementation(setRoute);
+  mocks.replace.mockImplementation(setRoute);
   mocks.list.mockResolvedValue({ data: [farm], meta: { page: 1, page_size: 20, total: 1 } });
   mocks.get.mockResolvedValue(farm);
   mocks.linked.mockResolvedValue(linkedResult([]));
@@ -149,7 +185,7 @@ beforeEach(() => {
     unit_label_vi: "kg",
     unit_label_en: "kg",
   }));
-  mocks.tracker.mockResolvedValue({ signup_count: 24 });
+  mocks.tracker.mockResolvedValue(trackerProfile);
 });
 afterEach(() => {
   cleanup();
@@ -159,17 +195,21 @@ afterEach(() => {
 it("lists canonical Farms with search and status without fetching tracker data", async () => {
   view(<FarmList />);
   expect(await screen.findByText("Nông trại Xanh")).toBeVisible();
-  expect(screen.getByText("8 sản phẩm còn hàng")).toBeVisible();
-  expect(screen.getByText("4 sản phẩm hết hàng")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Quản lý hàng" })).toHaveAttribute(
+  expect(screen.getByText("8 sản phẩm có tồn khả dụng")).toBeVisible();
+  expect(screen.getByText("4 sản phẩm không có tồn khả dụng")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Nông trại Xanh" })).toHaveAttribute(
     "href",
     "/farms/farm-1",
   );
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Đà Lạt" } });
   fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
   await waitFor(() =>
-    expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ search: "Đà Lạt" })),
+    expect(mocks.list).toHaveBeenCalledWith(
+      expect.objectContaining({ search: "Đà Lạt" }),
+      expect.any(AbortSignal),
+    ),
   );
+  expect(mocks.tracker).not.toHaveBeenCalled();
 });
 
 it("keeps Farm shared fields and version in its own editor", async () => {
@@ -501,7 +541,8 @@ it("opens Farm inventory by default with its stock summary and supporting tabs",
     "href",
     "/farms/farm-1/edit",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Xóa trang trại" }));
+  fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
   expect(screen.getByRole("dialog", { name: "Xóa trang trại" })).toBeVisible();
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy" }));
   expect(await screen.findByRole("heading", { name: "Sản phẩm của Farm" })).toBeVisible();
@@ -514,21 +555,21 @@ it("opens Farm inventory by default with its stock summary and supporting tabs",
       expect.any(AbortSignal),
     ),
   );
-  expect(screen.getByRole("tab", { name: "Sản phẩm & tồn kho" })).toHaveAttribute(
+  expect(screen.getByRole("tab", { name: "Sản phẩm & nguồn cung" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  expect(mocks.tracker).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("tab", { name: "Growth Tracker" }));
-  expect(screen.getByRole("link", { name: "Quản lý Growth Tracker" })).toHaveAttribute(
-    "href",
-    "/tracker-farms/farm-1",
-  );
+  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(24);
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.tracker).toHaveBeenCalledExactlyOnceWith("farm-1", expect.any(AbortSignal));
 });
 
 it("moves Farm detail tabs with arrow, Home and End keys", async () => {
   view(<FarmDetail farmId="farm-1" />);
-  const products = await screen.findByRole("tab", { name: "Sản phẩm & tồn kho" });
-  const information = screen.getByRole("tab", { name: "Thông tin Farm" });
+  const products = await screen.findByRole("tab", { name: "Sản phẩm & nguồn cung" });
+  const information = screen.getByRole("tab", { name: "Thông tin" });
   const tracker = screen.getByRole("tab", { name: "Growth Tracker" });
   expect(products).toHaveAttribute("tabindex", "0");
   fireEvent.keyDown(products, { key: "ArrowRight" });
@@ -728,11 +769,11 @@ it("explains when a Product was deactivated after catalog selection", async () =
 });
 
 it("shows zero Growth Tracker signups without treating an existing profile as missing", async () => {
-  mocks.tracker.mockResolvedValue({ signup_count: 0 });
+  mocks.tracker.mockResolvedValue({ ...trackerProfile, signup_count: 0 });
   view(<FarmDetail farmId="farm-1" />);
   fireEvent.click(await screen.findByRole("tab", { name: "Growth Tracker" }));
-  expect(await screen.findByText("0 người đăng ký")).toBeVisible();
-  expect(screen.queryByText("Chưa bật profile Growth Tracker")).not.toBeInTheDocument();
+  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(0);
+  expect(screen.getByRole("button", { name: "Lưu Growth Tracker" })).toBeVisible();
 });
 
 it("links a catalog Product together with the first current-week stock batch", async () => {
@@ -1577,4 +1618,127 @@ it("closes the product action menu with Escape and restores its trigger focus", 
   await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
   expect(trigger).toHaveFocus();
   expect(mocks.active).not.toHaveBeenCalled();
+});
+
+function DetailWithBreadcrumb() {
+  const items = useAdminBreadcrumbs([]);
+  return (
+    <>
+      <nav aria-label="Farm breadcrumb">
+        {items.map(({ label, href }) =>
+          href ? (
+            <a key={href} href={href}>
+              {label}
+            </a>
+          ) : (
+            <span key={label}>{label}</span>
+          ),
+        )}
+      </nav>
+      <FarmDetail farmId="farm-1" />
+    </>
+  );
+}
+
+function FarmBreadcrumbScope() {
+  const current = useSyncExternalStore(subscribeRoute, readSearch);
+  return (
+    <AdminBreadcrumbProvider pathname="/farms/farm-1" search={current.toString()}>
+      <DetailWithBreadcrumb />
+    </AdminBreadcrumbProvider>
+  );
+}
+
+it("uses the paginated Farm directory to select a Tracker farm with its list context", async () => {
+  search = new URLSearchParams("search=xanh&is_active=true&page=2&setup=tracker");
+  mocks.list.mockResolvedValue({ data: [farm], meta: { page: 2, page_size: 20, total: 25 } });
+  view(<FarmList />);
+  expect(
+    screen.getByRole("heading", { level: 1, name: "Danh sách trang trại" }),
+  ).toBeInTheDocument();
+  expect(screen.getAllByRole("link", { name: "Thêm trang trại" })).toHaveLength(1);
+  expect(await screen.findByRole("link", { name: "Nông trại Xanh" })).toHaveAttribute(
+    "href",
+    "/farms/farm-1?search=xanh&is_active=true&page=2&setup=tracker&tab=tracker",
+  );
+  const pager = screen.getByRole("navigation", { name: /2\/2/ });
+  expect(screen.getByRole("region", { name: "Danh sách trang trại" })).not.toContainElement(pager);
+  expect(mocks.get).not.toHaveBeenCalled();
+  expect(mocks.tracker).not.toHaveBeenCalled();
+});
+
+it("retries the failed Farm list read and shows a filtered empty result", async () => {
+  search = new URLSearchParams("search=unknown&is_active=false");
+  mocks.list.mockRejectedValueOnce(new Error("network_error")).mockResolvedValueOnce({
+    data: [],
+    meta: { page: 1, page_size: 20, total: 0 },
+  });
+  view(<FarmList />);
+  fireEvent.click(
+    within(await screen.findByRole("alert")).getByRole("button", { name: "Thử lại" }),
+  );
+  expect(await screen.findByText("Không tìm thấy trang trại phù hợp.")).toBeVisible();
+  expect(mocks.list).toHaveBeenLastCalledWith(
+    {
+      search: "unknown",
+      page: 1,
+      is_active: false,
+    },
+    expect.any(AbortSignal),
+  );
+  expect(mocks.tracker).not.toHaveBeenCalled();
+});
+
+it("loads only Tracker on direct entry, keeps its draft across tabs and preserves the parent context", async () => {
+  search = new URLSearchParams("search=xanh&is_active=true&page=2&view=tracker&tab=tracker");
+  view(<FarmBreadcrumbScope />);
+  const breadcrumb = within(screen.getByRole("navigation", { name: "Farm breadcrumb" }));
+  expect(breadcrumb.getByText("Chi tiết trang trại")).toBeVisible();
+  const count = await screen.findByLabelText("Số người đăng ký 6 tháng");
+  expect(breadcrumb.getByText("Nông trại Xanh")).toBeVisible();
+  expect(breadcrumb.getByRole("link", { name: "Danh sách trang trại" })).toHaveAttribute(
+    "href",
+    "/farms?search=xanh&is_active=true&page=2&tab=tracker",
+  );
+  expect(screen.getByRole("link", { name: "Sửa thông tin" })).toHaveAttribute(
+    "href",
+    "/farms/farm-1/edit?search=xanh&is_active=true&page=2&view=tracker&tab=tracker",
+  );
+  expect(mocks.linked).not.toHaveBeenCalled();
+  fireEvent.change(count, { target: { value: "25" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Thông tin" }));
+  expect(screen.getByText("Organic greens")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Growth Tracker" }));
+  expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(25);
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.tracker).toHaveBeenCalledTimes(1);
+  expect(mocks.linked).not.toHaveBeenCalled();
+});
+
+it("retires the Farm name and its breadcrumb when Tracker loses access", async () => {
+  mocks.tracker.mockRejectedValue(Object.assign(new Error("forbidden"), { status: 403 }));
+  view(<FarmBreadcrumbScope />);
+  const breadcrumb = within(screen.getByRole("navigation", { name: "Farm breadcrumb" }));
+  await breadcrumb.findByText("Nông trại Xanh");
+  fireEvent.click(screen.getByRole("tab", { name: "Growth Tracker" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(breadcrumb.queryByText("Nông trại Xanh")).not.toBeInTheDocument();
+  expect(breadcrumb.getByText("Chi tiết trang trại")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Sửa thông tin" })).not.toBeInTheDocument();
+});
+
+it("keeps Farm deletion protection and can deactivate using the current version", async () => {
+  mocks.removeFarm.mockRejectedValue(Object.assign(new Error("farm_in_use"), { status: 409 }));
+  mocks.save.mockResolvedValue({ ...farm, is_active: false, version: 3 });
+  view(<FarmDetail farmId="farm-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Tùy chọn khác" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
+  const dialog = within(screen.getByRole("dialog"));
+  fireEvent.click(dialog.getByRole("button", { name: "Xóa trang trại" }));
+  expect(await dialog.findByRole("alert")).toHaveTextContent(/thay vì xóa/);
+  fireEvent.click(dialog.getByRole("button", { name: "Tắt hoạt động" }));
+  expect(await screen.findByText("Đã tắt")).toBeVisible();
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith("farm-1", { version: 2, is_active: false });
+  expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).not.toHaveBeenCalled();
 });

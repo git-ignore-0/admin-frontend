@@ -1,12 +1,10 @@
-import { TrackerFarmManager } from "@/components/tracker-farm-manager";
-import { adminDictionaries } from "@/lib/admin-i18n";
-import { getAdminLocale } from "@/lib/admin-locale";
+import { redirect } from "next/navigation";
+import { legacyTrackerHref } from "@/lib/farm-navigation";
 
-export async function generateMetadata() {
-  const t = adminDictionaries[await getAdminLocale()];
-  return { title: t.common.trackerFarms };
-}
-
-export default function TrackerFarmsPage() {
-  return <TrackerFarmManager />;
+export default async function TrackerFarmsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  redirect(legacyTrackerHref(await searchParams));
 }

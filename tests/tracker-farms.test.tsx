@@ -1,15 +1,60 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createRef, type ComponentPropsWithRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
-import { TrackerFarmManager } from "@/components/tracker-farm-manager";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
+import { FarmList } from "@/components/farm-list";
+import {
+  TrackerFarmManager,
+  type TrackerFarmManagerHandle,
+} from "@/components/tracker-farm-manager";
 import { ToastProvider } from "@/components/toast-provider";
-import { api } from "@/lib/client-api";
+import { api, apiEnvelope } from "@/lib/client-api";
 import type { MediaAsset, TrackerFarm } from "@/lib/types";
 
 const push = vi.fn();
+let searchParams = new URLSearchParams();
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("next/link", () => ({
+  default: ({
+    href,
+    onNavigate,
+    onClick,
+    ...props
+  }: ComponentPropsWithRef<"a"> & {
+    onNavigate?: (event: { preventDefault: () => void }) => void;
+  }) => (
+    <a
+      {...props}
+      href={href}
+      onClick={(event) => {
+        onClick?.(event);
+        if (
+          event.defaultPrevented ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          event.altKey ||
+          props.target === "_blank"
+        )
+          return;
+        event.preventDefault();
+        let canceled = false;
+        onNavigate?.({
+          preventDefault: () => {
+            canceled = true;
+          },
+        });
+        if (!canceled) push(href);
+      }}
+    />
+  ),
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+  useSearchParams: () => searchParams,
+}));
 
 const farm: TrackerFarm = {
   id: "farm-1",
@@ -59,23 +104,33 @@ function deferred<T>() {
 function renderWithProviders(node: React.ReactNode, locale: "en" | "vi" = "en") {
   return render(
     <AdminI18nProvider initialLocale={locale}>
-      <ToastProvider>{node}</ToastProvider>
+      <ToastProvider>
+        <AdminQueryProvider>{node}</AdminQueryProvider>
+      </ToastProvider>
     </AdminI18nProvider>,
   );
 }
 afterEach(() => {
   cleanup();
+  searchParams = new URLSearchParams();
   vi.resetAllMocks();
 });
 
-it("uses routes for create and edit instead of a farm form dialog", async () => {
+it("provides integrated Farm links for enabling or editing Tracker with list context", async () => {
+  searchParams = new URLSearchParams("tab=tracker&search=green&is_active=true&page=3");
   vi.mocked(api).mockResolvedValueOnce([farm]);
   renderWithProviders(<TrackerFarmManager />);
   expect(
     (await screen.findByRole("link", { name: "+ Enable Growth Tracker" })).getAttribute("href"),
-  ).toBe("/tracker-farms/new");
+  ).toBe("/farms?search=green&is_active=true&page=3&setup=tracker");
   const edit = screen.getByRole("link", { name: "Edit Green Valley" });
-  expect(edit.getAttribute("href")).toBe("/tracker-farms/farm-1");
+  expect(edit.getAttribute("href")).toBe(
+    "/farms/farm-1?search=green&is_active=true&page=3&view=tracker&tab=tracker",
+  );
+  expect(screen.getByRole("link", { name: "Green Valley" })).toHaveAttribute(
+    "href",
+    edit.getAttribute("href"),
+  );
   expect(edit).toHaveAttribute("title", "Edit Green Valley");
   expect(edit).toHaveTextContent("");
   expect(edit.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
@@ -84,7 +139,7 @@ it("uses routes for create and edit instead of a farm form dialog", async () => 
   expect(remove).toHaveAttribute("title", "Disable Growth Tracker for Green Valley");
   expect(remove).toHaveTextContent("");
   expect(remove.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-  expect(screen.queryByRole("dialog", { name: "Edit farm" })).toBeNull();
+  expect(screen.queryByRole("heading")).toBeNull();
 });
 
 it("renders only the active admin locale's name and location in the list", async () => {
@@ -92,9 +147,8 @@ it("renders only the active admin locale's name and location in the list", async
   const view = renderWithProviders(<TrackerFarmManager />);
 
   expect(await screen.findByRole("columnheader", { name: "Farm name" })).toBeVisible();
-  expect(screen.getByRole("columnheader", { name: "Location" })).toBeVisible();
-  expect(screen.getByText("Green Valley")).toBeVisible();
-  expect(screen.getByText("Da Lat")).toBeVisible();
+  const farmCell = screen.getByRole("link", { name: "Green Valley" }).closest("td")!;
+  expect(within(farmCell).getByText("Da Lat")).toBeVisible();
   expect(screen.queryByText("Thung lũng Xanh")).toBeNull();
   expect(screen.queryByText("Đà Lạt")).toBeNull();
   expect(screen.getByRole("link", { name: "Edit Green Valley" })).toBeVisible();
@@ -105,7 +159,6 @@ it("renders only the active admin locale's name and location in the list", async
   vi.mocked(api).mockResolvedValueOnce([farm]);
   renderWithProviders(<TrackerFarmManager />, "vi");
   expect(await screen.findByRole("columnheader", { name: "Tên nông trại" })).toBeVisible();
-  expect(screen.getByRole("columnheader", { name: "Địa điểm" })).toBeVisible();
   expect(screen.getByText("Thung lũng Xanh")).toBeVisible();
   expect(screen.getByText("Đà Lạt")).toBeVisible();
   expect(screen.getByText("Bắt đầu phát triển")).toBeVisible();
@@ -121,13 +174,12 @@ it("renders only the active admin locale's name and location in the list", async
   ).toHaveAttribute("title", "Tắt Growth Tracker của Thung lũng Xanh");
 });
 
-it("keeps icon-only Edit and Delete on one equal square action row at every breakpoint", async () => {
+it("groups icon-only Edit and Disable actions with accessible names", async () => {
   vi.mocked(api).mockResolvedValueOnce([farm]);
   renderWithProviders(<TrackerFarmManager />);
 
   const edit = await screen.findByRole("link", { name: "Edit Green Valley" });
   const remove = screen.getByRole("button", { name: "Disable Growth Tracker for Green Valley" });
-  expect(edit.parentElement).toHaveClass("tracker-row-actions");
   expect(remove.parentElement).toBe(edit.parentElement);
   expect(edit).toHaveClass("mantine-ActionIcon-root");
   expect(edit).toHaveAttribute("data-variant", "default");
@@ -140,7 +192,7 @@ it("keeps icon-only Edit and Delete on one equal square action row at every brea
   expect(remove).toHaveStyle({ "--ai-size": "calc(2.25rem * var(--mantine-scale))" });
 });
 
-it("renders a Rewards-style farm thumbnail or milestone fallback in EN and VI list rows", async () => {
+it("renders the primary farm thumbnail or milestone fallback in EN and VI list rows", async () => {
   vi.mocked(api).mockResolvedValueOnce([
     { ...farm, image: farmImage, photos: [secondFarmImage, farmImage] },
     { ...farm, id: "farm-2", name_en: "River Farm", name_vi: "Nông trại Sông" },
@@ -148,24 +200,21 @@ it("renders a Rewards-style farm thumbnail or milestone fallback in EN and VI li
   const view = renderWithProviders(<TrackerFarmManager />);
 
   const photo = await screen.findByAltText("Green Valley");
-  expect(photo).toHaveClass("reward-thumbnail");
   expect(photo).toHaveAttribute("src", expect.stringContaining("river-farm.webp"));
-  expect(screen.getByRole("columnheader", { name: "Farm image" })).toBeVisible();
+  expect(photo.closest("td")).toBe(
+    screen.getByRole("link", { name: "Green Valley" }).closest("td"),
+  );
   expect(screen.getAllByAltText("Green Valley")).toHaveLength(1);
   expect(document.querySelector('img[src*="green-valley"]')).toBeNull();
   expect(screen.getAllByRole("img", { name: "River Farm" })).toHaveLength(1);
-  expect(screen.getByRole("img", { name: "River Farm" })).toHaveClass(
-    "tracker-farm-thumbnail-fallback",
-  );
+  expect(screen.getByRole("img", { name: "River Farm" })).toHaveTextContent("🌱");
 
   view.unmount();
   vi.mocked(api).mockResolvedValueOnce([farm]);
   renderWithProviders(<TrackerFarmManager />, "vi");
   expect(await screen.findByText(/Thung lũng Xanh/)).toBeVisible();
   expect(screen.getAllByRole("img", { name: "Thung lũng Xanh" })).toHaveLength(1);
-  expect(screen.getByRole("img", { name: "Thung lũng Xanh" })).toHaveClass(
-    "tracker-farm-thumbnail-fallback",
-  );
+  expect(screen.getByRole("img", { name: "Thung lũng Xanh" })).toHaveTextContent("🌱");
   expect(screen.getAllByText("🌱")).toHaveLength(1);
 });
 
@@ -251,7 +300,7 @@ it("reloads server order after a reorder version conflict", async () => {
   expect(screen.queryByRole("button", { name: "Save order" })).toBeNull();
 });
 
-it("guards Add and Edit navigation while reorder changes are unsaved", async () => {
+it("guards Enable and Edit links while preserving modified clicks", async () => {
   vi.mocked(api)
     .mockResolvedValueOnce([farm, secondFarm])
     .mockResolvedValueOnce([
@@ -261,23 +310,149 @@ it("guards Add and Edit navigation while reorder changes are unsaved", async () 
   renderWithProviders(<TrackerFarmManager />);
   fireEvent.click(await screen.findByRole("button", { name: "Move Green Valley down" }));
 
-  fireEvent.click(screen.getByRole("link", { name: "+ Enable Growth Tracker" }));
+  const enable = screen.getByRole("link", { name: "+ Enable Growth Tracker" });
+  const edit = screen.getByRole("link", { name: "Edit Green Valley" });
+  // Avoid jsdom's unimplemented browser navigation after React handles the click.
+  const preventBrowserNavigation = (event: MouseEvent) => event.preventDefault();
+  document.addEventListener("click", preventBrowserNavigation, { once: true });
+  fireEvent.click(enable, { ctrlKey: true });
+  document.addEventListener("click", preventBrowserNavigation, { once: true });
+  fireEvent.click(edit, { metaKey: true });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(push).not.toHaveBeenCalled();
+
+  fireEvent.click(enable);
   const stayDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
   expect(push).not.toHaveBeenCalled();
   fireEvent.click(within(stayDialog).getByRole("button", { name: "Stay" }));
   expect(screen.getAllByRole("row")[1]).toHaveTextContent("River Farm");
 
-  fireEvent.click(screen.getByRole("link", { name: "Edit Green Valley" }));
+  fireEvent.click(edit);
   const discardDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
   fireEvent.click(within(discardDialog).getByRole("button", { name: "Discard changes" }));
-  expect(push).toHaveBeenCalledWith("/tracker-farms/farm-1");
+  expect(push).toHaveBeenCalledWith("/farms/farm-1?view=tracker&tab=tracker");
 
   push.mockClear();
   fireEvent.click(screen.getByRole("button", { name: "Move Green Valley down" }));
-  fireEvent.click(screen.getByRole("link", { name: "+ Enable Growth Tracker" }));
+  fireEvent.click(enable);
   const saveDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
   fireEvent.click(within(saveDialog).getByRole("button", { name: "Save order" }));
-  await waitFor(() => expect(push).toHaveBeenCalledWith("/tracker-farms/new"));
+  await waitFor(() => expect(push).toHaveBeenCalledWith("/farms?setup=tracker"));
+});
+
+it("guards leaving the active Tracker tab until the reorder is saved or discarded", async () => {
+  vi.mocked(api).mockResolvedValueOnce([farm, secondFarm]);
+  const manager = createRef<TrackerFarmManagerHandle>();
+  const switchToFarmList = vi.fn();
+  renderWithProviders(<TrackerFarmManager ref={manager} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Move Green Valley down" }));
+
+  act(() => manager.current!.requestNavigation(switchToFarmList));
+  const stayDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
+  expect(switchToFarmList).not.toHaveBeenCalled();
+  fireEvent.click(within(stayDialog).getByRole("button", { name: "Stay" }));
+  expect(screen.getAllByRole("row")[1]).toHaveTextContent("River Farm");
+
+  act(() => manager.current!.requestNavigation(switchToFarmList));
+  const discardDialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
+  fireEvent.click(within(discardDialog).getByRole("button", { name: "Discard changes" }));
+  expect(switchToFarmList).toHaveBeenCalledTimes(1);
+  expect(screen.getAllByRole("row")[1]).toHaveTextContent("Green Valley");
+  expect(api).toHaveBeenCalledTimes(1);
+});
+
+it("reads only the active list tab and guards the actual tab switch with a dirty reorder", async () => {
+  searchParams = new URLSearchParams("search=river&is_active=false&page=2&tab=tracker");
+  vi.mocked(api).mockResolvedValueOnce([farm, secondFarm]);
+  vi.mocked(apiEnvelope).mockResolvedValueOnce({
+    data: [
+      { ...secondFarm, is_active: false, in_stock_product_count: 1, out_of_stock_product_count: 1 },
+    ],
+    meta: { page: 2, page_size: 20, total: 40 },
+  });
+  const view = renderWithProviders(<FarmList />);
+  fireEvent.click(await screen.findByRole("button", { name: "Move Green Valley down" }));
+  expect(apiEnvelope).not.toHaveBeenCalled();
+  const farmTab = screen.getByRole("tab", { name: "Farm list" });
+  fireEvent.click(farmTab);
+  let dialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stay" }));
+  expect(push).not.toHaveBeenCalled();
+  fireEvent.click(farmTab);
+  dialog = screen.getByRole("dialog", { name: "Farm order has unsaved changes" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Discard changes" }));
+  expect(push).toHaveBeenCalledExactlyOnceWith("/farms?search=river&is_active=false&page=2", {
+    scroll: false,
+  });
+
+  searchParams = new URLSearchParams("search=river&is_active=false&page=2");
+  view.rerender(
+    <AdminI18nProvider initialLocale="en">
+      <ToastProvider>
+        <AdminQueryProvider>
+          <FarmList />
+        </AdminQueryProvider>
+      </ToastProvider>
+    </AdminI18nProvider>,
+  );
+  expect(await screen.findByRole("link", { name: "River Farm" })).toHaveAttribute(
+    "href",
+    "/farms/farm-2?search=river&is_active=false&page=2",
+  );
+  expect(api).toHaveBeenCalledTimes(1);
+  expect(apiEnvelope).toHaveBeenCalledExactlyOnceWith(
+    "admin/farms?page=2&search=river&is_active=false",
+    { signal: expect.any(AbortSignal) },
+  );
+});
+
+it("supports drag-and-drop and clears the draft after moving back to the saved order", async () => {
+  vi.mocked(api).mockResolvedValueOnce([
+    { ...farm, sort_order: 4 },
+    { ...secondFarm, sort_order: 6 },
+  ]);
+  renderWithProviders(<TrackerFarmManager />);
+  const handle = await screen.findByRole("button", { name: "Drag to reorder Green Valley" });
+  const target = screen.getByRole("row", { name: /River Farm/ });
+  const dataTransfer = { setData: vi.fn(), dropEffect: "", effectAllowed: "" };
+  fireEvent.dragStart(handle, { dataTransfer });
+  fireEvent.dragOver(target, { dataTransfer });
+  fireEvent.drop(target, { dataTransfer });
+  expect(dataTransfer.dropEffect).toBe("move");
+  expect(screen.getAllByRole("row")[1]).toHaveTextContent("River Farm");
+  expect(screen.getByRole("button", { name: "Save order" })).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Move Green Valley up" }));
+  expect(screen.getAllByRole("row")[1]).toHaveTextContent("Green Valley");
+  expect(screen.queryByRole("button", { name: "Save order" })).toBeNull();
+  expect(api).toHaveBeenCalledTimes(1);
+});
+
+it("shows loading, an error and retry, then the empty Tracker state", async () => {
+  const request = deferred<TrackerFarm[]>();
+  vi.mocked(api).mockReturnValueOnce(request.promise).mockResolvedValueOnce([]);
+  renderWithProviders(<TrackerFarmManager />);
+
+  expect(screen.getByRole("status")).toHaveTextContent("Loading tracker farms");
+  await act(async () => request.resolve([{ error: "invalid response" } as unknown as TrackerFarm]));
+  const error = await screen.findByRole("alert");
+  fireEvent.click(within(error).getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("No farms have been added to the Growth Tracker.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "+ Enable Growth Tracker" })).toBeVisible();
+  expect(api).toHaveBeenCalledTimes(2);
+});
+
+it("clears protected rows and an unsaved order when saving loses permission", async () => {
+  vi.mocked(api)
+    .mockResolvedValueOnce([farm, secondFarm])
+    .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+  renderWithProviders(<TrackerFarmManager />);
+  fireEvent.click(await screen.findByRole("button", { name: "Move Green Valley down" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save order" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.queryByText("Green Valley")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save order" })).not.toBeInTheDocument();
+  expect(api).toHaveBeenCalledTimes(2);
 });
 
 it("disables only the Growth Tracker profile after confirmation and preserves the item on failure", async () => {

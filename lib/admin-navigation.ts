@@ -32,6 +32,7 @@ function atOrBelow(pathname: string, href: string) {
 function navigationPath(pathname: string) {
   if (pathname === "/store-catalog") return "/store-catalog/products";
   if (pathname === "/membership-catalog") return "/membership-catalog/packages";
+  if (atOrBelow(pathname, "/tracker-farms")) return "/farms";
   if (atOrBelow(pathname, "/points")) return "/users";
   if (atOrBelow(pathname, "/memberships")) return "/csa-customers";
   return pathname;
@@ -86,6 +87,23 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
       ],
     },
     {
+      key: "farms",
+      label: t.common.farms,
+      icon: "farms",
+      items: [
+        {
+          href: "/farms",
+          label: t.common.farmList,
+          icon: "farms",
+          childScreens: {
+            new: t.breadcrumb.newFarm,
+            record: t.breadcrumb.farmDetails,
+            edit: t.breadcrumb.edit,
+          },
+        },
+      ],
+    },
+    {
       key: "csa",
       label: t.common.csa,
       icon: "csa",
@@ -132,32 +150,6 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
           label: t.common.csaTerms,
           icon: "terms",
           childScreens: { new: t.csaTerms.createTitle, record: t.csaTerms.viewTitle },
-        },
-      ],
-    },
-    {
-      key: "farms",
-      label: t.common.farms,
-      icon: "farms",
-      items: [
-        {
-          href: "/farms",
-          label: t.common.farmList,
-          icon: "farms",
-          childScreens: {
-            new: t.breadcrumb.newFarm,
-            record: t.breadcrumb.farmDetails,
-            edit: t.breadcrumb.edit,
-          },
-        },
-        {
-          href: "/tracker-farms",
-          label: t.common.trackerFarms,
-          icon: "tracker",
-          childScreens: {
-            new: t.trackerFarms.createTitle,
-            record: t.breadcrumb.trackerFarmDetails,
-          },
         },
       ],
     },

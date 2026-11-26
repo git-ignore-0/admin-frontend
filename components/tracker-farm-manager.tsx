@@ -1,90 +1,92 @@
 "use client";
-import { IconEdit, IconTrash } from "@tabler/icons-react";
-import { Alert, ActionIcon, Button, Table } from "@mantine/core";
-
-import { Status } from "@/components/nfv-controls";
-
-import Image from "next/image";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
-  DragEvent,
-  MouseEvent as ReactMouseEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+  IconArrowDown,
+  IconArrowUp,
+  IconEdit,
+  IconGripVertical,
+  IconTrash,
+} from "@tabler/icons-react";
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Box,
+  Button,
+  Center,
+  Divider,
+  Group,
+  Image,
+  Paper,
+  Stack,
+  Table,
+  Text,
+} from "@mantine/core";
+import NextImage from "next/image";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { DragEvent, Ref } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { ListState } from "@/components/list-state";
-import { PageHeading } from "@/components/page-heading";
+import { ListToolbar } from "@/components/list-toolbar";
+import { Status } from "@/components/nfv-controls";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
+import { farmHref } from "@/lib/farm-navigation";
 import { disableFarmTracker } from "@/lib/farms-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
-import type { AdminDictionary } from "@/lib/admin-i18n";
+import { trackerMilestone } from "@/lib/tracker-milestone";
 import type { TrackerFarm } from "@/lib/types";
+import styles from "./tracker-farm-manager.module.css";
 
-export function trackerMilestone(count: number) {
-  if (count >= 30) return "communityLeader" as const;
-  if (count >= 20) return "providingForFamily" as const;
-  if (count >= 10) return "gettingStarted" as const;
-  return "seedPlanted" as const;
-}
-
-function milestoneLabel(count: number, t: AdminDictionary) {
-  return t.trackerFarms[trackerMilestone(count)];
-}
-
-function milestoneTreeIcon(count: number) {
-  if (count >= 30) return "🌳 🌱";
-  if (count >= 20) return "🌳";
-  if (count >= 10) return "🌱";
-  return "🌰";
-}
+const milestoneIcons: Record<ReturnType<typeof trackerMilestone>, string> = {
+  communityLeader: "🌳 🌱",
+  providingForFamily: "🌳",
+  gettingStarted: "🌱",
+  seedPlanted: "🌰",
+};
 
 function FarmThumbnail({ farm, name }: { farm: TrackerFarm; name: string }) {
   const primaryPhoto = farm.photos?.[0] ?? farm.image;
   if (primaryPhoto) {
     return (
       <Image
+        component={NextImage}
         alt={name}
-        className="reward-thumbnail"
-        height={56}
-        src={mediaUrlForWidth(primaryPhoto, 144)}
+        height={48}
+        width={48}
+        h={48}
+        w={48}
+        radius="md"
+        flex="0 0 auto"
+        src={mediaUrlForWidth(primaryPhoto, 96)}
         unoptimized
-        width={72}
       />
     );
   }
 
   return (
-    <span aria-label={name} className="reward-thumbnail tracker-farm-thumbnail-fallback" role="img">
-      {milestoneTreeIcon(farm.signup_count)}
-    </span>
-  );
-}
-function sameOrder(current: TrackerFarm[], saved: TrackerFarm[]) {
-  if (!Array.isArray(current) || !Array.isArray(saved)) return false;
-  return (
-    current.length === saved.length &&
-    current.every(
-      (farm, index) => farm.id === saved[index]?.id && farm.sort_order === saved[index]?.sort_order,
-    )
+    <Center aria-label={name} role="img" h={48} w={48} flex="0 0 auto" bg="gray.0" bdrs="md">
+      {milestoneIcons[trackerMilestone(farm.signup_count)]}
+    </Center>
   );
 }
 
-export function TrackerFarmManager() {
+export type TrackerFarmManagerHandle = { requestNavigation: (navigate: () => void) => void };
+
+export function TrackerFarmManager({ ref }: { ref?: Ref<TrackerFarmManagerHandle> }) {
   const { locale, t } = useAdminI18n();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
-  const [farms, setFarms] = useState<TrackerFarm[] | null>(null);
-  const [savedFarms, setSavedFarms] = useState<TrackerFarm[]>([]);
+  const isCurrent = useIsAdminQueryScopeCurrent();
+  const [savedFarms, setSavedFarms] = useState<TrackerFarm[] | null>(null);
+  const [draftFarms, setDraftFarms] = useState<TrackerFarm[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<TrackerFarm | null>(null);
@@ -93,48 +95,74 @@ export function TrackerFarmManager() {
   const [draggedId, setDraggedId] = useState("");
   const [reorderError, setReorderError] = useState("");
   const [savingOrder, setSavingOrder] = useState(false);
-  const [pendingNavigation, setPendingNavigation] = useState("");
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+  const loadRequest = useRef<AbortController | null>(null);
   const deletingRef = useRef(false);
   const savingOrderRef = useRef(false);
   const dictionaryRef = useRef(t);
   dictionaryRef.current = t;
-  const loadFarms = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoading(true);
-    setLoadError("");
-    try {
-      const latest = requireResponseList(
-        await api<TrackerFarm[]>("admin/tracker-farms"),
-        requireResponseEntity,
-      );
-      setFarms(latest);
-      setSavedFarms(latest);
-      return latest;
-    } catch (caught) {
-      setLoadError(requestErrorMessage(caught, dictionaryRef.current));
-      return null;
-    } finally {
-      if (showLoading) setLoading(false);
-    }
+  const retireRows = useCallback((cause: unknown) => {
+    setLoadError(requestErrorMessage(cause, dictionaryRef.current));
+    setSavedFarms(null);
+    setDraftFarms(null);
+    setPendingNavigation(null);
+    setDeleteTarget(null);
+    setDraggedId("");
   }, []);
+  const loadFarms = useCallback(
+    async (showLoading = true) => {
+      loadRequest.current?.abort();
+      const request = new AbortController();
+      loadRequest.current = request;
+      if (showLoading) setLoading(true);
+      setLoadError("");
+      try {
+        const latest = requireResponseList(
+          await api<TrackerFarm[]>("admin/tracker-farms", { signal: request.signal }),
+          requireResponseEntity,
+        );
+        if (request.signal.aborted || !isCurrent()) return false;
+        setSavedFarms(latest);
+        setDraftFarms(null);
+        return true;
+      } catch (caught) {
+        if (!request.signal.aborted && isCurrent()) {
+          if (isProtectedDataError(caught)) retireRows(caught);
+          else setLoadError(requestErrorMessage(caught, dictionaryRef.current));
+        }
+        return false;
+      } finally {
+        if (showLoading && !request.signal.aborted) setLoading(false);
+      }
+    },
+    [isCurrent, retireRows],
+  );
   useEffect(() => {
     void loadFarms();
+    return () => loadRequest.current?.abort();
   }, [loadFarms]);
-  const orderDirty = useMemo(
-    () => Boolean(farms && !sameOrder(farms, savedFarms)),
-    [farms, savedFarms],
-  );
+  const farms = draftFarms ?? savedFarms;
+  const orderDirty = draftFarms !== null;
   const orderLocked = savingOrder || deleting;
   const mutationLocked = orderDirty || orderLocked;
+  const enableHref = farmHref(searchParams, { view: "farms", setup: true });
   function moveFarm(sourceId: string, targetIndex: number) {
-    if (orderLocked) return;
-    setFarms((current) => {
-      if (!current) return current;
-      const sourceIndex = current.findIndex((farm) => farm.id === sourceId);
-      if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= current.length) return current;
-      const reordered = [...current];
+    if (orderLocked || !savedFarms) return;
+    setDraftFarms((current) => {
+      const order = current ?? savedFarms;
+      const sourceIndex = order.findIndex((farm) => farm.id === sourceId);
+      if (
+        sourceIndex < 0 ||
+        sourceIndex === targetIndex ||
+        targetIndex < 0 ||
+        targetIndex >= order.length
+      ) {
+        return current;
+      }
+      const reordered = [...order];
       const [moved] = reordered.splice(sourceIndex, 1);
       reordered.splice(targetIndex, 0, moved);
-      return reordered.map((farm, index) => ({ ...farm, sort_order: index }));
+      return reordered.every((farm, index) => farm.id === savedFarms[index]?.id) ? null : reordered;
     });
     setReorderError("");
   }
@@ -148,7 +176,9 @@ export function TrackerFarmManager() {
     event.dataTransfer.setData("text/plain", farmId);
   }
   async function saveOrderChanges() {
-    if (!farms || !orderDirty || savingOrderRef.current) return false;
+    const scope = loadRequest.current?.signal;
+    const current = () => isCurrent() && scope && !scope.aborted;
+    if (!draftFarms || !current() || savingOrderRef.current || deletingRef.current) return false;
     savingOrderRef.current = true;
     setSavingOrder(true);
     setReorderError("");
@@ -156,23 +186,33 @@ export function TrackerFarmManager() {
       const saved = await api<TrackerFarm[]>("admin/tracker-farms/reorder", {
         method: "PATCH",
         body: JSON.stringify({
-          items: farms.map((farm, index) => ({
+          items: draftFarms.map((farm, index) => ({
             id: farm.id,
             sort_order: index,
             version: farm.version,
           })),
         }),
       });
+      if (!current()) return false;
       requireResponseList(saved, requireResponseEntity);
-      setFarms(saved);
       setSavedFarms(saved);
+      setDraftFarms(null);
       toast(t.trackerFarms.orderSaved);
       return true;
     } catch (caught) {
+      if (!current()) return false;
+      if (isProtectedDataError(caught)) {
+        retireRows(caught);
+        return false;
+      }
       const status = caught instanceof Error ? (caught as Error & { status?: number }).status : 0;
       if (status === 409) {
-        if (await loadFarms(false)) setReorderError(t.trackerFarms.conflict);
-        toast(t.trackerFarms.conflict, "error");
+        if (await loadFarms(false)) {
+          setPendingNavigation(null);
+          setReorderError(t.trackerFarms.conflict);
+        }
+        if (isCurrent() && !loadRequest.current?.signal.aborted)
+          toast(t.trackerFarms.conflict, "error");
       } else setReorderError(requestErrorMessage(caught, t));
       return false;
     } finally {
@@ -181,254 +221,266 @@ export function TrackerFarmManager() {
       setDraggedId("");
     }
   }
-  function guardNavigation(event: ReactMouseEvent<HTMLAnchorElement>, href: string) {
+  function requestNavigation(navigate: () => void) {
+    if (savingOrderRef.current || deletingRef.current) return;
+    if (!orderDirty) {
+      navigate();
+      return;
+    }
+    setReorderError("");
+    setPendingNavigation(() => navigate);
+  }
+  useImperativeHandle(ref, () => ({ requestNavigation }));
+
+  function guardLink(event: { preventDefault: () => void }, href: string) {
     if (!mutationLocked) return;
     event.preventDefault();
-    if (orderDirty && !orderLocked) {
-      setReorderError("");
-      setPendingNavigation(href);
-    }
+    requestNavigation(() => router.push(href));
   }
   async function saveOrderAndNavigate() {
-    const href = pendingNavigation;
-    if (!href || !(await saveOrderChanges())) return;
-    setPendingNavigation("");
-    router.push(href);
+    const navigate = pendingNavigation;
+    if (!navigate || !(await saveOrderChanges())) return;
+    setPendingNavigation(null);
+    navigate();
   }
-  function discardOrderAndNavigate() {
-    const href = pendingNavigation;
-    if (!href) return;
-    setFarms(savedFarms);
+  function discardOrder() {
+    setDraftFarms(null);
     setDraggedId("");
     setReorderError("");
-    setPendingNavigation("");
-    router.push(href);
+  }
+  function discardOrderAndNavigate() {
+    discardOrder();
+    setPendingNavigation(null);
+    pendingNavigation?.();
   }
   async function confirmDelete() {
-    if (!deleteTarget || deletingRef.current) return;
+    const scope = loadRequest.current?.signal;
+    const current = () => isCurrent() && scope && !scope.aborted;
+    if (!deleteTarget || !current() || draftFarms || savingOrderRef.current || deletingRef.current)
+      return;
     deletingRef.current = true;
     setDeleting(true);
     setDeleteError("");
     try {
       await disableFarmTracker(deleteTarget.id);
-      setFarms((current) => current?.filter((farm) => farm.id !== deleteTarget.id) ?? []);
-      setSavedFarms((current) => current.filter((farm) => farm.id !== deleteTarget.id));
+      if (!current()) return;
+      setSavedFarms((current) => current?.filter((farm) => farm.id !== deleteTarget.id) ?? null);
       setDeleteTarget(null);
       toast(t.trackerFarms.deleted);
     } catch (caught) {
-      setDeleteError(requestErrorMessage(caught, t));
+      if (!current()) return;
+      if (isProtectedDataError(caught)) retireRows(caught);
+      else setDeleteError(requestErrorMessage(caught, t));
     } finally {
       deletingRef.current = false;
       setDeleting(false);
     }
   }
+  const copy = t.trackerFarms;
   return (
-    <>
-      <PageHeading
-        action={
+    <Stack gap="md" miw={0}>
+      <ListToolbar
+        primaryAction={
           <Button
-            component={Link}
+            component={AdminNavigationLink}
             aria-haspopup={orderDirty ? "dialog" : undefined}
-
-            href="/tracker-farms/new"
-            onClick={(event) => guardNavigation(event, "/tracker-farms/new")}
+            aria-disabled={orderLocked || undefined}
+            href={enableHref}
+            onNavigate={(event) => guardLink(event, enableHref)}
           >
-            {t.trackerFarms.create}
+            {copy.create}
           </Button>
         }
-        description={t.page.trackerFarmsDescription}
-        title={t.common.trackerFarms}
       />
-      <section
-        aria-busy={loading || orderLocked}
-        className="admin-list-section tracker-farm-section"
-      >
-        <ListState
-          empty={t.trackerFarms.empty}
-          error={loadError}
-          hasData={farms !== null}
-          isEmpty={farms?.length === 0}
-          loading={loading}
-          loadingLabel={t.trackerFarms.loading}
-          onRetry={() => void loadFarms()}
-          retryLabel={t.common.retry}
-        />
+      <Paper w="100%" miw={0} style={{ overflow: "hidden" }} aria-busy={loading || orderLocked}>
+        <Box p={loadError ? "md" : undefined}>
+          <ListState
+            embedded
+            empty={copy.empty}
+            error={loadError}
+            hasData={farms !== null}
+            isEmpty={farms?.length === 0}
+            loading={loading}
+            loadingLabel={copy.loading}
+            onRetry={() => void loadFarms()}
+            retryLabel={t.common.retry}
+          />
+        </Box>
+        {reorderError && (
+          <Box p="md">
+            <Alert color="red" role="alert">
+              {reorderError}
+            </Alert>
+          </Box>
+        )}
         {farms && farms.length > 0 && (
           <>
-            <div className="tracker-order-toolbar">
-              <p className="muted-copy">{t.trackerFarms.reorderHelp}</p>
-              {orderDirty && (
-                <div className="tracker-order-actions">
-                  <Button
-                    variant="default"
-                    disabled={savingOrder}
-                    onClick={() => {
-                      setFarms(savedFarms);
-                      setDraggedId("");
-                      setReorderError("");
-                    }}
-                    type="button"
-                  >
-                    {t.trackerFarms.cancelOrder}
-                  </Button>
-                  <Button
-                    disabled={savingOrder}
-                    onClick={() => void saveOrderChanges()}
-                    type="button"
-                  >
-                    {savingOrder ? t.trackerFarms.savingOrder : t.trackerFarms.saveOrder}
-                  </Button>
-                </div>
-              )}
-            </div>
-            {reorderError && (
-              <Alert color="red" role="alert">
-                {reorderError}
-              </Alert>
+            {farms.length > 1 && (
+              <>
+                <Group px="md" py="sm" gap="sm" justify="space-between">
+                  <Text size="sm" c="dimmed">
+                    {copy.reorderHelp}
+                  </Text>
+                  {orderDirty && (
+                    <Group gap="xs">
+                      <Button
+                        variant="default"
+                        disabled={savingOrder}
+                        onClick={discardOrder}
+                        type="button"
+                      >
+                        {copy.cancelOrder}
+                      </Button>
+                      <Button
+                        disabled={savingOrder}
+                        onClick={() => void saveOrderChanges()}
+                        type="button"
+                      >
+                        {savingOrder ? copy.savingOrder : copy.saveOrder}
+                      </Button>
+                    </Group>
+                  )}
+                </Group>
+                <Divider />
+              </>
             )}
             <Table.ScrollContainer
               type="native"
-              minWidth={0}
-              className="table-wrap admin-list-wrap"
+              minWidth={740}
+              role="region"
+              aria-label={t.common.trackerFarms}
+              tabIndex={0}
+              style={{ outlineOffset: -2 }}
             >
-              <Table role="table" className="admin-list-table tracker-farm-table">
-                <colgroup>
-                  <col className="tracker-farm-order-column" />
-                  <col className="tracker-farm-image-column" />
-                  <col className="tracker-farm-details-column" />
-                  <col className="tracker-farm-details-column" />
-                  <col className="tracker-farm-signups-column" />
-                  <col className="tracker-farm-milestone-column" />
-                  <col className="tracker-farm-visibility-column" />
-                  <col className="tracker-farm-actions-column" />
-                </colgroup>
-                <Table.Thead role="rowgroup">
-                  <Table.Tr role="row">
-                    <Table.Th role="columnheader" aria-label={t.trackerFarms.order} scope="col" />
-                    <Table.Th role="columnheader" aria-label={t.trackerFarms.image} scope="col" />
-                    <Table.Th role="columnheader" scope="col">
-                      {t.trackerFarms.farmName}
-                    </Table.Th>
-                    <Table.Th role="columnheader" scope="col">
-                      {t.trackerFarms.location}
-                    </Table.Th>
-                    <Table.Th role="columnheader" scope="col">
-                      {t.trackerFarms.signups}
-                    </Table.Th>
-                    <Table.Th role="columnheader" scope="col">
-                      {t.trackerFarms.milestone}
-                    </Table.Th>
-                    <Table.Th role="columnheader" scope="col">
-                      {t.trackerFarms.visibility}
-                    </Table.Th>
-                    <Table.Th role="columnheader" scope="col">
-                      {t.trackerFarms.actions}
-                    </Table.Th>
+              <Table aria-label={t.common.trackerFarms} withRowBorders>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th scope="col">{copy.order}</Table.Th>
+                    <Table.Th scope="col">{copy.farmName}</Table.Th>
+                    <Table.Th scope="col">{copy.signups}</Table.Th>
+                    <Table.Th scope="col">{copy.milestone}</Table.Th>
+                    <Table.Th scope="col">{copy.visibility}</Table.Th>
+                    <Table.Th scope="col">{copy.actions}</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
-                <Table.Tbody role="rowgroup">
+                <Table.Tbody>
                   {farms.map((farm, index) => {
                     const name = locale === "vi" ? farm.name_vi : farm.name_en;
                     const location = locale === "vi" ? farm.location_vi : farm.location_en;
-                    const editLabel = t.trackerFarms.edit.replace("{name}", name);
-                    const deleteLabel = t.trackerFarms.delete.replace("{name}", name);
+                    const editLabel = copy.edit.replace("{name}", name);
+                    const deleteLabel = copy.delete.replace("{name}", name);
+                    const href = farmHref(searchParams, {
+                      id: farm.id,
+                      tab: "tracker",
+                      view: "tracker",
+                    });
+                    const dragging = draggedId === farm.id;
 
                     return (
                       <Table.Tr
-                        role="row"
-                        className={draggedId === farm.id ? "is-dragging" : undefined}
+                        data-selected={dragging || undefined}
                         key={farm.id}
                         onDragOver={(event) => {
-                          if (!orderLocked && draggedId && draggedId !== farm.id) {
+                          if (!orderLocked && draggedId && !dragging) {
                             event.preventDefault();
                             event.dataTransfer.dropEffect = "move";
                           }
                         }}
                         onDrop={(event) => {
+                          if (!draggedId || orderLocked) return;
                           event.preventDefault();
-                          moveFarm(draggedId || event.dataTransfer.getData("text/plain"), index);
+                          moveFarm(draggedId, index);
                           setDraggedId("");
                         }}
                       >
-                        <Table.Td role="cell" data-label={t.trackerFarms.order}>
-                          <div className="tracker-order-controls">
-                            <Button
-                              aria-label={t.trackerFarms.drag.replace("{name}", name)}
-                              className="tracker-drag-handle"
-                              disabled={orderLocked}
-                              draggable={!orderLocked}
+                        <Table.Td>
+                          <Group gap="xs" wrap="nowrap">
+                            <ActionIcon
+                              aria-label={copy.drag.replace("{name}", name)}
+                              className={styles.dragHandle}
+                              disabled={orderLocked || farms.length < 2}
+                              draggable={!orderLocked && farms.length > 1}
                               onDragEnd={() => setDraggedId("")}
                               onDragStart={(event) => startDragging(event, farm.id)}
+                              tabIndex={-1}
+                              variant="default"
                               type="button"
                             >
-                              <span aria-hidden="true">⠿</span>
-                            </Button>
-                            <div className="tracker-order-buttons">
-                              <Button
-                                aria-label={t.trackerFarms.moveUp.replace("{name}", name)}
+                              <IconGripVertical aria-hidden size={18} />
+                            </ActionIcon>
+                            <Group gap={4} wrap="nowrap">
+                              <ActionIcon
+                                aria-label={copy.moveUp.replace("{name}", name)}
                                 disabled={orderLocked || index === 0}
                                 onClick={() => moveFarm(farm.id, index - 1)}
+                                variant="default"
                                 type="button"
                               >
-                                ↑
-                              </Button>
-                              <Button
-                                aria-label={t.trackerFarms.moveDown.replace("{name}", name)}
+                                <IconArrowUp aria-hidden size={16} />
+                              </ActionIcon>
+                              <ActionIcon
+                                aria-label={copy.moveDown.replace("{name}", name)}
                                 disabled={orderLocked || index === farms.length - 1}
                                 onClick={() => moveFarm(farm.id, index + 1)}
+                                variant="default"
                                 type="button"
                               >
-                                ↓
-                              </Button>
-                            </div>
-                          </div>
+                                <IconArrowDown aria-hidden size={16} />
+                              </ActionIcon>
+                            </Group>
+                          </Group>
                         </Table.Td>
-                        <Table.Td
-                          role="cell"
-                          className="tracker-farm-thumbnail-cell"
-                          data-label={t.trackerFarms.image}
-                        >
-                          <FarmThumbnail farm={farm} name={name} />
+                        <Table.Td>
+                          <Group gap="sm" wrap="nowrap" miw={0}>
+                            <FarmThumbnail farm={farm} name={name} />
+                            <Stack gap={4} miw={0} style={{ overflowWrap: "anywhere" }}>
+                              <Anchor
+                                component={AdminNavigationLink}
+                                aria-haspopup={orderDirty ? "dialog" : undefined}
+                                aria-disabled={orderLocked || undefined}
+                                fw={600}
+                                href={href}
+                                lang={locale}
+                                onNavigate={(event) => guardLink(event, href)}
+                              >
+                                {name}
+                              </Anchor>
+                              <Text size="sm" c="dimmed" lang={locale}>
+                                {location}
+                              </Text>
+                            </Stack>
+                          </Group>
                         </Table.Td>
-                        <Table.Td role="cell" data-label={t.trackerFarms.farmName}>
-                          <strong lang={locale}>{name}</strong>
+                        <Table.Td>
+                          <Text span fw={600}>
+                            {farm.signup_count}
+                          </Text>
                         </Table.Td>
-                        <Table.Td role="cell" data-label={t.trackerFarms.location}>
-                          <span lang={locale}>{location}</span>
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={t.trackerFarms.signups}>
-                          <strong>{farm.signup_count}</strong>
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={t.trackerFarms.milestone}>
-                          {milestoneLabel(farm.signup_count, t)}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={t.trackerFarms.visibility}>
+                        <Table.Td>{copy[trackerMilestone(farm.signup_count)]}</Table.Td>
+                        <Table.Td>
                           <Status
                             domain="visibility"
                             status={farm.is_visible ? "visible" : "hidden"}
-                            label={farm.is_visible ? t.trackerFarms.visible : t.trackerFarms.hidden}
+                            label={farm.is_visible ? copy.visible : copy.hidden}
                           />
                         </Table.Td>
-                        <Table.Td role="cell" data-label={t.trackerFarms.actions}>
-                          <div className="tracker-row-actions">
+                        <Table.Td>
+                          <Group gap="xs" wrap="nowrap">
                             <ActionIcon
-                              component={Link}
+                              component={AdminNavigationLink}
                               aria-label={editLabel}
                               aria-haspopup={orderDirty ? "dialog" : undefined}
-                              variant="default"
-
-                              href={`/tracker-farms/${farm.id}`}
-                              onClick={(event) =>
-                                guardNavigation(event, `/tracker-farms/${farm.id}`)
-                              }
+                              aria-disabled={orderLocked || undefined}
+                              href={href}
+                              onNavigate={(event) => guardLink(event, href)}
                               title={editLabel}
+                              variant="default"
                             >
-                              <IconEdit aria-hidden="true" size={18} stroke={1.8} />
+                              <IconEdit aria-hidden size={18} stroke={1.8} />
                             </ActionIcon>
                             <ActionIcon
                               aria-label={deleteLabel}
                               color="red"
-
                               disabled={mutationLocked}
                               onClick={() => {
                                 setDeleteError("");
@@ -437,9 +489,9 @@ export function TrackerFarmManager() {
                               title={deleteLabel}
                               type="button"
                             >
-                              <IconTrash aria-hidden="true" size={18} stroke={1.8} />
+                              <IconTrash aria-hidden size={18} stroke={1.8} />
                             </ActionIcon>
-                          </div>
+                          </Group>
                         </Table.Td>
                       </Table.Tr>
                     );
@@ -449,7 +501,7 @@ export function TrackerFarmManager() {
             </Table.ScrollContainer>
           </>
         )}
-      </section>
+      </Paper>
       {deleteTarget && (
         <ConfirmationDialog
           busy={deleting}
@@ -479,13 +531,13 @@ export function TrackerFarmManager() {
           confirmLabel={t.trackerFarms.saveOrder}
           error={reorderError}
           onAlternate={discardOrderAndNavigate}
-          onCancel={() => !savingOrder && setPendingNavigation("")}
+          onCancel={() => !savingOrder && setPendingNavigation(null)}
           onConfirm={() => void saveOrderAndNavigate()}
           title={t.trackerFarms.unsavedOrderTitle}
         >
           <p>{t.trackerFarms.unsavedOrderBody}</p>
         </ConfirmationDialog>
       )}
-    </>
+    </Stack>
   );
 }
