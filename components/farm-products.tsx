@@ -24,7 +24,13 @@ import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { apiErrorContext, isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { farmHref, normalizeFarmSupplySearch, readFarmSupplyContext } from "@/lib/farm-navigation";
-import { farmListKey, farmSupplyKey } from "@/lib/farm-query";
+import {
+  farmAccess,
+  farmAccessDenied,
+  farmListKey,
+  farmSupplyKey,
+  retireFarmAccess,
+} from "@/lib/farm-query";
 import {
   addFarmProduct,
   getFarmProduct,
@@ -298,6 +304,7 @@ function AddFarmProduct({
   const recovery = useRef<AbortController | null>(null);
   const mutationKey = addMutationKey(farm.id);
   const cache = queryClient.getMutationCache();
+  // Pending writes stay observable across routes. Only unresolved writes survive settlement.
   const mutation = useMutation({
     mutationKey,
     mutationFn: ({ product, batch }: AddAttempt) => addFarmProduct(farm.id, product.id, batch),
@@ -326,27 +333,35 @@ function AddFarmProduct({
     if (!selected || unconfirmed || pending.current || !currentSession()) return;
     pending.current = true;
     const attempt = { product: selected, batch };
+    const accessRevision = farmAccess(queryClient).revision;
+    const permitted = () => currentSession() && farmAccess(queryClient).revision === accessRevision;
     let uncertain = false;
     setError("");
     try {
       await mutation.mutateAsync(attempt);
-      if (!currentSession()) return;
+      if (!permitted()) return;
       void queryClient.invalidateQueries({
         queryKey: [...farmSupplyKey(farm.id), "picker"],
         refetchType: "none",
       });
       if (!active.current) {
-        void queryClient.invalidateQueries({ queryKey: farmSupplyKey(farm.id) });
+        void queryClient.invalidateQueries({ queryKey: [...farmSupplyKey(farm.id), "list"] });
+        void queryClient.invalidateQueries({
+          queryKey: [...farmSupplyKey(farm.id), "source", selected.id],
+        });
         void queryClient.invalidateQueries({ queryKey: farmListKey });
         return;
       }
       if (tabActive.current) toast(c.addedProduct);
       onAdded();
     } catch (cause) {
-      uncertain =
-        currentSession() && !isProtectedDataError(cause) && isUncertainFarmSupplyWrite(cause);
-      if (!active.current || !currentSession()) return;
-      if (isProtectedDataError(cause)) return onAccessLost?.(cause);
+      if (currentSession() && farmAccessDenied(cause)) {
+        retireFarmAccess(queryClient, cause);
+        if (active.current) onAccessLost?.(cause);
+        return;
+      }
+      uncertain = permitted() && isUncertainFarmSupplyWrite(cause);
+      if (!active.current || !permitted()) return;
       const blocker = parseFarmSourceBlocker({
         code: (cause as Error)?.message,
         context: apiErrorContext(cause) ?? undefined,
@@ -388,12 +403,18 @@ function AddFarmProduct({
   async function verify() {
     if (!selected || recovery.current || !currentSession()) return;
     const controller = new AbortController();
+    const accessRevision = farmAccess(queryClient).revision;
+    const canUpdate = () =>
+      !controller.signal.aborted &&
+      active.current &&
+      currentSession() &&
+      farmAccess(queryClient).revision === accessRevision;
     recovery.current = controller;
     setChecking(true);
     setCheckMessage("");
     try {
       await getFarmProduct(farm.id, selected.id, controller.signal);
-      if (!controller.signal.aborted && active.current && currentSession()) {
+      if (canUpdate()) {
         setFound(true);
         setCheckMessage(c.sourceFoundReview);
         void queryClient.invalidateQueries({ queryKey: [...farmSupplyKey(farm.id), "list"] });
@@ -404,13 +425,15 @@ function AddFarmProduct({
         });
       }
     } catch (cause) {
-      if (!controller.signal.aborted && active.current && currentSession()) {
-        if (isProtectedDataError(cause)) onAccessLost?.(cause);
-        else setCheckMessage(c.addStillUncertain);
+      if (!controller.signal.aborted && currentSession() && farmAccessDenied(cause)) {
+        retireFarmAccess(queryClient, cause);
+        if (active.current) onAccessLost?.(cause);
+      } else if (canUpdate()) {
+        setCheckMessage(c.addStillUncertain);
       }
     } finally {
       recovery.current = null;
-      if (!controller.signal.aborted && active.current && currentSession()) setChecking(false);
+      if (canUpdate()) setChecking(false);
     }
   }
 
@@ -479,63 +502,71 @@ function AddFarmProduct({
           )
         }
       >
-        <ListToolbar
-          search={{
-            label: c.productSearch,
-            value: searchDraft,
-            appliedValue: search,
-            formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
-            submitLabel: c.searchButton,
-            onChange: setSearchDraft,
-            onSubmit: (value) => {
-              const trimmed = normalizeFarmSupplySearch(value);
-              if (search === trimmed && page === 1) void picker.refetch();
-              else {
-                setSearch(trimmed);
-                setPage(1);
-              }
-            },
-          }}
-          busy={busy || unconfirmed}
-        />
-        <ListState
-          embedded
-          loading={picker.isPending}
-          loadingLabel={c.loadingSupply}
-          hasData={Boolean(picker.data)}
-          isEmpty={items.length === 0}
-          empty={c.noCatalogMatch}
-          error={picker.error ? requestErrorMessage(picker.error, t) : ""}
-          onRetry={() => void picker.refetch()}
-          retryLabel={t.common.retry}
-        />
-        <Select
-          label={c.productColumn}
-          role="combobox"
-          placeholder={c.chooseProduct}
-          disabled={busy || unconfirmed || picker.isFetching || Boolean(picker.error)}
-          value={selected?.id ?? null}
-          data={products.map((row) => ({
-            value: row.id,
-            label: `${locale === "vi" ? row.name_vi : row.name_en} · ${row.sku}`,
-          }))}
-          onChange={(id) => setSelected(products.find((row) => row.id === id))}
-        />
-        {picker.data && picker.data.meta.total > picker.data.meta.page_size && (
-          <Group>
-            <Pagination
-              page={page}
-              pageSize={picker.data.meta.page_size}
-              total={picker.data.meta.total}
-              disabled={busy || unconfirmed || picker.isFetching}
-              onPage={setPage}
-              previousLabel={t.common.previous}
-              nextLabel={t.common.next}
-              summary={t.common.pagination}
-              resultCountLabel={t.common.resultCount}
-              resultCountSingularLabel={t.common.resultCountSingular}
+        {unconfirmed && selected ? (
+          <Text fw={600} style={{ overflowWrap: "anywhere" }}>
+            {locale === "vi" ? selected.name_vi : selected.name_en} · {selected.sku}
+          </Text>
+        ) : (
+          <>
+            <ListToolbar
+              search={{
+                label: c.productSearch,
+                value: searchDraft,
+                appliedValue: search,
+                formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
+                submitLabel: c.searchButton,
+                onChange: setSearchDraft,
+                onSubmit: (value) => {
+                  const trimmed = normalizeFarmSupplySearch(value);
+                  if (search === trimmed && page === 1) void picker.refetch();
+                  else {
+                    setSearch(trimmed);
+                    setPage(1);
+                  }
+                },
+              }}
+              busy={busy}
             />
-          </Group>
+            <ListState
+              embedded
+              loading={picker.isLoading}
+              loadingLabel={c.loadingSupply}
+              hasData={Boolean(picker.data)}
+              isEmpty={items.length === 0}
+              empty={c.noCatalogMatch}
+              error={picker.error ? requestErrorMessage(picker.error, t) : ""}
+              onRetry={() => void picker.refetch()}
+              retryLabel={t.common.retry}
+            />
+            <Select
+              label={c.productColumn}
+              role="combobox"
+              placeholder={c.chooseProduct}
+              disabled={busy || picker.isFetching || Boolean(picker.error)}
+              value={selected?.id ?? null}
+              data={products.map((row) => ({
+                value: row.id,
+                label: `${locale === "vi" ? row.name_vi : row.name_en} · ${row.sku}`,
+              }))}
+              onChange={(id) => setSelected(products.find((row) => row.id === id))}
+            />
+            {picker.data && picker.data.meta.total > picker.data.meta.page_size && (
+              <Group>
+                <Pagination
+                  page={page}
+                  pageSize={picker.data.meta.page_size}
+                  total={picker.data.meta.total}
+                  disabled={busy || picker.isFetching}
+                  onPage={setPage}
+                  previousLabel={t.common.previous}
+                  nextLabel={t.common.next}
+                  summary={t.common.pagination}
+                  resultCountLabel={t.common.resultCount}
+                  resultCountSingularLabel={t.common.resultCountSingular}
+                />
+              </Group>
+            )}
+          </>
         )}
       </FarmBatchDialog>
     </>

@@ -27,9 +27,15 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
-import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
+import { requestErrorMessage } from "@/lib/client-error";
 import { farmHref, readFarmListContext } from "@/lib/farm-navigation";
-import { farmListKey, retireFarmQueries } from "@/lib/farm-query";
+import {
+  farmAccessDenied,
+  farmListKey,
+  retireFarmAccess,
+  retryFarmAccess,
+  useFarmAccess,
+} from "@/lib/farm-query";
 import { listFarms } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { mediaUrlForWidth } from "@/lib/media";
@@ -43,7 +49,7 @@ export function FarmList() {
   const client = useQueryClient();
   const { search, status, page } = readFarmListContext(params);
   const [query, setQuery] = useState(search);
-  const [accessError, setAccessError] = useState<Error | null>(null);
+  const { error: accessError } = useFarmAccess();
   useEffect(() => setQuery(search), [search]);
 
   const result = useQuery({
@@ -59,10 +65,8 @@ export function FarmList() {
     enabled: !accessError && isCurrent(),
   });
   useEffect(() => {
-    if (!accessError && isCurrent() && result.error && isProtectedDataError(result.error)) {
-      setAccessError(result.error);
-      retireFarmQueries(client);
-    }
+    if (!accessError && isCurrent() && farmAccessDenied(result.error))
+      retireFarmAccess(client, result.error);
   }, [accessError, client, isCurrent, result.error]);
   const cause = accessError ?? result.error;
   const items = !cause ? (result.data?.data ?? null) : null;
@@ -70,7 +74,7 @@ export function FarmList() {
   const loading = !accessError && (result.isPending || result.isFetching);
   const error = cause ? requestErrorMessage(cause, t) : "";
   const reload = () => {
-    if (accessError) setAccessError(null);
+    if (accessError) retryFarmAccess(client);
     else void result.refetch();
   };
   const lastPage = meta ? Math.max(1, Math.ceil(meta.total / meta.page_size)) : page;

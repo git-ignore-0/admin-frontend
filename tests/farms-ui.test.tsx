@@ -1415,7 +1415,7 @@ it("loads lifecycle events by page on intent and distinguishes system classifica
     ),
   );
   view(<FarmSourceDetail farm={farm} productId="product-1" />);
-  const open = await screen.findByRole("button", { name: "Xem lịch sử nguồn cung" });
+  const open = await screen.findByRole("button", { name: "Lịch sử nguồn cung" });
   expect(mocks.history).not.toHaveBeenCalled();
   fireEvent.click(open);
   expect(await screen.findByText(/khi hệ thống cập nhật dữ liệu/)).toBeVisible();
@@ -1430,7 +1430,7 @@ it("retires the verified source and its actions when a linked read loses access"
   mocks.history.mockRejectedValue(fail("forbidden", 403));
   view(<FarmDetail farmId={farm.id} productId="product-1" />);
   expect(await screen.findByRole("heading", { name: "Rau muống" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Xem lịch sử nguồn cung" }));
+  fireEvent.click(screen.getByRole("button", { name: "Lịch sử nguồn cung" }));
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Rau muống" })).not.toBeInTheDocument(),
   );
@@ -1549,4 +1549,125 @@ it("keeps date status separate from history and protects old batches in all scop
     "history",
     "all",
   ]);
+});
+
+it.each(["edit", "cancel"] as const)(
+  "lets an uncertain batch %s be reviewed on another page without replaying the write",
+  async (action) => {
+    prepareInventory();
+    let changed = false;
+    const other = { ...liveBatch, id: "another-batch", version: 2 };
+    const updated: FarmStockBatch =
+      action === "edit"
+        ? { ...liveBatch, quantity_units: 8, remaining_quantity: 8, version: 2 }
+        : { ...liveBatch, status: "cancelled", available_quantity: 0, version: 2 };
+    mocks.batches.mockImplementation((_farm, _product, { page, status }) =>
+      Promise.resolve(
+        linkedResult(
+          !changed
+            ? [liveBatch]
+            : page === 2 && (action === "edit" || status === "cancelled")
+              ? [updated]
+              : [other],
+          page,
+          21,
+        ),
+      ),
+    );
+    const mutation = action === "edit" ? mocks.updateBatch : mocks.cancelBatch;
+    mutation.mockImplementation(async () => {
+      changed = true;
+      throw fail("request_timeout", 408);
+    });
+
+    view(<FarmSourceDetail farm={farm} productId="product-1" />);
+    const trigger = action === "edit" ? "Sửa đợt cung cấp" : "Hủy đợt cung cấp";
+    fireEvent.click(await screen.findByRole("button", { name: trigger }));
+    const dialog = within(screen.getByRole("dialog", { name: trigger }));
+    if (action === "edit") {
+      fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "8" } });
+    }
+    fireEvent.click(
+      dialog.getByRole("button", { name: action === "edit" ? "Lưu thay đổi" : trigger }),
+    );
+    fireEvent.click(await dialog.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+    expect(await dialog.findByText(/Trang đợt cung cấp hiện tại/)).toBeVisible();
+    fireEvent.click(dialog.getByRole("button", { name: "Hủy" }));
+
+    expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Lịch sử nguồn cung" }));
+    await waitFor(() => expect(mocks.history).toHaveBeenCalledOnce());
+    const scope = screen.getByRole("combobox", { name: "Phạm vi đợt cung cấp" });
+    expect(scope).toBeEnabled();
+    if (action === "cancel") {
+      const status = screen.getByRole("combobox", { name: "Trạng thái đợt cung cấp" });
+      expect(status).toBeEnabled();
+      fireEvent.click(status);
+      fireEvent.click(await screen.findByRole("option", { name: "Đã hủy" }));
+    }
+    const next = await screen.findByRole("button", { name: "Sau" });
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+    await waitFor(() =>
+      expect(mocks.batches).toHaveBeenLastCalledWith(
+        farm.id,
+        "product-1",
+        expect.objectContaining({ page: 2 }),
+        expect.anything(),
+      ),
+    );
+    expect(await screen.findByText("Đợt cần đối chiếu")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeDisabled();
+    const readsBeforeReview = mocks.batches.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+    expect(await screen.findByText(/Dữ liệu hiện tại khớp/)).toBeVisible();
+    expect(mocks.batches).toHaveBeenCalledTimes(readsBeforeReview);
+    fireEvent.click(screen.getByRole("button", { name: "Đóng và xem lại" }));
+    expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeEnabled();
+    expect(mutation).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("retains uncertain batch intent across routes and treats older snapshots as inconclusive until a new generation is verified", async () => {
+  prepareInventory();
+  const pending = deferred<FarmStockBatch>();
+  mocks.cancelBatch.mockReturnValue(pending.promise);
+  const route = (opened: boolean) => (
+    <AdminI18nProvider initialLocale="vi">
+      <ToastProvider>
+        <AdminQueryProvider>
+          {opened ? <FarmSourceDetail farm={farm} productId="product-1" /> : <p>Other route</p>}
+        </AdminQueryProvider>
+      </ToastProvider>
+    </AdminI18nProvider>
+  );
+  const rendered = render(route(true));
+  fireEvent.click(await screen.findByRole("button", { name: "Hủy đợt cung cấp" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy đợt cung cấp" }),
+  );
+  await waitFor(() => expect(mocks.cancelBatch).toHaveBeenCalledTimes(1));
+  rendered.rerender(route(false));
+  await act(async () => pending.reject(fail("request_timeout", 408)));
+  rendered.rerender(route(true));
+
+  await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(2));
+  mocks.batches.mockRejectedValueOnce(fail("network_error", 503));
+  fireEvent.click(await screen.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  expect(await screen.findByText(/Chưa đủ dữ liệu/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(4));
+  expect(await screen.findByText(/Chưa đủ dữ liệu/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeDisabled();
+
+  mocks.source.mockResolvedValueOnce({ ...supplying, version: 4, supply_generation: 2 });
+  mocks.batches.mockResolvedValue(linkedResult([]));
+  fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  expect(await screen.findByText(/Dữ liệu đã thay đổi/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Đóng và xem lại" }));
+  expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeEnabled();
+  expect(mocks.cancelBatch).toHaveBeenCalledTimes(1);
 });

@@ -2,7 +2,7 @@
 
 import { Button, Group, Select, Stack, Table, Text, Title } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
@@ -16,29 +16,28 @@ import type { FarmBatchScope, FarmProduct, FarmStockBatch, StockBatchStatus } fr
 
 type Props = {
   source: FarmProduct;
+  filter: FarmBatchFilter;
+  onFilterChange: (filter: FarmBatchFilter) => void;
   locked: boolean;
+  reviewingBatchId?: string;
   onAccessLost?: (cause: unknown) => void;
-  onEdit: (batch: FarmStockBatch, filter: FarmBatchFilter) => void;
-  onCancel: (batch: FarmStockBatch, filter: FarmBatchFilter) => void;
+  onEdit: (batch: FarmStockBatch) => void;
+  onCancel: (batch: FarmStockBatch) => void;
 };
 
-export function FarmStockBatches(props: Props) {
-  return (
-    <BatchList
-      key={`${props.source.id}:${props.source.supply_generation}:${props.source.supply_status}`}
-      {...props}
-    />
-  );
-}
-
-function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
+export function FarmStockBatches({
+  source,
+  filter,
+  onFilterChange,
+  locked,
+  reviewingBatchId,
+  onAccessLost,
+  onEdit,
+  onCancel,
+}: Props) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const removed = source.supply_status === "removed";
-  const [filter, setFilter] = useState<FarmBatchFilter>({
-    scope: removed ? "history" : "current",
-    page: 1,
-  });
   const result = useQuery(farmBatchQuery(source, filter));
   const denied = isProtectedDataError(result.error);
   const data = result.error ? undefined : result.data;
@@ -50,9 +49,8 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
     if (denied) onAccessLost?.(result.error);
   }, [denied, onAccessLost, result.error]);
   useEffect(() => {
-    if (lastPage < filter.page)
-      setFilter((current) => ({ ...current, page: Math.min(current.page, lastPage) }));
-  }, [lastPage, filter.page]);
+    if (lastPage < filter.page) onFilterChange({ ...filter, page: lastPage });
+  }, [filter, lastPage, onFilterChange]);
 
   if (denied) return null;
   const statuses: Record<StockBatchStatus, string> = {
@@ -66,9 +64,14 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
   return (
     <Stack gap="sm" miw={0}>
       <Group justify="space-between" gap="sm" align="end">
-        <Title order={3} size="h4">
-          {c.stockBatches}
-        </Title>
+        <Stack gap={4}>
+          <Title order={3} size="h4">
+            {c.stockBatches}
+          </Title>
+          <Text size="xs" c="dimmed">
+            {c.batchSellingUnits}
+          </Text>
+        </Stack>
         <Group gap="sm" align="end">
           {!removed && (
             <Select
@@ -82,9 +85,8 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
                 { value: "all", label: c.allBatches },
               ]}
               onChange={(value) => {
-                if (value) setFilter({ ...filter, scope: value as FarmBatchScope, page: 1 });
+                if (value) onFilterChange({ ...filter, scope: value as FarmBatchScope, page: 1 });
               }}
-              disabled={locked}
             />
           )}
           <Select
@@ -97,25 +99,28 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
               ...Object.entries(statuses).map(([value, label]) => ({ value, label })),
             ]}
             onChange={(value) =>
-              setFilter({
+              onFilterChange({
                 ...filter,
                 status: (value || undefined) as StockBatchStatus | undefined,
                 page: 1,
               })
             }
-            disabled={locked}
           />
         </Group>
       </Group>
       {Boolean(data?.data.length) && (
         <Table.ScrollContainer
           type="native"
-          minWidth={actions ? 665 : 510}
+          minWidth={actions ? 600 : 490}
           role="region"
           aria-label={c.stockBatches}
           tabIndex={0}
         >
-          <Table aria-label={c.stockBatches} aria-busy={result.isFetching || undefined}>
+          <Table
+            horizontalSpacing="sm"
+            aria-label={c.stockBatches}
+            aria-busy={result.isFetching || undefined}
+          >
             <Table.Thead>
               <Table.Tr>
                 <Table.Th scope="col">{c.batchPeriod}</Table.Th>
@@ -135,6 +140,11 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
                   <Table.Tr key={batch.id}>
                     <Table.Td>
                       {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
+                      {batch.id === reviewingBatchId && (
+                        <Text size="xs" c="dimmed">
+                          {c.batchPendingReview}
+                        </Text>
+                      )}
                     </Table.Td>
                     <Table.Td>{num.format(batch.quantity_units)}</Table.Td>
                     <Table.Td>
@@ -164,17 +174,19 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
                             <Button
                               variant="subtle"
                               disabled={locked || result.isFetching}
-                              onClick={() => onEdit(batch, filter)}
+                              aria-label={c.editBatch}
+                              onClick={() => onEdit(batch)}
                             >
-                              {c.editBatch}
+                              {c.editBatchShort}
                             </Button>
                             <Button
                               color="red"
                               variant="subtle"
                               disabled={locked || result.isFetching}
-                              onClick={() => onCancel(batch, filter)}
+                              aria-label={c.cancelBatch}
+                              onClick={() => onCancel(batch)}
                             >
-                              {c.cancelBatch}
+                              {c.cancelBatchShort}
                             </Button>
                           </Group>
                         )}
@@ -209,8 +221,8 @@ function BatchList({ source, locked, onAccessLost, onEdit, onCancel }: Props) {
           page={filter.page}
           pageSize={data.meta.page_size}
           total={data.meta.total}
-          disabled={locked || result.isFetching || lastPage < filter.page}
-          onPage={(page) => setFilter({ ...filter, page })}
+          disabled={result.isFetching || lastPage < filter.page}
+          onPage={(page) => onFilterChange({ ...filter, page })}
           previousLabel={t.common.previous}
           nextLabel={t.common.next}
           summary={t.common.pagination}

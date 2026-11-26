@@ -38,9 +38,19 @@ import { PageHeading } from "@/components/page-heading";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
-import { type ClientApiError, isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
+import { type ClientApiError, requestErrorMessage } from "@/lib/client-error";
 import { farmHref } from "@/lib/farm-navigation";
-import { farmDetailKey, farmListKey, farmSupplyKey, retireFarmQueries } from "@/lib/farm-query";
+import {
+  farmAccess,
+  farmAccessDenied,
+  farmDetailKey,
+  farmListKey,
+  farmSupplyKey,
+  retireFarmAccess,
+  retireFarmQueries,
+  retryFarmAccess,
+  useFarmAccess,
+} from "@/lib/farm-query";
 import { deleteFarmImage, getFarm, saveFarm, uploadFarmImage } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { isSupportedImageFile } from "@/lib/image-validation";
@@ -88,11 +98,12 @@ function fromFarm(farm: Farm): Form {
 }
 
 function farmUnavailable(caught: unknown) {
-  return isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404;
+  return farmAccessDenied(caught) || (caught as ClientApiError | null)?.status === 404;
 }
 
 function farmSaveRejected(problem: ClientApiError | null) {
   return (
+    problem?.message === "csrf_rejected" ||
     (problem?.status === 400 &&
       ["validation_error", "invalid_request_body"].includes(problem.message)) ||
     (problem?.status === 409 &&
@@ -115,10 +126,20 @@ function discardTemporaryPhotos(uploads: UploadedPhotos) {
 }
 
 export function FarmEditor({ farmId }: { farmId?: string }) {
-  return <FarmEditorForm key={farmId ?? "new"} farmId={farmId} />;
+  const access = useFarmAccess();
+  return (
+    <FarmEditorForm key={`${farmId ?? "new"}:${access.revision}`} farmId={farmId} access={access} />
+  );
 }
 
-function FarmEditorForm({ farmId }: { farmId?: string }) {
+function FarmEditorForm({
+  farmId,
+  access,
+}: {
+  farmId?: string;
+  access: ReturnType<typeof useFarmAccess>;
+}) {
+  const { error: accessError, revision: accessRevision } = access;
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const router = useRouter();
@@ -154,13 +175,19 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
   const uploadLock = useRef(false);
 
   function canAct() {
-    return mounted.current && isCurrent() && !accessRevoked.current;
+    return (
+      mounted.current &&
+      isCurrent() &&
+      !accessRevoked.current &&
+      farmAccess(queryClient).revision === accessRevision
+    );
   }
 
   const hideFarm = useCallback(
     (cause: unknown) => {
       accessRevoked.current = true;
-      retireFarmQueries(queryClient, isProtectedDataError(cause) ? undefined : farmId);
+      if (farmAccessDenied(cause)) retireFarmAccess(queryClient, cause);
+      else if (farmId) retireFarmQueries(queryClient, farmId);
       setSavedNames(undefined);
       setForm(emptyForm);
       setPhotoError("");
@@ -192,11 +219,16 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
     return () => {
       mounted.current = false;
       recoveryRequest.current?.abort();
-      if (isCurrent() && !accessRevoked.current) discardTemporaryPhotos(uploads);
+      if (
+        isCurrent() &&
+        !accessRevoked.current &&
+        farmAccess(queryClient).revision === accessRevision
+      )
+        discardTemporaryPhotos(uploads);
     };
-  }, [isCurrent]);
+  }, [accessRevision, isCurrent, queryClient]);
   useEffect(() => {
-    if (!farmId || !isCurrent()) return;
+    if (accessError || !farmId || !isCurrent()) return;
     const controller = new AbortController();
     setLoading(true);
     setError("");
@@ -215,7 +247,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
         if (!controller.signal.aborted && isCurrent()) setLoading(false);
       });
     return () => controller.abort();
-  }, [adoptFarm, farmId, hideFarm, isCurrent, retry]);
+  }, [accessError, adoptFarm, farmId, hideFarm, isCurrent, retry]);
   useEffect(() => {
     if (!pendingFocus.current) return;
     const selector =
@@ -389,6 +421,15 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
         ...(farmId ? { version } : {}),
       });
     } catch (caught) {
+      if (isCurrent() && farmAccessDenied(caught)) {
+        if (mounted.current) {
+          hideFarm(caught);
+          setError(requestErrorMessage(caught, translationRef.current));
+        } else {
+          retireFarmAccess(queryClient, caught);
+        }
+        return;
+      }
       const problem = caught instanceof Error ? (caught as ClientApiError) : null;
       const unavailable = farmUnavailable(caught);
       const rejected = !unavailable && farmSaveRejected(problem);
@@ -416,7 +457,13 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
       return;
     }
     forgetReferencedPhotos(uploads, result);
-    if (!canAct()) return;
+    if (!isCurrent() || farmAccess(queryClient).revision !== accessRevision) return;
+    if (!canAct()) {
+      void queryClient.invalidateQueries({ queryKey: farmDetailKey(result.id) });
+      void queryClient.invalidateQueries({ queryKey: farmListKey });
+      void queryClient.invalidateQueries({ queryKey: farmSupplyKey(result.id) });
+      return;
+    }
     const detailKey = farmDetailKey(result.id);
     await queryClient.cancelQueries({ queryKey: detailKey });
     if (!canAct()) return;
@@ -481,6 +528,17 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
         <Alert color="danger" role="alert">
           {t.common.sessionChanged}
         </Alert>
+      </>
+    );
+  if (accessError)
+    return (
+      <>
+        {heading}
+        <RecoveryAlert
+          message={requestErrorMessage(accessError, t)}
+          retryLabel={t.common.retry}
+          onRetry={() => retryFarmAccess(queryClient)}
+        />
       </>
     );
   if (loading)

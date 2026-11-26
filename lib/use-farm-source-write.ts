@@ -10,8 +10,14 @@ import {
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
-import { apiErrorContext, isProtectedDataError, type ClientApiError } from "@/lib/client-error";
-import { farmListKey, farmSupplyKey } from "@/lib/farm-query";
+import { apiErrorContext, type ClientApiError } from "@/lib/client-error";
+import {
+  farmAccess,
+  farmAccessDenied,
+  farmListKey,
+  farmSupplyKey,
+  retireFarmAccess,
+} from "@/lib/farm-query";
 import {
   cancelFarmStockBatch,
   createFarmStockBatch,
@@ -32,7 +38,6 @@ import type {
 type SourceAction<Kind extends string> = { kind: Kind; source: FarmProductDetail };
 type BatchAction<Kind extends string> = SourceAction<Kind> & {
   batch: FarmStockBatch;
-  filter: FarmBatchFilter;
 };
 export type FarmSupplyAction =
   | SourceAction<"remove">
@@ -40,7 +45,7 @@ export type FarmSupplyAction =
   | SourceAction<"create">
   | BatchAction<"edit">
   | BatchAction<"cancel">;
-type Attempt = { action: FarmSupplyAction; input?: StockBatchInput };
+type Attempt = { action: FarmSupplyAction; input?: StockBatchInput; startedAt: number };
 type Failure = {
   type: "uncertain" | "conflict" | "rejected";
   cause: unknown;
@@ -98,6 +103,7 @@ export function useFarmSourceWrite(
   const writeScope = [...scope, "write"];
   const mutationKey = [...writeScope, "source", productId];
   const isWriting = useIsMutating({ mutationKey: writeScope }) > 0;
+  // Only uncertain outcomes survive the finally block until review or session retirement.
   const mutation = useMutation({ mutationKey, mutationFn: writeSupply, gcTime: Infinity });
   const cache = client.getMutationCache();
   const [unconfirmed] = useMutationState({
@@ -105,7 +111,7 @@ export function useFarmSourceWrite(
     select: (entry) => entry,
   })
     .filter(
-      ({ state }) => !isProtectedDataError(state.error) && isUncertainFarmSupplyWrite(state.error),
+      ({ state }) => !farmAccessDenied(state.error) && isUncertainFarmSupplyWrite(state.error),
     )
     .slice(-1);
   const mounted = useRef(false);
@@ -147,6 +153,18 @@ export function useFarmSourceWrite(
     return currentSession() && mounted.current;
   }
 
+  function sameAccess(revision: number) {
+    const access = farmAccess(client);
+    return currentSession() && access.revision === revision && !access.error;
+  }
+
+  function retireIfDenied(cause: unknown) {
+    if (!currentSession() || !farmAccessDenied(cause)) return false;
+    retireFarmAccess(client, cause);
+    if (mounted.current) onAccessLost?.(cause);
+    return true;
+  }
+
   function refreshDependents(kind: FarmSupplyAction["kind"], observedWrite: boolean) {
     const lifecycle = kind === "remove" || kind === "readd";
     void client.invalidateQueries({
@@ -161,11 +179,17 @@ export function useFarmSourceWrite(
     }
   }
 
-  async function inspect(attempt: Attempt, reason: Failure) {
+  async function inspect(
+    attempt: Attempt,
+    reason: Failure,
+    visiblePage: FarmBatchFilter,
+    accessRevision: number,
+  ) {
+    const canUpdate = () => active() && sameAccess(accessRevision);
     const query = farmSourceQuery(farmId, productId);
     recoveryRead.current = query.queryKey;
     const latest = await client.fetchQuery(query);
-    if (!active()) return;
+    if (!canUpdate()) return;
     const { action, input } = attempt;
     const previous = action.source;
     const sameLink = latest.id === previous.id;
@@ -200,13 +224,18 @@ export function useFarmSourceWrite(
       const batches = farmBatchQuery(latest, { scope: "current", page: 1 });
       recoveryRead.current = batches.queryKey;
       const page = await client.fetchQuery(batches);
-      if (!active()) return;
+      if (!canUpdate()) return;
       return setReview(
         page.data.some((batch) => batchMatchesInput(batch, input)) ? "matches" : "batch_missing",
       );
     }
     if ("batch" in action) {
-      const { batch, filter } = action;
+      const { batch } = action;
+      if (
+        latest.version < previous.version ||
+        latest.supply_generation < previous.supply_generation
+      )
+        return setReview("unknown");
       if (
         latest.supply_generation !== previous.supply_generation ||
         latest.supply_status === "removed"
@@ -214,11 +243,30 @@ export function useFarmSourceWrite(
         refreshDependents("remove", true);
         return setReview("changed");
       }
-      const batches = farmBatchQuery(latest, { ...filter, status: undefined });
-      recoveryRead.current = batches.queryKey;
-      const page = await client.fetchQuery(batches);
-      if (!active()) return;
-      const row = page.data.find(({ id }) => id === batch.id);
+      const batches = farmBatchQuery(latest, visiblePage);
+      const findBatch = (rows: FarmStockBatch[]) =>
+        rows.find(
+          (row) =>
+            row.id === batch.id &&
+            row.farm_product_id === latest.id &&
+            row.supply_generation === batch.supply_generation &&
+            row.source_version >= latest.version &&
+            !row.is_historical,
+        );
+      const cached = client.getQueryState(batches.queryKey);
+      let row = cached?.data && findBatch(cached.data.data);
+      if (
+        !row ||
+        row.version <= batch.version ||
+        cached?.status !== "success" ||
+        cached.isInvalidated ||
+        cached.dataUpdatedAt < attempt.startedAt
+      ) {
+        recoveryRead.current = batches.queryKey;
+        const { data } = await client.fetchQuery(batches);
+        if (!canUpdate()) return;
+        row = findBatch(data);
+      }
       if (!row) return setReview("batch_missing");
       if (row.version <= batch.version) return setReview("unknown");
       void client.invalidateQueries({ queryKey: [...scope, "list"] });
@@ -230,55 +278,59 @@ export function useFarmSourceWrite(
     }
   }
 
-  async function check(attempt: Attempt, reason: Failure) {
+  async function check(attempt: Attempt, reason: Failure, visiblePage: FarmBatchFilter) {
+    const { revision } = farmAccess(client);
+    if (!sameAccess(revision)) return;
     setChecking(true);
     setReview(null);
     try {
-      await inspect(attempt, reason);
+      await inspect(attempt, reason, visiblePage, revision);
     } catch (cause) {
-      if (!active()) return;
-      if (isProtectedDataError(cause)) onAccessLost?.(cause);
-      else setReview("unknown");
+      if (!retireIfDenied(cause) && active() && sameAccess(revision)) setReview("unknown");
     } finally {
       recoveryRead.current = null;
-      if (active()) setChecking(false);
+      if (active() && sameAccess(revision)) setChecking(false);
     }
   }
 
-  async function submit(action: FarmSupplyAction, onSuccess: () => void, input?: StockBatchInput) {
-    if (!active() || operation.current || isWriting) return;
+  async function submit(
+    action: FarmSupplyAction,
+    visiblePage: FarmBatchFilter,
+    onSuccess: () => void,
+    input?: StockBatchInput,
+  ) {
+    const { revision } = farmAccess(client);
+    if (!active() || !sameAccess(revision) || operation.current || isWriting) return;
     operation.current = true;
-    const attempt = { action, input };
+    const attempt = { action, input, startedAt: Date.now() };
     submitted.current = attempt;
     setFailure(null);
     let uncertain = false;
     try {
       await mutation.mutateAsync(attempt);
-      if (!currentSession()) return;
+      if (!sameAccess(revision)) return;
       void client.invalidateQueries({ queryKey: farmSourceQuery(farmId, productId).queryKey });
       refreshDependents(action.kind, true);
       if (active()) onSuccess();
     } catch (cause) {
-      uncertain =
-        currentSession() && !isProtectedDataError(cause) && isUncertainFarmSupplyWrite(cause);
+      if (retireIfDenied(cause) || !sameAccess(revision)) return;
+      uncertain = isUncertainFarmSupplyWrite(cause);
       if (!active()) return;
-      if (isProtectedDataError(cause)) return onAccessLost?.(cause);
       const { message, status } = (cause ?? {}) as ClientApiError;
-      const blocker = parseFarmSourceBlocker({
-        code: message,
-        context: apiErrorContext(cause) ?? undefined,
-      });
+      const conflict = status === 409 && !guardsWithoutRevisionChange.has(message);
+      const blocker =
+        conflict &&
+        (message === "farm_product_has_open_allocations" ||
+          message === "farm_product_supply_shortfall")
+          ? parseFarmSourceBlocker({ code: message, context: apiErrorContext(cause) })
+          : undefined;
       const next: Failure = {
-        type: uncertain
-          ? "uncertain"
-          : (status === 409 || blocker) && !guardsWithoutRevisionChange.has(message)
-            ? "conflict"
-            : "rejected",
+        type: uncertain ? "uncertain" : conflict ? "conflict" : "rejected",
         cause,
         blocker,
       };
       setFailure(next);
-      if (next.type === "conflict") await check(attempt, next);
+      if (next.type === "conflict") await check(attempt, next, visiblePage);
     } finally {
       if (!uncertain) {
         const entry = cache.find({
@@ -293,10 +345,10 @@ export function useFarmSourceWrite(
   }
 
   const attempt = submitted.current ?? (unconfirmed?.state.variables as Attempt | undefined);
-  function recover() {
+  function recover(visiblePage: FarmBatchFilter) {
     if (!failure || !attempt || operation.current || !active()) return;
     operation.current = true;
-    void check(attempt, failure).finally(() => {
+    void check(attempt, failure, visiblePage).finally(() => {
       operation.current = false;
     });
   }
@@ -307,6 +359,10 @@ export function useFarmSourceWrite(
     checking,
     pending: mutation.isPending,
     attemptedKind: attempt?.action.kind,
+    reviewingBatchId:
+      failure?.type === "uncertain" && attempt && "batch" in attempt.action
+        ? attempt.action.batch.id
+        : undefined,
     isWriting,
     reset,
     submit,

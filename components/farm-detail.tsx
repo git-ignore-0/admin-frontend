@@ -31,14 +31,24 @@ import { DataState, Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
-import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import { requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   farmDetailTabs,
   farmHref,
   readFarmDetailTab,
   type FarmDetailTab,
 } from "@/lib/farm-navigation";
-import { farmDetailKey, farmListKey, farmSupplyKey, retireFarmQueries } from "@/lib/farm-query";
+import {
+  farmAccess,
+  farmAccessDenied,
+  farmDetailKey,
+  farmListKey,
+  farmSupplyKey,
+  retireFarmAccess,
+  retireFarmQueries,
+  retryFarmAccess,
+  useFarmAccess,
+} from "@/lib/farm-query";
 import { deleteFarm, getFarm, saveFarm } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { mediaUrlForWidth } from "@/lib/media";
@@ -58,6 +68,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
   const search = useSearchParams();
   const isCurrent = useIsAdminQueryScopeCurrent();
   const queryClient = useQueryClient();
+  const access = useFarmAccess();
   const tab = readFarmDetailTab(search);
   const [visited, setVisited] = useState({
     products: tab === "products",
@@ -78,13 +89,15 @@ function FarmDetailContent({ farmId, productId }: Props) {
       if (signal.aborted || !isCurrent()) throw new CancelledError();
       return row;
     },
-    enabled: !unavailable && isCurrent(),
+    enabled: !access.error && !unavailable && isCurrent(),
     // Leaf navigation shares this parent snapshot. Focus and reconnect still revalidate it.
     refetchOnMount: (query) => query.state.isInvalidated || query.state.status === "error",
   });
-  const error = unavailable?.cause ?? farmQuery.error;
+  const error = access.error ?? unavailable?.cause ?? farmQuery.error;
   const farm =
-    isCurrent() && !unavailable && !recordUnavailable(farmQuery.error) ? farmQuery.data : null;
+    isCurrent() && !access.error && !unavailable && !recordUnavailable(farmQuery.error)
+      ? farmQuery.data
+      : null;
   const name = farm ? (locale === "vi" ? farm.name_vi : farm.name_en) : t.breadcrumb.farmDetails;
   const listHref = farmHref(search);
   const items = useMemo(
@@ -111,8 +124,11 @@ function FarmDetailContent({ farmId, productId }: Props) {
       recordEpoch.current += 1;
       setDialog(false);
       setBusy(false);
-      setUnavailable({ cause });
-      retireFarmQueries(queryClient, isProtectedDataError(cause) ? undefined : farmId);
+      if (farmAccessDenied(cause)) retireFarmAccess(queryClient, cause);
+      else {
+        setUnavailable({ cause });
+        retireFarmQueries(queryClient, farmId);
+      }
     },
     [farmId, isCurrent, queryClient],
   );
@@ -128,33 +144,53 @@ function FarmDetailContent({ farmId, productId }: Props) {
     setVisited((current) => (current[tab] ? current : { ...current, [tab]: true }));
   }, [tab]);
   useEffect(() => {
-    if (!unavailable && isCurrent() && recordUnavailable(farmQuery.error)) {
+    if (!access.error && !unavailable && isCurrent() && recordUnavailable(farmQuery.error)) {
       retireRecord(farmQuery.error);
     }
-  }, [farmQuery.error, isCurrent, retireRecord, unavailable]);
+  }, [access.error, farmQuery.error, isCurrent, retireRecord, unavailable]);
+
+  useEffect(() => {
+    if (!access.error) return;
+    setDialog(false);
+    setBusy(false);
+    setActionError("");
+  }, [access.error]);
 
   const reload = () => {
-    if (unavailable) setUnavailable(null);
+    if (access.error) retryFarmAccess(queryClient);
+    else if (unavailable) setUnavailable(null);
     else void farmQuery.refetch();
   };
 
   async function changeFarm(action: "delete" | "deactivate") {
     if (!farm || !isCurrent() || mutation.current) return;
     const epoch = recordEpoch.current;
-    const current = () => mounted.current && isCurrent() && recordEpoch.current === epoch;
+    const permitted = () => isCurrent() && farmAccess(queryClient).revision === access.revision;
+    const current = () => mounted.current && permitted() && recordEpoch.current === epoch;
     mutation.current = true;
     setBusy(true);
     setActionError("");
     try {
       if (action === "delete") {
         await deleteFarm(farm.id);
-        if (!current()) return;
-        retireFarmQueries(queryClient, farm.id);
+        if (!permitted()) return;
+        if (current()) {
+          retireFarmQueries(queryClient, farm.id);
+          router.replace(listHref);
+        } else {
+          void queryClient.resetQueries({ queryKey: farmDetailKey(farm.id) });
+          void queryClient.resetQueries({ queryKey: farmSupplyKey(farm.id) });
+        }
         void queryClient.invalidateQueries({ queryKey: farmListKey });
-        router.replace(listHref);
       } else {
         const updated = await saveFarm(farm.id, { version: farm.version, is_active: false });
-        if (!current()) return;
+        if (!permitted()) return;
+        if (!current()) {
+          void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
+          void queryClient.invalidateQueries({ queryKey: farmListKey });
+          void queryClient.invalidateQueries({ queryKey: farmSupplyKey(farm.id) });
+          return;
+        }
         await queryClient.cancelQueries({ queryKey: farmDetailKey(farm.id) });
         if (!current()) return;
         queryClient.setQueryData(farmDetailKey(farm.id), updated);
@@ -163,6 +199,11 @@ function FarmDetailContent({ farmId, productId }: Props) {
       }
       setDialog(false);
     } catch (cause) {
+      if (isCurrent() && farmAccessDenied(cause)) {
+        if (mounted.current) retireRecord(cause);
+        else retireFarmAccess(queryClient, cause);
+        return;
+      }
       if (!current()) return;
       if (recordUnavailable(cause)) {
         retireRecord(cause);
@@ -419,7 +460,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
 }
 
 function recordUnavailable(cause: unknown) {
-  return isProtectedDataError(cause) || farmNotFound(cause);
+  return farmAccessDenied(cause) || farmNotFound(cause);
 }
 
 function farmNotFound(cause: unknown) {

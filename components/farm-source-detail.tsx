@@ -1,9 +1,10 @@
 "use client";
 
 import { Alert, Anchor, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
+import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -24,9 +25,14 @@ import { farmHref } from "@/lib/farm-navigation";
 import { farmSupplyKey } from "@/lib/farm-query";
 import { listFarmProductHistory } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
-import { farmSourceQuery } from "@/lib/farm-supply-query";
+import { farmSourceQuery, type FarmBatchFilter } from "@/lib/farm-supply-query";
 import { formatDecimalInput } from "@/lib/numeric-input";
-import type { Farm, FarmProductHistoryEntry, FarmSourceBlocker } from "@/lib/types";
+import type {
+  Farm,
+  FarmProductHistoryEntry,
+  FarmSourceBlocker,
+  StockBatchInput,
+} from "@/lib/types";
 import {
   sameFarmSourceRevision,
   useFarmSourceWrite,
@@ -49,6 +55,8 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
   const write = useFarmSourceWrite(farm.id, productId, onAccessLost);
   const [action, setAction] = useState<FarmSupplyAction | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const historyPanelId = useId();
+  const [batchView, setBatchView] = useState<{ scopeKey: string; filter: FarmBatchFilter }>();
   const heading = useRef<HTMLHeadingElement>(null);
   const denied = isProtectedDataError(query.error);
   const notFound = (query.error as ClientApiError | null)?.status === 404;
@@ -60,6 +68,18 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
         : undefined
       : query.data;
   const hasVerifiedSource = Boolean(source) && !notFound;
+  const batchScopeKey = source
+    ? `${source.id}:${source.supply_generation}:${source.supply_status}`
+    : "";
+  const batchFilter: FarmBatchFilter =
+    batchView?.scopeKey === batchScopeKey
+      ? batchView.filter
+      : { scope: source?.supply_status === "removed" ? "history" : "current", page: 1 };
+  const setBatchFilter = useCallback(
+    (filter: FarmBatchFilter) => setBatchView({ scopeKey: batchScopeKey, filter }),
+    [batchScopeKey],
+  );
+  const recover = () => write.recover(batchFilter);
   const productName =
     source && !notFound ? (locale === "vi" ? source.name_vi : source.name_en) : c.sourceDetail;
   const farmName = locale === "vi" ? farm.name_vi : farm.name_en;
@@ -109,7 +129,7 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
                   : requestErrorMessage(query.error, t)
             }
             retryLabel={c.checkLatestFarm}
-            onRetry={() => (write.failure ? write.recover() : void query.refetch())}
+            onRetry={() => (write.failure ? recover() : void query.refetch())}
             loading={query.isFetching || write.checking}
           />
         )}
@@ -178,10 +198,11 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
     setAction(next);
   }
 
-  function confirm(input?: Parameters<typeof write.submit>[2]) {
+  function confirm(input?: StockBatchInput) {
     if (!action || blocked) return;
     void write.submit(
       action,
+      batchFilter,
       () => {
         toast(messages[action.kind]);
         close();
@@ -199,7 +220,7 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
             write.failure?.type === "uncertain" ? c.supplyWriteUnconfirmed : c.supplyWriteConflict
           }
           retryLabel={c.checkLatestFarm}
-          onRetry={write.recover}
+          onRetry={recover}
         />
       )}
       {write.checking && (
@@ -223,13 +244,18 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
           {c.closeAndReview}
         </Button>
       )}
+      {action && write.reviewingBatchId && !comparable && !write.checking && (
+        <Button variant="default" onClick={dismiss}>
+          {c.browseBatches}
+        </Button>
+      )}
     </Stack>
   ) : null;
 
   return (
     <Stack gap="md" miw={0}>
       {breadcrumb}
-      {query.error && (
+      {query.error && !unresolved && (
         <RecoveryAlert
           message={requestErrorMessage(query.error, t)}
           retryLabel={c.checkLatestFarm}
@@ -288,7 +314,10 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
                   <Text size="sm">
                     {c.currentStock}:{" "}
                     <Text span fw={600} inherit>
-                      {new Intl.NumberFormat(locale).format(source.available_quantity)}
+                      {(source.available_quantity === 1 ? c.stockUnit : c.stockUnits).replace(
+                        "{count}",
+                        new Intl.NumberFormat(locale).format(source.available_quantity),
+                      )}
                     </Text>
                   </Text>
                   <Text size="xs" c="dimmed">
@@ -313,30 +342,41 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
               )}
             </Stack>
           </Paper>
+          {!action && feedback}
           <Paper p="md" miw={0}>
             <FarmStockBatches
               source={source}
+              filter={batchFilter}
+              onFilterChange={setBatchFilter}
               locked={locked}
+              reviewingBatchId={write.reviewingBatchId}
               onAccessLost={onAccessLost}
-              onEdit={(batch, filter) => begin({ kind: "edit", source, batch, filter })}
-              onCancel={(batch, filter) => begin({ kind: "cancel", source, batch, filter })}
+              onEdit={(batch) => begin({ kind: "edit", source, batch })}
+              onCancel={(batch) => begin({ kind: "cancel", source, batch })}
             />
           </Paper>
           <Paper p="md" miw={0}>
-            <Stack gap="sm" align="stretch">
-              <Group justify="space-between" gap="sm">
-                <Title order={3} size="h4">
-                  {c.history}
-                </Title>
-                <Button
-                  size="sm"
-                  variant="default"
-                  aria-expanded={historyOpen}
-                  onClick={() => setHistoryOpen((open) => !open)}
-                >
-                  {historyOpen ? c.hideHistory : c.showHistory}
-                </Button>
-              </Group>
+            <Title order={3} size="h4">
+              <Button
+                variant="subtle"
+                justify="space-between"
+                fullWidth
+                px={0}
+                aria-expanded={historyOpen}
+                aria-controls={historyPanelId}
+                rightSection={
+                  historyOpen ? (
+                    <IconChevronDown size={16} aria-hidden />
+                  ) : (
+                    <IconChevronRight size={16} aria-hidden />
+                  )
+                }
+                onClick={() => setHistoryOpen((open) => !open)}
+              >
+                {c.history}
+              </Button>
+            </Title>
+            <div id={historyPanelId} hidden={!historyOpen}>
               {historyOpen && (
                 <FarmSourceHistory
                   farmId={farm.id}
@@ -344,11 +384,11 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
                   onAccessLost={onAccessLost}
                 />
               )}
-            </Stack>
+            </div>
           </Paper>
         </>
       )}
-      {!action && feedback}
+      {notFound && !action && feedback}
       {action && (action.kind === "remove" || action.kind === "cancel") && (
         <ConfirmationDialog
           title={
