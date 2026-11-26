@@ -6,7 +6,7 @@ import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { FarmTrackerFields, useFarmTracker } from "@/components/farm-tracker-profile-editor";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { farmAccess, farmDetailKey } from "@/lib/farm-query";
+import { farmAccess, farmDetailKey, farmSupplyKey } from "@/lib/farm-query";
 
 const api = vi.hoisted(() => ({
   getFarm: vi.fn(),
@@ -43,17 +43,19 @@ const retry = (name = "Kiểm tra lại dữ liệu") =>
   fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name }));
 
 function Tracker({
+  id = farmId,
   enabled = true,
   farmActive = true,
   canAct = () => true,
   onAccessLost = () => undefined,
 }: {
+  id?: string;
   enabled?: boolean;
   farmActive?: boolean;
   canAct?: () => boolean;
   onAccessLost?: (cause: unknown) => void;
 }) {
-  const tracker = useFarmTracker({ farmId, enabled, canAct, onAccessLost });
+  const tracker = useFarmTracker({ farmId: id, enabled, canAct, onAccessLost });
   return (
     <form
       noValidate
@@ -123,8 +125,104 @@ it("loads lazily and creates a missing profile only after an actual change", asy
     is_visible: false,
   });
   expect(api.getFarmTracker).toHaveBeenCalledExactlyOnceWith(farmId, expect.any(AbortSignal));
-  expect(api.getFarm).not.toHaveBeenCalled();
+  expect(api.getFarm).toHaveBeenCalledExactlyOnceWith(farmId, api.getFarmTracker.mock.calls[0][1]);
   expect(api.saveFarm).not.toHaveBeenCalled();
+});
+
+it.each(["initial load", "post-write verification"])(
+  "retires cached Farm data when Tracker and Farm both return 404 during %s",
+  async (phase) => {
+    let client!: ReturnType<typeof useQueryClient>;
+    function CaptureClient() {
+      client = useQueryClient();
+      return null;
+    }
+    const onAccessLost = vi.fn();
+    const detailKey = farmDetailKey(farmId);
+    const supplyKey = farmSupplyKey(farmId);
+    const missingFarm = notFound();
+    if (phase === "post-write verification") api.getFarmTracker.mockResolvedValueOnce(profile);
+    api.getFarmTracker.mockRejectedValueOnce(notFound());
+    api.getFarm.mockRejectedValueOnce(missingFarm);
+    render(
+      tree(
+        <>
+          <CaptureClient />
+          <Tracker onAccessLost={onAccessLost} />
+        </>,
+      ),
+    );
+    client.setQueryData(detailKey, { id: farmId });
+    client.setQueryData(supplyKey, []);
+    if (phase === "post-write verification") {
+      await screen.findByLabelText(month);
+      changeCount(month, "7");
+      fireEvent.click(check());
+    }
+
+    await screen.findByRole("alert");
+    expect(onAccessLost).toHaveBeenCalledExactlyOnceWith(missingFarm);
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+    expect(client.getQueryData(supplyKey)).toBeUndefined();
+    expect(screen.queryByLabelText(month)).not.toBeInTheDocument();
+    expect(api.getFarm).toHaveBeenCalledTimes(1);
+    expect(api.enableFarmTracker).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  new Error("network_error"),
+  error("server_error", 502),
+  error("invalid_response", 200),
+  error("request_timeout", 404),
+])("allows retry after Farm verification fails with %s", async (cause) => {
+  api.getFarmTracker.mockRejectedValueOnce(notFound()).mockRejectedValueOnce(notFound());
+  api.getFarm.mockRejectedValueOnce(cause);
+  render(tree(<Tracker />));
+
+  await screen.findByRole("alert");
+  expect(screen.queryByLabelText(month)).not.toBeInTheDocument();
+  expect(save()).toBeDisabled();
+  retry("Thử lại");
+  expect(await screen.findByLabelText(month)).toHaveValue("0");
+  expect(api.getFarmTracker).toHaveBeenCalledTimes(2);
+  expect(api.getFarm).toHaveBeenCalledTimes(2);
+  expect(api.enableFarmTracker).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["forbidden", 403],
+  ["session_expired", 401],
+  ["session_changed", 409],
+])("retires protected Farm data after verification fails with %s", async (code, status) => {
+  const denial = error(code, status);
+  const onAccessLost = vi.fn();
+  api.getFarmTracker.mockRejectedValueOnce(notFound());
+  api.getFarm.mockRejectedValueOnce(denial);
+  render(tree(<Tracker onAccessLost={onAccessLost} />));
+
+  await screen.findByRole("alert");
+  expect(onAccessLost).toHaveBeenCalledExactlyOnceWith(denial);
+  expect(screen.queryByLabelText(month)).not.toBeInTheDocument();
+  expect(api.enableFarmTracker).not.toHaveBeenCalled();
+});
+
+it("ignores successful verification for a Farm that is no longer open", async () => {
+  let finish!: (value: { id: string }) => void;
+  api.getFarmTracker
+    .mockRejectedValueOnce(notFound())
+    .mockResolvedValueOnce({ ...profile, id: "other", one_month_signup_count: 8 });
+  api.getFarm.mockReturnValueOnce(new Promise<{ id: string }>((resolve) => (finish = resolve)));
+  const rendered = render(tree(<Tracker />));
+  await waitFor(() => expect(api.getFarm).toHaveBeenCalledTimes(1));
+
+  rendered.rerender(tree(<Tracker id="other" />));
+  expect(await screen.findByLabelText(month)).toHaveValue("8");
+  expect(api.getFarmTracker.mock.calls[0][1].aborted).toBe(true);
+  await act(async () => finish({ id: farmId }));
+  expect(screen.getByLabelText(month)).toHaveValue("8");
+  expect(api.getFarm).toHaveBeenCalledTimes(1);
+  expect(api.enableFarmTracker).not.toHaveBeenCalled();
 });
 
 it("patches only the changed visibility and preserves both signup counts", async () => {
@@ -149,6 +247,7 @@ it("patches only the changed visibility and preserves both signup counts", async
   });
   expect(api.disableFarmTracker).not.toHaveBeenCalled();
   expect(api.saveFarm).not.toHaveBeenCalled();
+  expect(api.getFarm).not.toHaveBeenCalled();
 });
 
 it("keeps a Tracker draft across locale and tab changes until undo", async () => {
@@ -546,13 +645,21 @@ it("blocks duplicate submits while a profile write is pending", async () => {
   expect(screen.getByLabelText(month)).toBeEnabled();
 });
 
-it.each([false, true])(
-  "guards late Tracker denial against session change (%s)",
-  async (newSession) => {
+it.each([
+  { source: "mutation", newSession: false },
+  { source: "mutation", newSession: true },
+  { source: "Farm verification", newSession: false },
+  { source: "Farm verification", newSession: true },
+])(
+  "guards late Tracker denial from $source against session change ($newSession)",
+  async ({ source, newSession }) => {
     let reject!: (cause: unknown) => void;
-    api.updateFarmTracker.mockReturnValueOnce(
-      new Promise<void>((_resolve, fail) => (reject = fail)),
-    );
+    const pending = new Promise<void>((_resolve, fail) => (reject = fail));
+    if (source === "mutation") api.updateFarmTracker.mockReturnValueOnce(pending);
+    else {
+      api.getFarmTracker.mockRejectedValueOnce(notFound());
+      api.getFarm.mockReturnValueOnce(pending);
+    }
     const onAccessLost = vi.fn();
     let client!: ReturnType<typeof useQueryClient>;
     function CaptureClient() {
@@ -567,9 +674,13 @@ it.each([false, true])(
         </>,
       ),
     );
-    await screen.findByLabelText(month);
-    changeCount(month, "7");
-    fireEvent.click(save());
+    if (source === "mutation") {
+      await screen.findByLabelText(month);
+      changeCount(month, "7");
+      fireEvent.click(save());
+    } else {
+      await waitFor(() => expect(api.getFarm).toHaveBeenCalledTimes(1));
+    }
     rendered.rerender(tree(<CaptureClient />, newSession ? "new" : "original"));
     client.setQueryData(farmDetailKey(farmId), { id: farmId });
     const cause = error("forbidden", 403);

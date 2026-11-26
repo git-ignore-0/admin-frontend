@@ -301,7 +301,7 @@ it("keeps Farm edits and temporary photos when the Admin language changes", asyn
   fireEvent.click(screen.getByRole("radio", { name: "EN" }));
   expect(screen.getByDisplayValue("Nông trại đang sửa")).toBeVisible();
   expect(screen.getByRole("button", { name: "Select image 1" })).toBeVisible();
-  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.get).toHaveBeenCalledTimes(2);
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
 
@@ -972,12 +972,18 @@ it("pages linked Farm products without loading every Product detail", async () =
 
 it("reviews a newer Farm version after conflict and cleans the photo when the draft is undone", async () => {
   const latest = { ...farm, name_vi: "Nông trại từ máy chủ", version: 3 };
-  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
+  const updated = { ...latest, description_vi: "Rau mới", version: 4 };
+  mocks.get
+    .mockResolvedValueOnce(farm)
+    .mockResolvedValueOnce(farm)
+    .mockResolvedValueOnce(latest)
+    .mockResolvedValueOnce(latest)
+    .mockResolvedValue(updated);
   mocks.upload.mockResolvedValue(farmPhoto("temp-1"));
   mocks.deleteImage.mockResolvedValue(undefined);
   mocks.save
     .mockRejectedValueOnce(Object.assign(new Error("version_conflict"), { status: 409 }))
-    .mockResolvedValueOnce({ ...latest, description_vi: "Rau mới", version: 4 });
+    .mockResolvedValueOnce(updated);
   viewFarmInformation();
   fireEvent.change(await screen.findByDisplayValue("Nông trại Xanh"), {
     target: { value: "Bản nháp" },
@@ -989,7 +995,7 @@ it("reviews a newer Farm version after conflict and cleans the photo when the dr
   expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
   expect(photo).toBeVisible();
   expect(screen.getByRole("button", { name: "Lưu thay đổi" })).toBeDisabled();
-  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.get).toHaveBeenCalledTimes(2);
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 
   await act(async () => fireEvent.click(check));

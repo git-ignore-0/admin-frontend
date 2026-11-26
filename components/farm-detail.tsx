@@ -212,17 +212,17 @@ function FarmDetailContent({ farmId, productId }: Props) {
 
   async function changeFarm(intent: HeaderIntent) {
     if (!farm || headerRecovery) return;
-    if (farm.version !== intent.before.version) {
-      setDialog(null);
-      setHeaderRecovery({ intent, conflict: true });
-      setActionError(c.conflict);
-      return;
-    }
     const release = claimWrite("header");
     if (!release) return;
     const { permitted, current } = writeScope();
     setActionError("");
     try {
+      if (farm.version !== intent.before.version) {
+        setDialog(null);
+        setHeaderRecovery({ intent, conflict: true });
+        setActionError(c.conflict);
+        return;
+      }
       if (intent.action === "delete") {
         await deleteFarm(farm.id);
         if (!permitted()) return;

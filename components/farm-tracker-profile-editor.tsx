@@ -89,7 +89,13 @@ function sameValues(a: Values, b: Values) {
 }
 
 function isNotFound(cause: unknown) {
-  return (cause as ClientApiError | null)?.status === 404;
+  const error = cause as ClientApiError | null;
+  return (
+    error?.status === 404 &&
+    error.message !== "request_timeout" &&
+    error.message !== "invalid_response" &&
+    !farmAccessDenied(cause)
+  );
 }
 
 export function useFarmTracker({
@@ -198,16 +204,15 @@ export function useFarmTracker({
         } catch (cause) {
           if (!isNotFound(cause)) throw cause;
           if (!canUse(revision)) return false;
-          // Tracker GET cannot distinguish a removed Farm from a removed profile.
-          // The parent verified the Farm when opening the tab or reconciling a Farm write.
-          if (check.type !== "initial" && check.type !== "farm-write") {
-            try {
-              const farm = await getFarm(farmId, controller.signal);
-              if (farm.id !== farmId) throw invalidApiResponse();
-            } catch (farmError) {
-              if (isNotFound(farmError) && canUse(revision)) retire(farmError, true);
-              throw farmError;
+          // Tracker GET returns 404 for either a missing profile or a missing Farm.
+          try {
+            await getFarm(farmId, controller.signal);
+          } catch (farmError) {
+            if (isNotFound(farmError) && canUse(revision)) {
+              retire(farmError, true);
+              return false;
             }
+            throw farmError;
           }
           latest = null;
         }
@@ -391,6 +396,8 @@ export function useFarmTracker({
 
   return {
     dirty: !access.error && dirty,
+    needsWriteRecovery:
+      issue?.type === "review" || (issue?.type === "check" && issue.check.type !== "initial"),
     ready:
       state.baseline !== undefined &&
       !state.busy &&

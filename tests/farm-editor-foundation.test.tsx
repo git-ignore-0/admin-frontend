@@ -200,7 +200,9 @@ it("uses the full information panel and groups the album and Tracker in one colu
 });
 
 it("saves only changed Farm information in place without creating a Tracker profile", async () => {
-  mocks.save.mockResolvedValue({ ...farm, name_vi: "Tên mới", version: 3 });
+  const updated = { ...farm, name_vi: "Tên mới", version: 3 };
+  mocks.save.mockResolvedValue(updated);
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValue(updated);
   renderEditor(farm.id);
 
   const save = await informationReady();
@@ -215,7 +217,8 @@ it("saves only changed Farm information in place without creating a Tracker prof
   expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, { version: 2, name_vi: "Tên mới" });
   expect(mocks.createTracker).not.toHaveBeenCalled();
   expect(mocks.updateTracker).not.toHaveBeenCalled();
-  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.get).toHaveBeenCalledTimes(3);
+  expect(mocks.getTracker).toHaveBeenCalledTimes(2);
   expect(mocks.replace).not.toHaveBeenCalled();
   expect(mocks.refresh).not.toHaveBeenCalled();
   expect(screen.getByRole("heading", { name: "Tên mới", level: 1 })).toBeVisible();
@@ -495,7 +498,7 @@ it("keeps both writes locked after a toggle timeout until a newer read confirms 
 
 it("retains the draft for review when a background Farm read finds a concurrent edit", async () => {
   const latest = { ...farm, name_vi: "Tên được sửa ở nơi khác", version: 3 };
-  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
   renderEditor(farm.id);
   const save = await informationReady();
   change(screen.getByDisplayValue(farm.description_vi), "Mô tả nháp");
@@ -509,7 +512,7 @@ it("retains the draft for review when a background Farm read finds a concurrent 
     expect(screen.getByDisplayValue("Mô tả nháp")).toBeVisible();
     expect(saveInformation()).toBeDisabled();
     await act(async () => fireEvent.submit(save.closest("form")!));
-    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.get).toHaveBeenCalledTimes(3);
     expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.updateTracker).not.toHaveBeenCalled();
   } finally {
@@ -586,7 +589,9 @@ it("keeps create navigation in the filtered Farm list context", async () => {
 
 it("keeps the persisted Farm name in the breadcrumb until inline save succeeds", async () => {
   mocks.search = new URLSearchParams(`${filters}&view=tracker`);
-  mocks.save.mockResolvedValue({ ...farm, name_vi: "Tên nháp", version: 3 });
+  const updated = { ...farm, name_vi: "Tên nháp", version: 3 };
+  mocks.save.mockResolvedValue(updated);
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValue(updated);
   renderEditor(farm.id);
   const save = await informationReady();
 
@@ -607,7 +612,7 @@ it("keeps the persisted Farm name in the breadcrumb until inline save succeeds",
   expect(mocks.push).not.toHaveBeenCalled();
   expect(mocks.replace).not.toHaveBeenCalled();
   expect(mocks.refresh).not.toHaveBeenCalled();
-  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.get).toHaveBeenCalledTimes(3);
 });
 
 it.each([401, 403, 404])(
@@ -773,7 +778,7 @@ it.each([
 });
 
 it("retains the edit draft and protects submitted photos through stale and failed verification", async () => {
-  mocks.get.mockResolvedValueOnce(farm);
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm);
   mocks.get.mockRejectedValueOnce(problem("server_error", 502));
   mocks.get.mockRejectedValueOnce(problem("invalid_response"));
   mocks.get.mockResolvedValueOnce({ ...farm, version: 1 });
@@ -803,7 +808,7 @@ it("retains the edit draft and protects submitted photos through stale and faile
     farm.id,
     expect.objectContaining({ version: 2, photo_ids: [cover.id, album.id] }),
   );
-  expect(mocks.get).toHaveBeenCalledTimes(5);
+  expect(mocks.get).toHaveBeenCalledTimes(6);
   editor.close();
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 });
@@ -816,10 +821,14 @@ it("requires explicit adoption of a newer Farm before saving again and preserves
     image: cover,
     photos: [cover, album],
   };
-  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(latest);
-  mocks.save
-    .mockRejectedValueOnce(problem("network_error"))
-    .mockResolvedValueOnce({ ...latest, version: 4, description_vi: "Mô tả tiếp theo" });
+  const updated = { ...latest, version: 4, description_vi: "Mô tả tiếp theo" };
+  mocks.get
+    .mockResolvedValueOnce(farm)
+    .mockResolvedValueOnce(farm)
+    .mockResolvedValueOnce(latest)
+    .mockResolvedValueOnce(latest)
+    .mockResolvedValue(updated);
+  mocks.save.mockRejectedValueOnce(problem("network_error")).mockResolvedValueOnce(updated);
   mocks.deleteImage.mockResolvedValue(undefined);
   const editor = renderEditor(farm.id);
   const save = await informationReady();
@@ -836,7 +845,7 @@ it("requires explicit adoption of a newer Farm before saving again and preserves
   expect(mocks.save).toHaveBeenCalledTimes(1);
   expect(mocks.deleteImage).not.toHaveBeenCalled();
 
-  await click(screen.getByRole("button", { name: "Dùng phiên bản mới nhất" }));
+  await click(screen.getByRole("button", { name: "Giữ album đang chỉnh sửa" }));
   expect(screen.getByDisplayValue("Giữ nguyên bản nháp")).toBeVisible();
   expect(screen.getByText("3/12")).toBeVisible();
   expect(mocks.save).toHaveBeenCalledTimes(1);

@@ -76,6 +76,7 @@ type SaveRecovery =
       conflict?: boolean;
     };
 type UploadedPhotos = Map<string, "temporary" | "submitted">;
+type AlbumChoice = "server" | "local";
 
 const emptyForm: Form = {
   name_en: "",
@@ -117,9 +118,10 @@ function forgetReferencedPhotos(uploads: UploadedPhotos, farm: Farm) {
   if (farm.image) uploads.delete(farm.image.id.toLowerCase());
 }
 
-function discardTemporaryPhotos(uploads: UploadedPhotos) {
+function discardTemporaryPhotos(uploads: UploadedPhotos, retained: MediaAsset[] = []) {
+  const retainedIds = new Set(retained.map((photo) => photo.id.toLowerCase()));
   for (const [id, state] of uploads) {
-    if (state === "temporary") {
+    if (state === "temporary" && !retainedIds.has(id)) {
       uploads.delete(id);
       void deleteFarmImage(id, { keepalive: true }).catch(() => undefined);
     }
@@ -138,7 +140,42 @@ const textFields = [
 function farmInformation(form: Form) {
   const { photos, ...texts } = form;
   for (const field of textFields) texts[field] = texts[field].trim();
-  return { ...texts, photo_ids: photos.map((photo) => photo.id) };
+  return { ...texts, photo_ids: photoIds(photos) };
+}
+
+function photoIds(photos: MediaAsset[]) {
+  return photos.map((photo) => photo.id);
+}
+
+function samePhotoOrder(previous: string[], current: string[]) {
+  return (
+    previous.length === current.length &&
+    current.every((id, index) => id.toLowerCase() === previous[index].toLowerCase())
+  );
+}
+
+function albumChanges(baseline: string[], latest: string[]) {
+  const before = baseline.map((id) => id.toLowerCase());
+  const after = latest.map((id) => id.toLowerCase());
+  const beforeIds = new Set(before);
+  const afterIds = new Set(after);
+  return {
+    albumAdded: after.some((id) => !beforeIds.has(id)),
+    albumRemoved: before.some((id) => !afterIds.has(id)),
+    albumReordered: !samePhotoOrder(
+      before.filter((id) => afterIds.has(id)),
+      after.filter((id) => beforeIds.has(id)),
+    ),
+    albumCoverChanged: before[0] !== after[0],
+  };
+}
+
+function albumItems(photos: MediaAsset[], label: string) {
+  return photos.map((photo, index) => ({
+    id: photo.id,
+    src: mediaUrlForWidth(photo, 160),
+    alt: `${label} ${index + 1}`,
+  }));
 }
 
 function changedFarmInformation(baseline: Form, draft: Form) {
@@ -148,12 +185,7 @@ function changedFarmInformation(baseline: Form, draft: Form) {
   for (const field of textFields) {
     if (previous[field] !== current[field]) patch[field] = current[field];
   }
-  if (
-    current.photo_ids.length !== previous.photo_ids.length ||
-    current.photo_ids.some(
-      (id, index) => id.toLowerCase() !== previous.photo_ids[index].toLowerCase(),
-    )
-  ) {
+  if (!samePhotoOrder(previous.photo_ids, current.photo_ids)) {
     patch.photo_ids = current.photo_ids;
   }
   return patch;
@@ -163,13 +195,17 @@ export function sameFarmInformation(a: Farm, b: Farm) {
   return Object.keys(changedFarmInformation(fromFarm(a), fromFarm(b))).length === 0;
 }
 
-function keepFarmEdits(baseline: Farm, latest: Farm, draft: Form) {
-  const patch = changedFarmInformation(fromFarm(baseline), draft);
+function keepFarmEdits(
+  delta: ReturnType<typeof changedFarmInformation>,
+  latest: Farm,
+  draft: Form,
+  album: AlbumChoice,
+) {
   const next = fromFarm(latest);
   for (const field of textFields) {
-    if (patch[field] !== undefined) next[field] = draft[field];
+    if (delta[field] !== undefined) next[field] = draft[field];
   }
-  if (patch.photo_ids) next.photos = draft.photos;
+  if (album === "local") next.photos = draft.photos;
   return next;
 }
 
@@ -277,13 +313,38 @@ function FarmEditorForm({
     syncAfterFarmWrite,
   ]);
   const setInformationLocked = information?.setInformationLocked;
-  const blocksHeader = trackerBusy || uploading || recovery !== null;
+  const blocksHeader = trackerBusy || tracker.needsWriteRecovery || uploading || recovery !== null;
   useLayoutEffect(() => {
     setInformationLocked?.(blocksHeader);
     return () => setInformationLocked?.(false);
   }, [blocksHeader, setInformationLocked]);
 
-  const delta = baseline ? changedFarmInformation(fromFarm(baseline), form) : {};
+  const baselineForm = baseline ? fromFarm(baseline) : null;
+  const delta = baselineForm ? changedFarmInformation(baselineForm, form) : {};
+  const reviewedForm =
+    recovery?.kind === "edit" && recovery.latest ? fromFarm(recovery.latest) : null;
+  const baselinePhotoIds = baselineForm && reviewedForm ? photoIds(baselineForm.photos) : null;
+  const latestPhotoIds = reviewedForm ? photoIds(reviewedForm.photos) : null;
+  const serverAlbumChanges =
+    baselinePhotoIds && latestPhotoIds && !samePhotoOrder(baselinePhotoIds, latestPhotoIds)
+      ? albumChanges(baselinePhotoIds, latestPhotoIds)
+      : null;
+  const albumConflict =
+    serverAlbumChanges &&
+    delta.photo_ids &&
+    latestPhotoIds &&
+    !samePhotoOrder(delta.photo_ids, latestPhotoIds);
+  const imagePickerLabels = {
+    choose: c.upload,
+    replace: c.upload,
+    empty: locale === "vi" ? "Chưa có ảnh" : "No images yet",
+    cover: locale === "vi" ? "Ảnh đại diện" : "Cover image",
+    setCover: locale === "vi" ? "Đặt làm đại diện" : "Set as cover",
+    moveEarlier: c.moveEarlier,
+    moveLater: c.moveLater,
+    remove: c.removePhoto,
+    select: locale === "vi" ? "Chọn ảnh số" : "Select image",
+  };
   const farmDirty = Object.keys(delta).length > 0;
   const dirty = farmDirty || tracker.dirty;
   const valid = (["vi", "en"] as const).every(
@@ -493,8 +554,9 @@ function FarmEditorForm({
     }
   }
 
-  async function adoptLatestFarm() {
+  async function adoptLatestFarm(choice?: AlbumChoice) {
     if (recovery?.kind !== "edit" || !recovery.latest || !baseline || !canAct()) return;
+    if (albumConflict && !choice) return;
     const release = information?.claimWrite();
     if (!release) return;
     const latest = recovery.latest;
@@ -511,7 +573,14 @@ function FarmEditorForm({
         latest.is_active === baseline.is_active &&
         Object.keys(changedFarmInformation(form, fromFarm(latest))).length === 0;
       forgetReferencedPhotos(uploadsRef.current, latest);
-      setForm(keepFarmEdits(baseline, latest, form));
+      const next = keepFarmEdits(
+        delta,
+        latest,
+        form,
+        choice ?? (serverAlbumChanges || !delta.photo_ids ? "server" : "local"),
+      );
+      if (choice === "server") discardTemporaryPhotos(uploadsRef.current, next.photos);
+      setForm(next);
       setBaseline(latest);
       await publishFarm(latest);
       if (!canAct()) return;
@@ -737,7 +806,7 @@ function FarmEditorForm({
           {recovery?.kind === "edit" &&
             (recovery.latest ? (
               <Alert color="warning" role="alert">
-                <Stack gap="sm" align="flex-start">
+                <Stack gap="sm" miw={0}>
                   <Text size="sm">{c.latestFarmAvailable}</Text>
                   {baseline && (
                     <Stack gap="xs">
@@ -757,14 +826,85 @@ function FarmEditorForm({
                         ))}
                     </Stack>
                   )}
-                  <Button
-                    variant="default"
-                    type="button"
-                    disabled={locked}
-                    onClick={() => void adoptLatestFarm()}
-                  >
-                    {c.useLatestFarm}
-                  </Button>
+                  {serverAlbumChanges && reviewedForm && baselineForm && (
+                    <Stack gap="xs" miw={0}>
+                      <Text size="sm" fw={600}>
+                        {c.serverAlbumChanged}
+                      </Text>
+                      <Text size="sm">
+                        {(Object.keys(serverAlbumChanges) as (keyof typeof serverAlbumChanges)[])
+                          .filter((change) => serverAlbumChanges[change])
+                          .map((change) => c[change])
+                          .join(" · ")}
+                      </Text>
+                      {(serverAlbumChanges.albumRemoved ||
+                        serverAlbumChanges.albumReordered ||
+                        serverAlbumChanges.albumCoverChanged) && (
+                        <>
+                          <Text size="sm" fw={600}>
+                            {c.previousAlbum}
+                          </Text>
+                          <AdminImagePicker
+                            items={albumItems(baselineForm.photos, c.previousAlbum)}
+                            maxItems={12}
+                            labels={{ ...imagePickerLabels, select: c.previousAlbum }}
+                          />
+                        </>
+                      )}
+                      <Text size="sm" fw={600}>
+                        {c.serverAlbum}
+                      </Text>
+                      <AdminImagePicker
+                        items={albumItems(reviewedForm.photos, c.serverAlbum)}
+                        maxItems={12}
+                        labels={{ ...imagePickerLabels, select: c.serverAlbum }}
+                      />
+                      {albumConflict && (
+                        <>
+                          <Text size="sm" fw={600}>
+                            {c.draftAlbum}
+                          </Text>
+                          <AdminImagePicker
+                            items={albumItems(form.photos, c.draftAlbum)}
+                            maxItems={12}
+                            labels={{ ...imagePickerLabels, select: c.draftAlbum }}
+                          />
+                          <Text size="sm">{c.albumChoiceHint}</Text>
+                        </>
+                      )}
+                    </Stack>
+                  )}
+                  <Group gap="xs">
+                    {albumConflict ? (
+                      <>
+                        <Button
+                          variant="default"
+                          type="button"
+                          disabled={locked}
+                          onClick={() => void adoptLatestFarm("server")}
+                        >
+                          {c.useServerAlbum}
+                        </Button>
+                        <Button
+                          variant="default"
+                          type="button"
+                          disabled={locked}
+                          onClick={() => void adoptLatestFarm("local")}
+                        >
+                          {c.keepDraftAlbum}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="default"
+                        type="button"
+                        disabled={locked}
+                        onClick={() => void adoptLatestFarm()}
+                      >
+                        {c.useLatestFarm}
+                      </Button>
+                    )}
+                  </Group>
                 </Stack>
               </Alert>
             ) : (
@@ -848,30 +988,18 @@ function FarmEditorForm({
                         </Text>
                       </Group>
                       <AdminImagePicker
-                        items={form.photos.map((photo, index) => ({
-                          id: photo.id,
-                          src: mediaUrlForWidth(photo, 160),
-                          alt: `${c.photos} ${index + 1}`,
-                        }))}
+                        items={albumItems(form.photos, c.photos)}
                         maxItems={12}
                         busy={uploading || fieldBusy}
                         error={photoError}
                         help={c.photoHint}
                         labels={{
-                          choose: c.upload,
-                          replace: c.upload,
-                          empty: locale === "vi" ? "Chưa có ảnh" : "No images yet",
-                          cover: locale === "vi" ? "Ảnh đại diện" : "Cover image",
-                          setCover: locale === "vi" ? "Đặt làm đại diện" : "Set as cover",
-                          moveEarlier: c.moveEarlier,
-                          moveLater: c.moveLater,
-                          remove: c.removePhoto,
+                          ...imagePickerLabels,
                           uploading: uploading
                             ? locale === "vi"
                               ? "Đang tải ảnh…"
                               : "Uploading images…"
                             : undefined,
-                          select: locale === "vi" ? "Chọn ảnh số" : "Select image",
                         }}
                         onChooseFiles={upload}
                         onMove={movePhoto}

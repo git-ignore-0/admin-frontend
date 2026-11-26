@@ -52,8 +52,8 @@ type Props = {
   fileName?: string;
   error?: string;
   busy?: boolean;
-  onChooseFiles: (files: File[]) => void;
-  onRemove: (id: string) => void;
+  onChooseFiles?: (files: File[]) => void;
+  onRemove?: (id: string) => void;
   onMove?: (index: number, direction: -1 | 1) => void;
   onSetCover?: (index: number) => void;
 };
@@ -80,6 +80,7 @@ export function AdminImagePicker({
   const coverId = useId();
 
   const gallery = maxItems > 1;
+  const readOnly = !onChooseFiles;
   const selectedIndex = gallery ? items.findIndex((item) => item.id === selectedId) : 0;
   const selected = items[selectedIndex];
   const canAdd = items.length < maxItems;
@@ -105,8 +106,210 @@ export function AdminImagePicker({
     resetFileInput.current?.();
     if (!value) return;
     const files = Array.isArray(value) ? value : [value];
-    if (files.length) onChooseFiles(files);
+    if (files.length) onChooseFiles?.(files);
   }
+
+  function renderPicker(openFilePicker?: () => void) {
+    const thumbnails = (
+      <Group
+        className={gallery ? classes.strip : undefined}
+        gap={7}
+        wrap="nowrap"
+        maw="100%"
+        role="group"
+        aria-label={selectLabel}
+        tabIndex={readOnly && gallery && items.length > 0 ? 0 : undefined}
+      >
+        {items.map((item, index) => {
+          const image = <Image src={item.src} alt={item.alt} width={80} height={80} unoptimized />;
+          if (!gallery) {
+            return (
+              <div key={item.id} className={classes.tile}>
+                {image}
+              </div>
+            );
+          }
+
+          const isCover = index === 0 && Boolean(labels.cover);
+          const coverMark = isCover && (
+            <Badge
+              component="span"
+              aria-hidden
+              circle
+              size="xs"
+              variant="white"
+              pos="absolute"
+              top={4}
+              left={4}
+              styles={{ label: { display: "flex" } }}
+            >
+              <IconStarFilled size={10} aria-hidden />
+            </Badge>
+          );
+          if (readOnly) {
+            return (
+              <div
+                key={item.id}
+                className={classes.tile}
+                role="group"
+                aria-describedby={isCover ? coverId : undefined}
+              >
+                {image}
+                {coverMark}
+              </div>
+            );
+          }
+          const isSelected = selectedId === item.id;
+          return (
+            <UnstyledButton
+              key={item.id}
+              ref={isSelected ? selectedTileRef : undefined}
+              type="button"
+              className={classes.tile}
+              aria-label={`${selectLabel} ${index + 1}`}
+              aria-describedby={isCover ? coverId : undefined}
+              aria-pressed={isSelected}
+              disabled={busy}
+              onClick={() => setSelectedId(isSelected ? null : item.id)}
+            >
+              {image}
+              {coverMark}
+            </UnstyledButton>
+          );
+        })}
+        {openFilePicker && canAdd && (
+          <UnstyledButton
+            className={`${classes.tile} ${classes.add}`}
+            type="button"
+            disabled={busy}
+            onClick={openFilePicker}
+            aria-label={`${labels.choose}…`}
+          >
+            <IconPlus size={17} aria-hidden />
+            {items.length === 0 && (
+              <Text component="small" size="xs" lh={1.2} px={3}>
+                {labels.choose}
+              </Text>
+            )}
+          </UnstyledButton>
+        )}
+      </Group>
+    );
+
+    const actions = !readOnly && selected && (
+      <Paper ref={actionsRef} radius="sm" p={2} w="fit-content" maw="100%">
+        <Group gap={2}>
+          {gallery && (
+            <Text component="span" className={classes.position} size="sm" c="dimmed" px={7}>
+              {selectedIndex + 1}/{items.length}
+            </Text>
+          )}
+          {gallery && onMove && (
+            <>
+              <ActionIcon
+                variant="default"
+                type="button"
+                disabled={busy || selectedIndex === 0}
+                aria-label={`${labels.moveEarlier} ${selectedIndex + 1}`}
+                title={labels.moveEarlier}
+                onClick={() => onMove(selectedIndex, -1)}
+              >
+                <IconArrowLeft size={16} aria-hidden />
+              </ActionIcon>
+              <ActionIcon
+                variant="default"
+                type="button"
+                disabled={busy || selectedIndex === items.length - 1}
+                aria-label={`${labels.moveLater} ${selectedIndex + 1}`}
+                title={labels.moveLater}
+                onClick={() => onMove(selectedIndex, 1)}
+              >
+                <IconArrowRight size={16} aria-hidden />
+              </ActionIcon>
+            </>
+          )}
+          {gallery && onSetCover && selectedIndex > 0 && (
+            <Button
+              variant="default"
+              type="button"
+              disabled={busy}
+              title={labels.setCover}
+              onClick={() => onSetCover(selectedIndex)}
+            >
+              {labels.setCover}
+            </Button>
+          )}
+          {!gallery && (
+            <Button variant="default" type="button" disabled={busy} onClick={openFilePicker}>
+              {labels.replace}
+            </Button>
+          )}
+          {onRemove && (
+            <ActionIcon
+              variant="light"
+              color="red"
+              type="button"
+              disabled={busy}
+              aria-label={labels.remove}
+              title={labels.remove}
+              onClick={() => {
+                onRemove(selected.id);
+                clearSelection();
+              }}
+            >
+              <IconTrash size={16} aria-hidden />
+            </ActionIcon>
+          )}
+        </Group>
+      </Paper>
+    );
+
+    return (
+      <Stack ref={rootRef} gap={3} miw={0}>
+        {gallery && labels.cover && (
+          <VisuallyHidden component="span" id={coverId}>
+            {labels.cover}
+          </VisuallyHidden>
+        )}
+        {gallery ? (
+          thumbnails
+        ) : (
+          <Group gap={8} wrap="nowrap">
+            {thumbnails}
+            {actions}
+          </Group>
+        )}
+        {items.length === 0 && (
+          <Text size="sm" c="dimmed">
+            {labels.empty}
+          </Text>
+        )}
+        {fileName && (
+          <Text className={classes.note} size="sm" c="dimmed">
+            {fileName}
+          </Text>
+        )}
+        {help && (
+          <Text className={classes.note} size="sm" c="dimmed">
+            {help}
+          </Text>
+        )}
+        {busy && labels.uploading && (
+          <Text size="sm" c="dimmed" role="status">
+            {labels.uploading}
+          </Text>
+        )}
+        {error && (
+          <Text c="var(--danger)" fw={650} role="alert">
+            {error}
+          </Text>
+        )}
+        {gallery && actions}
+      </Stack>
+    );
+  }
+
+  if (readOnly) return renderPicker();
 
   return (
     <FileButton
@@ -117,190 +320,7 @@ export function AdminImagePicker({
       resetRef={resetFileInput}
       onChange={chooseFiles}
     >
-      {({ onClick: openFilePicker }) => {
-        const thumbnails = (
-          <Group
-            className={gallery ? classes.strip : undefined}
-            gap={7}
-            wrap="nowrap"
-            maw="100%"
-            role="group"
-            aria-label={selectLabel}
-          >
-            {items.map((item, index) => {
-              const image = (
-                <Image src={item.src} alt={item.alt} width={80} height={80} unoptimized />
-              );
-              if (!gallery) {
-                return (
-                  <div key={item.id} className={classes.tile}>
-                    {image}
-                  </div>
-                );
-              }
-
-              const isCover = index === 0 && Boolean(labels.cover);
-              const isSelected = selectedId === item.id;
-              return (
-                <UnstyledButton
-                  key={item.id}
-                  ref={isSelected ? selectedTileRef : undefined}
-                  type="button"
-                  className={classes.tile}
-                  aria-label={`${selectLabel} ${index + 1}`}
-                  aria-describedby={isCover ? coverId : undefined}
-                  aria-pressed={isSelected}
-                  disabled={busy}
-                  onClick={() => setSelectedId(isSelected ? null : item.id)}
-                >
-                  {image}
-                  {isCover && (
-                    <Badge
-                      component="span"
-                      aria-hidden
-                      circle
-                      size="xs"
-                      variant="white"
-                      pos="absolute"
-                      top={4}
-                      left={4}
-                      styles={{ label: { display: "flex" } }}
-                    >
-                      <IconStarFilled size={10} aria-hidden />
-                    </Badge>
-                  )}
-                </UnstyledButton>
-              );
-            })}
-            {canAdd && (
-              <UnstyledButton
-                className={`${classes.tile} ${classes.add}`}
-                type="button"
-                disabled={busy}
-                onClick={openFilePicker}
-                aria-label={`${labels.choose}…`}
-              >
-                <IconPlus size={17} aria-hidden />
-                {items.length === 0 && (
-                  <Text component="small" size="xs" lh={1.2} px={3}>
-                    {labels.choose}
-                  </Text>
-                )}
-              </UnstyledButton>
-            )}
-          </Group>
-        );
-
-        const actions = selected && (
-          <Paper ref={actionsRef} radius="sm" p={2} w="fit-content" maw="100%">
-            <Group gap={2}>
-              {gallery && (
-                <Text component="span" className={classes.position} size="sm" c="dimmed" px={7}>
-                  {selectedIndex + 1}/{items.length}
-                </Text>
-              )}
-              {gallery && onMove && (
-                <>
-                  <ActionIcon
-                    variant="default"
-                    type="button"
-                    disabled={busy || selectedIndex === 0}
-                    aria-label={`${labels.moveEarlier} ${selectedIndex + 1}`}
-                    title={labels.moveEarlier}
-                    onClick={() => onMove(selectedIndex, -1)}
-                  >
-                    <IconArrowLeft size={16} aria-hidden />
-                  </ActionIcon>
-                  <ActionIcon
-                    variant="default"
-                    type="button"
-                    disabled={busy || selectedIndex === items.length - 1}
-                    aria-label={`${labels.moveLater} ${selectedIndex + 1}`}
-                    title={labels.moveLater}
-                    onClick={() => onMove(selectedIndex, 1)}
-                  >
-                    <IconArrowRight size={16} aria-hidden />
-                  </ActionIcon>
-                </>
-              )}
-              {gallery && onSetCover && selectedIndex > 0 && (
-                <Button
-                  variant="default"
-                  type="button"
-                  disabled={busy}
-                  title={labels.setCover}
-                  onClick={() => onSetCover(selectedIndex)}
-                >
-                  {labels.setCover}
-                </Button>
-              )}
-              {!gallery && (
-                <Button variant="default" type="button" disabled={busy} onClick={openFilePicker}>
-                  {labels.replace}
-                </Button>
-              )}
-              <ActionIcon
-                variant="light"
-                color="red"
-                type="button"
-                disabled={busy}
-                aria-label={labels.remove}
-                title={labels.remove}
-                onClick={() => {
-                  onRemove(selected.id);
-                  clearSelection();
-                }}
-              >
-                <IconTrash size={16} aria-hidden />
-              </ActionIcon>
-            </Group>
-          </Paper>
-        );
-
-        return (
-          <Stack ref={rootRef} gap={3} miw={0}>
-            {gallery && labels.cover && (
-              <VisuallyHidden component="span" id={coverId}>
-                {labels.cover}
-              </VisuallyHidden>
-            )}
-            {gallery ? (
-              thumbnails
-            ) : (
-              <Group gap={8} wrap="nowrap">
-                {thumbnails}
-                {actions}
-              </Group>
-            )}
-            {items.length === 0 && (
-              <Text size="sm" c="dimmed">
-                {labels.empty}
-              </Text>
-            )}
-            {fileName && (
-              <Text className={classes.note} size="sm" c="dimmed">
-                {fileName}
-              </Text>
-            )}
-            {help && (
-              <Text className={classes.note} size="sm" c="dimmed">
-                {help}
-              </Text>
-            )}
-            {busy && labels.uploading && (
-              <Text size="sm" c="dimmed" role="status">
-                {labels.uploading}
-              </Text>
-            )}
-            {error && (
-              <Text c="var(--danger)" fw={650} role="alert">
-                {error}
-              </Text>
-            )}
-            {gallery && actions}
-          </Stack>
-        );
-      }}
+      {({ onClick }) => renderPicker(onClick)}
     </FileButton>
   );
 }
