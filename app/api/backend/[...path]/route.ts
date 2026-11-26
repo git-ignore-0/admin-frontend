@@ -136,6 +136,27 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
   if (resource === "membership-price-options" && action === "payment-plans") {
     return params.size > 0;
   }
+  if (resource === "store-products") {
+    if (action === "transition") return params.size > 0;
+    if (request.method === "GET" && id === undefined) {
+      return (
+        hasDuplicateQuery(
+          params,
+          "page",
+          "category_id",
+          "status",
+          "search",
+          "csa_eligible",
+          "is_active",
+          "is_published",
+        ) ||
+        (params.has("status") &&
+          (!["draft", "active", "discontinued"].includes(params.get("status") ?? "") ||
+            params.has("is_active") ||
+            params.has("is_published")))
+      );
+    }
+  }
   if (request.method === "GET") {
     if (resource === "csa-rounds" && id === undefined) {
       return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size", "status");
@@ -145,9 +166,6 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
       (resource === "csa-selections" && action === "events")
     ) {
       return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size");
-    }
-    if (id === undefined && resource === "store-products") {
-      return hasDuplicateQuery(params, "page", "category_id", "status");
     }
     if (id === undefined && resource === "testimonials") {
       return hasDuplicateQuery(params, "page", "page_size", "search", "status", "type");

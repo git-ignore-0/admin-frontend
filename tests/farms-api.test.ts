@@ -18,6 +18,98 @@ const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 beforeEach(() => fetchMock.mockReset());
 
+const farmId = "11111111-1111-4111-8111-111111111111";
+const productId = "22222222-2222-4222-8222-222222222222";
+const linkId = "33333333-3333-4333-8333-333333333333";
+const batchId = "44444444-4444-4444-8444-444444444444";
+const farmProduct = {
+  id: linkId,
+  farm_id: farmId,
+  product_id: productId,
+  sku: "R01",
+  name_vi: "Rau",
+  name_en: "Greens",
+  unit_size: "1.000",
+  unit_label_vi: "kg",
+  unit_label_en: "kg",
+  product_status: "active",
+  is_active: true,
+  initial_quantity: 10,
+  net_sold_quantity: 0,
+  available_quantity: 10,
+  batch_count: 1,
+  active_batch_count: 1,
+  has_supply_history: true,
+  next_expiry_date: "2026-11-01",
+};
+const stockBatch = {
+  id: batchId,
+  farm_product_id: linkId,
+  start_date: "2026-10-26",
+  end_date: "2026-11-01",
+  quantity_units: 10,
+  net_sold_quantity: 0,
+  remaining_quantity: 10,
+  available_quantity: 10,
+  version: 3,
+  status: "active",
+  created_at: "2026-10-26T00:00:00Z",
+  updated_at: "2026-10-26T00:00:00Z",
+};
+
+it("rejects Farm product data for a different Farm or without a supported lifecycle", async () => {
+  for (const data of [
+    { ...farmProduct, farm_id: productId },
+    { ...farmProduct, product_status: undefined, is_published: true },
+    { ...farmProduct, product_status: "published" },
+    { ...farmProduct, unit_size: "x" },
+  ]) {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        data: [data],
+        meta: { page: 1, page_size: 20, total: 1 },
+      }),
+    );
+    await expect(listFarmProducts(farmId)).rejects.toThrow("invalid_response");
+  }
+});
+
+it("rejects a 2xx stock mutation with malformed fields or a mismatched row ID", async () => {
+  for (const data of [
+    { ...stockBatch, id: productId },
+    { ...stockBatch, end_date: "2026-02-31" },
+    { ...stockBatch, remaining_quantity: "10" },
+    { ...stockBatch, status: "stopped" },
+  ]) {
+    fetchMock.mockResolvedValueOnce(Response.json({ data }));
+    await expect(updateFarmStockBatch(farmId, productId, batchId, { version: 2 })).rejects.toThrow(
+      "invalid_response",
+    );
+  }
+});
+
+it("forwards the inventory signal and rejects stock rows from another Farm link", async () => {
+  const controller = new AbortController();
+  fetchMock.mockResolvedValueOnce(
+    Response.json({
+      data: [{ ...stockBatch, farm_product_id: productId }],
+      meta: { page: 1, page_size: 20, total: 1 },
+    }),
+  );
+  await expect(
+    listFarmStockBatches(
+      farmId,
+      productId,
+      {},
+      {
+        signal: controller.signal,
+        linkId,
+      },
+    ),
+  ).rejects.toThrow("invalid_response");
+  expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+});
+
 it("cleans up Farm media on HTTP 204 with keepalive and no JSON parsing", async () => {
   const response = new Response(null, { status: 204 });
   const readJson = vi.spyOn(response, "json");
@@ -100,18 +192,18 @@ it("does not treat a Farm save with a missing record ID as authoritative", async
 });
 
 it("creates a Farm product together with its first stock batch", async () => {
-  fetchMock.mockResolvedValue(Response.json({ data: { id: "link-1" } }, { status: 201 }));
+  fetchMock.mockResolvedValue(Response.json({ data: farmProduct }, { status: 201 }));
 
-  await addFarmProduct("farm-1", "product-1", {
+  await addFarmProduct(farmId, productId, {
     start_date: "2026-10-26",
     end_date: "2026-11-01",
     quantity_units: 10,
   });
 
-  expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/admin/farms/farm-1/products");
+  expect(fetchMock.mock.calls[0][0]).toBe(`/api/backend/admin/farms/${farmId}/products`);
   expect(fetchMock.mock.calls[0][1].method).toBe("POST");
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
-    product_id: "product-1",
+    product_id: productId,
     start_date: "2026-10-26",
     end_date: "2026-11-01",
     quantity_units: 10,
@@ -121,22 +213,22 @@ it("creates a Farm product together with its first stock batch", async () => {
 it("lists, creates, updates, and cancels Farm stock batches through the BFF", async () => {
   fetchMock
     .mockResolvedValueOnce(Response.json({ data: [], meta: { page: 2, page_size: 20, total: 0 } }))
-    .mockImplementation(() => Promise.resolve(Response.json({ data: { id: "batch-1" } })));
+    .mockImplementation(() => Promise.resolve(Response.json({ data: stockBatch })));
 
-  await listFarmStockBatches("farm-1", "product-1", { page: 2, status: "active" });
-  await createFarmStockBatch("farm-1", "product-1", {
+  await listFarmStockBatches(farmId, productId, { page: 2, status: "active" });
+  await createFarmStockBatch(farmId, productId, {
     start_date: "2026-10-26",
     end_date: "2026-11-01",
     quantity_units: 10,
   });
-  await updateFarmStockBatch("farm-1", "product-1", "batch-1", {
+  await updateFarmStockBatch(farmId, productId, batchId, {
     version: 2,
     end_date: "2026-11-02",
     quantity_units: 12,
   });
-  await cancelFarmStockBatch("farm-1", "product-1", "batch-1", 3);
+  await cancelFarmStockBatch(farmId, productId, batchId, 3);
 
-  const base = "/api/backend/admin/farms/farm-1/products/product-1/batches";
+  const base = `/api/backend/admin/farms/${farmId}/products/${productId}/batches`;
   expect(fetchMock.mock.calls[0][0]).toBe(`${base}?page=2&status=active`);
   expect(fetchMock.mock.calls[1][0]).toBe(base);
   expect(fetchMock.mock.calls[1][1].method).toBe("POST");
@@ -145,14 +237,14 @@ it("lists, creates, updates, and cancels Farm stock batches through the BFF", as
     end_date: "2026-11-01",
     quantity_units: 10,
   });
-  expect(fetchMock.mock.calls[2][0]).toBe(`${base}/batch-1`);
+  expect(fetchMock.mock.calls[2][0]).toBe(`${base}/${batchId}`);
   expect(fetchMock.mock.calls[2][1].method).toBe("PATCH");
   expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
     version: 2,
     end_date: "2026-11-02",
     quantity_units: 12,
   });
-  expect(fetchMock.mock.calls[3][0]).toBe(`${base}/batch-1/cancel`);
+  expect(fetchMock.mock.calls[3][0]).toBe(`${base}/${batchId}/cancel`);
   expect(fetchMock.mock.calls[3][1].method).toBe("POST");
   expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ version: 3 });
 });

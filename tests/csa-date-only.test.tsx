@@ -331,3 +331,43 @@ it("retries a failed reopen read inside the dialog without automatically posting
     body: JSON.stringify({ deadline: "2026-12-31T23:59:00+07:00", expected_revision: 7 }),
   });
 });
+
+it.each([
+  [
+    "locked",
+    null,
+    /Reopening releases the existing stock holds.*cannot select discontinued products/,
+  ],
+  [
+    "reselecting",
+    "2026-12-31T23:10:00+07:00",
+    /Extending the deadline preserves the current selection and effective holds/,
+  ],
+] as const)(
+  "shows the stock-hold consequence for a %s selection",
+  async (state, reopenUntil, warning) => {
+    vi.mocked(api).mockResolvedValue({
+      status: "pending_review",
+      approved_at: null,
+      server_time: round.server_time,
+      csa: { round, selection: { id: "s", state, revision: 4, reopen_until: reopenUntil } },
+    });
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <CSAReopenDialog
+          selectionId="s"
+          orderId="o"
+          deliveryDate={round.delivery_date}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </AdminI18nProvider>,
+    );
+    expect(await screen.findByText(warning)).toBeVisible();
+    expect(
+      screen.queryByText(
+        state === "locked" ? /Extending the deadline preserves/ : /Reopening releases/,
+      ),
+    ).not.toBeInTheDocument();
+  },
+);

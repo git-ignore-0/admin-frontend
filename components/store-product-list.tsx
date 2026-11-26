@@ -6,17 +6,16 @@ import { FormField, FormSelect } from "@/components/nfv-controls";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { Pagination } from "@/components/pagination";
-import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { formatAdminDate } from "@/lib/admin-date";
 import { listStoreCategories, listStoreProducts } from "@/lib/commerce-api";
-import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { categoryPath } from "@/lib/store-categories";
 import type { StoreCategory, StoreProduct } from "@/lib/types";
@@ -24,19 +23,6 @@ import { usePaginatedList } from "@/lib/use-paginated-list";
 
 function booleanFilter(value: string) {
   return value === "true" ? true : value === "false" ? false : undefined;
-}
-
-function validateProductRecord(product: StoreProduct) {
-  requireResponseEntity(product);
-  if (!["draft", "active", "discontinued"].includes(product.status)) throw invalidApiResponse();
-  requireResponseList(product.translations, (translation) => {
-    if (!isApiObject(translation) || typeof translation.name !== "string") {
-      throw invalidApiResponse();
-    }
-  });
-  if (typeof product.retail_price_vnd !== "string" || !/^\d+$/u.test(product.retail_price_vnd)) {
-    throw invalidApiResponse();
-  }
 }
 
 export function StoreProductList() {
@@ -52,11 +38,14 @@ export function StoreProductList() {
       ? requestedStatus
       : "active";
   const csa = searchParams.get("csa_eligible") ?? "";
+  const hasAppliedFilters = Boolean(search || categoryId || status !== "active" || csa);
   const [query, setQuery] = useState(search);
-  const [categories, setCategories] = useState<StoreCategory[]>([]);
-  const [categoryError, setCategoryError] = useState("");
+  const [categoryRows, setCategories] = useState<StoreCategory[] | null>(null);
+  const [categoryError, setCategoryError] = useState<unknown>(null);
   const [categoryRetry, setCategoryRetry] = useState(0);
-  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  const categoryRequest = useRef<AbortController | null>(null);
+  const requestedPage = Number(searchParams.get("page"));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
 
   useEffect(() => setQuery(search), [search]);
 
@@ -73,50 +62,75 @@ export function StoreProductList() {
   }
 
   useEffect(() => {
-    let cancelled = false;
-    listStoreCategories()
+    const controller = new AbortController();
+    categoryRequest.current = controller;
+    listStoreCategories(undefined, controller.signal)
       .then((items) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setCategories(items);
-          setCategoryError("");
+          setCategoryError(null);
         }
       })
       .catch((caught) => {
-        if (!cancelled) setCategoryError(requestErrorMessage(caught, t));
+        if (!controller.signal.aborted) {
+          setCategories(null);
+          setCategoryError(caught);
+        }
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [categoryRetry, t]);
+    return () => controller.abort();
+  }, [categoryRetry]);
 
   const fetchPage = useCallback(
-    (page: number) =>
-      listStoreProducts({
-        page,
-        search,
-        category_id: categoryId || undefined,
-        status: status === "all" ? undefined : status,
-        csa_eligible: booleanFilter(csa),
-      }),
+    (page: number, signal: AbortSignal) =>
+      listStoreProducts(
+        {
+          page,
+          search,
+          category_id: categoryId || undefined,
+          status: status === "all" ? undefined : status,
+          csa_eligible: booleanFilter(csa),
+        },
+        signal,
+      ),
     [search, categoryId, status, csa],
   );
-  const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
+  const getErrorMessage = useCallback(
+    (caught: unknown) => {
+      if (isProtectedDataError(caught)) {
+        categoryRequest.current?.abort();
+        setCategories(null);
+      }
+      return requestErrorMessage(caught, t);
+    },
+    [t],
+  );
   const { items, meta, loading, error, reload, setPage } = usePaginatedList<StoreProduct>({
     fetchPage,
-    validateRecord: validateProductRecord,
     getErrorMessage,
     controlledPage: page,
+    enabled: !isProtectedDataError(categoryError),
+    requestKey: JSON.stringify([search, categoryId, status, csa]),
     onPage: (next) => navigate({ page: next > 1 ? String(next) : "" }),
   });
 
+  function reloadProducts() {
+    if (categoryRows === null && categoryRequest.current?.signal.aborted) {
+      setCategoryRetry((value) => value + 1);
+    }
+    reload();
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (query.trim() === search && page === 1) reload();
+    if (query.trim() === search && page === 1) reloadProducts();
     else navigate({ search: query.trim(), page: "" });
   }
-  const labels = new Map(
-    categories.map((item) => [item.id, categoryPath(item, categories, locale)]),
-  );
+  const categories = categoryRows ?? [];
+  const categoryOptions = categories.map((item) => ({
+    value: item.id,
+    label: categoryPath(item, categories, locale),
+  }));
+  const labels = new Map(categoryOptions.map(({ value, label }) => [value, label]));
   return (
     <section aria-busy={loading}>
       <ListToolbar
@@ -128,13 +142,7 @@ export function StoreProductList() {
               <FormSelect
                 value={categoryId}
                 onChange={(selection) => navigate({ category_id: selection ?? "", page: "" })}
-                data={[
-                  { value: "", label: copy.all },
-                  ...categories.map((item) => ({
-                    value: item.id,
-                    label: categoryPath(item, categories, locale),
-                  })),
-                ]}
+                data={[{ value: "", label: copy.all }, ...categoryOptions]}
               />
             </FormField>
             <FormField label={copy.status} className="field">
@@ -164,7 +172,7 @@ export function StoreProductList() {
             </FormField>
           </>
         }
-        hasFilters={Boolean(query || search || categoryId || status !== "active" || csa)}
+        hasFilters={Boolean(query || hasAppliedFilters)}
         onClear={() => {
           setQuery("");
           navigate({
@@ -185,10 +193,10 @@ export function StoreProductList() {
         searchLabel={copy.search}
         searchSubmitLabel={copy.search}
       />
-      {categoryError && (
+      {categoryError != null && (
         <Alert color="red" role="alert">
           <Stack gap="sm" align="flex-start">
-            {categoryError}{" "}
+            {requestErrorMessage(categoryError, t)}{" "}
             <Button variant="default" onClick={() => setCategoryRetry((value) => value + 1)}>
               {t.common.retry}
             </Button>
@@ -202,7 +210,9 @@ export function StoreProductList() {
         isEmpty={items?.length === 0}
         loading={loading}
         loadingLabel={copy.loading}
-        onRetry={reload}
+        noResults={hasAppliedFilters ? copy.noMatchingProducts : undefined}
+        onRetry={reloadProducts}
+        refreshingLabel={copy.refreshing}
         retryLabel={t.common.retry}
       />
       {items && items.length > 0 && (

@@ -36,6 +36,7 @@ type Props = {
   unitSize: string;
   unitLabel: string;
   startDisabled?: boolean;
+  disabled?: boolean;
   limits?: { start: string; end: string; quantity: number };
   onChange: (draft: StockBatchDraft) => void;
   onPresetChange: (preset: StockBatchPreset) => void;
@@ -58,6 +59,7 @@ export function StockBatchFields({
   unitSize,
   unitLabel,
   startDisabled = false,
+  disabled = false,
   limits,
   onChange,
   onPresetChange,
@@ -69,6 +71,7 @@ export function StockBatchFields({
       : `— ${unitLabel}`;
 
   function selectPreset(value: string) {
+    if (disabled) return;
     const nextPreset = value as StockBatchPreset;
     onPresetChange(nextPreset);
     if (nextPreset !== "custom") {
@@ -85,6 +88,7 @@ export function StockBatchFields({
             label={labels.batchRange}
             value={preset}
             onChange={selectPreset}
+            disabled={disabled}
             items={[
               { value: "week", label: labels.currentWeek },
               { value: "month", label: labels.currentMonth },
@@ -96,7 +100,7 @@ export function StockBatchFields({
       <div className="stock-batch-date-grid">
         <FormField label={labels.startDate} error={errorMessage(errors.start_date, labels)}>
           <FormInput
-            disabled={startDisabled}
+            disabled={disabled || startDisabled}
             min={limits?.start}
             type="date"
             value={draft.start_date}
@@ -110,6 +114,7 @@ export function StockBatchFields({
           <FormInput
             type="date"
             value={draft.end_date}
+            disabled={disabled}
             max={limits?.end}
             onChange={(event) => {
               onPresetChange("custom");
@@ -123,6 +128,7 @@ export function StockBatchFields({
           <FormField label={labels.quantityUnits} error={errorMessage(errors.quantity, labels)}>
             <FormInput
               inputMode="numeric"
+              disabled={disabled}
               min="1"
               max={limits?.quantity}
               step="1"

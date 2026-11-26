@@ -15,6 +15,8 @@ type PaginatedListOptions<T, M extends PaginationMeta> = {
   controlledPage?: number;
   onPage?: (page: number) => void;
   enabled?: boolean;
+  /** Identify the applied query. Only its current page may expose data or errors. */
+  requestKey?: string;
 };
 
 export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
@@ -25,6 +27,7 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   controlledPage,
   onPage,
   enabled = true,
+  requestKey,
 }: PaginatedListOptions<T, M>) {
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<M | null>(null);
@@ -34,6 +37,8 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadVersion, setReloadVersion] = useState(0);
+  const key = requestKey === undefined ? undefined : JSON.stringify([requestKey, page]);
+  const [settledKey, setSettledKey] = useState<string | undefined>();
   const activeRequest = useRef<AbortController | null>(null);
   const cancelActiveRequest = useCallback(() => {
     const previous = activeRequest.current;
@@ -42,7 +47,14 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      if (key !== undefined) {
+        setItems(null);
+        setMeta(null);
+        setError("");
+      }
+      return;
+    }
     const controller = new AbortController();
     activeRequest.current = controller;
     setLoading(true);
@@ -57,11 +69,16 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
         setMeta(meta);
       } catch (error) {
         if (activeRequest.current === controller && !isRequestCanceled(error, controller.signal)) {
+          if (key !== undefined) {
+            setItems(null);
+            setMeta(null);
+          }
           setError(getErrorMessage(error));
         }
       } finally {
         if (activeRequest.current === controller) {
           activeRequest.current = null;
+          setSettledKey(key);
           setLoading(false);
         }
       }
@@ -76,6 +93,7 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
     enabled,
     fetchPage,
     getErrorMessage,
+    key,
     page,
     reloadVersion,
     validateRecord,
@@ -92,10 +110,21 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
       setItems(nextItems);
       if (nextMeta !== undefined) setMeta(nextMeta);
       setError("");
+      setSettledKey(key);
       setLoading(false);
     },
-    [cancelActiveRequest, validateRecord],
+    [cancelActiveRequest, key, validateRecord],
   );
 
-  return { error, items, loading, meta, page, reload, replaceData, setPage };
+  const showResult = key === undefined || (enabled && key === settledKey);
+  return {
+    error: showResult ? error : "",
+    items: showResult ? items : null,
+    loading: key === undefined ? loading : enabled && (!showResult || loading),
+    meta: showResult ? meta : null,
+    page,
+    reload,
+    replaceData,
+    setPage,
+  };
 }

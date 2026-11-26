@@ -43,6 +43,8 @@ export type ProductLockReason = {
     | "store_reservation";
   id?: string;
   farm_id?: string;
+  farm_name_vi?: string;
+  farm_name_en?: string;
   label?: string;
 };
 
@@ -77,6 +79,8 @@ export type StoreProduct = {
   created_at: string;
   updated_at: string;
 };
+
+export type StoreProductDetail = StoreProduct & { capabilities: ProductCapabilities };
 
 export type MembershipStatus = "scheduled" | "active" | "frozen" | "ended" | "revoked";
 export type MembershipQuotaPolicy = "expire" | "rollover";

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   deleteStoreProductImage,
+  getStoreProduct,
+  transitionStoreProduct,
   listStoreCategories,
   listStoreProducts,
   saveStoreProduct,
@@ -14,6 +16,31 @@ const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
 beforeEach(() => fetchMock.mockReset());
+
+const productId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+const categoryId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
+const productResponse = {
+  id: productId,
+  category_id: categoryId,
+  category_slug: "rau",
+  sku: "RAU-1",
+  slug: "rau-1",
+  status: "draft",
+  unit_size: "0.500",
+  unit_label_vi: "kg",
+  unit_label_en: "kg",
+  retail_price_vnd: "9007199254740993",
+  csa_quota_group_id: null,
+  csa_quota_group: null,
+  csa_quota_cost: 0,
+  primary_image_id: null,
+  primary_image: null,
+  created_at: "2026-11-26T00:00:00Z",
+  updated_at: "2026-11-26T00:00:00Z",
+  translations: [{ locale: "vi", name: "Rau", description: "", short_description: "" }],
+};
+const capability = { allowed: true, reasons: [] };
+const capabilities = { edit_identity: capability, edit_csa: capability, delete: capability };
 
 describe("Commerce API and compatibility adapter", () => {
   it("accepts an empty unpaginated category response", async () => {
@@ -59,7 +86,9 @@ describe("Commerce API and compatibility adapter", () => {
   });
 
   it("keeps VND as a lossless decimal integer string in product writes", async () => {
-    fetchMock.mockResolvedValue(Response.json({ data: { id: "product" } }, { status: 201 }));
+    fetchMock.mockResolvedValue(
+      Response.json({ data: { ...productResponse, capabilities } }, { status: 201 }),
+    );
     await saveStoreProduct({
       sku: "RAU-1",
       slug: "rau-1",
@@ -77,6 +106,65 @@ describe("Commerce API and compatibility adapter", () => {
     expect(payload.retail_price_vnd).toBe("9007199254740993");
     expect(payload.csa_quota_group_id).toBeNull();
     expect(payload.csa_quota_cost).toBe(0);
+  });
+
+  it("validates list rows and page metadata and forwards the request signal", async () => {
+    const controller = new AbortController();
+    const meta = { page: 2, page_size: 30, total: 31 };
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [productResponse], meta }));
+    await expect(listStoreProducts({ page: 2 }, controller.signal)).resolves.toMatchObject({
+      meta,
+    });
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ data: [productResponse], meta: { ...meta, page: 1 } }),
+    );
+    await expect(listStoreProducts({ page: 2 })).rejects.toThrow("invalid_response");
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ data: [{ ...productResponse, status: "published" }], meta }),
+    );
+    await expect(listStoreProducts({ page: 2 })).rejects.toThrow("invalid_response");
+  });
+
+  it.each([
+    {},
+    { capabilities: { ...capabilities, edit_identity: { allowed: "true", reasons: [] } } },
+    { capabilities: { ...capabilities, delete: { allowed: false, reasons: [null] } } },
+    { capabilities, id: categoryId },
+    { capabilities, retail_price_vnd: 1000 },
+    { capabilities, unit_size: "invalid" },
+    { capabilities, translations: [{ locale: "fr", name: "Rau" }] },
+    { capabilities, csa_quota_cost: "0" },
+  ])("rejects malformed or misbound product detail %#", async (patch) => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: { ...productResponse, ...patch } }));
+    await expect(getStoreProduct(productId)).rejects.toThrow("invalid_response");
+  });
+
+  it("accepts a valid detail with localized reason metadata and rejects incomplete mutations", async () => {
+    const detail = {
+      ...productResponse,
+      capabilities: {
+        ...capabilities,
+        delete: {
+          allowed: false,
+          reasons: [
+            { code: "farm_link", farm_id: categoryId, farm_name_vi: "Vườn", farm_name_en: "Farm" },
+          ],
+        },
+      },
+    };
+    fetchMock.mockResolvedValueOnce(Response.json({ data: detail }));
+    await expect(getStoreProduct(productId)).resolves.toEqual(detail);
+    fetchMock.mockResolvedValueOnce(Response.json({ data: { ...detail, id: categoryId } }));
+    await expect(saveStoreProduct({ sku: "RAU-1" }, productId)).rejects.toThrow("invalid_response");
+    fetchMock.mockResolvedValueOnce(Response.json({ data: detail }));
+    await expect(transitionStoreProduct(productId, "draft", "active")).rejects.toThrow(
+      "invalid_response",
+    );
+    fetchMock.mockResolvedValueOnce(Response.json({ data: { ...detail, status: "active" } }));
+    await expect(transitionStoreProduct(productId, "draft", "active")).resolves.toMatchObject({
+      status: "active",
+    });
   });
 
   it("keeps orphan-image cleanup alive while leaving the editor", async () => {

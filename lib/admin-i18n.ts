@@ -823,6 +823,15 @@ const vi = {
     productCsaLocked: "Cấu hình CSA đã được khóa trong thời gian còn lượt giữ hàng.",
     productDeleteBlocked: "Không thể xóa sản phẩm vì còn dữ liệu liên quan.",
     batchIncreaseBlocked: "Chỉ sản phẩm Đang bán mới được nhập thêm hoặc tăng nguồn tồn.",
+    refreshing: "Đang làm mới danh sách…",
+    noMatchingProducts: "Không có sản phẩm khớp bộ lọc.",
+    productCapabilitiesUnverified:
+      "Chưa thể xác minh quyền sửa sản phẩm. Hãy tải lại thông tin trước khi lưu.",
+    productTransitionInvalid:
+      "Không thể chuyển sang trạng thái đã chọn. Hãy kiểm tra trạng thái hiện tại.",
+    productResultUncertain:
+      "Chưa xác định được kết quả thao tác. Hãy kiểm tra dữ liệu vừa tải trước khi quyết định tiếp.",
+    productNotFound: "Không tìm thấy sản phẩm.",
     lifecycleUnavailable: "Cần cập nhật Backend để quản lý vòng đời sản phẩm.",
     productLockReasons: {
       stock_batch: "Đợt hàng",
@@ -2398,6 +2407,14 @@ const en: AdminDictionary = {
     productCsaLocked: "CSA configuration is locked while there is an effective stock hold.",
     productDeleteBlocked: "This product has related records and cannot be deleted.",
     batchIncreaseBlocked: "Stock can only be added or increased for products that are selling.",
+    refreshing: "Refreshing the product list…",
+    noMatchingProducts: "No products match these filters.",
+    productCapabilitiesUnverified:
+      "Product editing permissions could not be verified. Refresh the product before saving.",
+    productTransitionInvalid: "This transition is unavailable. Review the current status.",
+    productResultUncertain:
+      "The result could not be confirmed. Review the refreshed product before deciding what to do next.",
+    productNotFound: "Product not found.",
     lifecycleUnavailable: "Update the Backend to manage the product lifecycle.",
     productLockReasons: {
       stock_batch: "Stock batch",

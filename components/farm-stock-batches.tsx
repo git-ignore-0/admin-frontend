@@ -1,15 +1,16 @@
 "use client";
-import { Button } from "@mantine/core";
+import { Alert, Button, Group, Text } from "@mantine/core";
 
-import { ReactNode, RefObject, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DataState, FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { Pagination } from "@/components/pagination";
 import { StockBatchFields } from "@/components/stock-batch-fields";
 import { formatAdminDate } from "@/lib/admin-date";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   cancelFarmStockBatch,
   createFarmStockBatch,
@@ -46,6 +47,8 @@ type Props = {
   detailHeadingRef: RefObject<HTMLHeadingElement | null>;
   onBack: () => void;
   onSummaryChanged: () => void;
+  onAccessLost: (caught: unknown) => void;
+  summaryBusy: boolean;
   actions?: ReactNode;
 };
 
@@ -55,6 +58,8 @@ export function FarmStockBatches({
   detailHeadingRef,
   onBack,
   onSummaryChanged,
+  onAccessLost,
+  summaryBusy,
   actions,
 }: Props) {
   const { locale, t } = useAdminI18n();
@@ -68,6 +73,16 @@ export function FarmStockBatches({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [reloadRequired, setReloadRequired] = useState(false);
+  const mutation = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const [retry, setRetry] = useState(0);
   const [editor, setEditor] = useState<"new" | FarmStockBatch | null>(null);
   const [cancelTarget, setCancelTarget] = useState<FarmStockBatch | null>(null);
@@ -76,26 +91,43 @@ export function FarmStockBatches({
   const [fieldErrors, setFieldErrors] = useState<StockBatchFieldErrors>({});
 
   const load = useCallback(
-    () => listFarmStockBatches(farmId, product.product_id, { page, status: status || undefined }),
-    [farmId, page, product.product_id, status],
+    (signal: AbortSignal) =>
+      listFarmStockBatches(
+        farmId,
+        product.product_id,
+        { page, status: status || undefined },
+        { signal, linkId: product.id },
+      ),
+    [farmId, page, product.id, product.product_id, status],
   );
 
   useEffect(() => {
-    let live = true;
+    const controller = new AbortController();
     setLoading(true);
     setError("");
-    load()
+    load(controller.signal)
       .then((result) => {
-        if (!live) return;
+        if (controller.signal.aborted) return;
         setRows(result.data);
         setMeta(result.meta ?? { page, page_size: 20, total: result.data.length });
+        setReloadRequired(false);
       })
-      .catch((caught) => live && setError(requestErrorMessage(caught, t)))
-      .finally(() => live && setLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [load, page, retry, t]);
+      .catch((caught) => {
+        if (controller.signal.aborted) return;
+        if (isProtectedDataError(caught)) {
+          onAccessLost(caught);
+          return;
+        }
+        setRows(null);
+        setEditor(null);
+        setCancelTarget(null);
+        setError(requestErrorMessage(caught, t));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [load, onAccessLost, page, retry, t]);
 
   const statusLabels = useMemo(
     () => ({
@@ -107,6 +139,7 @@ export function FarmStockBatches({
     [c],
   );
   const canIncrease = product.product_status === "active";
+  const actionsBlocked = summaryBusy || loading || busy || Boolean(error) || reloadRequired;
   const limits =
     !canIncrease && editor && editor !== "new"
       ? { start: editor.start_date, end: editor.end_date, quantity: editor.quantity_units }
@@ -117,13 +150,13 @@ export function FarmStockBatches({
       draft.end_date > limits.end ||
       Number(draft.quantity) > limits.quantity),
   );
-  const productStockLabel = !product.is_active
-    ? c.productInactive
-    : product.available_quantity > 0
+  const productStockLabel =
+    product.available_quantity > 0
       ? c.remainingUnits.replace("{count}", String(product.available_quantity))
       : c.outOfStock;
 
   function openNew() {
+    if (actionsBlocked || !canIncrease) return;
     setEditor("new");
     setPreset("week");
     setDraft(emptyDraft());
@@ -132,6 +165,7 @@ export function FarmStockBatches({
   }
 
   function openEdit(batch: FarmStockBatch) {
+    if (actionsBlocked) return;
     setEditor(batch);
     setPreset("custom");
     setDraft({
@@ -143,14 +177,41 @@ export function FarmStockBatches({
     setActionError("");
   }
 
-  function errorFor(caught: unknown) {
-    if (caught instanceof Error && caught.message === "product_not_selling") {
-      onSummaryChanged();
-      return t.storeCatalog.batchIncreaseBlocked;
+  function handleMutationError(caught: unknown) {
+    if (isProtectedDataError(caught)) {
+      onAccessLost(caught);
+      return;
     }
-    return caught instanceof Error && conflictCodes.has(caught.message)
-      ? c.batchChanged
-      : requestErrorMessage(caught, t);
+    if (!(caught instanceof Error)) {
+      setActionError(requestErrorMessage(caught, t));
+      return;
+    }
+    const error = caught as ClientApiError;
+    if (error.message === "product_not_selling" || error.message === "product_inactive") {
+      setEditor(null);
+      setCancelTarget(null);
+      setActionError(t.storeCatalog.batchIncreaseBlocked);
+      reloadFromFirstPage();
+      onSummaryChanged();
+      return;
+    }
+    if (error.message === "stock_reserved") {
+      setActionError(c.stockReserved);
+      return;
+    }
+    if (conflictCodes.has(error.message)) {
+      setReloadRequired(true);
+      setActionError(c.batchChanged);
+      return;
+    }
+    if (
+      error.status === 404 ||
+      (error.status ?? 0) >= 500 ||
+      ["invalid_response", "network_error", "request_timeout"].includes(error.message)
+    ) {
+      setReloadRequired(true);
+    }
+    setActionError(requestErrorMessage(caught, t));
   }
 
   function reloadAfterConflict() {
@@ -162,6 +223,7 @@ export function FarmStockBatches({
   }
 
   function reloadFromFirstPage() {
+    setLoading(true);
     if (page === 1) setRetry((value) => value + 1);
     else setPage(1);
   }
@@ -169,42 +231,64 @@ export function FarmStockBatches({
   async function save() {
     const validated = validateStockBatchInput(draft);
     setFieldErrors(validated.errors);
-    if (!editor || !validated.value || busy || exceedsLimits || (editor === "new" && !canIncrease))
+    if (
+      !editor ||
+      !validated.value ||
+      mutation.current ||
+      actionsBlocked ||
+      exceedsLimits ||
+      (editor === "new" && !canIncrease)
+    )
       return;
+    mutation.current = true;
     setBusy(true);
     setActionError("");
     try {
       if (editor === "new") {
-        await createFarmStockBatch(farmId, product.product_id, validated.value);
+        await createFarmStockBatch(farmId, product.product_id, validated.value, product.id);
       } else {
-        await updateFarmStockBatch(farmId, product.product_id, editor.id, {
-          ...validated.value,
-          version: editor.version,
-        });
+        await updateFarmStockBatch(
+          farmId,
+          product.product_id,
+          editor.id,
+          { ...validated.value, version: editor.version },
+          product.id,
+        );
       }
+      if (!mounted.current) return;
       setEditor(null);
       reloadFromFirstPage();
       onSummaryChanged();
     } catch (caught) {
-      setActionError(errorFor(caught));
+      if (mounted.current) handleMutationError(caught);
     } finally {
-      setBusy(false);
+      mutation.current = false;
+      if (mounted.current) setBusy(false);
     }
   }
 
   async function cancel() {
-    if (!cancelTarget || busy) return;
+    if (!cancelTarget || mutation.current || actionsBlocked) return;
+    mutation.current = true;
     setBusy(true);
     setActionError("");
     try {
-      await cancelFarmStockBatch(farmId, product.product_id, cancelTarget.id, cancelTarget.version);
+      await cancelFarmStockBatch(
+        farmId,
+        product.product_id,
+        cancelTarget.id,
+        cancelTarget.version,
+        product.id,
+      );
+      if (!mounted.current) return;
       setCancelTarget(null);
       reloadFromFirstPage();
       onSummaryChanged();
     } catch (caught) {
-      setActionError(errorFor(caught));
+      if (mounted.current) handleMutationError(caught);
     } finally {
-      setBusy(false);
+      mutation.current = false;
+      if (mounted.current) setBusy(false);
     }
   }
 
@@ -224,30 +308,51 @@ export function FarmStockBatches({
             {c.stockBatches}: {locale === "vi" ? product.name_vi : product.name_en}
           </h3>
           <p>{c.stockBatchesHint}</p>
-          <Status
-            domain="farm-stock"
-            status={
-              !product.is_active
-                ? "inactive"
-                : product.available_quantity > 0
-                  ? "active"
-                  : "expired"
-            }
-            label={productStockLabel}
-          />
+          <Group gap="xs">
+            <ProductLifecycleStatus status={product.product_status} />
+            <Status
+              domain="farm-stock"
+              status={product.is_active ? "active" : "inactive"}
+              label={product.is_active ? c.productActive : c.productInactive}
+            />
+            <Text size="sm">{productStockLabel}</Text>
+          </Group>
         </div>
-        <div className="farm-stock-batches-actions">
-          <Button size="xs" onClick={openNew} disabled={!canIncrease}>
-            {c.addBatch}
-          </Button>
-          {actions}
-        </div>
+        {!error && (
+          <div className="farm-stock-batches-actions">
+            <Button
+              size="xs"
+              onClick={openNew}
+              disabled={!canIncrease || actionsBlocked}
+              aria-describedby={!canIncrease && !summaryBusy ? "farm-stock-add-reason" : undefined}
+            >
+              {c.addBatch}
+            </Button>
+            {!actionsBlocked && actions}
+          </div>
+        )}
       </div>
+      {!canIncrease && !summaryBusy && !error && (
+        <Text size="sm" id="farm-stock-add-reason">
+          {t.storeCatalog.batchIncreaseBlocked}
+        </Text>
+      )}
+      {actionError && !editor && !cancelTarget && (
+        <Alert color="red" role="alert">
+          {actionError}
+          {reloadRequired && (
+            <Button ml="xs" size="xs" variant="default" onClick={reloadAfterConflict}>
+              {c.reload}
+            </Button>
+          )}
+        </Alert>
+      )}
       <div className="farm-stock-batches-filter">
         <FormField label={c.batchStatus}>
           <FormSelect
             value={status}
             onChange={(value) => {
+              if (status !== (value ?? "") || page !== 1) setLoading(true);
               setPage(1);
               setStatus((value ?? "") as StockBatchStatus | "");
             }}
@@ -263,7 +368,7 @@ export function FarmStockBatches({
           kind="error"
           title={c.batchError}
           description={error}
-          action={{ label: t.common.retry, onClick: () => setRetry((value) => value + 1) }}
+          action={{ label: t.common.retry, onClick: reloadAfterConflict }}
         />
       ) : loading ? (
         <DataState kind="loading" title={c.loading} compact />
@@ -296,13 +401,20 @@ export function FarmStockBatches({
                 <div className="farm-stock-batch-row-actions">
                   {editable ? (
                     <>
-                      <Button size="xs" variant="subtle" onClick={() => openEdit(batch)}>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        disabled={actionsBlocked}
+                        onClick={() => openEdit(batch)}
+                      >
                         {c.edit}
                       </Button>
                       <Button
                         size="xs"
                         variant="subtle"
+                        disabled={actionsBlocked}
                         onClick={() => {
+                          if (actionsBlocked) return;
                           setActionError("");
                           setCancelTarget(batch);
                         }}
@@ -324,23 +436,31 @@ export function FarmStockBatches({
           page={page}
           total={meta.total}
           pageSize={meta.page_size}
-          onPage={setPage}
+          onPage={(page) => {
+            setLoading(true);
+            setPage(page);
+          }}
           disabled={loading}
           previousLabel={t.common.previous}
           nextLabel={t.common.next}
           summary={t.common.pagination}
         />
       ) : null}
-      {editor ? (
+      {editor && !error ? (
         <ConfirmationDialog
           title={editor === "new" ? c.addBatch : c.editBatch}
           busy={busy}
           busyLabel={c.saving}
           cancelLabel={c.cancel}
           confirmLabel={editor === "new" ? c.addBatch : c.save}
-          alternateLabel={actionError === c.batchChanged ? c.reload : undefined}
-          error={exceedsLimits ? t.storeCatalog.batchIncreaseBlocked : actionError}
-          confirmDisabled={exceedsLimits || (editor === "new" && !canIncrease)}
+          alternateLabel={reloadRequired ? c.reload : undefined}
+          error={
+            actionError ||
+            (exceedsLimits || (editor === "new" && !canIncrease)
+              ? t.storeCatalog.batchIncreaseBlocked
+              : undefined)
+          }
+          confirmDisabled={actionsBlocked || exceedsLimits || (editor === "new" && !canIncrease)}
           onAlternate={reloadAfterConflict}
           onCancel={() => !busy && setEditor(null)}
           onConfirm={() => void save()}
@@ -353,6 +473,7 @@ export function FarmStockBatches({
             unitSize={product.unit_size}
             unitLabel={unitLabel}
             startDisabled={editor !== "new" && editor.status === "active"}
+            disabled={actionsBlocked || (editor === "new" && !canIncrease)}
             limits={limits}
             onChange={(value) => {
               setDraft(value);
@@ -362,7 +483,7 @@ export function FarmStockBatches({
           />
         </ConfirmationDialog>
       ) : null}
-      {cancelTarget ? (
+      {cancelTarget && !error ? (
         <ConfirmationDialog
           title={c.cancelBatch}
           busy={busy}
@@ -370,7 +491,8 @@ export function FarmStockBatches({
           cancelLabel={c.cancel}
           confirmLabel={c.cancelBatch}
           danger
-          alternateLabel={actionError === c.batchChanged ? c.reload : undefined}
+          confirmDisabled={actionsBlocked}
+          alternateLabel={reloadRequired ? c.reload : undefined}
           error={actionError}
           onAlternate={reloadAfterConflict}
           onCancel={() => !busy && setCancelTarget(null)}

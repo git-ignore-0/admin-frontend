@@ -29,6 +29,17 @@ export type ClientApiError = Error & {
   };
 };
 
+export function isProtectedDataError(caught: unknown): boolean {
+  if (!(caught instanceof Error)) return false;
+  const { status, message } = caught as ClientApiError;
+  return (
+    status === 401 ||
+    status === 403 ||
+    message === "session_expired" ||
+    message === "session_changed"
+  );
+}
+
 /** A response can violate its contract even when HTTP reports success. */
 export function invalidApiResponse(status?: number): ClientApiError {
   const error = new Error("invalid_response") as ClientApiError;

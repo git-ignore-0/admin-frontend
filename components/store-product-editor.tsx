@@ -1,14 +1,13 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Stack, Alert, Button } from "@mantine/core";
-
-import { FormField, FormInput, FormSelect } from "@/components/nfv-controls";
+import { DataState, FormField, FormInput, FormSelect } from "@/components/nfv-controls";
+import { Alert, Button, Stack } from "@mantine/core";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminImagePicker } from "@/components/admin-image-picker";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import {
   BilingualContentFields,
   emptyBilingualContent,
@@ -30,7 +29,12 @@ import {
   saveStoreProduct,
   uploadStoreProductImage,
 } from "@/lib/commerce-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import {
+  invalidApiResponse,
+  isProtectedDataError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { isSupportedImageFile } from "@/lib/image-validation";
 import { listActiveQuotaGroups } from "@/lib/membership-catalog-adapter";
 import { mediaUrlForWidth } from "@/lib/media";
@@ -51,14 +55,22 @@ import type {
   ProductStatus,
   StoreCategory,
   StoreProduct,
+  StoreProductDetail,
   TiptapDocument,
 } from "@/lib/types";
 
 export function StoreProductEditor({ productId }: { productId?: string }) {
+  return <ProductEditorForm key={productId ?? "new"} productId={productId} />;
+}
+
+function ProductEditorForm({ productId }: { productId?: string }) {
   const { locale, t } = useAdminI18n();
   const copy = t.storeCatalog;
   const router = useRouter();
   const toast = useToast();
+  const isCurrent = useIsAdminQueryScopeCurrent();
+  const accessRevoked = useRef(false);
+  const recoveryRequest = useRef<AbortController | null>(null);
   const savingRef = useRef(false);
   const mountedRef = useRef(false);
   const saveInFlightRef = useRef(false);
@@ -107,24 +119,34 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   >({ vi: { text: "" }, en: { text: "" } });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accessError, setAccessError] = useState("");
+  const [recovery, setRecovery] = useState<{
+    problem: ClientApiError;
+    error: unknown;
+  } | null>(null);
+
+  function canAct() {
+    return mountedRef.current && !accessRevoked.current && isCurrent();
+  }
 
   function setPendingImage(next: string | null) {
     pendingImageIdRef.current = next;
     setPendingImageId(next);
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (saveInFlightRef.current) return;
+      recoveryRequest.current?.abort();
+      if (saveInFlightRef.current || !isCurrent() || accessRevoked.current) return;
       const imageId = pendingImageIdRef.current;
       if (imageId) {
         void deleteStoreProductImage(imageId, { keepalive: true }).catch(() => undefined);
         pendingImageIdRef.current = null;
       }
     };
-  }, []);
+  }, [isCurrent]);
 
   useEffect(() => {
     if (!selectedImage || typeof URL.createObjectURL !== "function") {
@@ -138,33 +160,10 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoaded(false);
-    setLoadError("");
-    Promise.all([
-      listStoreCategories(),
-      productId ? getStoreProduct(productId) : Promise.resolve(null),
-    ])
-      .then(([categoryRows, item]) => {
-        if (cancelled) return;
-        setCategories(categoryRows);
-        if (item) hydrate(item);
-        setLoadError("");
-        setLoaded(true);
-      })
-      .catch((caught) => {
-        if (!cancelled) setLoadError(requestErrorMessage(caught, translationRef.current));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [productId, loadRetry]);
-
-  useEffect(() => {
-    let cancelled = false;
     setGroupLoading(true);
     listActiveQuotaGroups(groupPage)
       .then(({ data, meta }) => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         setGroups((current) => {
           const next = new Map(current.map((value) => [value.id, value]));
           data.forEach((value) => next.set(value.id, value));
@@ -174,60 +173,106 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         setGroupError("");
       })
       .catch((caught) => {
-        if (!cancelled) setGroupError(requestErrorMessage(caught, translationRef.current));
+        if (!cancelled && isCurrent()) {
+          if (isProtectedDataError(caught)) setGroups([]);
+          setGroupError(requestErrorMessage(caught, translationRef.current));
+        }
       })
       .finally(() => {
-        if (!cancelled) setGroupLoading(false);
+        if (!cancelled && isCurrent()) setGroupLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [groupPage, groupRetry]);
+  }, [groupPage, groupRetry, isCurrent]);
 
-  function hydrate(item: StoreProduct) {
+  const hydrateIdentity = useCallback((item: StoreProduct) => {
     setSku(item.sku);
-    setCategoryId(item.category_id);
-    setOriginalCategoryId(item.category_id);
     setUnitSize(formatDecimalInput(item.unit_size));
     setUnitVi(item.unit_label_vi);
     setUnitEn(item.unit_label_en);
-    setPrice(String(item.retail_price_vnd));
+  }, []);
+
+  const hydrateCsa = useCallback((item: StoreProduct) => {
     setCsa(Boolean(item.csa_quota_group_id));
     setGroupId(item.csa_quota_group_id ?? "");
     setQuotaCost(String(item.csa_quota_cost || ""));
-    setImage(item.primary_image);
-    setStatus(item.status);
-    setCapabilities(item.capabilities);
-    if (item.csa_quota_group)
-      setGroups((current) =>
-        current.some((value) => value.id === item.csa_quota_group!.id)
-          ? current
-          : [...current, item.csa_quota_group!],
-      );
-    const next = emptyBilingualContent();
-    const full = { vi: descriptionDocument(""), en: descriptionDocument("") };
-    originalDescriptions.current = { vi: { text: "" }, en: { text: "" } };
-    for (const translation of item.translations) {
-      next[translation.locale] = {
-        name: translation.name,
-        description: translation.short_description,
-      };
-      full[translation.locale] = descriptionDocument(
-        translation.description,
-        translation.description_document,
-      );
-      originalDescriptions.current[translation.locale] = {
-        text: translation.description,
-        document: translation.description_document,
-      };
+    const group = item.csa_quota_group;
+    if (group) {
+      setGroups((current) => {
+        if (current.some((value) => value.id === group.id)) {
+          return current.map((value) => (value.id === group.id ? group : value));
+        }
+        return [...current, group];
+      });
     }
-    setContent(next);
-    setLongDescriptions(full);
-  }
+  }, []);
+
+  const hydrate = useCallback(
+    (item: StoreProductDetail) => {
+      hydrateIdentity(item);
+      hydrateCsa(item);
+      setCategoryId(item.category_id);
+      setOriginalCategoryId(item.category_id);
+      setPrice(String(item.retail_price_vnd));
+      setImage(item.primary_image);
+      setStatus(item.status);
+      setCapabilities(item.capabilities);
+      const next = emptyBilingualContent();
+      const full = { vi: descriptionDocument(""), en: descriptionDocument("") };
+      originalDescriptions.current = { vi: { text: "" }, en: { text: "" } };
+      for (const translation of item.translations) {
+        next[translation.locale] = {
+          name: translation.name,
+          description: translation.short_description,
+        };
+        full[translation.locale] = descriptionDocument(
+          translation.description,
+          translation.description_document,
+        );
+        originalDescriptions.current[translation.locale] = {
+          text: translation.description,
+          document: translation.description_document,
+        };
+      }
+      setContent(next);
+      setLongDescriptions(full);
+    },
+    [hydrateIdentity, hydrateCsa],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoaded(false);
+    setLoadError("");
+    Promise.all([
+      listStoreCategories(undefined, controller.signal),
+      productId ? getStoreProduct(productId, controller.signal) : Promise.resolve(null),
+    ])
+      .then(([categoryRows, item]) => {
+        if (controller.signal.aborted || !isCurrent()) return;
+        if (
+          productId &&
+          (!item?.capabilities || item.id.toLowerCase() !== productId.toLowerCase())
+        ) {
+          throw invalidApiResponse();
+        }
+        setCategories(categoryRows);
+        if (item) hydrate(item);
+        setLoadError("");
+        setLoaded(true);
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted && isCurrent())
+          setLoadError(requestErrorMessage(caught, translationRef.current));
+      });
+    return () => controller.abort();
+  }, [productId, loadRetry, isCurrent, hydrate]);
 
   function fail(message: string, field?: string) {
     setError(message);
     requestAnimationFrame(() => {
+      if (!canAct()) return;
       const input = field
         ? formRef.current?.querySelector<HTMLElement>(
             `[data-focus-field="${field}"], [name="${field}"]:not([type="hidden"])`,
@@ -237,26 +282,101 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     });
   }
 
+  function hideProtectedData(caught: unknown) {
+    if (!isProtectedDataError(caught) && (caught as ClientApiError | null)?.status !== 404)
+      return false;
+    accessRevoked.current = true;
+    setAccessError(
+      caught instanceof Error && ["session_expired", "session_changed"].includes(caught.message)
+        ? t.common.sessionChanged
+        : requestErrorMessage(caught, t),
+    );
+    return true;
+  }
+
+  function showSaveError(caught: unknown) {
+    fail(
+      requestErrorMessage(caught, t, {
+        sku: copy.sku,
+        category_id: copy.category,
+        unit_size: copy.unitSize,
+        unit_label_vi: copy.unitVi,
+        unit_label_en: copy.unitEn,
+        retail_price_vnd: copy.price,
+        csa_quota_group_id: copy.quotaGroup,
+        csa_quota_cost: copy.quotaCost,
+        primary_image_id: copy.image,
+        translations: copy.translationSection,
+      }),
+      (caught as ClientApiError | null)?.field,
+    );
+  }
+
+  async function refreshCapabilities(problem: ClientApiError) {
+    if (!productId || !canAct()) return;
+    const controller = new AbortController();
+    recoveryRequest.current = controller;
+    try {
+      const latest = await getStoreProduct(productId, controller.signal);
+      if (!canAct() || controller.signal.aborted) return;
+      if (!latest?.capabilities || latest.id.toLowerCase() !== productId.toLowerCase()) {
+        throw invalidApiResponse();
+      }
+      setStatus(latest.status);
+      setCapabilities(latest.capabilities);
+      setOriginalCategoryId(latest.category_id);
+      if (!latest.capabilities.edit_identity.allowed) hydrateIdentity(latest);
+      if (!latest.capabilities.edit_csa.allowed) hydrateCsa(latest);
+      setRecovery(null);
+      if (problem.message === "validation_error") showSaveError(problem);
+      else fail(copy.statusConflict);
+    } catch (caught) {
+      if (!canAct() || controller.signal.aborted || hideProtectedData(caught)) return;
+      setRecovery({ problem, error: caught });
+      fail("");
+    } finally {
+      if (recoveryRequest.current === controller) recoveryRequest.current = null;
+    }
+  }
+
+  async function retryCapabilities() {
+    if (!recovery || savingRef.current || !canAct()) return;
+    savingRef.current = true;
+    setBusy(true);
+    try {
+      await refreshCapabilities(recovery.problem);
+    } finally {
+      if (canAct()) {
+        savingRef.current = false;
+        setBusy(false);
+      }
+    }
+  }
+
   async function removeImage() {
+    if (!canAct()) return;
     setSelectedImage(null);
     if (pendingImageId) {
       try {
         await deleteStoreProductImage(pendingImageId);
+        if (!canAct()) return;
         setPendingImage(null);
         setImage(null);
       } catch (caught) {
-        fail(requestErrorMessage(caught, t));
+        if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
       }
     } else setImage(null);
   }
 
   async function cancel() {
+    if (!canAct()) return;
     if (pendingImageId) {
       try {
         await deleteStoreProductImage(pendingImageId);
+        if (!canAct()) return;
         setPendingImage(null);
       } catch (caught) {
-        fail(requestErrorMessage(caught, t));
+        if (canAct() && !hideProtectedData(caught)) fail(requestErrorMessage(caught, t));
         return;
       }
     }
@@ -272,7 +392,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (savingRef.current) return;
+    if (savingRef.current || recovery || !canAct()) return;
     const leaf = categories.find((item) => item.id === categoryId && isSelectableCategory(item));
     const parsedSize = parsePositiveDecimal(unitSize);
     const parsedPrice = parsePositiveBigInteger(price);
@@ -342,12 +462,14 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       if (selectedImage) {
         if (pendingImageId) {
           await deleteStoreProductImage(pendingImageId);
+          if (!canAct()) return;
           setPendingImage(null);
         }
-        if (!mountedRef.current) return;
+        if (!canAct()) return;
         savedImage = await uploadStoreProductImage(selectedImage);
-        if (!mountedRef.current) {
-          void deleteStoreProductImage(savedImage.id, { keepalive: true }).catch(() => undefined);
+        if (!canAct()) {
+          if (isCurrent())
+            void deleteStoreProductImage(savedImage.id, { keepalive: true }).catch(() => undefined);
           return;
         }
         setImage(savedImage);
@@ -376,76 +498,54 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       );
       saveInFlightRef.current = false;
       pendingImageIdRef.current = null;
-      if (!mountedRef.current) return;
+      if (!canAct()) return;
       setPendingImage(null);
       toast(copy.success);
       router.replace(`/store-catalog/products/${item.id}`);
     } catch (caught) {
       saveInFlightRef.current = false;
-      if (!mountedRef.current) {
+      if (!canAct()) {
         const imageId = pendingImageIdRef.current;
-        if (imageId) {
+        if (imageId && isCurrent() && !isProtectedDataError(caught)) {
           pendingImageIdRef.current = null;
           void deleteStoreProductImage(imageId, { keepalive: true }).catch(() => undefined);
         }
         return;
       }
-      const field = (caught as { field?: string }).field;
-      if (
-        productId &&
-        caught instanceof Error &&
-        ["product_unit_in_use", "product_csa_hold_in_use"].includes(caught.message)
-      ) {
-        try {
-          const latest = await getStoreProduct(productId);
-          if (mountedRef.current) {
-            setCapabilities(latest.capabilities);
-            setStatus(latest.status);
-            if (!latest.capabilities?.edit_identity.allowed) {
-              setSku(latest.sku);
-              setUnitSize(formatDecimalInput(latest.unit_size));
-              setUnitVi(latest.unit_label_vi);
-              setUnitEn(latest.unit_label_en);
-            }
-            if (!latest.capabilities?.edit_csa.allowed) {
-              setCsa(Boolean(latest.csa_quota_group_id));
-              setGroupId(latest.csa_quota_group_id ?? "");
-              setQuotaCost(String(latest.csa_quota_cost || ""));
-            }
-          }
-        } catch {
-          // Keep the draft available for retry.
-        } finally {
-          if (mountedRef.current) {
-            fail(
-              caught.message === "product_unit_in_use" ? copy.productLocked : copy.statusConflict,
-            );
-            savingRef.current = false;
-            setBusy(false);
-          }
-        }
-        return;
+      if (hideProtectedData(caught)) return;
+
+      const problem = caught instanceof Error ? (caught as ClientApiError) : null;
+      const locked =
+        problem?.status === 409 &&
+        ["product_unit_in_use", "product_csa_hold_in_use"].includes(problem.message);
+      // A form opened before publication may now be subject to selling validation.
+      const sellingValidation =
+        !selling &&
+        problem?.message === "validation_error" &&
+        ["category_id", "retail_price_vnd", "translations", "primary_image_id"].includes(
+          problem.field ?? "",
+        );
+      if (productId && problem && (locked || sellingValidation)) {
+        await refreshCapabilities(problem);
+      } else {
+        showSaveError(caught);
       }
-      fail(
-        requestErrorMessage(caught, t, {
-          sku: copy.sku,
-          category_id: copy.category,
-          unit_size: copy.unitSize,
-          unit_label_vi: copy.unitVi,
-          unit_label_en: copy.unitEn,
-          retail_price_vnd: copy.price,
-          csa_quota_group_id: copy.quotaGroup,
-          csa_quota_cost: copy.quotaCost,
-          primary_image_id: copy.image,
-          translations: copy.translationSection,
-        }),
-        field,
-      );
-      savingRef.current = false;
-      setBusy(false);
+    } finally {
+      if (canAct()) {
+        savingRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
+  if (accessError)
+    return (
+      <DataState
+        kind="error"
+        title={accessError}
+        action={{ label: t.common.reloadPage, onClick: () => window.location.reload() }}
+      />
+    );
   if (loadError)
     return (
       <DataState
@@ -455,14 +555,22 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       />
     );
   if (!loaded) return <DataState kind="loading" title={copy.loading} />;
-  if (productId && !capabilities)
-    return <DataState kind="error" title={copy.lifecycleUnavailable} />;
   const leafCategories = categories.filter(isSelectableCategory);
   return (
     <form className="catalog-editor" noValidate onSubmit={submit} ref={formRef}>
-      {error && (
+      {(recovery || error) && (
         <Alert color="red" ref={errorRef} role="alert" tabIndex={-1}>
-          {error}
+          {recovery ? (
+            <Stack gap="sm" align="flex-start">
+              <span>{copy.productCapabilitiesUnverified}</span>
+              <span>{requestErrorMessage(recovery.error, t)}</span>
+              <Button variant="default" type="button" disabled={busy} onClick={retryCapabilities}>
+                {t.common.retry}
+              </Button>
+            </Stack>
+          ) : (
+            error
+          )}
         </Alert>
       )}
       <section className="catalog-editor-section">
@@ -703,7 +811,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         <Button variant="default" disabled={busy} onClick={cancel} type="button">
           {copy.cancel}
         </Button>
-        <Button disabled={busy} type="submit">
+        <Button disabled={busy || recovery !== null} type="submit">
           {busy ? copy.saving : copy.save}
         </Button>
       </div>

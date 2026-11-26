@@ -45,6 +45,61 @@ describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
 
+  it("binds product transition to the page session and same-origin CSRF checks", async () => {
+    const path = ["admin", "store-products", membershipId, "transition"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const context = { params: Promise.resolve({ path }) };
+    const body = JSON.stringify({ expected_status: "draft", target_status: "active" });
+    const verifiedHeaders = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+      "content-type": "application/json",
+      authorization: "Bearer browser-token",
+    };
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "active" } }));
+    vi.stubGlobal("fetch", upstream);
+    expect((await POST(pageRequest(url, { method: "POST", body }), context)).status).toBe(403);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect(
+      (await POST(pageRequest(url, { method: "POST", body, headers: verifiedHeaders }), context))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await POST(
+          pageRequest(url, {
+            method: "POST",
+            body,
+            headers: { ...verifiedHeaders, "x-nfv-admin-session": "obsolete-page" },
+          }),
+          context,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await POST(
+          pageRequest(`${url}?status=active`, { method: "POST", body, headers: verifiedHeaders }),
+          context,
+        )
+      ).status,
+    ).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const response = await POST(
+      pageRequest(url, { method: "POST", body, headers: verifiedHeaders }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/${path.join("/")}`,
+    );
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+  });
+
   describe("CMS user accounts", () => {
     const userId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = "https://admin.example.test/api/backend/admin/users";
@@ -945,6 +1000,10 @@ describe("admin backend proxy", () => {
       path: ["admin", "store-products"],
       search: `?category_id=${membershipId}&category_id=${versionId}`,
     },
+    { path: ["admin", "store-products"], search: "?status=all" },
+    { path: ["admin", "store-products"], search: "?status=active&status=draft" },
+    { path: ["admin", "store-products"], search: "?search=rau&search=qua" },
+    { path: ["admin", "store-products"], search: "?csa_eligible=true&csa_eligible=false" },
     { path: ["admin", "testimonials"], search: "?type=farmer&type=customer" },
   ])("rejects an ambiguous or malformed query at $path with $search", async ({ path, search }) => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));

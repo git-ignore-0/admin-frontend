@@ -1,6 +1,6 @@
 "use client";
 import { DataState } from "@/components/nfv-controls";
-import { Group, Button } from "@mantine/core";
+import { Alert, Group, Button, Stack } from "@mantine/core";
 
 import { ProductLifecycleStatus, ProductLockReasons } from "@/components/product-lifecycle-status";
 
@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
@@ -16,41 +17,59 @@ import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
 import { descriptionDocument } from "@/lib/store-product-description";
 import { useToast } from "@/components/toast-provider";
 import { deleteStoreProduct, getStoreProduct, transitionStoreProduct } from "@/lib/commerce-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import { formatDecimalInput } from "@/lib/numeric-input";
-import type { StoreProduct } from "@/lib/types";
+import type { StoreProductDetail as ProductDetail } from "@/lib/types";
 
 export function StoreProductDetail({ productId }: { productId: string }) {
+  return <ProductDetailContent key={productId} productId={productId} />;
+}
+
+type Notice =
+  "statusConflict" | "productTransitionInvalid" | "productDeleteBlocked" | "productResultUncertain";
+
+function ProductDetailContent({ productId }: { productId: string }) {
   const { locale, t } = useAdminI18n();
+  const isCurrent = useIsAdminQueryScopeCurrent();
   const copy = t.storeCatalog;
   const router = useRouter();
   const toast = useToast();
-  const [item, setItem] = useState<StoreProduct | null>(null);
-  const [error, setError] = useState("");
+  const [item, setItem] = useState<ProductDetail | null>(null);
+  const [loadError, setLoadError] = useState<{ cause: unknown } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<"delete" | "transition" | null>(null);
   const [dialogError, setDialogError] = useState("");
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(0);
   const inFlight = useRef(false);
+  const mounted = useRef(false);
   useEffect(() => {
-    let cancelled = false;
-    setError("");
-    getStoreProduct(productId)
-      .then((result) => {
-        if (!cancelled) {
-          setItem(result);
-          setError("");
-        }
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(requestErrorMessage(caught, t));
-      });
+    mounted.current = true;
     return () => {
-      cancelled = true;
+      mounted.current = false;
     };
-  }, [productId, retry, t]);
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getStoreProduct(productId, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted && isCurrent()) setItem(result);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted && isCurrent()) setLoadError({ cause });
+      });
+    return () => controller.abort();
+  }, [productId, retry, isCurrent]);
+
+  function reload() {
+    setItem(null);
+    setLoadError(null);
+    setDialog(null);
+    setRetry((value) => value + 1);
+  }
+
   const target = item?.status === "active" ? "discontinued" : "active";
   const transitionLabel =
     item?.status === "active"
@@ -60,33 +79,41 @@ export function StoreProductDetail({ productId }: { productId: string }) {
         : copy.startSelling;
 
   async function confirm() {
-    if (!item || !dialog || inFlight.current) return;
+    if (
+      !item ||
+      !dialog ||
+      inFlight.current ||
+      !isCurrent() ||
+      (dialog === "delete" && !item.capabilities?.delete.allowed)
+    )
+      return;
     inFlight.current = true;
     setBusy(true);
     setDialogError("");
     try {
       if (dialog === "delete") {
         await deleteStoreProduct(item.id);
+        if (!mounted.current || !isCurrent()) return;
+        setItem(null);
         toast(copy.deleted);
         router.replace("/store-catalog/products");
       } else {
-        setItem(await transitionStoreProduct(item.id, item.status, target));
+        const updated = await transitionStoreProduct(item.id, item.status, target);
+        if (!mounted.current || !isCurrent()) return;
+        setItem(updated);
         toast(copy.success);
         router.refresh();
       }
+      setNotice(null);
       setDialog(null);
     } catch (caught) {
-      if ((caught as { status?: number }).status === 409) {
-        try {
-          setItem(await getStoreProduct(item.id));
-          setDialog(null);
-          toast(copy.statusConflict);
-        } catch {
-          setDialogError(
-            dialog === "delete" ? copy.productDeleteBlocked : requestErrorMessage(caught, t),
-          );
-        }
-      } else {
+      if (!mounted.current || !isCurrent()) return;
+      const { status, message } = caught instanceof Error ? (caught as ClientApiError) : {};
+      if (isProtectedDataError(caught) || status === 404) {
+        setItem(null);
+        setDialog(null);
+        setLoadError({ cause: caught });
+      } else if (status === 400 && message !== "invalid_response") {
         setDialogError(
           requestErrorMessage(caught, t, {
             translations: copy.translationSection,
@@ -97,18 +124,35 @@ export function StoreProductDetail({ productId }: { productId: string }) {
             csa_quota_cost: copy.quotaCost,
           }),
         );
+      } else {
+        const conflict =
+          status === 409 &&
+          (dialog === "delete" && message === "product_in_use"
+            ? "productDeleteBlocked"
+            : dialog === "transition" && message === "product_status_changed"
+              ? "statusConflict"
+              : dialog === "transition" && message === "product_transition_invalid"
+                ? "productTransitionInvalid"
+                : null);
+        setNotice(conflict || "productResultUncertain");
+        reload();
       }
     } finally {
       inFlight.current = false;
-      setBusy(false);
+      if (mounted.current && isCurrent()) setBusy(false);
     }
   }
-  if (error)
+
+  if (loadError)
     return (
       <DataState
         kind="error"
-        title={error}
-        action={{ label: t.common.retry, onClick: () => setRetry((value) => value + 1) }}
+        title={
+          (loadError.cause as ClientApiError | undefined)?.status === 404
+            ? copy.productNotFound
+            : requestErrorMessage(loadError.cause, t)
+        }
+        action={{ label: t.common.retry, onClick: reload }}
       />
     );
   if (!item) return <DataState kind="loading" title={copy.loading} />;
@@ -138,7 +182,7 @@ export function StoreProductDetail({ productId }: { productId: string }) {
         </div>
         <div>
           <Group gap="xs" mb="sm">
-            {item.status && <ProductLifecycleStatus status={item.status} />}
+            <ProductLifecycleStatus status={item.status} />
           </Group>
           <p>
             {copy.category}: {item.category_slug}
@@ -169,6 +213,49 @@ export function StoreProductDetail({ productId }: { productId: string }) {
               </p>
             </>
           )}
+          <Stack gap="sm" mt="md">
+            {notice && notice !== "productDeleteBlocked" && (
+              <Alert role="status">{copy[notice]}</Alert>
+            )}
+            {item.capabilities ? (
+              <>
+                <Group gap="xs">
+                  <Button
+                    component={Link}
+                    href={`/store-catalog/products/${item.id}/edit`}
+                    disabled={busy}
+                  >
+                    {copy.edit}
+                  </Button>
+                  <Button variant="default" disabled={busy} onClick={() => setDialog("transition")}>
+                    {transitionLabel}
+                  </Button>
+                </Group>
+                {item.capabilities.delete.allowed ? (
+                  <Group>
+                    {notice === "productDeleteBlocked" && (
+                      <Alert role="status">{copy.productDeleteBlocked}</Alert>
+                    )}
+                    <Button
+                      variant="outline"
+                      color="red"
+                      disabled={busy}
+                      onClick={() => setDialog("delete")}
+                    >
+                      {copy.delete}
+                    </Button>
+                  </Group>
+                ) : (
+                  <Alert>
+                    {copy.productDeleteBlocked}
+                    <ProductLockReasons reasons={item.capabilities.delete.reasons} />
+                  </Alert>
+                )}
+              </>
+            ) : (
+              <Alert>{copy.lifecycleUnavailable}</Alert>
+            )}
+          </Stack>
         </div>
       </div>
       <div className="panel">
@@ -188,31 +275,6 @@ export function StoreProductDetail({ productId }: { productId: string }) {
             />
           </section>
         ))}
-        <div className="catalog-editor-actions">
-          {item.capabilities && item.status ? (
-            <>
-              <Button component={Link} href={`/store-catalog/products/${item.id}/edit`}>
-                {copy.edit}
-              </Button>
-              <Button variant="default" onClick={() => setDialog("transition")}>
-                {transitionLabel}
-              </Button>
-              {item.capabilities.delete.allowed && (
-                <Button color="red" onClick={() => setDialog("delete")}>
-                  {copy.delete}
-                </Button>
-              )}
-            </>
-          ) : (
-            <p>{copy.lifecycleUnavailable}</p>
-          )}
-        </div>
-        {item.capabilities && !item.capabilities.delete.allowed && (
-          <>
-            <p>{copy.productDeleteBlocked}</p>
-            <ProductLockReasons reasons={item.capabilities.delete.reasons} />
-          </>
-        )}
       </div>
       {dialog && (
         <ConfirmationDialog

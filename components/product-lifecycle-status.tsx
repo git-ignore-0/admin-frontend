@@ -1,7 +1,11 @@
 "use client";
 
+import { Anchor, List, Text } from "@mantine/core";
+import Link from "next/link";
+
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { Status } from "@/components/nfv-controls";
+import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import type { ProductLockReason, ProductStatus } from "@/lib/types";
 
 export function ProductLifecycleStatus({ status }: { status: ProductStatus }) {
@@ -17,17 +21,43 @@ export function ProductLifecycleStatus({ status }: { status: ProductStatus }) {
 
 export function ProductLockReasons({ reasons }: { reasons: ProductLockReason[] }) {
   const {
+    locale,
     t: { storeCatalog: copy },
   } = useAdminI18n();
+  if (!reasons.length) return null;
   return (
-    <ul>
-      {reasons.map((reason) => (
-        <li key={reason.code}>
-          {[copy.productLockReasons[reason.code], reason.label ?? reason.id, reason.farm_id]
-            .filter(Boolean)
-            .join(" · ")}
-        </li>
-      ))}
-    </ul>
+    <List size="sm" spacing="xs" mt="xs" withPadding>
+      {reasons.map((reason) => {
+        const farm = ["stock_batch", "legacy_supply", "farm_link"].includes(reason.code);
+        const order = ["store_order", "store_reservation"].includes(reason.code);
+        const id = farm ? reason.farm_id : reason.id;
+        const path = farm ? "/farms" : order ? "/store-orders" : "/csa-rounds";
+        const farmName =
+          locale === "vi"
+            ? reason.farm_name_vi || reason.farm_name_en
+            : reason.farm_name_en || reason.farm_name_vi;
+        const reference = (farm ? farmName : reason.label) || id;
+        const href = id && UUID_PATH_SEGMENT.test(id) ? `${path}/${id}` : null;
+        return (
+          <List.Item key={reason.code}>
+            {copy.productLockReasons[reason.code]}
+            {reference && (
+              <>
+                {" · "}
+                {href ? (
+                  <Anchor component={Link} href={href} size="sm">
+                    {reference}
+                  </Anchor>
+                ) : (
+                  <Text component="span" size="sm">
+                    {reference}
+                  </Text>
+                )}
+              </>
+            )}
+          </List.Item>
+        );
+      })}
+    </List>
   );
 }

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   deleteImage: vi.fn(),
   replace: vi.fn(),
   toast: vi.fn(),
+  isCurrent: vi.fn(),
 }));
 const originalCreateObjectUrl = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
 const originalRevokeObjectUrl = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
@@ -40,6 +41,9 @@ vi.mock("@/components/admin-i18n-provider", () => ({
   useAdminI18n: () => ({ locale: mocks.locale, t: adminDictionaries[mocks.locale] }),
 }));
 vi.mock("@/components/toast-provider", () => ({ useToast: () => mocks.toast }));
+vi.mock("@/components/admin-query-provider", () => ({
+  useIsAdminQueryScopeCurrent: () => mocks.isCurrent,
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh, back: vi.fn() }),
 }));
@@ -49,6 +53,7 @@ beforeEach(() => {
   Object.values(mocks).forEach((mock) => {
     if (typeof mock === "function") mock.mockReset();
   });
+  mocks.isCurrent.mockReturnValue(true);
   createObjectUrl.mockClear();
   revokeObjectUrl.mockClear();
   Object.defineProperty(URL, "createObjectURL", {
@@ -171,7 +176,13 @@ describe("store product editor", () => {
   });
 
   it("explains why a selling unit cannot change after stock batches exist", async () => {
-    mocks.product.mockResolvedValue(storedProduct);
+    mocks.product.mockResolvedValueOnce(storedProduct).mockResolvedValueOnce({
+      ...storedProduct,
+      capabilities: {
+        ...storedProduct.capabilities,
+        edit_identity: { allowed: false, reasons: [{ code: "stock_batch" }] },
+      },
+    });
     mocks.save.mockRejectedValue(Object.assign(new Error("product_unit_in_use"), { status: 409 }));
     render(<StoreProductEditor productId="product-1" />);
     fireEvent.change(await screen.findByLabelText(/Khối lượng \/ số lượng/), {
@@ -179,7 +190,170 @@ describe("store product editor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
     expect(await screen.findByText(/SKU và quy cách đã được khóa/)).toBeVisible();
+    expect(screen.getByLabelText(/Khối lượng \/ số lượng/)).toBeDisabled();
     expect(mocks.save).toHaveBeenCalled();
+  });
+
+  it("blocks saving after a failed lock reload and recovers only server-locked fields", async () => {
+    const locked = {
+      ...storedProduct,
+      status: "active",
+      sku: "RAU-SERVER",
+      unit_size: "2.000",
+      csa_quota_group_id: "new-quota",
+      csa_quota_group: {
+        id: "new-quota",
+        name: "Nhóm quota từ máy chủ",
+        translations: [],
+      },
+      csa_quota_cost: 3,
+      capabilities: {
+        ...storedProduct.capabilities,
+        edit_identity: { allowed: false, reasons: [{ code: "csa_hold" }] },
+        edit_csa: { allowed: false, reasons: [{ code: "csa_hold" }] },
+      },
+    };
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockRejectedValueOnce(new Error("network_error"))
+      .mockResolvedValueOnce(locked);
+    mocks.save.mockRejectedValueOnce(
+      Object.assign(new Error("product_csa_hold_in_use"), { status: 409 }),
+    );
+    const { container } = render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByLabelText(/Mã quản lý sản phẩm/), {
+      target: { value: "RAU-DRAFT" },
+    });
+    fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    const editor = (await screen.findByLabelText("Mô tả chi tiết")) as HTMLElement & {
+      editor: Editor;
+    };
+    act(() => editor.editor.commands.setContent("<p>Giữ mô tả đang sửa</p>", true));
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["image"], "rau.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+
+    const retry = await screen.findByRole("button", { name: "Thử lại" });
+    expect(screen.getByRole("button", { name: "Lưu" })).toBeDisabled();
+    expect(screen.queryByText(/Đã tải lại thông tin sản phẩm/)).not.toBeInTheDocument();
+    fireEvent.submit(container.querySelector("form")!);
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(retry);
+    expect(await screen.findByDisplayValue("RAU-SERVER")).toBeDisabled();
+    expect(screen.getByDisplayValue("2")).toBeDisabled();
+    expect(screen.getByDisplayValue("Nhóm quota từ máy chủ")).toBeDisabled();
+    expect(screen.getByDisplayValue("3")).toBeDisabled();
+    expect(screen.getByDisplayValue("95000")).toBeVisible();
+    expect(screen.getByText("Đang bán")).toBeVisible();
+    expect(screen.getByAltText(adminDictionaries.vi.storeCatalog.imagePreviewAlt)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
+    const [payload, id] = mocks.save.mock.calls[1];
+    expect(id).toBe("product-1");
+    expect(payload).toMatchObject({
+      retail_price_vnd: "95000",
+      primary_image_id: "image-1",
+      translations: expect.arrayContaining([
+        expect.objectContaining({ locale: "vi", description: "Giữ mô tả đang sửa" }),
+      ]),
+    });
+    for (const field of [
+      "sku",
+      "unit_size",
+      "unit_label_vi",
+      "unit_label_en",
+      "csa_quota_group_id",
+      "csa_quota_cost",
+      "status",
+      "is_active",
+      "is_published",
+    ]) {
+      expect(payload).not.toHaveProperty(field);
+    }
+    expect(mocks.upload).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteImage).not.toHaveBeenCalled();
+  });
+
+  it("hides protected product fields if a capability recovery returns 403", async () => {
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    mocks.save.mockRejectedValueOnce(
+      Object.assign(new Error("product_unit_in_use"), { status: 409 }),
+    );
+    render(<StoreProductEditor productId="product-1" />);
+    await screen.findByDisplayValue("RAU-01");
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    expect(await screen.findByText(adminDictionaries.vi.common.forbidden)).toBeVisible();
+    expect(screen.queryByDisplayValue("RAU-01")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Lưu" })).not.toBeInTheDocument();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ...storedProduct, capabilities: undefined },
+    { ...storedProduct, id: "wrong-product" },
+  ])("keeps saving blocked after an invalid recovery response", async (response) => {
+    mocks.product.mockResolvedValueOnce(storedProduct).mockResolvedValueOnce(response);
+    mocks.save.mockRejectedValueOnce(
+      Object.assign(new Error("product_unit_in_use"), { status: 409 }),
+    );
+    render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+
+    expect(await screen.findByRole("button", { name: "Thử lại" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Lưu" })).toBeDisabled();
+    expect(screen.getByDisplayValue("95000")).toBeVisible();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("ignores late capability recovery for a product the editor has left", async () => {
+    let finishRecovery!: (value: typeof storedProduct) => void;
+    const pendingRecovery = new Promise<typeof storedProduct>((resolve) => {
+      finishRecovery = resolve;
+    });
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockReturnValueOnce(pendingRecovery)
+      .mockResolvedValueOnce({ ...storedProduct, id: "product-2", sku: "RAU-02" });
+    mocks.save.mockRejectedValueOnce(
+      Object.assign(new Error("product_unit_in_use"), { status: 409 }),
+    );
+    const page = render(<StoreProductEditor productId="product-1" />);
+    await screen.findByDisplayValue("RAU-01");
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await waitFor(() => expect(mocks.product).toHaveBeenCalledTimes(2));
+    const signal = mocks.product.mock.calls[1][1] as AbortSignal;
+
+    page.rerender(<StoreProductEditor productId="product-2" />);
+    expect(signal.aborted).toBe(true);
+    expect(screen.queryByDisplayValue("RAU-01")).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue("RAU-02")).toBeEnabled();
+    await act(async () => finishRecovery(storedProduct));
+    expect(screen.getByDisplayValue("RAU-02")).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("updates selling-state validation after a draft started selling during editing", async () => {
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockResolvedValueOnce({ ...storedProduct, status: "active" });
+    mocks.save.mockRejectedValueOnce(
+      Object.assign(new Error("validation_error"), { status: 400, field: "primary_image_id" }),
+    );
+    render(<StoreProductEditor productId="product-1" />);
+    fireEvent.change(await screen.findByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    expect(await screen.findByText("Đang bán")).toBeVisible();
+    expect(screen.getByDisplayValue("95000")).toBeVisible();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    expect(await screen.findByText(adminDictionaries.vi.storeCatalog.imageRequired)).toBeVisible();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
   });
 
   it("keeps unsaved product edits when the Admin language changes", async () => {
@@ -404,7 +578,8 @@ describe("store product editor", () => {
     expect(screen.getByLabelText("Mô tả chi tiết")).toHaveAttribute("contenteditable", "false");
   });
 
-  it("saves a retail-only draft without a quota group", async () => {
+  it("creates a retail-only draft and opens its detail", async () => {
+    mocks.save.mockResolvedValueOnce({ ...storedProduct, id: "draft-created" });
     render(<StoreProductEditor />);
     await fillBase();
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
@@ -416,7 +591,11 @@ describe("store product editor", () => {
       csa_quota_cost: 0,
     });
     expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("slug");
+    expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("status");
+    expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("is_active");
     expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("is_published");
+    expect(mocks.save.mock.calls[0][1]).toBeUndefined();
+    expect(mocks.replace).toHaveBeenCalledWith("/store-catalog/products/draft-created");
     expect(screen.queryByLabelText(/Đường dẫn/)).not.toBeInTheDocument();
   });
 
@@ -789,6 +968,134 @@ describe("store product detail", () => {
     expect(await screen.findByRole("button", { name: "Bán lại" })).toBeVisible();
     expect(mocks.save).not.toHaveBeenCalled();
   });
+  it("moves actions above the description and guards against duplicate confirmation", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    let finish!: (value: unknown) => void;
+    mocks.transition.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(<StoreProductDetail productId="product-1" />);
+    const action = await screen.findByRole("button", { name: "Đưa lên bán" });
+    const description = screen.getByRole("heading", { name: /^VI: / });
+    expect(
+      action.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(action);
+    const confirm = within(screen.getByRole("dialog")).getByRole("button", { name: "Đưa lên bán" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(mocks.transition).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ...storedProduct, status: "active" }));
+    expect(await screen.findByRole("button", { name: "Ngừng bán" })).toBeVisible();
+  });
+
+  it("returns a discontinued product to active through its own transition", async () => {
+    mocks.product.mockResolvedValue({ ...storedProduct, status: "discontinued" });
+    mocks.transition.mockResolvedValue({ ...storedProduct, status: "active" });
+    render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Bán lại" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Bán lại" }));
+    expect(await screen.findByRole("button", { name: "Ngừng bán" })).toBeVisible();
+    expect(mocks.transition).toHaveBeenCalledExactlyOnceWith("product-1", "discontinued", "active");
+  });
+
+  it.each([
+    ["product_status_changed", "statusConflict"],
+    ["product_transition_invalid", "productTransitionInvalid"],
+  ] as const)("refreshes capabilities before showing %s", async (code, message) => {
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockResolvedValueOnce({ ...storedProduct, status: "discontinued" });
+    mocks.transition.mockRejectedValue(Object.assign(new Error(code), { status: 409 }));
+    render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Đưa lên bán" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Đưa lên bán" }),
+    );
+    expect(await screen.findByText(adminDictionaries.vi.storeCatalog[message])).toBeVisible();
+    expect(screen.getByRole("button", { name: "Bán lại" })).toBeVisible();
+    expect(mocks.transition).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("reloads after an uncertain transition and blocks all actions if recovery fails", async () => {
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockRejectedValueOnce(new Error("network_error"))
+      .mockResolvedValueOnce({ ...storedProduct, status: "active" });
+    mocks.transition.mockRejectedValue(new Error("invalid_response"));
+    render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Đưa lên bán" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Đưa lên bán" }),
+    );
+    const retry = await screen.findByRole("button", { name: "Thử lại" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Chỉnh sửa" })).not.toBeInTheDocument();
+    expect(mocks.toast).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    expect(await screen.findByRole("button", { name: "Ngừng bán" })).toBeVisible();
+    expect(mocks.transition).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("refreshes capabilities and shows fresh delete protection", async () => {
+    const locked = {
+      ...storedProduct,
+      status: "active",
+      capabilities: {
+        ...storedProduct.capabilities,
+        delete: { allowed: false, reasons: [{ code: "store_order", label: "DH-101" }] },
+      },
+    };
+    mocks.product.mockResolvedValueOnce(storedProduct).mockResolvedValueOnce(locked);
+    mocks.remove.mockRejectedValue(Object.assign(new Error("product_in_use"), { status: 409 }));
+    render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
+    expect(await screen.findByText(/DH-101/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+    expect(mocks.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides delete and edit after a delete conflict whose recovery loses access", async () => {
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    mocks.remove.mockRejectedValue(Object.assign(new Error("product_in_use"), { status: 409 }));
+    render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
+    expect(await screen.findByRole("button", { name: "Thử lại" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Chỉnh sửa" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+    expect(mocks.remove).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("does not keep old product actions or route away after a late delete result", async () => {
+    let finish!: () => void;
+    mocks.remove.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    mocks.product
+      .mockResolvedValueOnce(storedProduct)
+      .mockImplementationOnce(() => new Promise(() => {}));
+    const view = render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
+    view.rerender(<StoreProductDetail productId="product-2" />);
+    expect(screen.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => finish());
+    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
   it("localizes the CSA quota group on the detail page", async () => {
     mocks.locale = "en";
     mocks.product.mockResolvedValue({
