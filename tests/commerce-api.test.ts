@@ -43,8 +43,6 @@ describe("Commerce API and compatibility adapter", () => {
       csa_quota_group_id: null,
       csa_quota_cost: 0,
       primary_image_id: null,
-      is_active: false,
-      is_published: false,
       translations: [],
     };
     await expect(saveStoreProduct(payload)).rejects.toThrow("invalid_response");
@@ -54,9 +52,9 @@ describe("Commerce API and compatibility adapter", () => {
     fetchMock.mockResolvedValue(
       Response.json({ data: [], meta: { page: 2, page_size: 30, total: 0 } }),
     );
-    await listStoreProducts({ page: 2, search: "rau", is_active: false, csa_eligible: true });
+    await listStoreProducts({ page: 2, search: "rau", status: "discontinued", csa_eligible: true });
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/backend/admin/store-products?page=2&search=rau&is_active=false&csa_eligible=true",
+      "/api/backend/admin/store-products?page=2&search=rau&status=discontinued&csa_eligible=true",
     );
   });
 
@@ -73,8 +71,6 @@ describe("Commerce API and compatibility adapter", () => {
       csa_quota_group_id: null,
       csa_quota_cost: 0,
       primary_image_id: null,
-      is_active: true,
-      is_published: false,
       translations: [],
     });
     const payload = JSON.parse(fetchMock.mock.calls[0][1].body);

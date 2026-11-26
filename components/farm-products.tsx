@@ -7,6 +7,7 @@ import { IconDots } from "@tabler/icons-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FarmStockBatches } from "@/components/farm-stock-batches";
 import { FormInput, FormField, FormSelect, Status } from "@/components/nfv-controls";
@@ -171,6 +172,9 @@ export function FarmProducts({
     };
   }, [addOpen, c.productDetailUnavailable, retry, selectedProduct]);
 
+  const selectedIsSelling =
+    selectedDetail?.id === selectedProduct && selectedDetail?.status === "active";
+
   function searchProducts(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCatalogPage(1);
@@ -181,7 +185,7 @@ export function FarmProducts({
   async function add() {
     const validated = validateStockBatchInput(batchDraft);
     setBatchErrors(validated.errors);
-    if (!selectedProduct || !selectedDetail || !validated.value || busy) return;
+    if (!selectedProduct || !selectedIsSelling || !validated.value || busy) return;
     setBusy(true);
     setActionError("");
     try {
@@ -195,13 +199,15 @@ export function FarmProducts({
       setBatchDraft(firstBatchDraft());
       setBatchErrors({});
     } catch (caught) {
-      setActionError(
-        (caught as Error).message === "product_already_linked"
-          ? c.alreadyLinked
-          : (caught as Error).message === "product_inactive"
-            ? c.productDeactivated
-            : requestErrorMessage(caught, t),
-      );
+      const code = caught instanceof Error ? caught.message : "";
+      if (code === "product_inactive" || code === "product_not_selling") {
+        setRetry((value) => value + 1);
+        setActionError(c.productDeactivated);
+      } else {
+        setActionError(
+          code === "product_already_linked" ? c.alreadyLinked : requestErrorMessage(caught, t),
+        );
+      }
     } finally {
       setBusy(false);
     }
@@ -356,6 +362,7 @@ export function FarmProducts({
                     <span style={{ display: "grid", minWidth: 0, gap: 3 }}>
                       <strong>{name}</strong>
                       <small>{row.sku}</small>
+                      {row.product_status && <ProductLifecycleStatus status={row.product_status} />}
                     </span>
                     <small style={{ gridColumn: 1 }}>{unit}</small>
                     <Status
@@ -452,13 +459,13 @@ export function FarmProducts({
           confirmLabel={c.addProduct}
           confirmDisabled={
             !selectedProduct ||
-            !selectedDetail ||
+            !selectedIsSelling ||
             catalogLoading ||
             detailLoading ||
             Boolean(catalogError) ||
             Boolean(detailError)
           }
-          error={actionError}
+          error={actionError || (selectedDetail && !selectedIsSelling ? c.productDeactivated : "")}
           onCancel={() => {
             if (!busy) {
               setAddOpen(false);

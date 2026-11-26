@@ -106,6 +106,17 @@ export function FarmStockBatches({
     }),
     [c],
   );
+  const canIncrease = product.product_status === "active";
+  const limits =
+    !canIncrease && editor && editor !== "new"
+      ? { start: editor.start_date, end: editor.end_date, quantity: editor.quantity_units }
+      : undefined;
+  const exceedsLimits = Boolean(
+    limits &&
+    ((draft.start_date && draft.start_date < limits.start) ||
+      draft.end_date > limits.end ||
+      Number(draft.quantity) > limits.quantity),
+  );
   const productStockLabel = !product.is_active
     ? c.productInactive
     : product.available_quantity > 0
@@ -133,6 +144,10 @@ export function FarmStockBatches({
   }
 
   function errorFor(caught: unknown) {
+    if (caught instanceof Error && caught.message === "product_not_selling") {
+      onSummaryChanged();
+      return t.storeCatalog.batchIncreaseBlocked;
+    }
     return caught instanceof Error && conflictCodes.has(caught.message)
       ? c.batchChanged
       : requestErrorMessage(caught, t);
@@ -154,7 +169,8 @@ export function FarmStockBatches({
   async function save() {
     const validated = validateStockBatchInput(draft);
     setFieldErrors(validated.errors);
-    if (!editor || !validated.value || busy) return;
+    if (!editor || !validated.value || busy || exceedsLimits || (editor === "new" && !canIncrease))
+      return;
     setBusy(true);
     setActionError("");
     try {
@@ -221,7 +237,7 @@ export function FarmStockBatches({
           />
         </div>
         <div className="farm-stock-batches-actions">
-          <Button size="xs" onClick={openNew}>
+          <Button size="xs" onClick={openNew} disabled={!canIncrease}>
             {c.addBatch}
           </Button>
           {actions}
@@ -323,7 +339,8 @@ export function FarmStockBatches({
           cancelLabel={c.cancel}
           confirmLabel={editor === "new" ? c.addBatch : c.save}
           alternateLabel={actionError === c.batchChanged ? c.reload : undefined}
-          error={actionError}
+          error={exceedsLimits ? t.storeCatalog.batchIncreaseBlocked : actionError}
+          confirmDisabled={exceedsLimits || (editor === "new" && !canIncrease)}
           onAlternate={reloadAfterConflict}
           onCancel={() => !busy && setEditor(null)}
           onConfirm={() => void save()}
@@ -336,6 +353,7 @@ export function FarmStockBatches({
             unitSize={product.unit_size}
             unitLabel={unitLabel}
             startDisabled={editor !== "new" && editor.status === "active"}
+            limits={limits}
             onChange={(value) => {
               setDraft(value);
               setFieldErrors({});

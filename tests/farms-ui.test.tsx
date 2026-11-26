@@ -96,6 +96,7 @@ const linkedProduct: FarmProduct = {
   unit_label_vi: "gói",
   unit_label_en: "pack",
   is_active: true,
+  product_status: "active",
   initial_quantity: 10,
   net_sold_quantity: 0,
   available_quantity: 10,
@@ -133,12 +134,13 @@ beforeEach(() => {
     meta: { page: 1, page_size: 30, total: 1 },
   });
   mocks.batches.mockResolvedValue({ data: [], meta: { page: 1, page_size: 20, total: 0 } });
-  mocks.productDetail.mockResolvedValue({
-    id: "product-1",
+  mocks.productDetail.mockImplementation(async (id: string) => ({
+    id,
+    status: "active",
     unit_size: "0.500",
     unit_label_vi: "kg",
     unit_label_en: "kg",
-  });
+  }));
   mocks.tracker.mockResolvedValue({ signup_count: 24 });
 });
 afterEach(() => {

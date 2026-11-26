@@ -1,7 +1,7 @@
 "use client";
 import { Stack, Alert, Button, Table } from "@mantine/core";
 
-import { FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { FormField, FormSelect } from "@/components/nfv-controls";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -11,6 +11,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
+import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { Pagination } from "@/components/pagination";
 import { requireResponseEntity, requireResponseList } from "@/lib/api-response";
 import { formatAdminDate } from "@/lib/admin-date";
@@ -27,6 +28,7 @@ function booleanFilter(value: string) {
 
 function validateProductRecord(product: StoreProduct) {
   requireResponseEntity(product);
+  if (!["draft", "active", "discontinued"].includes(product.status)) throw invalidApiResponse();
   requireResponseList(product.translations, (translation) => {
     if (!isApiObject(translation) || typeof translation.name !== "string") {
       throw invalidApiResponse();
@@ -44,8 +46,11 @@ export function StoreProductList() {
   const searchParams = useSearchParams();
   const search = searchParams.get("search") ?? "";
   const categoryId = searchParams.get("category_id") ?? "";
-  const active = searchParams.get("is_active") ?? "";
-  const published = searchParams.get("is_published") ?? "";
+  const requestedStatus = searchParams.get("status");
+  const status =
+    requestedStatus === "draft" || requestedStatus === "discontinued" || requestedStatus === "all"
+      ? requestedStatus
+      : "active";
   const csa = searchParams.get("csa_eligible") ?? "";
   const [query, setQuery] = useState(search);
   const [categories, setCategories] = useState<StoreCategory[]>([]);
@@ -61,6 +66,8 @@ export function StoreProductList() {
       if (value) params.set(key, value);
       else params.delete(key);
     }
+    params.delete("is_active");
+    params.delete("is_published");
     const next = params.toString();
     router.push(`/store-catalog/products${next ? `?${next}` : ""}`, { scroll: false });
   }
@@ -88,11 +95,10 @@ export function StoreProductList() {
         page,
         search,
         category_id: categoryId || undefined,
-        is_active: booleanFilter(active),
-        is_published: booleanFilter(published),
+        status: status === "all" ? undefined : status,
         csa_eligible: booleanFilter(csa),
       }),
-    [search, categoryId, active, published, csa],
+    [search, categoryId, status, csa],
   );
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
   const { items, meta, loading, error, reload, setPage } = usePaginatedList<StoreProduct>({
@@ -133,23 +139,15 @@ export function StoreProductList() {
             </FormField>
             <FormField label={copy.status} className="field">
               <FormSelect
-                value={published}
-                onChange={(selection) => navigate({ is_published: selection ?? "", page: "" })}
+                value={status}
+                onChange={(selection) =>
+                  navigate({ status: selection === "active" ? "" : (selection ?? ""), page: "" })
+                }
                 data={[
-                  { value: "", label: copy.all },
-                  { value: "true", label: copy.published },
-                  { value: "false", label: copy.draft },
-                ]}
-              />
-            </FormField>
-            <FormField label={copy.activeLabel} className="field">
-              <FormSelect
-                value={active}
-                onChange={(selection) => navigate({ is_active: selection ?? "", page: "" })}
-                data={[
-                  { value: "", label: copy.all },
-                  { value: "true", label: copy.active },
-                  { value: "false", label: copy.inactive },
+                  { value: "all", label: copy.all },
+                  { value: "draft", label: copy.productDraft },
+                  { value: "active", label: copy.selling },
+                  { value: "discontinued", label: copy.discontinued },
                 ]}
               />
             </FormField>
@@ -166,14 +164,13 @@ export function StoreProductList() {
             </FormField>
           </>
         }
-        hasFilters={Boolean(query || search || categoryId || active || published || csa)}
+        hasFilters={Boolean(query || search || categoryId || status !== "active" || csa)}
         onClear={() => {
           setQuery("");
           navigate({
             search: "",
             category_id: "",
-            is_active: "",
-            is_published: "",
+            status: "",
             csa_eligible: "",
             page: "",
           });
@@ -264,14 +261,7 @@ export function StoreProductList() {
                       {item.csa_quota_group_id ? copy.csaEligible : copy.retailOnly}
                     </Table.Td>
                     <Table.Td role="cell" data-label={copy.status}>
-                      <Status
-                        domain="publication"
-                        status={item.is_published ? "published" : "draft"}
-                        label={item.is_published ? copy.published : copy.draft}
-                      />{" "}
-                      {!item.is_active && (
-                        <Status domain="availability" status={"inactive"} label={copy.inactive} />
-                      )}
+                      <ProductLifecycleStatus status={item.status} />
                     </Table.Td>
                     <Table.Td role="cell" data-label={copy.updatedAt}>
                       {formatAdminDate(item.updated_at)}

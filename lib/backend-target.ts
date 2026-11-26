@@ -98,6 +98,9 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   }
   if (["store-categories", "store-products"].includes(resource)) {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (resource === "store-products" && action === "transition") {
+      return path.length === 4 && UUID_PATH_SEGMENT.test(id) && normalizedMethod === "POST";
+    }
     if (resource === "store-products" && id === "media") {
       if (action === undefined) return path.length === 3 && normalizedMethod === "POST";
       return path.length === 4 && normalizedMethod === "DELETE" && UUID_PATH_SEGMENT.test(action);

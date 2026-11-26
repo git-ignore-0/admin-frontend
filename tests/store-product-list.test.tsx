@@ -24,7 +24,7 @@ vi.mock("@/lib/commerce-api", () => ({
 }));
 
 beforeEach(() => {
-  mocks.search = new URLSearchParams("page=2&search=rau&is_published=false");
+  mocks.search = new URLSearchParams("page=2&search=rau&status=draft");
   mocks.push.mockReset();
   mocks.categories.mockReset();
   mocks.products.mockReset();
@@ -38,13 +38,34 @@ describe("store product filters", () => {
     render(<StoreProductList />);
     await waitFor(() =>
       expect(mocks.products).toHaveBeenCalledWith(
-        expect.objectContaining({ page: 2, search: "rau", is_published: false }),
+        expect.objectContaining({ page: 2, search: "rau", status: "draft" }),
       ),
     );
     selectOption(screen.getByLabelText("Hình thức bán"), "true");
     expect(mocks.push).toHaveBeenCalledWith(
-      "/store-catalog/products?search=rau&is_published=false&csa_eligible=true",
+      "/store-catalog/products?search=rau&status=draft&csa_eligible=true",
       { scroll: false },
+    );
+  });
+
+  it("defaults to selling and distinguishes the explicit all filter", async () => {
+    mocks.search = new URLSearchParams();
+    const view = render(<StoreProductList />);
+    await waitFor(() =>
+      expect(mocks.products).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: "active", page: 1 }),
+      ),
+    );
+    selectOption(screen.getByLabelText("Trạng thái"), "all");
+    expect(mocks.push).toHaveBeenCalledWith("/store-catalog/products?status=all", {
+      scroll: false,
+    });
+    mocks.search = new URLSearchParams("status=all");
+    view.rerender(<StoreProductList />);
+    await waitFor(() =>
+      expect(mocks.products).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: undefined, page: 1 }),
+      ),
     );
   });
 
@@ -60,8 +81,7 @@ describe("store product filters", () => {
           primary_image: null,
           retail_price_vnd: "10000",
           csa_quota_group_id: null,
-          is_published: true,
-          is_active: true,
+          status: "active",
           updated_at: "2026-10-15T00:00:00Z",
         },
       ],

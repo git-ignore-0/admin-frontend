@@ -30,6 +30,30 @@ export type StoreCategory = {
   updated_at: string;
 };
 
+export type ProductStatus = "draft" | "active" | "discontinued";
+
+export type ProductLockReason = {
+  code:
+    | "stock_batch"
+    | "legacy_supply"
+    | "store_order"
+    | "csa_hold"
+    | "farm_link"
+    | "csa_history"
+    | "store_reservation";
+  id?: string;
+  farm_id?: string;
+  label?: string;
+};
+
+type ProductCapability = { allowed: boolean; reasons: ProductLockReason[] };
+
+export type ProductCapabilities = {
+  edit_identity: ProductCapability;
+  edit_csa: ProductCapability;
+  delete: ProductCapability;
+};
+
 export type StoreProduct = {
   id: string;
   category_id: string;
@@ -45,8 +69,8 @@ export type StoreProduct = {
   csa_quota_cost: number;
   primary_image_id: string | null;
   primary_image: MediaAsset | null;
-  is_active: boolean;
-  is_published: boolean;
+  status: ProductStatus;
+  capabilities?: ProductCapabilities;
   translations: Array<
     StoreTranslation & { short_description: string; description_document?: TiptapDocument | null }
   >;
@@ -671,6 +695,7 @@ export type FarmProduct = {
   unit_label_vi: string;
   unit_label_en: string;
   is_active: boolean;
+  product_status: ProductStatus;
   initial_quantity: number;
   net_sold_quantity: number;
   available_quantity: number;

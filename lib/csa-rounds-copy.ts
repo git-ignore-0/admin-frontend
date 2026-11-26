@@ -120,7 +120,8 @@ const vi = {
     empty_or_revoked: "Lựa chọn trống hoặc quyền lợi đã bị thu hồi.",
   },
   reopenHint:
-    "Mở lại toàn bộ đơn để hội viên chọn từ đầu. Hạn khóa phải ở tương lai và trước ngày giao hàng. Khách không xác nhận đúng hạn sẽ bị hủy cả đơn và hoàn điểm.",
+    "Mở lại lần đầu giải phóng hàng đã giữ. Hội viên sẽ chọn từ đầu và không thể chọn sản phẩm đã ngừng bán. Hạn khóa phải ở tương lai và trước ngày giao hàng. Khách không xác nhận đúng hạn sẽ bị hủy cả đơn và hoàn điểm.",
+  extendReselectionHint: "Gia hạn chọn lại giữ nguyên lựa chọn và lượt giữ còn hiệu lực.",
   allocated: "Đơn đã phân bổ, kết thúc hoặc không còn được mở chọn lại. Hãy tải lại dữ liệu.",
   schedule: "Thời gian kết thúc chọn hàng phải sau thời gian bắt đầu và trước ngày giao hàng.",
   deadlineError: "Hạn chọn lại phải ở tương lai và trước ngày giao hàng.",
@@ -276,7 +277,9 @@ const en: typeof vi = {
     empty_or_revoked: "The selection was empty or the membership benefit was revoked.",
   },
   reopenHint:
-    "Reopen the entire order for the member to choose again. Set a future deadline before the delivery day. If the member does not confirm in time, the entire order is cancelled and points are refunded.",
+    "Reopening releases the existing stock holds. The member chooses again and cannot select discontinued products. Set a future deadline before the delivery day. If the member does not confirm in time, the entire order is cancelled and points are refunded.",
+  extendReselectionHint:
+    "Extending the deadline preserves the current selection and effective holds.",
   allocated: "This order is already allocated, terminal, or cannot be reopened. Refresh the data.",
   schedule: "Selection must close after it opens and before the delivery day.",
   deadlineError: "The deadline must be in the future and before the delivery day.",

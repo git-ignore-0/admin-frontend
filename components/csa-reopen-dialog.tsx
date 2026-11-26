@@ -31,6 +31,7 @@ export function CSAReopenDialog({
 }) {
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
+  const [extending, setExtending] = useState(false);
   const [deadline, setDeadline] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -61,6 +62,7 @@ export function CSAReopenDialog({
       .then((order) => {
         if (current !== generation.current) return;
         const selected = order.csa?.selection;
+        setExtending(selected?.state === "reselecting");
         revision.current = selected?.revision ?? null;
         clock.current = { server: Date.parse(order.server_time), received: performance.now() };
         const delivery = order.csa?.round.delivery_date ?? deliveryDate;
@@ -153,7 +155,7 @@ export function CSAReopenDialog({
         <DataState kind="loading" title={c.loading} />
       ) : (
         <>
-          <p>{c.reopenHint}</p>
+          <p>{extending ? c.extendReselectionHint : c.reopenHint}</p>
           <p>
             <strong>{c.delivery}:</strong> {formatAdminDate(actualDelivery)}
           </p>

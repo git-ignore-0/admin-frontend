@@ -13,6 +13,7 @@ import {
   BilingualContentFields,
   emptyBilingualContent,
 } from "@/components/bilingual-content-fields";
+import { ProductLifecycleStatus, ProductLockReasons } from "@/components/product-lifecycle-status";
 import { LazyRichTextEditor } from "@/components/lazy-rich-text-editor";
 import { normalizeTiptapLinks } from "@/lib/rich-text-links";
 import {
@@ -46,6 +47,8 @@ import { categoryPath } from "@/lib/store-categories";
 import type {
   MediaAsset,
   MembershipProduct,
+  ProductCapabilities,
+  ProductStatus,
   StoreCategory,
   StoreProduct,
   TiptapDocument,
@@ -90,8 +93,11 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [pendingImageId, setPendingImageId] = useState<string | null>(null);
-  const [active, setActive] = useState(true);
-  const [published, setPublished] = useState(false);
+  const [status, setStatus] = useState<ProductStatus>("draft");
+  const [capabilities, setCapabilities] = useState<ProductCapabilities>();
+  const identityLocked = capabilities?.edit_identity.allowed === false;
+  const csaLocked = capabilities?.edit_csa.allowed === false;
+  const selling = status === "active";
   const [content, setContent] = useState(emptyBilingualContent());
   const [longDescriptions, setLongDescriptions] = useState<Record<"vi" | "en", TiptapDocument>>(
     () => ({ vi: descriptionDocument(""), en: descriptionDocument("") }),
@@ -190,8 +196,8 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
     setGroupId(item.csa_quota_group_id ?? "");
     setQuotaCost(String(item.csa_quota_cost || ""));
     setImage(item.primary_image);
-    setActive(item.is_active);
-    setPublished(item.is_published);
+    setStatus(item.status);
+    setCapabilities(item.capabilities);
     if (item.csa_quota_group)
       setGroups((current) =>
         current.some((value) => value.id === item.csa_quota_group!.id)
@@ -260,7 +266,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
   function isSelectableCategory(item: StoreCategory) {
     return (
       !item.has_children &&
-      (item.is_active || (Boolean(productId) && !published && item.id === originalCategoryId))
+      (item.is_active || (Boolean(productId) && !selling && item.id === originalCategoryId))
     );
   }
 
@@ -324,8 +330,8 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       )
     )
       return fail(copy.invalidForm);
-    if (published && (!active || translations.length !== 2)) return fail(copy.translationsRequired);
-    if (published && !image && !selectedImage) return fail(copy.imageRequired);
+    if (selling && translations.length !== 2) return fail(copy.translationsRequired);
+    if (selling && !image && !selectedImage) return fail(copy.imageRequired);
     if (csa && (!groupId || parsedQuota.error))
       return fail(copy.quotaRequired, !groupId ? "csa_quota_group_id" : "csa_quota_cost");
     savingRef.current = true;
@@ -351,17 +357,19 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       saveInFlightRef.current = true;
       const item = await saveStoreProduct(
         {
-          sku: sku.trim().toUpperCase(),
+          ...(!identityLocked && {
+            sku: sku.trim().toUpperCase(),
+            unit_size: String(parsedSize.value),
+            unit_label_vi: unitVi.trim(),
+            unit_label_en: unitEn.trim(),
+          }),
           category_id: categoryId,
-          unit_size: String(parsedSize.value),
-          unit_label_vi: unitVi.trim(),
-          unit_label_en: unitEn.trim(),
           retail_price_vnd: parsedPrice.value!.toString(),
-          csa_quota_group_id: csa ? groupId : null,
-          csa_quota_cost: parsedQuota.value!,
+          ...(!csaLocked && {
+            csa_quota_group_id: csa ? groupId : null,
+            csa_quota_cost: parsedQuota.value!,
+          }),
           primary_image_id: savedImage?.id ?? null,
-          is_active: active,
-          is_published: published,
           translations,
         },
         productId,
@@ -383,10 +391,39 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         return;
       }
       const field = (caught as { field?: string }).field;
-      if (caught instanceof Error && caught.message === "product_unit_in_use") {
-        fail(copy.productUnitInUse, "unit_size");
-        savingRef.current = false;
-        setBusy(false);
+      if (
+        productId &&
+        caught instanceof Error &&
+        ["product_unit_in_use", "product_csa_hold_in_use"].includes(caught.message)
+      ) {
+        try {
+          const latest = await getStoreProduct(productId);
+          if (mountedRef.current) {
+            setCapabilities(latest.capabilities);
+            setStatus(latest.status);
+            if (!latest.capabilities?.edit_identity.allowed) {
+              setSku(latest.sku);
+              setUnitSize(formatDecimalInput(latest.unit_size));
+              setUnitVi(latest.unit_label_vi);
+              setUnitEn(latest.unit_label_en);
+            }
+            if (!latest.capabilities?.edit_csa.allowed) {
+              setCsa(Boolean(latest.csa_quota_group_id));
+              setGroupId(latest.csa_quota_group_id ?? "");
+              setQuotaCost(String(latest.csa_quota_cost || ""));
+            }
+          }
+        } catch {
+          // Keep the draft available for retry.
+        } finally {
+          if (mountedRef.current) {
+            fail(
+              caught.message === "product_unit_in_use" ? copy.productLocked : copy.statusConflict,
+            );
+            savingRef.current = false;
+            setBusy(false);
+          }
+        }
         return;
       }
       fail(
@@ -418,6 +455,8 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       />
     );
   if (!loaded) return <DataState kind="loading" title={copy.loading} />;
+  if (productId && !capabilities)
+    return <DataState kind="error" title={copy.lifecycleUnavailable} />;
   const leafCategories = categories.filter(isSelectableCategory);
   return (
     <form className="catalog-editor" noValidate onSubmit={submit} ref={formRef}>
@@ -433,7 +472,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
             <FormInput
               aria-describedby="store-product-sku-help"
 
-              disabled={busy}
+              disabled={busy || identityLocked}
               maxLength={80}
               name="sku"
               placeholder={copy.skuPlaceholder}
@@ -466,7 +505,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
           </FormField>
           <FormField label={copy.unitVi + " *"} className="field">
             <FormInput
-              disabled={busy}
+              disabled={busy || identityLocked}
               maxLength={40}
               name="unit_label_vi"
               placeholder={copy.unitViPlaceholder}
@@ -476,7 +515,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
           </FormField>
           <FormField label={copy.unitEn + " *"} className="field">
             <FormInput
-              disabled={busy}
+              disabled={busy || identityLocked}
               maxLength={40}
               name="unit_label_en"
               placeholder={copy.unitEnPlaceholder}
@@ -488,7 +527,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
             <FormInput
               aria-describedby="store-product-unit-size-help"
 
-              disabled={busy}
+              disabled={busy || identityLocked}
               inputMode="decimal"
               name="unit_size"
               placeholder={copy.unitSizePlaceholder}
@@ -510,6 +549,12 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
           </FormField>
         </div>
       </section>
+      {identityLocked && capabilities && (
+        <Alert>
+          <p>{copy.productLocked}</p>
+          <ProductLockReasons reasons={capabilities.edit_identity.reasons} />
+        </Alert>
+      )}
       <BilingualContentFields
         busy={busy}
         completionLabels={{ complete: copy.complete, incomplete: copy.incomplete }}
@@ -537,7 +582,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         )}
         nameLabel={copy.productName}
         onChange={setContent}
-        requireNames={published}
+        requireNames={selling}
         title={copy.translationSection}
         value={content}
       />
@@ -545,7 +590,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
         <h2>{copy.saleType}</h2>
         <FormField label={copy.saleType} className="field">
           <FormSelect
-            disabled={busy}
+            disabled={busy || csaLocked}
             value={csa ? "yes" : "no"}
             onChange={(selection) => {
               const enabled = (selection ?? "") === "yes";
@@ -565,7 +610,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
           <div className="form-grid">
             <FormField label={copy.quotaGroup + " *"} className="field">
               <FormSelect
-                disabled={busy || groupLoading}
+                disabled={busy || csaLocked || groupLoading}
                 data-focus-field="csa_quota_group_id"
                 name="csa_quota_group_id"
                 value={groupId}
@@ -582,7 +627,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
             </FormField>
             <FormField label={copy.quotaCost + " *"} className="field">
               <FormInput
-                disabled={busy}
+                disabled={busy || csaLocked}
                 inputMode="decimal"
                 name="csa_quota_cost"
                 value={quotaCost}
@@ -615,6 +660,12 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
             )}
           </div>
         )}
+        {csaLocked && capabilities && (
+          <Alert>
+            <p>{copy.productCsaLocked}</p>
+            <ProductLockReasons reasons={capabilities.edit_csa.reasons} />
+          </Alert>
+        )}
       </section>
       <section className="catalog-editor-section admin-image-picker-section">
         <h2>{copy.image}</h2>
@@ -646,34 +697,7 @@ export function StoreProductEditor({ productId }: { productId?: string }) {
       </section>
       <section className="catalog-editor-section">
         <h2>{copy.status}</h2>
-        <div className="form-grid">
-          <FormField label={copy.activeLabel} className="field">
-            <FormSelect
-              disabled={busy}
-              value={active ? "true" : "false"}
-              onChange={(selection) => {
-                const value = (selection ?? "") === "true";
-                setActive(value);
-                if (!value) setPublished(false);
-              }}
-              data={[
-                { value: "true", label: copy.active },
-                { value: "false", label: copy.inactive },
-              ]}
-            />
-          </FormField>
-          <FormField label={copy.publish} className="field">
-            <FormSelect
-              disabled={busy}
-              value={published ? "true" : "false"}
-              onChange={(selection) => setPublished((selection ?? "") === "true")}
-              data={[
-                { value: "false", label: copy.draft },
-                { value: "true", label: copy.published },
-              ]}
-            />
-          </FormField>
-        </div>
+        <ProductLifecycleStatus status={status} />
       </section>
       <div className="catalog-editor-actions">
         <Button variant="default" disabled={busy} onClick={cancel} type="button">

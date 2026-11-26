@@ -1,5 +1,5 @@
 import { selectOption } from "./select-option";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Editor } from "@tiptap/react";
@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(),
   product: vi.fn(),
   save: vi.fn(),
+  transition: vi.fn(),
+  refresh: vi.fn(),
   remove: vi.fn(),
   upload: vi.fn(),
   deleteImage: vi.fn(),
@@ -26,6 +28,7 @@ const revokeObjectUrl = vi.fn();
 vi.mock("@/lib/commerce-api", () => ({
   listStoreCategories: mocks.categories,
   saveStoreProduct: mocks.save,
+  transitionStoreProduct: mocks.transition,
   getStoreProduct: mocks.product,
   deleteStoreProduct: mocks.remove,
   uploadStoreProductImage: mocks.upload,
@@ -38,7 +41,7 @@ vi.mock("@/components/admin-i18n-provider", () => ({
 }));
 vi.mock("@/components/toast-provider", () => ({ useToast: () => mocks.toast }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mocks.replace, back: vi.fn() }),
+  useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh, back: vi.fn() }),
 }));
 
 beforeEach(() => {
@@ -113,8 +116,12 @@ const storedProduct = {
   csa_quota_cost: 1,
   primary_image_id: null,
   primary_image: null,
-  is_active: true,
-  is_published: false,
+  status: "draft",
+  capabilities: {
+    edit_identity: { allowed: true, reasons: [] },
+    edit_csa: { allowed: true, reasons: [] },
+    delete: { allowed: true, reasons: [] },
+  },
   translations: [
     { locale: "vi" as const, name: "Rau muống", short_description: "", description: "" },
     { locale: "en" as const, name: "Water spinach", short_description: "", description: "" },
@@ -171,9 +178,7 @@ describe("store product editor", () => {
       target: { value: "1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
-    expect(
-      await screen.findByText(/Không thể đổi quy cách hoặc đơn vị bán vì sản phẩm đã có đợt hàng/),
-    ).toBeVisible();
+    expect(await screen.findByText(/SKU và quy cách đã được khóa/)).toBeVisible();
     expect(mocks.save).toHaveBeenCalled();
   });
 
@@ -213,11 +218,10 @@ describe("store product editor", () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
   });
 
-  it("shows names as optional for drafts and required for published products", async () => {
+  it("shows names as optional when creating a draft", async () => {
     render(<StoreProductEditor />);
     expect(await screen.findByLabelText("Tên sản phẩm")).not.toBeRequired();
-    selectOption(screen.getByLabelText("Xuất bản"), "true");
-    expect(screen.getByLabelText("Tên sản phẩm *")).toBeRequired();
+    expect(screen.queryByLabelText("Xuất bản")).not.toBeInTheDocument();
   });
 
   it("localizes the CSA quota group in the editor", async () => {
@@ -410,9 +414,9 @@ describe("store product editor", () => {
       retail_price_vnd: "90000",
       csa_quota_group_id: null,
       csa_quota_cost: 0,
-      is_published: false,
     });
     expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("slug");
+    expect(mocks.save.mock.calls[0][0]).not.toHaveProperty("is_published");
     expect(screen.queryByLabelText(/Đường dẫn/)).not.toBeInTheDocument();
   });
 
@@ -467,13 +471,12 @@ describe("store product editor", () => {
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:store-product-preview");
   });
 
-  it("does not publish without translations and an image", async () => {
-    render(<StoreProductEditor />);
-    await fillBase();
-    selectOption(screen.getByLabelText("Xuất bản"), "true");
-    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/tiếng Việt và tiếng Anh/);
-    expect(mocks.save).not.toHaveBeenCalled();
+  it("keeps translation validation when editing a selling product", async () => {
+    mocks.product.mockResolvedValue({ ...storedProduct, status: "active" });
+    render(<StoreProductEditor productId="product-1" />);
+    expect(await screen.findByLabelText("Tên sản phẩm *")).toBeRequired();
+    expect(screen.getByText("Đang bán")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Xuất bản")).not.toBeInTheDocument();
   });
 
   it("retains a successful upload when product save fails and retries without another upload", async () => {
@@ -739,7 +742,53 @@ describe("Store description link editing regression", () => {
   });
 });
 
+it("locks identity and CSA fields from server capabilities without submitting them", async () => {
+  const reason = { code: "csa_hold", id: "round-1", label: "Đợt mùa thu" };
+  mocks.product.mockResolvedValue({
+    ...storedProduct,
+    capabilities: {
+      ...storedProduct.capabilities,
+      edit_identity: { allowed: false, reasons: [reason] },
+      edit_csa: { allowed: false, reasons: [reason] },
+    },
+  });
+  render(<StoreProductEditor productId="product-1" />);
+  expect(await screen.findByLabelText(/Mã quản lý sản phẩm/)).toBeDisabled();
+  expect(screen.getByLabelText(/Khối lượng \/ số lượng/)).toBeDisabled();
+  expect(screen.getByLabelText(/Số điểm cần trừ/)).toBeDisabled();
+  expect(screen.getAllByText(/Đợt mùa thu/)).toHaveLength(2);
+  fireEvent.change(screen.getByLabelText(/Giá bán lẻ/), { target: { value: "95000" } });
+  fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  const payload = mocks.save.mock.calls[0][0];
+  expect(payload.retail_price_vnd).toBe("95000");
+  for (const key of [
+    "sku",
+    "unit_size",
+    "unit_label_vi",
+    "unit_label_en",
+    "csa_quota_group_id",
+    "csa_quota_cost",
+  ]) {
+    expect(payload).not.toHaveProperty(key);
+  }
+});
+
 describe("store product detail", () => {
+  it("discontinues through the transition action and displays the new status", async () => {
+    mocks.product.mockResolvedValue({ ...storedProduct, status: "active" });
+    mocks.transition.mockResolvedValue({ ...storedProduct, status: "discontinued" });
+    render(<StoreProductDetail productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ngừng bán" }));
+    expect(screen.getByText(/lượt giữ hợp lệ/)).toBeVisible();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Ngừng bán" }));
+    await waitFor(() =>
+      expect(mocks.transition).toHaveBeenCalledWith("product-1", "active", "discontinued"),
+    );
+    expect(await screen.findByRole("button", { name: "Bán lại" })).toBeVisible();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
   it("localizes the CSA quota group on the detail page", async () => {
     mocks.locale = "en";
     mocks.product.mockResolvedValue({

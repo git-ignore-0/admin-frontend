@@ -36,6 +36,7 @@ type Props = {
   unitSize: string;
   unitLabel: string;
   startDisabled?: boolean;
+  limits?: { start: string; end: string; quantity: number };
   onChange: (draft: StockBatchDraft) => void;
   onPresetChange: (preset: StockBatchPreset) => void;
 };
@@ -57,6 +58,7 @@ export function StockBatchFields({
   unitSize,
   unitLabel,
   startDisabled = false,
+  limits,
   onChange,
   onPresetChange,
 }: Props) {
@@ -76,7 +78,7 @@ export function StockBatchFields({
 
   return (
     <div className="stock-batch-fields">
-      {!startDisabled ? (
+      {!startDisabled && !limits ? (
         <div className="stock-batch-presets">
           <span className="nfv-field-label">{labels.batchRange}</span>
           <Tabs
@@ -95,6 +97,7 @@ export function StockBatchFields({
         <FormField label={labels.startDate} error={errorMessage(errors.start_date, labels)}>
           <FormInput
             disabled={startDisabled}
+            min={limits?.start}
             type="date"
             value={draft.start_date}
             onChange={(event) => {
@@ -107,6 +110,7 @@ export function StockBatchFields({
           <FormInput
             type="date"
             value={draft.end_date}
+            max={limits?.end}
             onChange={(event) => {
               onPresetChange("custom");
               onChange({ ...draft, end_date: event.target.value });
@@ -120,6 +124,7 @@ export function StockBatchFields({
             <FormInput
               inputMode="numeric"
               min="1"
+              max={limits?.quantity}
               step="1"
               type="number"
               value={draft.quantity}

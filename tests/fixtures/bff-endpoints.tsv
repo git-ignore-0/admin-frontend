@@ -30,6 +30,7 @@ admin/store-categories	GET,POST	no
 admin/store-categories/{category}	GET,PATCH,DELETE	no
 admin/store-products	GET,POST	no
 admin/store-products/{product}	GET,PATCH,DELETE	no
+admin/store-products/{product}/transition	POST	no
 admin/store-products/media	POST	no
 admin/store-products/media/{media}	DELETE	no
 admin/shipping-settings/{province}	GET,PUT	no

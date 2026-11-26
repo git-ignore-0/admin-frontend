@@ -147,7 +147,7 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
       return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size");
     }
     if (id === undefined && resource === "store-products") {
-      return hasDuplicateQuery(params, "page", "category_id");
+      return hasDuplicateQuery(params, "page", "category_id", "status");
     }
     if (id === undefined && resource === "testimonials") {
       return hasDuplicateQuery(params, "page", "page_size", "search", "status", "type");
