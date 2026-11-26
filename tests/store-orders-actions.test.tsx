@@ -9,7 +9,10 @@ import { api } from "@/lib/client-api";
 import type { StoreOrder } from "@/lib/types";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("@/lib/client-api", async () => {
+  const { createStoreOrderApiMock } = await import("@/tests/store-orders-fixture");
+  return createStoreOrderApiMock();
+});
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: null, wardName: null }),
 }));
@@ -87,6 +90,7 @@ describe("Store order actions", () => {
     vi.mocked(api).mockResolvedValueOnce({
       ...item,
       status: "pending_delivery",
+      approved_at: "2026-10-31T10:00:00Z",
       payment_status: "received",
       payment_received_at: "2026-10-31T10:00:00Z",
       expires_at: null,
@@ -125,7 +129,12 @@ describe("Store order actions", () => {
       idempotency_key: "00000000-0000-4000-8000-000000000001",
       allocations: item.allocation_suggestion,
     });
-    resolve({ ...item, status: "pending_delivery", payment_status: "received" });
+    resolve({
+      ...item,
+      status: "pending_delivery",
+      approved_at: "2026-10-31T10:00:00Z",
+      payment_status: "received",
+    });
   });
 
   it("requires a cancel reason and preserves the reason after a network failure with the same retry key", async () => {
@@ -178,6 +187,7 @@ describe("Store order actions", () => {
     vi.mocked(api).mockResolvedValueOnce({
       ...item,
       payment_status: "received",
+      payment_received_at: "2026-10-31T10:02:00Z",
       server_time: "2026-10-31T10:02:00Z",
     });
     const dialog = await open("Ghi nhận đã nhận tiền");
@@ -323,7 +333,13 @@ describe("Store order actions", () => {
       allocations,
     };
     view(item);
-    vi.mocked(api).mockResolvedValueOnce(item);
+    vi.mocked(api).mockResolvedValueOnce({
+      ...item,
+      allocations: [
+        { ...allocations[0], restocked_quantity: 2, restock_remaining_quantity: 1 },
+        allocations[1],
+      ],
+    });
 
     const dialog = await open("Hoàn tồn");
     expect(within(dialog).getByText("Rau muống")).toBeVisible();
@@ -565,7 +581,13 @@ it("allows only eligible allocations in a mixed-source restock", async () => {
   expect(confirm).toBeDisabled();
   fireEvent.change(inputs[0], { target: { value: "0" } });
   expect(confirm).toBeEnabled();
-  vi.mocked(api).mockResolvedValueOnce(item);
+  vi.mocked(api).mockResolvedValueOnce({
+    ...item,
+    allocations: [
+      item.allocations![0],
+      { ...item.allocations![1], restocked_quantity: 1, restock_remaining_quantity: 2 },
+    ],
+  });
   fireEvent.click(confirm);
   await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
   expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body)).allocations).toEqual([

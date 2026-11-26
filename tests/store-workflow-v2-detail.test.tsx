@@ -8,7 +8,10 @@ import { api } from "@/lib/client-api";
 import { isAllowedBackendRequest } from "@/lib/backend-target";
 import type { StoreOrder } from "@/lib/types";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("@/lib/client-api", async () => {
+  const { createStoreOrderApiMock } = await import("@/tests/store-orders-fixture");
+  return createStoreOrderApiMock();
+});
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: null, wardName: null }),
 }));
@@ -78,7 +81,11 @@ it.each([false, true])(
             finish = resolve;
           }),
       )
-      .mockResolvedValueOnce({ ...next, payment_status: "refund_required" });
+      .mockResolvedValueOnce({
+        ...next,
+        payment_status: "refund_required",
+        payment_received_at: "2026-10-31T10:01:00Z",
+      });
     render(tree(item.id));
     await act(async () => {});
     const modal = await dialog("Ghi nhận đã nhận tiền");
@@ -258,6 +265,7 @@ it("unknown receipt keeps exact intent despite edit, locale and retry", async ()
       ...item,
       status: "pending_delivery",
       payment_status: "received",
+      payment_received_at: "2026-10-31T10:03:00Z",
       expires_at: null,
     });
   render(tree(item.id));
@@ -299,7 +307,15 @@ it("late mutation from previous order never overwrites the next order", async ()
   fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
   view.rerender(tree(second.id));
   await screen.findByRole("heading", { name: "NEXT-ORDER" });
-  await act(async () => finish({ ...first, status: "pending_delivery", expires_at: null }));
+  await act(async () =>
+    finish({
+      ...first,
+      status: "pending_delivery",
+      payment_status: "received",
+      payment_received_at: "2026-10-31T10:01:00Z",
+      expires_at: null,
+    }),
+  );
   expect(screen.getByRole("heading", { name: "NEXT-ORDER" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: first.reference_code })).toBeNull();
 });
@@ -600,6 +616,7 @@ it.each(["payment_pending", "payment_review"] as const)(
       .mockResolvedValueOnce({
         ...item,
         status: "cancelled",
+        cancelled_at: "2026-10-31T10:03:00Z",
         refund_status: "pending",
         refund_requested_at: "2026-10-31T10:03:00Z",
         expires_at: null,
@@ -634,7 +651,12 @@ it("cancels unapproved v2 goods with only a cancellation reason and no reconcili
   const item = row({ payment: null, approved_at: null, expires_at: null });
   vi.mocked(api)
     .mockResolvedValueOnce(item)
-    .mockResolvedValueOnce({ ...item, status: "cancelled", refund_status: null });
+    .mockResolvedValueOnce({
+      ...item,
+      status: "cancelled",
+      cancelled_at: "2026-10-31T10:03:00Z",
+      refund_status: null,
+    });
   render(tree(item.id));
   const modal = await dialog("Hủy đơn");
   expect(within(modal).queryByLabelText("Ghi chú đối soát")).toBeNull();

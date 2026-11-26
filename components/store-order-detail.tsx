@@ -31,8 +31,10 @@ import {
   getStoreOrderPrimaryAction,
   IdempotencyKeyStore,
   mutateStoreOrder,
+  reflectsStoreOrderAction,
   storeDeadlineRemainingMs,
   storeOrderHasDeadline,
+  type StoreOrderConfirmation,
   validateStoreAllocations,
 } from "@/lib/store-orders";
 import {
@@ -81,6 +83,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     orderId: string;
     action: StoreOrderAction;
     payload: StoreOrderActionPayload & { idempotency_key: string };
+    confirmation: StoreOrderConfirmation;
   } | null>(null);
   const unresolved = pendingIntent !== null;
   const [order, setOrder] = useState<StoreOrder | null>(null);
@@ -105,7 +108,9 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionConflict, setActionConflict] = useState(false);
-  const [reloadRequired, setReloadRequired] = useState(false);
+  const [reloadGate, setReloadGate] = useState<StoreOrderConfirmation | "conflict" | null>(null);
+  const reloadRequired = reloadGate !== null;
+  const confirmedAction = typeof reloadGate === "object" ? reloadGate : null;
   const [actionBusy, setActionBusy] = useState(false);
   const [restock, setRestock] = useState<Record<string, number>>({});
   const restockLedgerAtOpen = useRef<Record<string, number>>({});
@@ -130,42 +135,49 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     if (discardIntent) {
       setPendingIntent(null);
     }
-    setReloadRequired(true);
+    setReloadGate((previous) => (discardIntent ? "conflict" : (previous ?? "conflict")));
   }, []);
 
-  const load = useCallback(async () => {
-    if (!mounted.current || submitting.current) return;
-    const current = ++requestId.current;
-    const isCurrent = () => mounted.current && current === requestId.current;
-    setLoading(true);
-    try {
-      const next = await getStoreOrder(orderId, undefined, { shouldRedirectToLogin: isCurrent });
-      if (!isCurrent()) return;
-      receivedAt.current = performance.now();
-      setOrder(next);
-      setError("");
-      setReloadRequired(false);
-      const nextCSARevision = next.csa
-        ? `${next.csa.selection.revision}:${next.csa.selection.state}`
-        : null;
-      if (nextCSARevision !== csaRevision.current) {
-        draftInitialized.current = false;
-        csaRevision.current = nextCSARevision;
+  const load = useCallback(
+    async (confirmation?: StoreOrderConfirmation) => {
+      if (!mounted.current || submitting.current) return;
+      const current = ++requestId.current;
+      const isCurrent = () => mounted.current && current === requestId.current;
+      setLoading(true);
+      try {
+        const next = await getStoreOrder(orderId, undefined, { shouldRedirectToLogin: isCurrent });
+        if (!isCurrent()) return;
+        if (confirmation && !reflectsStoreOrderAction(next, confirmation)) {
+          setError("");
+          return;
+        }
+        receivedAt.current = performance.now();
+        setOrder(next);
+        setError("");
+        setReloadGate(null);
+        const nextCSARevision = next.csa
+          ? `${next.csa.selection.revision}:${next.csa.selection.state}`
+          : null;
+        if (nextCSARevision !== csaRevision.current) {
+          draftInitialized.current = false;
+          csaRevision.current = nextCSARevision;
+        }
+        if (!draftInitialized.current) {
+          setDraft(next.allocation_suggestion ?? []);
+          draftInitialized.current = true;
+        }
+      } catch (caught) {
+        if (!isCurrent()) return;
+        const { message, status } = (caught ?? {}) as { message?: string; status?: number };
+        if (isProtectedDataError(caught) || status === 404) retireOrder(true);
+        else if (message === "invalid_response") retireOrder(false);
+        setError(requestErrorMessage(caught, latestCopy.current.t));
+      } finally {
+        if (isCurrent()) setLoading(false);
       }
-      if (!draftInitialized.current) {
-        setDraft(next.allocation_suggestion ?? []);
-        draftInitialized.current = true;
-      }
-    } catch (caught) {
-      if (!isCurrent()) return;
-      const { message, status } = (caught ?? {}) as { message?: string; status?: number };
-      if (isProtectedDataError(caught) || status === 404) retireOrder(true);
-      else if (message === "invalid_response") retireOrder(false);
-      setError(requestErrorMessage(caught, latestCopy.current.t));
-    } finally {
-      if (isCurrent()) setLoading(false);
-    }
-  }, [orderId, retireOrder]);
+    },
+    [orderId, retireOrder],
+  );
 
   useLayoutEffect(() => {
     mounted.current = true;
@@ -193,19 +205,22 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       !storeOrderHasDeadline(order) ||
       remaining !== 0 ||
       submitting.current ||
+      reloadRequired ||
       expiryReloaded.current === order.expires_at
     )
       return;
     expiryReloaded.current = order.expires_at;
     void load();
-  }, [load, order, remaining, tick]);
+  }, [load, order, reloadRequired, remaining, tick]);
+
+  const refreshOrder = () => void load(confirmedAction ?? undefined);
 
   if (!order) {
     return (
       <DataState
-        kind={error ? "error" : "loading"}
-        title={error || c.detailLoading}
-        action={error ? { label: t.common.retry, onClick: () => void load() } : undefined}
+        kind={loading ? "loading" : "error"}
+        title={loading ? c.detailLoading : confirmedAction ? c.mutationConfirmedReload : error}
+        action={loading ? undefined : { label: t.common.retry, onClick: refreshOrder }}
       />
     );
   }
@@ -418,6 +433,20 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         idempotency_key: idempotencyKeys.current.forPayload(action, payload, restockRevision),
         ...payload,
       },
+      confirmation: {
+        action,
+        refundRequestedAt:
+          action === "close-refund-request" && currentOrder.workflow_version === 1
+            ? currentOrder.refund_requested_at
+            : undefined,
+        minimumRestocked: restockRevision
+          ? Object.fromEntries(
+              (currentOrder.allocations ?? [])
+                .filter((row) => Object.hasOwn(restockRevision, row.id))
+                .map((row) => [row.id, row.restocked_quantity + restock[row.id]]),
+            )
+          : undefined,
+      },
     };
     discardPendingReads();
     submitting.current = true;
@@ -430,14 +459,19 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       });
       if (!mounted.current) return;
       discardPendingReads();
-      receivedAt.current = performance.now();
-      setOrder(updated);
-      setError("");
-      setReloadRequired(false);
       idempotencyKeys.current.clear(action);
       setPendingIntent(null);
       setAction(null);
-      toast(latestCopy.current.c.mutationSuccess);
+      setError("");
+      if (reflectsStoreOrderAction(updated, intent.confirmation)) {
+        receivedAt.current = performance.now();
+        setOrder(updated);
+        setReloadGate(null);
+        toast(latestCopy.current.c.mutationSuccess);
+      } else {
+        draftInitialized.current = false;
+        setReloadGate(intent.confirmation);
+      }
     } catch (caught) {
       if (!mounted.current) return;
       discardPendingReads();
@@ -457,7 +491,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         (replaying && message === "csrf_rejected");
       setPendingIntent(unknownResult ? intent : null);
       if (!unknownResult && status === 409) {
-        setReloadRequired(true);
+        setReloadGate("conflict");
         setActionConflict(true);
         setActionError(latestCopy.current.c.conflict);
       } else {
@@ -510,7 +544,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         <Button
           variant="outline"
           disabled={loading || actionBusy}
-          onClick={() => void load()}
+          onClick={refreshOrder}
           type="button"
         >
           {c.refresh}
@@ -519,11 +553,17 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       {!action && (error || reloadRequired) ? (
         <Alert color="red" role="alert">
           <Group gap="sm" justify="space-between">
-            <span>{error ? `${error} ${c.staleSnapshot}` : c.conflictReloadRequired}</span>
+            <span>
+              {confirmedAction
+                ? c.mutationConfirmedReload
+                : error
+                  ? `${error} ${c.staleSnapshot}`
+                  : c.conflictReloadRequired}
+            </span>
             <Button
               variant="outline"
               disabled={loading || actionBusy}
-              onClick={() => void load()}
+              onClick={refreshOrder}
               type="button"
             >
               {t.common.retry}
@@ -549,7 +589,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       <CSAOrderPanel
         order={order}
         disabled={loading || Boolean(error) || reloadRequired || actionBusy || unresolved}
-        onReload={() => void load()}
+        onReload={refreshOrder}
       />
       <div className="store-order-workspace">
         <div className="store-order-main">
@@ -698,9 +738,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
               kind={loading ? "loading" : "error"}
               title={loading ? c.detailLoading : error}
               action={
-                !loading && error
-                  ? { label: t.common.retry, onClick: () => void load() }
-                  : undefined
+                !loading && error ? { label: t.common.retry, onClick: refreshOrder } : undefined
               }
             />
           ) : null}

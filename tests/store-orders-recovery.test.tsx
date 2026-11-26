@@ -6,7 +6,10 @@ import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 import type { StoreOrder } from "@/lib/types";
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("@/lib/client-api", async () => {
+  const { createStoreOrderApiMock } = await import("@/tests/store-orders-fixture");
+  return createStoreOrderApiMock();
+});
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: null, wardName: null }),
 }));
@@ -55,7 +58,13 @@ it("pending delivery never polls an inactive expiry and blocks refresh during de
     await vi.advanceTimersByTimeAsync(60_000);
   });
   expect(api).toHaveBeenCalledTimes(2);
-  await act(async () => resolveMutation({ ...initial, status: "delivered" }));
+  await act(async () =>
+    resolveMutation({
+      ...initial,
+      status: "delivered",
+      delivered_at: "2026-11-02T00:01:00Z",
+    }),
+  );
   expect(screen.getByText("Đã giao", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(api).toHaveBeenCalledTimes(2);
 });
@@ -104,23 +113,21 @@ it.each([0, 1])(
   "reopening restock after reconciliation respects the confirmed ledger (%i)",
   async (completed) => {
     const initial = restockOrder();
-    const reconciled = {
+    const withRestock = (restocked_quantity: number) => ({
       ...initial,
       allocations: [
         {
           ...initial.allocations![0],
-          restocked_quantity: completed,
-          restock_remaining_quantity: 3 - completed,
-          restock_eligible: true,
-          restock_unavailable_reason: null,
+          restocked_quantity,
+          restock_remaining_quantity: 3 - restocked_quantity,
         },
       ],
-    };
+    });
     vi.mocked(api)
       .mockResolvedValueOnce(initial)
       .mockRejectedValueOnce(new Error("network_error"))
-      .mockResolvedValueOnce(reconciled)
-      .mockResolvedValueOnce(reconciled);
+      .mockResolvedValueOnce(withRestock(completed))
+      .mockResolvedValueOnce(withRestock(1));
     renderOrder();
     fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
     let dialog = screen.getByRole("dialog");
@@ -141,7 +148,7 @@ it.each([0, 1])(
     expect(second.allocations).toEqual(first.allocations);
     expect(second.idempotency_key).toBe(first.idempotency_key);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    vi.mocked(api).mockResolvedValueOnce(reconciled);
+    vi.mocked(api).mockResolvedValueOnce(withRestock(2));
     fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn" }));
     const deliberate = screen.getByRole("dialog");
     fireEvent.change(within(deliberate).getByRole("spinbutton"), { target: { value: "1" } });
@@ -290,7 +297,11 @@ it.each([
   vi.mocked(api).mockResolvedValueOnce(item);
   if (outcome instanceof Error) vi.mocked(api).mockRejectedValueOnce(outcome);
   else vi.mocked(api).mockResolvedValueOnce(outcome);
-  vi.mocked(api).mockResolvedValueOnce({ ...item, status: "cancelled" });
+  vi.mocked(api).mockResolvedValueOnce({
+    ...item,
+    status: "cancelled",
+    cancelled_at: "2026-10-31T10:01:00Z",
+  });
   renderOrder(item.id);
   await screen.findByText("Nguyễn An");
   const confirm = cancelOrder();
@@ -374,7 +385,11 @@ it("preserves only the exact submitted intent across a bad read and CSRF rejecti
     .mockResolvedValueOnce(otherOrder)
     .mockResolvedValueOnce(item)
     .mockRejectedValueOnce(Object.assign(new Error("csrf_rejected"), { status: 403 }))
-    .mockResolvedValueOnce({ ...item, status: "cancelled" });
+    .mockResolvedValueOnce({
+      ...item,
+      status: "cancelled",
+      cancelled_at: "2026-10-31T10:01:00Z",
+    });
   renderOrder(item.id);
   await screen.findByText("Nguyễn An");
   fireEvent.click(cancelOrder());

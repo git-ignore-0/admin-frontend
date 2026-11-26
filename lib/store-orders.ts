@@ -313,17 +313,68 @@ export async function mutateStoreOrder(
   payload: Record<string, unknown>,
   options?: StoreOrderRequestOptions,
 ) {
-  if (!isUuid(id)) throw invalidApiResponse();
+  const key = payload.idempotency_key;
+  if (!isUuid(id) || !isUuid(key)) throw invalidApiResponse();
   const orderId = id.toLowerCase();
   const path = `admin/store-orders/${orderId}/${action}`;
   const init = {
     method: "POST",
     body: JSON.stringify(payload),
   };
-  const updated = options
-    ? await api<StoreOrder>(path, init, options)
-    : await api<StoreOrder>(path, init);
-  return requireStoreOrderDetail(updated, orderId);
+  const { data, meta } = await apiEnvelope<StoreOrder>(path, init, options);
+  const order = requireStoreOrderDetail(data, orderId);
+  const receipt = isApiObject(meta) ? meta.action_receipt : undefined;
+  if (
+    !isApiObject(receipt) ||
+    !isUuid(receipt.order_id) ||
+    receipt.order_id.toLowerCase() !== orderId ||
+    receipt.action !== action.replaceAll("-", "_") ||
+    !isUuid(receipt.idempotency_key) ||
+    receipt.idempotency_key.toLowerCase() !== key.toLowerCase()
+  ) {
+    throw invalidApiResponse();
+  }
+  return order;
+}
+
+export type StoreOrderConfirmation = {
+  action: StoreOrderAction;
+  minimumRestocked?: Record<string, number>;
+  refundRequestedAt?: string | null;
+};
+
+/** An action receipt confirms the write even when this projection needs a fresh read. */
+export function reflectsStoreOrderAction(
+  order: StoreOrder,
+  { action, minimumRestocked, refundRequestedAt }: StoreOrderConfirmation,
+) {
+  switch (action) {
+    case "approve":
+      return isTimestamp(order.approved_at);
+    case "cancel":
+      return isTimestamp(order.cancelled_at);
+    case "deliver":
+      return isTimestamp(order.delivered_at);
+    case "record-payment":
+      // An already-received legacy payment can have no timestamp, and the
+      // payment may since have progressed to refund reconciliation.
+      return ["received", "refund_required", "refunded"].includes(order.payment_status);
+    case "close-refund-request":
+      // A later buyer request may clear the close timestamp on workflow v1.
+      return (
+        isTimestamp(order.refund_request_closed_at) ||
+        (order.workflow_version === 1 &&
+          isTimestamp(refundRequestedAt) &&
+          isTimestamp(order.refund_requested_at) &&
+          Date.parse(order.refund_requested_at) > Date.parse(refundRequestedAt))
+      );
+    case "refund":
+      return isTimestamp(order.refunded_at);
+    case "restock":
+      return Object.entries(minimumRestocked ?? {}).every(([id, minimum]) =>
+        order.allocations?.some((row) => row.id === id && row.restocked_quantity >= minimum),
+      );
+  }
 }
 
 export function formatStoreMoney(value: string, locale: AdminLocale) {

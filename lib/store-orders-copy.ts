@@ -153,6 +153,7 @@ const copy = {
     mutationSuccess: "Đã cập nhật đơn hàng.",
     mutationUncertain:
       "Chưa xác định được kết quả. Nếu thử lại, hệ thống sẽ gửi lại đúng yêu cầu trước.",
+    mutationConfirmedReload: "Đã xác nhận thao tác. Hãy tải lại trạng thái đơn trước khi tiếp tục.",
     saving: "Đang xử lý…",
     cancelButton: "Đóng",
     retryRequest: "Thử lại yêu cầu trước",
@@ -340,6 +341,7 @@ const copy = {
       "Every product must be fully allocated without duplicates or exceeding stock.",
     mutationSuccess: "Order updated.",
     mutationUncertain: "The result is unconfirmed. Retrying will send the same request.",
+    mutationConfirmedReload: "The action is confirmed. Reload the order before continuing.",
     saving: "Processing…",
     cancelButton: "Close",
     retryRequest: "Retry previous request",

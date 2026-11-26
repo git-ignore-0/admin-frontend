@@ -1,4 +1,25 @@
+import { vi } from "vitest";
+
+import type { api as clientApi } from "@/lib/client-api";
 import type { StoreOrder } from "@/lib/types";
+
+// UI fixtures queue explicit snapshots/errors on one transport spy. POSTs wrap
+// that snapshot with the successful receipt for the submitted test intent.
+export function createStoreOrderApiMock() {
+  const api = vi.fn<(...args: Parameters<typeof clientApi>) => Promise<unknown>>();
+  const apiEnvelope = async (...args: Parameters<typeof clientApi>) => {
+    const [path, init] = args;
+    const match = /^admin\/store-orders\/([^/]+)\/([^/]+)$/.exec(path);
+    if (!match || init?.method !== "POST") throw new Error(`Unexpected request: ${path}`);
+    const [, order_id, action] = match;
+    const { idempotency_key } = JSON.parse(String(init.body));
+    return {
+      data: await api(...args),
+      meta: { action_receipt: { order_id, action: action.replaceAll("-", "_"), idempotency_key } },
+    };
+  };
+  return { api, apiEnvelope };
+}
 
 export function storeOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrder {
   return {
