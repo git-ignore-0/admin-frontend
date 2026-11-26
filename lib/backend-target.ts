@@ -89,8 +89,12 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (action !== "products") return false;
     if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(extra)) return false;
-    if (path.length === 5) return new Set(["PATCH", "DELETE"]).has(normalizedMethod);
-    if (path[5] !== "batches") return false;
+    if (path.length === 5) return normalizedMethod === "GET";
+    const sourceAction = path[5];
+    if (sourceAction === "history") return path.length === 6 && normalizedMethod === "GET";
+    if (sourceAction === "remove" || sourceAction === "re-add")
+      return path.length === 6 && normalizedMethod === "POST";
+    if (sourceAction !== "batches") return false;
     if (path.length === 6) return CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(path[6] ?? "")) return false;
     if (path.length === 7) return normalizedMethod === "PATCH";

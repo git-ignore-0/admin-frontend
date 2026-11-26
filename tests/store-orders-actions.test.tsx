@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
+import type { AdminLocale } from "@/lib/admin-i18n";
 import { api } from "@/lib/client-api";
 import type { StoreOrder } from "@/lib/types";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
@@ -53,10 +54,10 @@ function pending() {
   };
 }
 
-function view(item: StoreOrder = pending()) {
+function view(item: StoreOrder = pending(), locale: AdminLocale = "vi") {
   vi.mocked(api).mockResolvedValueOnce(item);
   return render(
-    <AdminI18nProvider initialLocale="vi">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
         <StoreOrderDetail orderId={item.id} />
       </ToastProvider>
@@ -396,6 +397,53 @@ describe("Store order actions", () => {
     await waitFor(() => expect(api).toHaveBeenCalledTimes(3));
   });
 
+  it("refreshes approval after a stock coverage conflict without replaying the mutation", async () => {
+    const item = pending();
+    const [candidate] = item.source_inventory.candidates;
+    view(item);
+    vi.mocked(api)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("store_allocation_stale"), {
+          status: 409,
+          payload: {
+            errors: [
+              {
+                code: "store_allocation_stale",
+                context: { product_id: candidate.product_id, available_quantity: 1 },
+              },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce({
+        ...item,
+        allocation_suggestion: [{ ...item.allocation_suggestion[0], quantity: 1 }],
+        source_inventory: {
+          ...item.source_inventory,
+          candidates: [{ ...candidate, batch_id: "batch-b" }],
+        },
+      });
+
+    const dialog = await open("Duyệt đơn");
+    const confirm = within(dialog).getByRole("button", { name: "Duyệt đơn" });
+    fireEvent.click(confirm);
+    const reload = await within(dialog).findByRole("button", { name: "Tải trạng thái mới" });
+    expect(confirm).toBeDisabled();
+    expect(api).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(reload);
+    const editor = screen.getByRole("region", { name: "Phân bổ nguồn Farm / batch" });
+    await waitFor(() =>
+      expect(within(editor).getByRole("combobox")).toHaveAttribute("aria-invalid", "true"),
+    );
+    expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+    expect(vi.mocked(api).mock.calls).toEqual([
+      [`admin/store-orders/${item.id}`],
+      [`admin/store-orders/${item.id}/approve`, expect.objectContaining({ method: "POST" })],
+      [`admin/store-orders/${item.id}`],
+    ]);
+  });
+
   it("shows a stale snapshot warning and locks mutations when conflict reload fails", async () => {
     const item = { ...pending(), payment_status: "received" as const };
     vi.mocked(api)
@@ -460,6 +508,32 @@ it("does not offer restock when every remaining source is ineligible and explain
   expect(await screen.findByText("Nguồn đã hết hạn, không thể hoàn tồn.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Hoàn tồn" })).not.toBeInTheDocument();
 });
+
+it.each([
+  [
+    "vi",
+    "batch_historical",
+    "Đợt cung cấp thuộc lịch sử, không thể hoàn tồn vào nguồn hiện tại.",
+    "Hoàn tồn",
+  ],
+  [
+    "en",
+    "batch_historical",
+    "This is a historical batch and cannot be restocked into the current supply.",
+    "Restock",
+  ],
+  ["vi", "offer_inactive", "Nguồn cung đã được gỡ khỏi trang trại.", "Hoàn tồn"],
+  ["en", "offer_inactive", "This source was removed from the farm.", "Restock"],
+] as const)(
+  "shows the Backend restock reason in %s for %s without offering the action",
+  async (locale, reason, message, action) => {
+    const item = cancelledSources();
+    item.allocations![0].restock_unavailable_reason = reason;
+    view(item, locale);
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.queryByRole("button", { name: action })).not.toBeInTheDocument();
+  },
+);
 
 it("allows only eligible allocations in a mixed-source restock", async () => {
   const item = cancelledSources();

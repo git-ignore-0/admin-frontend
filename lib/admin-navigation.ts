@@ -269,6 +269,20 @@ export function resolveAdminBreadcrumbs(
   const labels = activeItem.childScreens;
   if (labels && pathname.startsWith(`${activeItem.href}/`)) {
     const [id, action, extra] = pathname.slice(activeItem.href.length + 1).split("/");
+    if (
+      activeItem.href === "/farms" &&
+      id &&
+      extra &&
+      action === "products" &&
+      pathname === `/farms/${id}/products/${extra}` &&
+      isInternalAdminHref(`/farms/${id}`)
+    ) {
+      return [
+        root,
+        { label: labels.record, href: `/farms/${id}` },
+        { label: t.breadcrumb.productDetails },
+      ];
+    }
     if (id && extra === undefined) {
       const createLabel = id === "new" ? labels.new : undefined;
       if (action === undefined) return [root, { label: createLabel ?? labels.record }];

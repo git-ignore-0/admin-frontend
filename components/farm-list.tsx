@@ -14,9 +14,10 @@ import {
   Text,
   Tooltip,
 } from "@mantine/core";
+import { CancelledError, useQuery, useQueryClient } from "@tanstack/react-query";
 import NextImage from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
@@ -26,12 +27,12 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { farmHref, readFarmListContext } from "@/lib/farm-navigation";
+import { farmListKey, retireFarmQueries } from "@/lib/farm-query";
 import { listFarms } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { mediaUrlForWidth } from "@/lib/media";
-import { usePaginatedList } from "@/lib/use-paginated-list";
 
 export function FarmList() {
   const { locale, t } = useAdminI18n();
@@ -39,34 +40,39 @@ export function FarmList() {
   const router = useRouter();
   const params = useSearchParams();
   const isCurrent = useIsAdminQueryScopeCurrent();
+  const client = useQueryClient();
   const { search, status, page } = readFarmListContext(params);
   const [query, setQuery] = useState(search);
-  const dictionary = useRef(t);
-  dictionary.current = t;
+  const [accessError, setAccessError] = useState<Error | null>(null);
   useEffect(() => setQuery(search), [search]);
 
-  const fetchPage = useCallback(
-    async (page: number, signal: AbortSignal) => {
+  const result = useQuery({
+    queryKey: [...farmListKey, { search, status, page }],
+    queryFn: async ({ signal }) => {
       const result = await listFarms(
         { search, is_active: status ? status === "true" : undefined, page },
         signal,
       );
-      if (!isCurrent()) throw new Error("session_changed");
+      if (signal.aborted || !isCurrent()) throw new CancelledError();
       return result;
     },
-    [isCurrent, search, status],
-  );
-  const getErrorMessage = useCallback(
-    (error: unknown) => requestErrorMessage(error, dictionary.current),
-    [],
-  );
-  const { items, meta, loading, error, reload } = usePaginatedList({
-    fetchPage,
-    getErrorMessage,
-    controlledPage: page,
-    enabled: isCurrent(),
-    requestKey: JSON.stringify([search, status]),
+    enabled: !accessError && isCurrent(),
   });
+  useEffect(() => {
+    if (!accessError && isCurrent() && result.error && isProtectedDataError(result.error)) {
+      setAccessError(result.error);
+      retireFarmQueries(client);
+    }
+  }, [accessError, client, isCurrent, result.error]);
+  const cause = accessError ?? result.error;
+  const items = !cause ? (result.data?.data ?? null) : null;
+  const meta = !cause ? result.data?.meta : undefined;
+  const loading = !accessError && (result.isPending || result.isFetching);
+  const error = cause ? requestErrorMessage(cause, t) : "";
+  const reload = () => {
+    if (accessError) setAccessError(null);
+    else void result.refetch();
+  };
   const lastPage = meta ? Math.max(1, Math.ceil(meta.total / meta.page_size)) : page;
 
   function href(change: Record<string, string>) {

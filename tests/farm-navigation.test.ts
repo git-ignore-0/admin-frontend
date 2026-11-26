@@ -4,7 +4,7 @@ import FarmsPage from "@/app/(admin)/farms/page";
 import LegacyTrackerList from "@/app/(admin)/tracker-farms/page";
 import LegacyTrackerCreate from "@/app/(admin)/tracker-farms/new/page";
 import LegacyTrackerDetail from "@/app/(admin)/tracker-farms/[id]/page";
-import { farmHref, legacyTrackerHref } from "@/lib/farm-navigation";
+import { farmHref, legacyTrackerHref, readFarmSupplyContext } from "@/lib/farm-navigation";
 
 const redirect = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ redirect }));
@@ -66,4 +66,35 @@ it("preserves detail tabs and supported list context through the editor", () => 
 
 it("keeps unsafe legacy record paths and unsupported filters out of redirects", () => {
   expect(legacyTrackerHref({ page: "10001", is_active: "maybe" }, "../other")).toBe("/farms");
+});
+
+it("keeps supply browsing separate from Farm list browsing", () => {
+  const context = new URLSearchParams(
+    "search=hue&page=4&is_active=true&supply_search=rau+sach&supply_page=2&supply_status=removed&tab=tracker",
+  );
+  expect(readFarmSupplyContext(context)).toEqual({
+    search: "rau sach",
+    status: "removed",
+    page: 2,
+  });
+  expect(farmHref(context)).toBe("/farms?search=hue&is_active=true&page=4");
+  expect(farmHref(context, { id: "farm-1", tab: "products", productId: "product-1" })).toBe(
+    "/farms/farm-1/products/product-1?search=hue&is_active=true&page=4&supply_search=rau+sach&supply_status=removed&supply_page=2",
+  );
+  expect(farmHref(context, { id: "farm-1", mode: "edit" })).toBe(
+    "/farms/farm-1/edit?search=hue&is_active=true&page=4&supply_search=rau+sach&supply_status=removed&supply_page=2&tab=tracker",
+  );
+});
+
+it("normalizes unsupported supply filters and resets their page independently", () => {
+  const context = new URLSearchParams(
+    "search=hue&page=4&supply_search=%20rau%20&supply_page=10001&supply_status=pause&next=//bad.example",
+  );
+  expect(readFarmSupplyContext(context)).toEqual({ search: "rau", status: "supplying", page: 1 });
+  expect(
+    farmHref(context, {
+      id: "farm-1",
+      supply: { search: "", status: "all", page: 1 },
+    }),
+  ).toBe("/farms/farm-1?search=hue&page=4&supply_status=all");
 });

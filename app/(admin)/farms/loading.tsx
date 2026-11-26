@@ -15,10 +15,12 @@ export default function FarmRouteLoading() {
   const pathname = usePathname();
   const search = useSearchParams();
   const parent = farmHref(search);
-  const recordId = pathname.startsWith(`${FARM_LIST_PATH}/`)
-    ? pathname.slice(FARM_LIST_PATH.length + 1).split("/")[0]
-    : "";
-  const record = recordId ? farmHref(search, { id: recordId }) : FARM_LIST_PATH;
+  const [recordId, action] = pathname.startsWith(`${FARM_LIST_PATH}/`)
+    ? pathname.slice(FARM_LIST_PATH.length + 1).split("/")
+    : [];
+  const record = recordId
+    ? farmHref(search, { id: recordId, tab: action === "products" ? "products" : undefined })
+    : FARM_LIST_PATH;
   const items = useMemo(() => {
     const farm = adminNavigation(t).find((section) => section.key === "farms")?.items[0];
     return resolveAdminBreadcrumbs(pathname, farm, t).map((item) =>

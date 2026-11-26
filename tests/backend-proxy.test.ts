@@ -1294,6 +1294,72 @@ describe("admin backend proxy", () => {
     expect((upstream.mock.calls[3][1] as RequestInit).method).toBe("DELETE");
   });
 
+  it("forwards only valid Farm lifecycle queries and methods", async () => {
+    const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const product = "11111111-1111-4111-8111-111111111111";
+    const collection = ["admin", "farms", farm, "products"];
+    const source = [...collection, product];
+    const batches = [...source, "batches"];
+    const history = [...source, "history"];
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const invoke = (
+      method: "GET" | "POST" | "PATCH" | "DELETE",
+      path: readonly string[],
+      query = "",
+    ) => {
+      const proxy = { GET, POST, PATCH, DELETE }[method];
+      return proxy(
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}${query}`, {
+          method,
+          headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        }),
+        { params: Promise.resolve({ path: [...path] }) },
+      );
+    };
+
+    for (const [path, query] of [
+      [collection, "?supply_status=active"],
+      [collection, "?supply_status=supplying&supply_status=all"],
+      [collection, "?page=10001"],
+      [collection, "?scope=history"],
+      [source, "?page=1"],
+      [batches, "?scope=expired"],
+      [batches, "?status=historical"],
+      [batches, "?scope=all&scope=history"],
+      [history, "?search=R01"],
+    ] as const) {
+      expect((await invoke("GET", path, query)).status).toBe(404);
+    }
+    expect((await invoke("PATCH", source)).status).toBe(404);
+    expect((await invoke("DELETE", source)).status).toBe(404);
+    expect((await invoke("POST", [...source, "remove"], "?page=1")).status).toBe(404);
+    expect((await invoke("POST", [...source, "remove", "extra"])).status).toBe(404);
+    expect((await invoke("POST", [...collection, "bad-id", "re-add"])).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const allowed = [
+      ["GET", collection, "?page=2&supply_status=removed&search=R01"],
+      ["GET", source, ""],
+      ["GET", batches, "?page=1&scope=history&status=active"],
+      ["GET", history, "?page=2"],
+      ["POST", [...source, "remove"], ""],
+      ["POST", [...source, "re-add"], ""],
+    ] as const;
+    for (const [method, path, query] of allowed) {
+      const response = await invoke(method, path, query);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+    }
+    expect(upstream).toHaveBeenCalledTimes(allowed.length);
+    for (let index = 0; index < allowed.length; index += 1) {
+      const [, path, query] = allowed[index];
+      const [url, init] = upstream.mock.calls[index];
+      expect(String(url)).toBe(`https://auth.example.test/api/v1/${path.join("/")}${query}`);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+    }
+  });
+
   it("forwards Farm stock-batch writes through the same-origin proxy", async () => {
     const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const product = "11111111-1111-4111-8111-111111111111";
@@ -1308,6 +1374,8 @@ describe("admin backend proxy", () => {
           start_date: "2026-10-19",
           end_date: "2026-10-25",
           quantity_units: 10,
+          expected_link_id: "22222222-2222-4222-8222-222222222222",
+          expected_version: 2,
         }),
       }),
       { params: Promise.resolve({ path }) },

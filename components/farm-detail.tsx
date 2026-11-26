@@ -14,9 +14,10 @@ import {
   Title,
 } from "@mantine/core";
 import { IconDots } from "@tabler/icons-react";
+import { CancelledError, useQuery, useQueryClient } from "@tanstack/react-query";
 import NextImage from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -24,6 +25,7 @@ import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FarmProducts } from "@/components/farm-products";
+import { FarmSourceDetail } from "@/components/farm-source-detail";
 import { FarmTrackerProfileEditor } from "@/components/farm-tracker-profile-editor";
 import { DataState, Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
@@ -36,62 +38,86 @@ import {
   readFarmDetailTab,
   type FarmDetailTab,
 } from "@/lib/farm-navigation";
+import { farmDetailKey, farmListKey, farmSupplyKey, retireFarmQueries } from "@/lib/farm-query";
 import { deleteFarm, getFarm, saveFarm } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { mediaUrlForWidth } from "@/lib/media";
-import type { Farm } from "@/lib/types";
 
-export function FarmDetail({ farmId }: { farmId: string }) {
-  return <FarmDetailContent key={farmId} farmId={farmId} />;
+type Props = { farmId: string; productId?: string };
+
+export function FarmDetail({ farmId, productId }: Props) {
+  return (
+    <FarmDetailContent key={`${farmId}:${productId ?? ""}`} farmId={farmId} productId={productId} />
+  );
 }
 
-function FarmDetailContent({ farmId }: { farmId: string }) {
+function FarmDetailContent({ farmId, productId }: Props) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const router = useRouter();
   const search = useSearchParams();
   const isCurrent = useIsAdminQueryScopeCurrent();
+  const queryClient = useQueryClient();
   const tab = readFarmDetailTab(search);
   const [visited, setVisited] = useState({
     products: tab === "products",
     tracker: tab === "tracker",
   });
-  const [record, setFarm] = useState<Farm | null>(null);
-  const [error, setError] = useState<{ cause: unknown } | null>(null);
+  const [unavailable, setUnavailable] = useState<{ cause: unknown } | null>(null);
   const [actionError, setActionError] = useState("");
   const [dialog, setDialog] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [retry, setRetry] = useState(0);
   const mounted = useRef(false);
   const mutation = useRef(false);
-  const activeRead = useRef<AbortController | null>(null);
   const recordEpoch = useRef(0);
   const menuTrigger = useRef<HTMLButtonElement>(null);
-  const farm = isCurrent() ? record : null;
+  const farmQuery = useQuery({
+    queryKey: farmDetailKey(farmId),
+    queryFn: async ({ signal }) => {
+      const row = await getFarm(farmId, signal);
+      if (signal.aborted || !isCurrent()) throw new CancelledError();
+      return row;
+    },
+    enabled: !unavailable && isCurrent(),
+    // Leaf navigation shares this parent snapshot. Focus and reconnect still revalidate it.
+    refetchOnMount: (query) => query.state.isInvalidated || query.state.status === "error",
+  });
+  const error = unavailable?.cause ?? farmQuery.error;
+  const farm =
+    isCurrent() && !unavailable && !recordUnavailable(farmQuery.error) ? farmQuery.data : null;
   const name = farm ? (locale === "vi" ? farm.name_vi : farm.name_en) : t.breadcrumb.farmDetails;
   const listHref = farmHref(search);
   const items = useMemo(
-    () => [{ label: c.list, href: listHref }, { label: name }],
-    [c.list, listHref, name],
+    () => [
+      { label: c.list, href: listHref },
+      productId
+        ? { label: name, href: farmHref(search, { id: farmId, tab: "products" }) }
+        : { label: name },
+      ...(productId ? [{ label: t.breadcrumb.productDetails }] : []),
+    ],
+    [c.list, farmId, listHref, name, productId, search, t.breadcrumb.productDetails],
   );
   const breadcrumb = (
     <AdminBreadcrumbForRoute
-      pathname={farmHref(null, { id: farmId })}
+      pathname={farmHref(null, { id: farmId, productId })}
       search={search?.toString() ?? ""}
       items={items}
     />
   );
 
-  const retireRecord = useCallback((cause: unknown) => {
-    recordEpoch.current += 1;
-    activeRead.current?.abort();
-    setFarm(null);
-    setDialog(false);
-    setBusy(false);
-    setError({ cause });
-  }, []);
+  const retireRecord = useCallback(
+    (cause: unknown) => {
+      if (!mounted.current || !isCurrent()) return;
+      recordEpoch.current += 1;
+      setDialog(false);
+      setBusy(false);
+      setUnavailable({ cause });
+      retireFarmQueries(queryClient, isProtectedDataError(cause) ? undefined : farmId);
+    },
+    [farmId, isCurrent, queryClient],
+  );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -102,25 +128,15 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
     setVisited((current) => (current[tab] ? current : { ...current, [tab]: true }));
   }, [tab]);
   useEffect(() => {
-    const controller = new AbortController();
-    activeRead.current = controller;
-    const current = () => !controller.signal.aborted && isCurrent();
-    setError(null);
-    getFarm(farmId, controller.signal)
-      .then((row) => {
-        if (current()) setFarm(row);
-      })
-      .catch((cause: unknown) => {
-        if (!current()) return;
-        if (recordUnavailable(cause)) retireRecord(cause);
-        else setError({ cause });
-      });
-    return () => controller.abort();
-  }, [farmId, isCurrent, retireRecord, retry]);
+    if (!unavailable && isCurrent() && recordUnavailable(farmQuery.error)) {
+      retireRecord(farmQuery.error);
+    }
+  }, [farmQuery.error, isCurrent, retireRecord, unavailable]);
 
-  const reload = useCallback(() => {
-    setRetry((value) => value + 1);
-  }, []);
+  const reload = () => {
+    if (unavailable) setUnavailable(null);
+    else void farmQuery.refetch();
+  };
 
   async function changeFarm(action: "delete" | "deactivate") {
     if (!farm || !isCurrent() || mutation.current) return;
@@ -133,14 +149,17 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
       if (action === "delete") {
         await deleteFarm(farm.id);
         if (!current()) return;
-        activeRead.current?.abort();
-        setFarm(null);
+        retireFarmQueries(queryClient, farm.id);
+        void queryClient.invalidateQueries({ queryKey: farmListKey });
         router.replace(listHref);
       } else {
         const updated = await saveFarm(farm.id, { version: farm.version, is_active: false });
         if (!current()) return;
-        activeRead.current?.abort();
-        setFarm(updated);
+        await queryClient.cancelQueries({ queryKey: farmDetailKey(farm.id) });
+        if (!current()) return;
+        queryClient.setQueryData(farmDetailKey(farm.id), updated);
+        void queryClient.invalidateQueries({ queryKey: farmListKey });
+        void queryClient.invalidateQueries({ queryKey: farmSupplyKey(farm.id) });
       }
       setDialog(false);
     } catch (cause) {
@@ -164,7 +183,7 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
 
   const recovery = error && (
     <RecoveryAlert
-      message={requestErrorMessage(error.cause, t)}
+      message={farmNotFound(error) ? c.farmMissing : requestErrorMessage(error, t)}
       retryLabel={t.common.retry}
       onRetry={reload}
     />
@@ -173,7 +192,10 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
     return (
       <>
         {breadcrumb}
-        <PageHeading title={t.breadcrumb.farmDetails} visuallyHiddenTitle />
+        <PageHeading
+          title={productId ? t.breadcrumb.productDetails : t.breadcrumb.farmDetails}
+          visuallyHiddenTitle
+        />
         {!isCurrent() ? (
           <RecoveryAlert
             message={t.common.sessionChanged}
@@ -185,6 +207,9 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
         )}
       </>
     );
+  if (productId) {
+    return <FarmSourceDetail farm={farm} productId={productId} onAccessLost={retireRecord} />;
+  }
 
   const labels: Record<FarmDetailTab, string> = {
     products: c.productsAndSupply,
@@ -300,8 +325,7 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
           <Tabs.Panel value="products">
             {(visited.products || tab === "products") && (
               <FarmProducts
-                farmId={farm.id}
-                farmActive={farm.is_active}
+                farm={farm}
                 isTabActive={tab === "products"}
                 onAccessLost={retireRecord}
               />
@@ -395,5 +419,9 @@ function FarmDetailContent({ farmId }: { farmId: string }) {
 }
 
 function recordUnavailable(cause: unknown) {
-  return isProtectedDataError(cause) || (cause as ClientApiError | undefined)?.status === 404;
+  return isProtectedDataError(cause) || farmNotFound(cause);
+}
+
+function farmNotFound(cause: unknown) {
+  return (cause as ClientApiError | undefined)?.status === 404;
 }

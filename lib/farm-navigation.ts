@@ -1,13 +1,22 @@
+import type { FarmSupplyFilter } from "@/lib/types";
+
 export const FARM_LIST_PATH = "/farms";
 
 type SearchReader = Pick<URLSearchParams, "get">;
 export type FarmRouteSearch = Record<string, string | string[] | undefined>;
 export const farmDetailTabs = ["products", "information", "tracker"] as const;
 export type FarmDetailTab = (typeof farmDetailTabs)[number];
+export type FarmSupplyContext = {
+  search: string;
+  status: FarmSupplyFilter;
+  page: number;
+};
 type FarmDestination = {
   id?: string;
   mode?: "new" | "edit";
   tab?: FarmDetailTab;
+  productId?: string;
+  supply?: FarmSupplyContext;
 };
 
 export function readFarmRouteSearch(search: FarmRouteSearch): SearchReader {
@@ -21,12 +30,29 @@ export function readFarmRouteSearch(search: FarmRouteSearch): SearchReader {
 
 export function readFarmListContext(search: SearchReader | null) {
   const status = search?.get("is_active");
-  const page = Number(search?.get("page"));
   return {
     search: search?.get("search")?.trim() ?? "",
     status: status === "true" || status === "false" ? status : "",
-    page: Number.isSafeInteger(page) && page > 0 && page <= 10_000 ? page : 1,
+    page: readPage(search?.get("page")),
   } as const;
+}
+
+function readPage(value: string | null | undefined) {
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page > 0 && page <= 10_000 ? page : 1;
+}
+
+export function normalizeFarmSupplySearch(value: string) {
+  return Array.from(value.trim()).slice(0, 200).join("");
+}
+
+export function readFarmSupplyContext(search: SearchReader | null): FarmSupplyContext {
+  const status = search?.get("supply_status");
+  return {
+    search: normalizeFarmSupplySearch(search?.get("supply_search") ?? ""),
+    status: status === "removed" || status === "all" ? status : "supplying",
+    page: readPage(search?.get("supply_page")),
+  };
 }
 
 export function readFarmDetailTab(search: SearchReader | null): FarmDetailTab {
@@ -35,20 +61,28 @@ export function readFarmDetailTab(search: SearchReader | null): FarmDetailTab {
 }
 
 export function farmHref(search: SearchReader | null, destination: FarmDestination = {}) {
-  const { id, mode, tab } = destination;
+  const { id, mode, tab, productId, supply } = destination;
+  const suffix =
+    mode === "edit" ? "/edit" : productId ? `/products/${encodeURIComponent(productId)}` : "";
   const path =
     mode === "new"
       ? `${FARM_LIST_PATH}/new`
       : id
-        ? `${FARM_LIST_PATH}/${encodeURIComponent(id)}${mode === "edit" ? "/edit" : ""}`
+        ? `${FARM_LIST_PATH}/${encodeURIComponent(id)}${suffix}`
         : FARM_LIST_PATH;
   const filters = readFarmListContext(search);
   const query = new URLSearchParams();
   if (filters.search) query.set("search", filters.search);
   if (filters.status) query.set("is_active", filters.status);
   if (filters.page > 1) query.set("page", String(filters.page));
-  const detailTab = tab ?? readFarmDetailTab(search);
-  if (id && mode !== "new" && detailTab !== "products") query.set("tab", detailTab);
+  if (id && mode !== "new") {
+    const sourceFilters = supply ?? readFarmSupplyContext(search);
+    if (sourceFilters.search) query.set("supply_search", sourceFilters.search);
+    if (sourceFilters.status !== "supplying") query.set("supply_status", sourceFilters.status);
+    if (sourceFilters.page > 1) query.set("supply_page", String(sourceFilters.page));
+    const detailTab = tab ?? readFarmDetailTab(search);
+    if (!productId && detailTab !== "products") query.set("tab", detailTab);
+  }
 
   return query.size ? `${path}?${query}` : path;
 }

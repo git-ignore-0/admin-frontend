@@ -688,6 +688,11 @@ export type Farm = {
   updated_at: string;
 };
 
+export const farmSupplyStatuses = ["supplying", "removed"] as const;
+export type FarmSupplyStatus = (typeof farmSupplyStatuses)[number];
+export const farmSupplyFilters = [...farmSupplyStatuses, "all"] as const;
+export type FarmSupplyFilter = (typeof farmSupplyFilters)[number];
+
 export type FarmProduct = {
   id: string;
   farm_id: string;
@@ -700,6 +705,10 @@ export type FarmProduct = {
   unit_label_en: string;
   is_active: boolean;
   product_status: ProductStatus;
+  supply_status: FarmSupplyStatus;
+  removed_at: string | null;
+  version: number;
+  supply_generation: number;
   initial_quantity: number;
   net_sold_quantity: number;
   available_quantity: number;
@@ -709,11 +718,58 @@ export type FarmProduct = {
   next_expiry_date: string | null;
 };
 
-export type AvailableFarmProduct = Pick<FarmProduct, "sku" | "name_vi" | "name_en"> & {
-  id: string;
+export type AvailableFarmProduct = Pick<
+  FarmProduct,
+  "id" | "sku" | "name_vi" | "name_en" | "unit_size" | "unit_label_vi" | "unit_label_en"
+>;
+
+export type FarmSourceBlocker = {
+  code: string;
+  context?:
+    | { orders: Array<{ id: string; reference_code: string }>; has_more: boolean }
+    | { required_units: number; remaining_units: number; shortfall_units: number }
+    | { source_id: string; version: number };
 };
 
-export type StockBatchStatus = "upcoming" | "active" | "expired" | "cancelled";
+export type FarmSourceCapabilities = {
+  can_remove: boolean;
+  can_readd: boolean;
+  can_create_batch: boolean;
+  blockers: Partial<Record<"remove" | "readd" | "create_batch", FarmSourceBlocker>>;
+};
+
+export type FarmProductDetail = FarmProduct & { capabilities: FarmSourceCapabilities };
+export type FarmProductWithFirstBatch = FarmProduct & { first_batch_id: string };
+
+export const farmProductHistoryActions = [
+  "farm.product.add",
+  "farm.product.remove",
+  "farm.product.readd",
+  "farm.product.lifecycle_backfill",
+  "farm.product.update",
+  "farm.product.delete",
+] as const;
+
+export type FarmProductHistoryEntry = {
+  id: string;
+  action: (typeof farmProductHistoryActions)[number];
+  created_at: string;
+  actor: { id: string; name: string } | null;
+  context: {
+    farm_id?: string;
+    product_id?: string;
+    stock_batch_id?: string;
+    supply_generation?: number;
+    is_active?: boolean;
+    provenance?: "legacy_disabled_link";
+    classified_at?: string;
+  };
+};
+
+export const farmBatchScopes = ["current", "history", "all"] as const;
+export type FarmBatchScope = (typeof farmBatchScopes)[number];
+export const stockBatchStatuses = ["upcoming", "active", "expired", "cancelled"] as const;
+export type StockBatchStatus = (typeof stockBatchStatuses)[number];
 
 export type FarmStockBatch = {
   id: string;
@@ -726,6 +782,9 @@ export type FarmStockBatch = {
   available_quantity: number;
   status: StockBatchStatus;
   version: number;
+  source_version: number;
+  supply_generation: number;
+  is_historical: boolean;
   created_at: string;
   updated_at: string;
 };

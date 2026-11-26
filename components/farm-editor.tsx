@@ -16,6 +16,7 @@ import {
   Title,
   useMantineTheme,
 } from "@mantine/core";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   type FormEvent,
@@ -39,6 +40,7 @@ import { useToast } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
 import { type ClientApiError, isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { farmHref } from "@/lib/farm-navigation";
+import { farmDetailKey, farmListKey, farmSupplyKey, retireFarmQueries } from "@/lib/farm-query";
 import { deleteFarmImage, getFarm, saveFarm, uploadFarmImage } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { isSupportedImageFile } from "@/lib/image-validation";
@@ -120,6 +122,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const router = useRouter();
+  const queryClient = useQueryClient();
   const search = useSearchParams();
   const { breakpoints } = useMantineTheme();
   const isCurrent = useIsAdminQueryScopeCurrent();
@@ -154,13 +157,17 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
     return mounted.current && isCurrent() && !accessRevoked.current;
   }
 
-  const hideFarm = useCallback(() => {
-    accessRevoked.current = true;
-    setSavedNames(undefined);
-    setForm(emptyForm);
-    setPhotoError("");
-    setConflict(false);
-  }, []);
+  const hideFarm = useCallback(
+    (cause: unknown) => {
+      accessRevoked.current = true;
+      retireFarmQueries(queryClient, isProtectedDataError(cause) ? undefined : farmId);
+      setSavedNames(undefined);
+      setForm(emptyForm);
+      setPhotoError("");
+      setConflict(false);
+    },
+    [farmId, queryClient],
+  );
 
   const adoptFarm = useCallback((farm: Farm) => {
     accessRevoked.current = false;
@@ -201,7 +208,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
       .catch((caught) => {
         if (controller.signal.aborted || !isCurrent()) return;
         setSavedNames(undefined);
-        if (farmUnavailable(caught)) hideFarm();
+        if (farmUnavailable(caught)) hideFarm(caught);
         setError(requestErrorMessage(caught, translationRef.current));
       })
       .finally(() => {
@@ -309,7 +316,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
     } catch (caught) {
       if (!canAct() || controller.signal.aborted) return;
       if (farmUnavailable(caught)) {
-        hideFarm();
+        hideFarm(caught);
         setError(requestErrorMessage(caught, translationRef.current));
       } else {
         setRecovery({ kind: "edit", version: recovery.version, problem: caught });
@@ -392,7 +399,7 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
       }
       setSaving(false);
       if (unavailable) {
-        hideFarm();
+        hideFarm(caught);
       } else if (!rejected) {
         setRecovery(
           farmId && version !== undefined
@@ -410,6 +417,17 @@ function FarmEditorForm({ farmId }: { farmId?: string }) {
     }
     forgetReferencedPhotos(uploads, result);
     if (!canAct()) return;
+    const detailKey = farmDetailKey(result.id);
+    await queryClient.cancelQueries({ queryKey: detailKey });
+    if (!canAct()) return;
+    const previousFarm = queryClient.getQueryData<Farm>(detailKey);
+    if (!previousFarm || previousFarm.version <= result.version) {
+      queryClient.setQueryData(detailKey, result);
+    }
+    void queryClient.invalidateQueries({ queryKey: farmListKey });
+    if (previousFarm?.is_active !== result.is_active) {
+      void queryClient.invalidateQueries({ queryKey: farmSupplyKey(result.id) });
+    }
     toast(locale === "vi" ? "Đã lưu trang trại." : "Farm saved.");
     router.replace(farmHref(search, { id: result.id }));
     router.refresh();

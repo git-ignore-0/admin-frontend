@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 126 canonical route shapes and 177 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(126);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(126);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(177);
+  it("covers the 129 canonical route shapes and 179 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(129);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(129);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(179);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);
@@ -151,8 +151,15 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", [...base, farm, "available-products"])).toBe(true);
     expect(isAllowedBackendRequest("POST", [...base, farm, "available-products"])).toBe(false);
     expect(isAllowedBackendRequest("POST", [...base, farm, "products"])).toBe(true);
-    expect(isAllowedBackendRequest("PATCH", [...base, farm, "products", product])).toBe(true);
-    expect(isAllowedBackendRequest("DELETE", [...base, farm, "products", product])).toBe(true);
+    const source = [...base, farm, "products", product];
+    expect(isAllowedBackendRequest("GET", source)).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", source)).toBe(false);
+    expect(isAllowedBackendRequest("DELETE", source)).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...source, "history"])).toBe(true);
+    for (const action of ["remove", "re-add"]) {
+      expect(isAllowedBackendRequest("POST", [...source, action])).toBe(true);
+      expect(isAllowedBackendRequest("GET", [...source, action])).toBe(false);
+    }
     const batch = "22222222-2222-4222-8222-222222222222";
     expect(isAllowedBackendRequest("GET", [...base, farm, "products", product, "batches"])).toBe(
       true,

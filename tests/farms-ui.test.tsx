@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { FarmList } from "@/components/farm-list";
 import { FarmEditor } from "@/components/farm-editor";
 import { FarmProducts } from "@/components/farm-products";
+import { FarmSourceDetail } from "@/components/farm-source-detail";
 import { FarmDetail } from "@/components/farm-detail";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
@@ -18,6 +19,7 @@ import type {
   AvailableFarmProduct,
   Farm,
   FarmProduct,
+  FarmProductDetail,
   FarmStockBatch,
   MediaAsset,
   TrackerFarm,
@@ -31,7 +33,9 @@ const mocks = vi.hoisted(() => ({
   deleteImage: vi.fn(),
   linked: vi.fn(),
   add: vi.fn(),
-  active: vi.fn(),
+  source: vi.fn(),
+  history: vi.fn(),
+  readd: vi.fn(),
   removeLink: vi.fn(),
   batches: vi.fn(),
   createBatch: vi.fn(),
@@ -49,7 +53,8 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 vi.mock("@/lib/commerce-api", () => ({ getStoreProduct: mocks.productDetail }));
-vi.mock("@/lib/farms-api", () => ({
+vi.mock("@/lib/farms-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/farms-api")>()),
   listFarms: mocks.list,
   getFarm: mocks.get,
   getFarmTracker: mocks.tracker,
@@ -63,7 +68,9 @@ vi.mock("@/lib/farms-api", () => ({
   listFarmProducts: mocks.linked,
   listAvailableFarmProducts: mocks.available,
   addFarmProduct: mocks.add,
-  setFarmProductActive: mocks.active,
+  getFarmProduct: mocks.source,
+  listFarmProductHistory: mocks.history,
+  readdFarmProduct: mocks.readd,
   removeFarmProduct: mocks.removeLink,
   listFarmStockBatches: mocks.batches,
   createFarmStockBatch: mocks.createBatch,
@@ -115,6 +122,9 @@ const product: AvailableFarmProduct = {
   sku: "RAU-01",
   name_vi: "Rau muống",
   name_en: "Water spinach",
+  unit_size: "500.000",
+  unit_label_vi: "g",
+  unit_label_en: "g",
 };
 const linkedProduct: FarmProduct = {
   id: "link-1",
@@ -127,6 +137,10 @@ const linkedProduct: FarmProduct = {
   unit_label_vi: "gói",
   unit_label_en: "pack",
   is_active: true,
+  supply_status: "supplying",
+  removed_at: null,
+  version: 2,
+  supply_generation: 1,
   product_status: "active",
   initial_quantity: 10,
   net_sold_quantity: 0,
@@ -136,15 +150,36 @@ const linkedProduct: FarmProduct = {
   has_supply_history: true,
   next_expiry_date: "2026-11-01",
 };
-const pausedSupply: FarmProduct = {
+const supplying: FarmProductDetail = {
   ...linkedProduct,
+  capabilities: {
+    can_remove: true,
+    can_create_batch: true,
+    can_readd: false,
+    blockers: { readd: { code: "farm_product_not_removed" } },
+  },
+};
+const removedSupply: FarmProductDetail = {
+  ...supplying,
+  version: 3,
+  supply_status: "removed",
+  removed_at: "2026-10-31T03:00:00Z",
+  capabilities: {
+    can_remove: false,
+    can_create_batch: false,
+    can_readd: true,
+    blockers: {
+      remove: { code: "farm_product_removed" },
+      create_batch: { code: "farm_product_removed" },
+    },
+  },
   is_active: false,
   initial_quantity: 0,
   available_quantity: 0,
   active_batch_count: 0,
   next_expiry_date: null,
 };
-function linkedResult(data: FarmProduct[], page = 1, total = data.length) {
+function linkedResult<T>(data: T[], page = 1, total = data.length) {
   return { data, meta: { page, page_size: 20, total } };
 }
 function farmPhoto(id: string): MediaAsset {
@@ -175,6 +210,8 @@ beforeEach(() => {
   mocks.list.mockResolvedValue({ data: [farm], meta: { page: 1, page_size: 20, total: 1 } });
   mocks.get.mockResolvedValue(farm);
   mocks.linked.mockResolvedValue(linkedResult([]));
+  mocks.source.mockResolvedValue(supplying);
+  mocks.history.mockResolvedValue(linkedResult([]));
   mocks.available.mockResolvedValue({
     data: [product],
     meta: { page: 1, page_size: 30, total: 1 },
@@ -547,11 +584,11 @@ it("opens Farm inventory by default with its stock summary and supporting tabs",
   fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
   expect(screen.getByRole("dialog", { name: "Xóa trang trại" })).toBeVisible();
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy" }));
-  expect(await screen.findByRole("heading", { name: "Sản phẩm của trang trại" })).toBeVisible();
+  expect(await screen.findByText("Trang trại chưa có sản phẩm nào.")).toBeVisible();
   await waitFor(() =>
     expect(mocks.linked).toHaveBeenCalledWith(
       "farm-1",
-      { page: 1, search: "" },
+      { page: 1, search: "", supplyStatus: "supplying" },
       expect.any(AbortSignal),
     ),
   );
@@ -581,552 +618,12 @@ it("moves Farm detail tabs with arrow, Home and End keys", async () => {
   expect(products).toHaveFocus();
 });
 
-it.each([
-  [
-    "vi",
-    "Rau muống, Đang bán, Đang cung cấp, Còn trong các đợt hiệu lực: 10 đơn vị bán",
-    "Cải ngọt, Đang bán, Ngừng cung cấp, Còn trong các đợt hiệu lực: 0 đơn vị bán",
-    "Số lượng còn lại: 50 đơn vị bán",
-  ],
-  [
-    "en",
-    "Water spinach, Selling, Supplying, Units from active batches: 10",
-    "Choy sum, Selling, Not supplying, Units from active batches: 0",
-    "Remaining selling units: 50",
-  ],
-] as const)(
-  "shows availability separately from batch stock for stopped supply in %s",
-  async (locale, firstLabel, stoppedLabel, batchInventory) => {
-    prepareInventory();
-    const stopped = {
-      ...pausedSupply,
-      id: "link-2",
-      product_id: "product-2",
-      sku: "RAU-02",
-      name_vi: "Cải ngọt",
-      name_en: "Choy sum",
-    };
-    mocks.linked.mockResolvedValue(linkedResult([linkedProduct, stopped]));
-    mocks.batches.mockImplementation((_farmId, productId) =>
-      Promise.resolve({
-        data:
-          productId === stopped.product_id
-            ? [
-                {
-                  ...liveBatch,
-                  farm_product_id: stopped.id,
-                  quantity_units: 50,
-                  remaining_quantity: 50,
-                  available_quantity: 0,
-                },
-              ]
-            : [liveBatch],
-        meta: { page: 1, page_size: 20, total: 1 },
-      }),
-    );
-    view(<FarmProducts farmId="farm-1" />, locale);
-
-    expect(await screen.findByRole("button", { name: firstLabel })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    const stoppedButton = screen.getByRole("button", { name: stoppedLabel });
-    expect(stoppedButton).toBeVisible();
-    await waitFor(() =>
-      expect(mocks.batches).toHaveBeenCalledWith(
-        "farm-1",
-        "product-1",
-        {
-          page: 1,
-          status: undefined,
-        },
-        { signal: expect.any(AbortSignal), linkId: "link-1" },
-      ),
-    );
-    fireEvent.click(stoppedButton);
-    await waitFor(() =>
-      expect(mocks.batches).toHaveBeenCalledWith(
-        "farm-1",
-        "product-2",
-        {
-          page: 1,
-          status: undefined,
-        },
-        { signal: expect.any(AbortSignal), linkId: "link-2" },
-      ),
-    );
-    expect(await screen.findByText(new RegExp(batchInventory))).toBeVisible();
-    expect(
-      screen.getAllByText(
-        locale === "vi"
-          ? "Còn trong các đợt hiệu lực: 0 đơn vị bán"
-          : "Units from active batches: 0",
-      ),
-    ).toHaveLength(1);
-    expect(
-      screen.getByText(
-        locale === "vi" ? "Tính vào nguồn cung: 0 đơn vị bán" : "Units counted toward supply: 0",
-      ),
-    ).toBeVisible();
-    expect(mocks.productDetail).not.toHaveBeenCalled();
-  },
-);
-
-it("resets batch pagination when selecting another Farm product", async () => {
-  const second = {
-    ...linkedProduct,
-    id: "link-2",
-    product_id: "product-2",
-    sku: "RAU-02",
-    name_vi: "Cải ngọt",
-  };
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct, second]));
-  mocks.batches.mockImplementation((_farmId, productId, query: { page: number }) =>
-    Promise.resolve({
-      data: [],
-      meta: { page: query.page, page_size: 20, total: productId === "product-1" ? 21 : 0 },
-    }),
-  );
-  view(<FarmProducts farmId="farm-1" />);
-
-  fireEvent.click(await screen.findByRole("button", { name: "Sau" }));
-  await waitFor(() =>
-    expect(mocks.batches).toHaveBeenCalledWith(
-      "farm-1",
-      "product-1",
-      {
-        page: 2,
-        status: undefined,
-      },
-      { signal: expect.any(AbortSignal), linkId: "link-1" },
-    ),
-  );
-  fireEvent.click(
-    screen.getByRole("button", {
-      name: "Cải ngọt, Đang bán, Đang cung cấp, Còn trong các đợt hiệu lực: 10 đơn vị bán",
-    }),
-  );
-  await waitFor(() =>
-    expect(mocks.batches).toHaveBeenCalledWith(
-      "farm-1",
-      "product-2",
-      {
-        page: 1,
-        status: undefined,
-      },
-      { signal: expect.any(AbortSignal), linkId: "link-2" },
-    ),
-  );
-});
-
-it("keeps a product action failure visible when the refreshed list no longer has that link", async () => {
-  mocks.linked
-    .mockResolvedValueOnce(linkedResult([linkedProduct]))
-    .mockResolvedValue(linkedResult([]));
-  mocks.active.mockRejectedValue(new Error("network_error"));
-  view(<FarmProducts farmId="farm-1" />);
-
-  await screen.findByRole("button", {
-    name: "Rau muống, Đang bán, Đang cung cấp, Còn trong các đợt hiệu lực: 10 đơn vị bán",
-  });
-  fireEvent.click(screen.getByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Ngừng cung cấp" }));
-
-  expect(await screen.findByText("Trang trại chưa có sản phẩm nào.")).toBeVisible();
-  expect(screen.getByRole("alert")).toHaveTextContent("Không thể kết nối.");
-  expect(screen.queryByRole("region", { name: "Các đợt cung cấp RAU-01" })).not.toBeInTheDocument();
-  expect(mocks.active).toHaveBeenCalledOnce();
-});
-
-it("moves focus into and back from the mobile product detail", async () => {
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  view(<FarmProducts farmId="farm-1" />);
-
-  const productButton = await screen.findByRole("button", {
-    name: "Rau muống, Đang bán, Đang cung cấp, Còn trong các đợt hiệu lực: 10 đơn vị bán",
-  });
-  fireEvent.click(productButton);
-  const detailHeading = screen.getByRole("heading", { name: "Các đợt cung cấp: Rau muống" });
-  const back = screen.getByRole("button", { name: "Quay lại sản phẩm" });
-  await waitFor(() => expect(detailHeading).toHaveFocus());
-  fireEvent.click(back);
-  await waitFor(() => expect(productButton).toHaveFocus());
-});
-
-it("uses the toggle response and refreshes batches without rereading Farm or its products", async () => {
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  mocks.active.mockResolvedValue(pausedSupply);
-  view(<FarmDetail farmId="farm-1" />);
-
-  fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Ngừng cung cấp" }));
-
-  expect(
-    await screen.findByRole("button", {
-      name: "Rau muống, Đang bán, Ngừng cung cấp, Còn trong các đợt hiệu lực: 0 đơn vị bán",
-    }),
-  ).toBeVisible();
-  await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(2));
-  expect(mocks.linked).toHaveBeenCalledTimes(1);
-  expect(mocks.get).toHaveBeenCalledTimes(1);
-});
-
-it("explains when a Product was deactivated after catalog selection", async () => {
-  mocks.add.mockRejectedValue(Object.assign(new Error("product_inactive"), { status: 409 }));
-  view(<FarmProducts farmId="farm-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Thêm sản phẩm" }));
-  const dialog = screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" });
-  fireEvent.change(await within(dialog).findByLabelText("Số lượng đơn vị bán"), {
-    target: { value: "1" },
-  });
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Thêm sản phẩm" }));
-  expect(await within(dialog).findByText(/không còn Đang bán/)).toBeVisible();
-});
-
 it("shows zero Growth Tracker signups without treating an existing profile as missing", async () => {
   mocks.tracker.mockResolvedValue({ ...trackerProfile, signup_count: 0 });
   view(<FarmDetail farmId="farm-1" />);
   fireEvent.click(await screen.findByRole("tab", { name: "Growth Tracker" }));
   expect(await screen.findByLabelText("Số người đăng ký 6 tháng")).toHaveValue(0);
   expect(screen.getByRole("button", { name: "Lưu Growth Tracker" })).toBeVisible();
-});
-
-it("links a catalog Product together with the first current-week stock batch", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  vi.setSystemTime(new Date("2026-10-31T03:00:00Z"));
-  mocks.add.mockResolvedValue(linkedProduct);
-  mocks.linked
-    .mockResolvedValueOnce(linkedResult([]))
-    .mockResolvedValueOnce(linkedResult([linkedProduct]));
-  try {
-    view(<FarmProducts farmId="farm-1" />);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Thêm sản phẩm" })).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Thêm sản phẩm" }));
-    const addDialog = screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" });
-    expect(await within(addDialog).findByRole("combobox", { name: "Sản phẩm" })).toHaveValue(
-      "Rau muống · RAU-01",
-    );
-    expect(await within(addDialog).findByText("Đơn vị bán")).toBeVisible();
-    expect(within(addDialog).getByText("Tổng số lượng")).toBeVisible();
-    expect(await within(addDialog).findByText("0.5 kg")).toBeVisible();
-    expect(within(addDialog).getByLabelText("Số lượng đơn vị bán")).toHaveAccessibleDescription(
-      "Ví dụ: với đơn vị bán 500 g, nhập 3 để tính tổng 1,5 kg.",
-    );
-    expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("26/10/2026");
-    expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("01/11/2026");
-    fireEvent.click(within(addDialog).getByRole("radio", { name: "Tháng hiện tại" }));
-    expect(within(addDialog).getByLabelText("Ngày bắt đầu")).toHaveValue("01/10/2026");
-    expect(within(addDialog).getByLabelText("Ngày kết thúc")).toHaveValue("31/10/2026");
-    fireEvent.click(within(addDialog).getByRole("radio", { name: "Tuần hiện tại" }));
-    fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
-      target: { value: "31102026" },
-    });
-    expect(within(addDialog).getByRole("radio", { name: "Tùy chọn" })).toBeChecked();
-    fireEvent.change(within(addDialog).getByLabelText("Ngày kết thúc"), {
-      target: { value: "01/11/2026" },
-    });
-    fireEvent.change(within(addDialog).getByLabelText("Số lượng đơn vị bán"), {
-      target: { value: "10" },
-    });
-    expect(within(addDialog).getByText("5 kg")).toBeVisible();
-    fireEvent.click(within(addDialog).getByRole("button", { name: "Thêm sản phẩm" }));
-    await waitFor(() =>
-      expect(mocks.add).toHaveBeenCalledWith("farm-1", "product-1", {
-        start_date: "2026-10-26",
-        end_date: "2026-11-01",
-        quantity_units: 10,
-      }),
-    );
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it("paginates the Farm product catalog during search and preserves the stock draft", async () => {
-  const nextProduct = { ...product, id: "product-3", sku: "RAU-03", name_vi: "Rau cải" };
-  mocks.available.mockImplementation((_farmId, { page }: { page: number }) =>
-    Promise.resolve({
-      data: page === 1 ? [product] : [nextProduct],
-      meta: { page, page_size: 30, total: 61 },
-    }),
-  );
-  view(<FarmProducts farmId="farm-1" />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Thêm sản phẩm" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Thêm sản phẩm" }));
-  const dialog = within(screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" }));
-
-  await dialog.findByRole("navigation", { name: "Trang 1/3" });
-  fireEvent.change(dialog.getByRole("searchbox", { name: "Tìm sản phẩm Cửa hàng" }), {
-    target: { value: "Rau" },
-  });
-  fireEvent.click(dialog.getByRole("button", { name: "Tìm kiếm" }));
-  await dialog.findByLabelText("Số lượng đơn vị bán");
-  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "12" } });
-  const pages = dialog.getByRole("navigation", { name: "Trang 1/3" });
-  fireEvent.click(within(pages).getByRole("button", { name: "3" }));
-
-  await waitFor(() =>
-    expect(mocks.available).toHaveBeenLastCalledWith(
-      "farm-1",
-      { page: 3, search: "Rau" },
-      expect.any(AbortSignal),
-    ),
-  );
-  expect(dialog.getByRole("combobox", { name: "Sản phẩm" })).toHaveValue("Rau cải · RAU-03");
-  expect(await dialog.findByLabelText("Số lượng đơn vị bán")).toHaveDisplayValue("12");
-  expect(mocks.add).not.toHaveBeenCalled();
-});
-
-it("offers deactivation instead of removal when a Farm product has batch history", async () => {
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  view(<FarmProducts farmId="farm-1" />);
-  expect(await screen.findByText("Rau muống", { selector: "strong" })).toBeVisible();
-  fireEvent.click(screen.getByLabelText("Tùy chọn khác: Rau muống"));
-  expect(screen.getByRole("menuitem", { name: "Ngừng cung cấp" })).toBeVisible();
-  expect(screen.queryByRole("menuitem", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
-  expect(mocks.removeLink).not.toHaveBeenCalled();
-});
-
-it("lists stock batches and only allows editing an active or upcoming batch", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-31T03:00:00Z"));
-  const active: FarmStockBatch = {
-    id: "batch-active",
-    farm_product_id: linkedProduct.id,
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
-    net_sold_quantity: 4,
-    remaining_quantity: 6,
-    available_quantity: 6,
-    status: "active",
-    version: 2,
-    created_at: "2026-10-26T00:00:00Z",
-    updated_at: "2026-10-26T00:00:00Z",
-  };
-  const expired: FarmStockBatch = {
-    ...active,
-    id: "batch-expired",
-    start_date: "2026-10-19",
-    end_date: "2026-10-25",
-    available_quantity: 0,
-    status: "expired",
-  };
-  const upcoming: FarmStockBatch = {
-    ...active,
-    id: "batch-upcoming",
-    start_date: "2026-11-02",
-    end_date: "2026-11-08",
-    available_quantity: 0,
-    status: "upcoming",
-  };
-  const cancelled: FarmStockBatch = {
-    ...expired,
-    id: "batch-cancelled",
-    status: "cancelled",
-  };
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  mocks.batches.mockResolvedValue({
-    data: [active, upcoming, expired, cancelled],
-    meta: { page: 1, page_size: 20, total: 4 },
-  });
-  mocks.updateBatch.mockResolvedValue({ ...active, quantity_units: 12, version: 3 });
-  mocks.cancelBatch.mockRejectedValue(
-    Object.assign(new Error("version_conflict"), { status: 409 }),
-  );
-
-  view(<FarmProducts farmId="farm-1" />);
-  expect(
-    await screen.findByText("Đang hiệu lực", { selector: ".mantine-Badge-label" }),
-  ).toBeVisible();
-  expect(screen.getByText("Đã hết hạn", { selector: ".mantine-Badge-label" })).toBeVisible();
-  expect(screen.getByText("Sắp bắt đầu", { selector: ".mantine-Badge-label" })).toBeVisible();
-  expect(screen.getByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
-  expect(screen.getAllByText("Ban đầu 10 · Đã bán sau hoàn trả 4")).toHaveLength(4);
-  expect(screen.getAllByText("Số lượng còn lại: 6 đơn vị bán")).toHaveLength(4);
-  expect(screen.getByText(/Đơn vị bán: 500 gói/)).toBeVisible();
-  expect(screen.getAllByText("Tính vào nguồn cung: 0 đơn vị bán")).toHaveLength(3);
-  expect(screen.getAllByRole("button", { name: "Sửa đợt cung cấp" })).toHaveLength(2);
-
-  fireEvent.click(screen.getAllByRole("button", { name: "Sửa đợt cung cấp" })[0]);
-  const dialog = screen.getByRole("dialog", { name: "Sửa đợt cung cấp" });
-  expect(within(dialog).getByLabelText("Ngày bắt đầu")).toBeDisabled();
-  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị bán"), {
-    target: { value: "12" },
-  });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Lưu thay đổi" }));
-  await waitFor(() =>
-    expect(mocks.updateBatch).toHaveBeenCalledWith(
-      "farm-1",
-      "product-1",
-      "batch-active",
-      {
-        start_date: "2026-10-26",
-        end_date: "2026-11-01",
-        quantity_units: 12,
-        version: 2,
-      },
-      linkedProduct.id,
-    ),
-  );
-
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument(),
-  );
-  fireEvent.click((await screen.findAllByRole("button", { name: "Hủy đợt cung cấp" }))[0]);
-  const cancelDialog = screen.getByRole("dialog", { name: "Hủy đợt cung cấp" });
-  expect(within(cancelDialog).getByRole("button", { name: "Hủy đợt cung cấp" })).toHaveStyle({
-    "--button-bg": "var(--mantine-color-red-filled)",
-  });
-  fireEvent.click(within(cancelDialog).getByRole("button", { name: "Hủy đợt cung cấp" }));
-  await waitFor(() =>
-    expect(mocks.cancelBatch).toHaveBeenCalledWith(
-      "farm-1",
-      "product-1",
-      "batch-active",
-      2,
-      linkedProduct.id,
-    ),
-  );
-  expect(await within(cancelDialog).findByText(/đã được người khác cập nhật/)).toBeVisible();
-  fireEvent.click(within(cancelDialog).getByRole("button", { name: "Tải lại dữ liệu" }));
-  await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(3));
-});
-
-it("returns to the first valid batch page after cancelling the only row on page two", async () => {
-  const active: FarmStockBatch = {
-    id: "batch-page-two",
-    farm_product_id: linkedProduct.id,
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
-    net_sold_quantity: 0,
-    remaining_quantity: 10,
-    available_quantity: 10,
-    status: "active",
-    version: 1,
-    created_at: "2026-10-26T00:00:00Z",
-    updated_at: "2026-10-26T00:00:00Z",
-  };
-  let cancelled = false;
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  mocks.batches.mockImplementation((_farmId, _productId, query: { page: number }) =>
-    Promise.resolve({
-      data: cancelled && query.page === 2 ? [] : [active],
-      meta: { page: query.page, page_size: 20, total: cancelled ? 20 : 21 },
-    }),
-  );
-  mocks.cancelBatch.mockImplementation(() => {
-    cancelled = true;
-    return Promise.resolve({ ...active, status: "cancelled", version: 2 });
-  });
-
-  view(<FarmProducts farmId="farm-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Sau" }));
-  await waitFor(() =>
-    expect(mocks.batches).toHaveBeenCalledWith(
-      "farm-1",
-      "product-1",
-      {
-        page: 2,
-        status: undefined,
-      },
-      { signal: expect.any(AbortSignal), linkId: "link-1" },
-    ),
-  );
-  fireEvent.click((await screen.findAllByRole("button", { name: "Hủy đợt cung cấp" }))[0]);
-  fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Hủy đợt cung cấp" })).getByRole("button", {
-      name: "Hủy đợt cung cấp",
-    }),
-  );
-
-  await waitFor(() =>
-    expect(mocks.batches.mock.calls.at(-1)?.[2]).toEqual({ page: 1, status: undefined }),
-  );
-});
-
-it("returns to the first batch page when reloading after a page-two conflict", async () => {
-  const active: FarmStockBatch = {
-    id: "batch-conflict-page-two",
-    farm_product_id: linkedProduct.id,
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
-    net_sold_quantity: 0,
-    remaining_quantity: 10,
-    available_quantity: 10,
-    status: "active",
-    version: 1,
-    created_at: "2026-10-26T00:00:00Z",
-    updated_at: "2026-10-26T00:00:00Z",
-  };
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  mocks.batches.mockImplementation((_farmId, _productId, query: { page: number }) =>
-    Promise.resolve({
-      data: [active],
-      meta: { page: query.page, page_size: 20, total: 21 },
-    }),
-  );
-  mocks.cancelBatch.mockRejectedValue(
-    Object.assign(new Error("version_conflict"), { status: 409 }),
-  );
-
-  view(<FarmProducts farmId="farm-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Sau" }));
-  await waitFor(() =>
-    expect(mocks.batches.mock.calls.at(-1)?.[2]).toEqual({ page: 2, status: undefined }),
-  );
-  fireEvent.click((await screen.findAllByRole("button", { name: "Hủy đợt cung cấp" }))[0]);
-  const dialog = screen.getByRole("dialog", { name: "Hủy đợt cung cấp" });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Hủy đợt cung cấp" }));
-  fireEvent.click(await within(dialog).findByRole("button", { name: "Tải lại dữ liệu" }));
-
-  await waitFor(() =>
-    expect(mocks.batches.mock.calls.at(-1)?.[2]).toEqual({ page: 1, status: undefined }),
-  );
-});
-
-it("shows selling, supplying, and available stock independently for a stopped product", async () => {
-  mocks.linked.mockResolvedValue(
-    linkedResult([{ ...linkedProduct, product_status: "discontinued" }]),
-  );
-  view(<FarmProducts farmId="farm-1" />);
-  const addBatch = await screen.findByRole("button", { name: "Thêm đợt cung cấp" });
-  expect(addBatch).toBeDisabled();
-  expect(screen.getByText(/Chỉ sản phẩm Đang bán/)).toBeVisible();
-  expect(screen.getAllByText("Ngừng bán").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("Đang cung cấp").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("Còn trong các đợt hiệu lực: 10 đơn vị bán").length).toBeGreaterThan(
-    0,
-  );
-});
-
-it("retires old Farm inventory and actions when the summary reload is denied after a selling conflict", async () => {
-  mocks.linked
-    .mockResolvedValueOnce(linkedResult([linkedProduct]))
-    .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
-  mocks.createBatch.mockRejectedValue(
-    Object.assign(new Error("product_not_selling"), { status: 409 }),
-  );
-  view(<FarmProducts farmId="farm-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Thêm đợt cung cấp" }));
-  const dialog = screen.getByRole("dialog", { name: "Thêm đợt cung cấp" });
-  fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị bán"), {
-    target: { value: "10" },
-  });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Thêm đợt cung cấp" }));
-  await waitFor(() => expect(mocks.linked).toHaveBeenCalledTimes(2));
-  await waitFor(() => {
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Các đợt cung cấp: Rau muống" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Thêm đợt cung cấp" })).not.toBeInTheDocument();
-  });
-  expect(mocks.createBatch).toHaveBeenCalledOnce();
 });
 
 const liveBatch: FarmStockBatch = {
@@ -1140,6 +637,9 @@ const liveBatch: FarmStockBatch = {
   available_quantity: 10,
   status: "active",
   version: 1,
+  source_version: supplying.version,
+  supply_generation: 1,
+  is_historical: false,
   created_at: "2026-10-26T00:00:00Z",
   updated_at: "2026-10-26T00:00:00Z",
 };
@@ -1153,17 +653,19 @@ function prepareInventory() {
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((complete, fail) => {
     resolve = complete;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 it("keeps impossible and incomplete date drafts, then submits manually entered ISO dates", async () => {
   prepareInventory();
   mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
   mocks.createBatch.mockResolvedValue(liveBatch);
-  view(<FarmProducts farmId="farm-1" />);
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Thêm đợt cung cấp" }));
   const dialog = within(screen.getByRole("dialog", { name: "Thêm đợt cung cấp" }));
@@ -1187,11 +689,13 @@ it("keeps impossible and incomplete date drafts, then submits manually entered I
   fireEvent.change(start, { target: { value: "02112026" } });
   fireEvent.change(end, { target: { value: "03112026" } });
   fireEvent.click(submit);
-  expect(mocks.createBatch).toHaveBeenCalledExactlyOnceWith(
-    "farm-1",
-    "product-1",
-    { start_date: "2026-11-02", end_date: "2026-11-03", quantity_units: 5 },
-    "link-1",
+  await waitFor(() =>
+    expect(mocks.createBatch).toHaveBeenCalledExactlyOnceWith(
+      "farm-1",
+      "product-1",
+      { start_date: "2026-11-02", end_date: "2026-11-03", quantity_units: 5 },
+      expect.objectContaining({ id: "link-1", version: 2 }),
+    ),
   );
 });
 
@@ -1200,7 +704,7 @@ it("selects a date from the Foundation calendar and closes an open calendar duri
   mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
   const pending = deferred<FarmStockBatch>();
   mocks.updateBatch.mockReturnValue(pending.promise);
-  view(<FarmProducts farmId="farm-1" />, "en");
+  view(<FarmSourceDetail farm={farm} productId="product-1" />, "en");
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit supply batch" }));
   const dialog = within(screen.getByRole("dialog", { name: "Edit supply batch" }));
@@ -1231,7 +735,7 @@ it("selects a date from the Foundation calendar and closes an open calendar duri
   fireEvent.click(calendar);
   const anotherDay = await screen.findByRole("button", { name: "5 November 2026" });
   fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
-  expect(calendar).toBeDisabled();
+  await waitFor(() => expect(calendar).toBeDisabled());
   expect(end).toBeDisabled();
   expect(calendar).toHaveAttribute("aria-expanded", "false");
   expect(anotherDay).not.toBeInTheDocument();
@@ -1242,21 +746,19 @@ it("selects a date from the Foundation calendar and closes an open calendar duri
     "product-1",
     "batch-1",
     { start_date: "2026-10-26", end_date: "2026-11-04", quantity_units: 10, version: 1 },
-    "link-1",
+    expect.objectContaining({ id: "link-1", version: 2 }),
   );
   await act(async () => pending.resolve(liveBatch));
 });
 
 it("limits both the calendar and manual dates to the saved window for a stopped product", async () => {
   prepareInventory();
-  mocks.linked.mockResolvedValue(
-    linkedResult([{ ...linkedProduct, product_status: "discontinued" }]),
-  );
+  mocks.source.mockResolvedValue({ ...supplying, product_status: "discontinued" });
   mocks.batches.mockResolvedValue({
     data: [{ ...liveBatch, start_date: "2026-11-02", end_date: "2026-11-08", status: "upcoming" }],
     meta: { page: 1, page_size: 20, total: 1 },
   });
-  view(<FarmProducts farmId="farm-1" />, "en");
+  view(<FarmSourceDetail farm={farm} productId="product-1" />, "en");
 
   fireEvent.click(await screen.findByRole("button", { name: "Edit supply batch" }));
   const dialog = within(screen.getByRole("dialog", { name: "Edit supply batch" }));
@@ -1279,12 +781,10 @@ it("limits both the calendar and manual dates to the saved window for a stopped 
 
 it("enforces existing batch boundaries for stopped inventory and reports a reservation conflict", async () => {
   prepareInventory();
-  mocks.linked.mockResolvedValue(
-    linkedResult([{ ...linkedProduct, product_status: "discontinued" }]),
-  );
+  mocks.source.mockResolvedValue({ ...supplying, product_status: "discontinued" });
   mocks.updateBatch.mockRejectedValue(Object.assign(new Error("stock_reserved"), { status: 409 }));
   mocks.cancelBatch.mockRejectedValue(Object.assign(new Error("stock_reserved"), { status: 409 }));
-  view(<FarmProducts farmId="farm-1" />);
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Sửa đợt cung cấp" }));
   const edit = within(screen.getByRole("dialog", { name: "Sửa đợt cung cấp" }));
@@ -1311,7 +811,7 @@ it("enforces existing batch boundaries for stopped inventory and reports a reser
       quantity_units: 8,
       version: 1,
     },
-    "link-1",
+    expect.objectContaining({ id: "link-1", version: 2 }),
   );
   expect(quantity).toHaveValue(8);
   fireEvent.click(edit.getByRole("button", { name: "Hủy" }));
@@ -1334,7 +834,7 @@ it.each([
     mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
     const pending = deferred<FarmStockBatch>();
     mocks[action].mockReturnValue(pending.promise);
-    view(<FarmProducts farmId="farm-1" />);
+    view(<FarmSourceDetail farm={farm} productId="product-1" />);
     await screen.findByText("Đang hiệu lực", { selector: ".mantine-Badge-label" });
     fireEvent.click(screen.getByRole("button", { name: open }));
     const dialog = within(screen.getByRole("dialog", { name: dialogName }));
@@ -1346,83 +846,40 @@ it.each([
       button.click();
       button.click();
     });
-    expect(mocks[action]).toHaveBeenCalledOnce();
+    await waitFor(() => expect(mocks[action]).toHaveBeenCalledOnce());
     await act(async () => pending.resolve(liveBatch));
   },
 );
 
-it("guards against duplicate add calls while the response is pending", async () => {
-  const pending = deferred<FarmProduct>();
-  mocks.add.mockReturnValue(pending.promise);
-  view(<FarmProducts farmId="farm-1" />);
-  const open = screen.getByRole("button", { name: "Thêm sản phẩm" });
-  await waitFor(() => expect(open).toBeEnabled());
-  fireEvent.click(open);
-  const dialog = within(screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" }));
-  fireEvent.change(await dialog.findByLabelText("Số lượng đơn vị bán"), {
-    target: { value: "10" },
+it("aborts stale source reads and does not load batches until the new source is verified", async () => {
+  const old = deferred<FarmProductDetail>();
+  mocks.source.mockReturnValueOnce(old.promise).mockResolvedValueOnce({
+    ...supplying,
+    farm_id: "farm-2",
+    name_vi: "Rau ở Farm mới",
   });
-  const submit = dialog.getByRole("button", { name: "Thêm sản phẩm" });
-  act(() => {
-    submit.click();
-    submit.click();
-  });
-  expect(mocks.add).toHaveBeenCalledOnce();
-  await act(async () => pending.resolve(linkedProduct));
-});
-
-it("blocks a pending catalog choice that is no longer selling and ignores its previous choice", async () => {
-  const oldProduct = { ...product, id: "old-product", sku: "OLD", name_vi: "Món cũ" };
-  const oldDetail = deferred<{ id: string; status: string }>();
-  mocks.available.mockResolvedValue({
-    data: [oldProduct, product],
-    meta: { page: 1, page_size: 30, total: 2 },
-  });
-  mocks.productDetail
-    .mockReturnValueOnce(oldDetail.promise)
-    .mockResolvedValueOnce({ id: product.id, status: "discontinued" });
-  view(<FarmProducts farmId="farm-1" />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Thêm sản phẩm" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Thêm sản phẩm" }));
-  const dialog = within(screen.getByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" }));
-  const pick = await dialog.findByRole("combobox", { name: "Sản phẩm" });
-  await waitFor(() => expect(mocks.productDetail).toHaveBeenCalledOnce());
-  fireEvent.click(pick);
-  fireEvent.click(await screen.findByRole("option", { name: "Rau muống · RAU-01" }));
-  expect(await dialog.findByText(/không còn Đang bán/)).toBeVisible();
-  await act(async () => oldDetail.resolve({ id: oldProduct.id, status: "active" }));
-  expect((mocks.productDetail.mock.calls[0][1] as AbortSignal).aborted).toBe(true);
-  expect(dialog.getByRole("button", { name: "Thêm sản phẩm" })).toBeDisabled();
-  expect(mocks.add).not.toHaveBeenCalled();
-});
-
-it("ignores a stale Farm response when changing Farm", async () => {
-  const old = deferred<ReturnType<typeof linkedResult>>();
-  mocks.linked.mockReturnValueOnce(old.promise).mockResolvedValueOnce(
-    linkedResult([
-      {
-        ...linkedProduct,
-        farm_id: "farm-2",
-        name_vi: "Rau ở Farm mới",
-      },
-    ]),
-  );
-  const rendered = view(<FarmProducts farmId="farm-1" />);
-  await waitFor(() => expect(mocks.linked).toHaveBeenCalledOnce());
+  const rendered = view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  await waitFor(() => expect(mocks.source).toHaveBeenCalledOnce());
+  expect(mocks.batches).not.toHaveBeenCalled();
   rendered.rerender(
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
-        <FarmProducts farmId="farm-2" />
+        <AdminQueryProvider>
+          <FarmSourceDetail farm={{ ...farm, id: "farm-2" }} productId="product-1" />
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>,
   );
-  expect(
-    await screen.findByRole("heading", { name: "Các đợt cung cấp: Rau ở Farm mới" }),
-  ).toBeVisible();
-  await act(async () => old.resolve(linkedResult([linkedProduct])));
-  expect((mocks.linked.mock.calls[0][2] as AbortSignal).aborted).toBe(true);
+  expect(await screen.findByRole("heading", { name: "Rau ở Farm mới" })).toBeVisible();
+  await act(async () => old.resolve(supplying));
+  expect((mocks.source.mock.calls[0][2] as AbortSignal).aborted).toBe(true);
   expect(screen.queryByText("Rau muống")).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Các đợt cung cấp: Rau ở Farm mới" })).toBeVisible();
+  expect(mocks.batches).toHaveBeenCalledExactlyOnceWith(
+    "farm-2",
+    "product-1",
+    { scope: "current", page: 1 },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
 });
 
 it("adds an overlapping stock batch using the shared date-range form", async () => {
@@ -1439,7 +896,7 @@ it("adds an overlapping stock batch using the shared date-range form", async () 
     updated_at: "2026-10-31T00:00:00Z",
   });
 
-  view(<FarmProducts farmId="farm-1" />);
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
   fireEvent.click(await screen.findByRole("button", { name: "Thêm đợt cung cấp" }));
   const dialog = screen.getByRole("dialog", { name: "Thêm đợt cung cấp" });
   fireEvent.change(within(dialog).getByLabelText("Số lượng đơn vị bán"), {
@@ -1455,102 +912,21 @@ it("adds an overlapping stock batch using the shared date-range form", async () 
         end_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
         quantity_units: 10,
       },
-      linkedProduct.id,
+      expect.objectContaining({ id: linkedProduct.id, version: 2 }),
     ),
   );
 });
 
-const linkWithoutHistory: FarmProduct = {
-  ...linkedProduct,
-  initial_quantity: 0,
-  available_quantity: 0,
-  batch_count: 0,
-  active_batch_count: 0,
-  has_supply_history: false,
-  next_expiry_date: null,
-};
-
-it("closes removal and refreshes actions when a stock batch was added after confirmation opened", async () => {
-  const reload = deferred<ReturnType<typeof linkedResult>>();
-  mocks.linked
-    .mockResolvedValueOnce(linkedResult([linkWithoutHistory]))
-    .mockReturnValueOnce(reload.promise);
-  mocks.removeLink.mockRejectedValue(
-    Object.assign(new Error("farm_product_has_supply"), { status: 409 }),
-  );
-  view(<FarmProducts farmId="farm-1" />);
-  fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Gỡ sản phẩm" }));
-  const dialog = screen.getByRole("dialog", { name: "Gỡ sản phẩm" });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Gỡ sản phẩm" }));
-
-  expect(await screen.findByText(/đã có lịch sử cung cấp/)).toBeVisible();
-  expect(screen.queryByRole("dialog", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Tùy chọn khác: Rau muống")).not.toBeInTheDocument();
-  await act(async () => reload.resolve(linkedResult([linkedProduct])));
-  fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-  expect(screen.getByRole("menuitem", { name: "Ngừng cung cấp" })).toBeVisible();
-  expect(screen.queryByRole("menuitem", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
-  expect(mocks.linked).toHaveBeenCalledTimes(2);
-  expect(mocks.removeLink).toHaveBeenCalledOnce();
-});
-
-it.each([
-  ["farm_product_changed", 409],
-  ["not_found", 404],
-] as const)(
-  "removes stale link actions after a %s response and a reload with no link",
-  async (code, status) => {
-    mocks.linked
-      .mockResolvedValueOnce(linkedResult([linkWithoutHistory]))
-      .mockResolvedValueOnce(linkedResult([]));
-    mocks.removeLink.mockRejectedValue(Object.assign(new Error(code), { status }));
-    view(<FarmProducts farmId="farm-1" />);
-    fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Gỡ sản phẩm" }));
-    const dialog = screen.getByRole("dialog", { name: "Gỡ sản phẩm" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Gỡ sản phẩm" }));
-    expect(await screen.findByText(/Liên kết sản phẩm đã thay đổi/)).toBeVisible();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Tùy chọn khác: Rau muống")).not.toBeInTheDocument();
-    expect(screen.queryByText(/đã có lịch sử cung cấp/)).not.toBeInTheDocument();
-    expect(mocks.linked).toHaveBeenCalledTimes(2);
-    expect(mocks.removeLink).toHaveBeenCalledOnce();
-  },
-);
-
-it("blocks Farm link mutations after failed recovery and reloads only data on retry", async () => {
-  mocks.linked
-    .mockResolvedValueOnce(linkedResult([linkedProduct]))
-    .mockRejectedValueOnce(new Error("network_error"))
-    .mockResolvedValueOnce(linkedResult([pausedSupply]));
-  mocks.active.mockRejectedValue(Object.assign(new Error("farm_product_changed"), { status: 409 }));
-  view(<FarmProducts farmId="farm-1" />);
-  fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Ngừng cung cấp" }));
-  const retry = await screen.findByRole("button", { name: "Thử lại" });
-  expect(screen.getByText(/Liên kết sản phẩm đã thay đổi/)).toBeVisible();
-  expect(screen.queryByLabelText("Tùy chọn khác: Rau muống")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Thêm sản phẩm" })).toBeDisabled();
-  expect(screen.queryByRole("button", { name: "Thêm đợt cung cấp" })).not.toBeInTheDocument();
-  expect(mocks.active).toHaveBeenCalledOnce();
-  fireEvent.click(retry);
-  fireEvent.click(await screen.findByLabelText("Tùy chọn khác: Rau muống"));
-  expect(screen.getByRole("menuitem", { name: "Tiếp tục cung cấp" })).toBeVisible();
-  expect(mocks.linked).toHaveBeenCalledTimes(3);
-  expect(mocks.active).toHaveBeenCalledOnce();
-});
-
 it("searches linked Farm products on the server without fetching each Product detail", async () => {
   mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  view(<FarmProducts farmId="farm-1" />);
-  expect(await screen.findByText("Rau muống", { selector: "strong" })).toBeVisible();
+  view(<FarmProducts farm={farm} />);
+  expect(await screen.findByRole("link", { name: "Rau muống" })).toBeVisible();
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "rau" } });
   fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
   await waitFor(() =>
     expect(mocks.linked).toHaveBeenCalledWith(
       "farm-1",
-      { page: 1, search: "rau" },
+      { page: 1, search: "rau", supplyStatus: "supplying" },
       expect.any(AbortSignal),
     ),
   );
@@ -1561,13 +937,13 @@ it("pages linked Farm products without loading every Product detail", async () =
   mocks.linked.mockImplementation((_farmId, query: { page: number }) =>
     Promise.resolve(linkedResult(query.page === 1 ? [linkedProduct] : [second], query.page, 21)),
   );
-  view(<FarmProducts farmId="farm-1" />);
+  view(<FarmProducts farm={farm} />);
   expect(await screen.findByText("RAU-01")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Sau" }));
   expect(await screen.findByText("RAU-02")).toBeVisible();
   expect(mocks.linked).toHaveBeenCalledWith(
     "farm-1",
-    { page: 2, search: "" },
+    { page: 2, search: "", supplyStatus: "supplying" },
     expect.any(AbortSignal),
   );
 });
@@ -1624,21 +1000,6 @@ it("cleans an image upload that finishes after the Farm editor closes", async ()
     expect(mocks.deleteImage).toHaveBeenCalledWith("orphan-1", { keepalive: true }),
   );
   expect(mocks.upload).toHaveBeenCalledTimes(1);
-});
-
-it("closes the product action menu with Escape and restores its trigger focus", async () => {
-  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
-  view(<FarmProducts farmId="farm-1" />);
-  const trigger = await screen.findByRole("button", { name: "Tùy chọn khác: Rau muống" });
-  trigger.focus();
-  fireEvent.click(trigger);
-  fireEvent.keyDown(await screen.findByRole("menu"), { key: "ArrowDown" });
-  const action = await screen.findByRole("menuitem", { name: "Ngừng cung cấp" });
-  await waitFor(() => expect(action).toHaveFocus());
-  fireEvent.keyDown(action, { key: "Escape" });
-  await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
-  expect(trigger).toHaveFocus();
-  expect(mocks.active).not.toHaveBeenCalled();
 });
 
 function DetailWithBreadcrumb() {
@@ -1744,4 +1105,448 @@ it("keeps Farm deletion protection and can deactivate using the current version"
   expect(mocks.save).toHaveBeenCalledExactlyOnceWith("farm-1", { version: 2, is_active: false });
   expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
   expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("opens supply through a contextual link without fetching capabilities or batches for rows", async () => {
+  setRoute("/farms/farm-1?search=Hue&supply_search=rau&supply_status=all");
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  view(<FarmDetail farmId="farm-1" />);
+  const link = await screen.findByRole("link", { name: "Rau muống" });
+  expect(link).toHaveAttribute(
+    "href",
+    "/farms/farm-1/products/product-1?search=Hue&supply_search=rau&supply_status=all",
+  );
+  expect(mocks.linked).toHaveBeenCalledTimes(1);
+  expect(mocks.batches).not.toHaveBeenCalled();
+  expect(mocks.tracker).not.toHaveBeenCalled();
+});
+
+function fail(code: string, status: number, context?: unknown) {
+  return Object.assign(new Error(code), { status, payload: { errors: [{ code, context }] } });
+}
+
+async function openAdd() {
+  const add = await screen.findByRole("button", { name: "Thêm sản phẩm" });
+  await waitFor(() => expect(add).toBeEnabled());
+  fireEvent.click(add);
+  const dialog = within(await screen.findByRole("dialog", { name: "Thêm sản phẩm từ Cửa hàng" }));
+  const picker = await dialog.findByRole("combobox", { name: "Sản phẩm" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  fireEvent.click(picker);
+  fireEvent.click(await screen.findByRole("option", { name: /Rau muống/ }));
+  return dialog;
+}
+
+it("uses picker units and a single Add with the first batch, then refreshes only the supply list", async () => {
+  prepareInventory();
+  const result = deferred<FarmProduct>();
+  mocks.add.mockReturnValue(result.promise);
+  view(<FarmDetail farmId={farm.id} />);
+  const dialog = await openAdd();
+  expect(dialog.getByText("500 g")).toBeVisible();
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "24" } });
+  expect(dialog.getByText("12000 g")).toBeVisible();
+  const save = dialog.getByRole("button", { name: "Thêm sản phẩm" });
+  act(() => {
+    save.click();
+    save.click();
+  });
+  await waitFor(() =>
+    expect(mocks.add).toHaveBeenCalledExactlyOnceWith(farm.id, "product-1", {
+      start_date: "2026-10-26",
+      end_date: "2026-11-01",
+      quantity_units: 24,
+    }),
+  );
+  await act(async () => result.resolve(supplying));
+  await waitFor(() => expect(mocks.linked).toHaveBeenCalledTimes(2));
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.available).toHaveBeenCalledTimes(1);
+  expect(mocks.source).not.toHaveBeenCalled();
+  expect(mocks.productDetail).not.toHaveBeenCalled();
+  expect(mocks.batches).not.toHaveBeenCalled();
+});
+
+it("keeps Add pending result protected, checks the exact pair with GET and rejects blind replay", async () => {
+  prepareInventory();
+  mocks.add.mockRejectedValue(fail("request_timeout", 408));
+  mocks.source.mockRejectedValueOnce(fail("not_found", 404)).mockResolvedValueOnce(supplying);
+  view(<FarmProducts farm={farm} />);
+  const dialog = await openAdd();
+  const quantity = dialog.getByLabelText("Số lượng đơn vị bán");
+  fireEvent.change(quantity, { target: { value: "3" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Thêm sản phẩm" }));
+  const verify = await dialog.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" });
+  expect(quantity).toHaveValue(3);
+  expect(dialog.getByRole("button", { name: "Thêm sản phẩm" })).toBeDisabled();
+  fireEvent.click(verify);
+  expect(await dialog.findByText(/Kết quả lần thêm trước/)).toBeVisible();
+  fireEvent.click(dialog.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  expect(await dialog.findByRole("link", { name: "Mở chi tiết nguồn cung" })).toHaveAttribute(
+    "href",
+    "/farms/farm-1/products/product-1",
+  );
+  expect(mocks.source).toHaveBeenCalledTimes(2);
+  expect(mocks.add).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText("Đã thêm sản phẩm và đợt cung cấp đầu tiên.")).not.toBeInTheDocument();
+});
+
+it("loads each picker page only on intent and retains the selected Product and batch draft", async () => {
+  prepareInventory();
+  mocks.available.mockImplementation((_id, { page }: { page: number }) =>
+    Promise.resolve({
+      data: [page === 1 ? product : { ...product, id: "product-2", name_vi: "Cải ngọt" }],
+      meta: { page, page_size: 30, total: 31 },
+    }),
+  );
+  view(<FarmProducts farm={farm} />);
+  expect(mocks.available).not.toHaveBeenCalled();
+  const dialog = await openAdd();
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "5" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Sau" }));
+  await waitFor(() =>
+    expect(mocks.available).toHaveBeenLastCalledWith(
+      farm.id,
+      { page: 2, search: "" },
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(dialog.getByLabelText("Số lượng đơn vị bán")).toHaveValue(5);
+  expect(dialog.getByRole("combobox", { name: "Sản phẩm" })).toHaveValue("Rau muống · RAU-01");
+  expect(mocks.productDetail).not.toHaveBeenCalled();
+});
+
+it("routes duplicate removed link conflicts to that source for review", async () => {
+  prepareInventory();
+  mocks.add.mockRejectedValue(
+    fail("farm_product_removed", 409, {
+      source_id: "228d9391-0df3-408a-80d6-fd28b934bf2e",
+      version: 3,
+    }),
+  );
+  view(<FarmProducts farm={farm} />);
+  const dialog = await openAdd();
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "3" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Thêm sản phẩm" }));
+  expect(await dialog.findByRole("link", { name: "Mở chi tiết nguồn cung" })).toHaveAttribute(
+    "href",
+    "/farms/farm-1/products/product-1",
+  );
+  expect(mocks.add).toHaveBeenCalledOnce();
+  expect(mocks.source).not.toHaveBeenCalled();
+});
+
+it("does not fetch a separate Product and handles rejection when it stops selling", async () => {
+  prepareInventory();
+  mocks.add.mockRejectedValue(fail("product_inactive", 409));
+  view(<FarmProducts farm={farm} />);
+  const dialog = await openAdd();
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "3" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Thêm sản phẩm" }));
+  expect(await dialog.findByText(/Sản phẩm không còn Đang bán/)).toBeVisible();
+  expect(dialog.getByRole("button", { name: "Thêm sản phẩm" })).toBeDisabled();
+  expect(mocks.productDetail).not.toHaveBeenCalled();
+});
+
+it("removes even a discontinued Product when permitted and refreshes its history scope without loading Farm or events", async () => {
+  prepareInventory();
+  const prior = { ...supplying, product_status: "discontinued" as const };
+  const after = { ...removedSupply, product_status: "discontinued" as const };
+  mocks.source.mockResolvedValueOnce(prior).mockResolvedValueOnce(after);
+  mocks.removeLink.mockResolvedValue(after);
+  mocks.batches.mockImplementation((_farm, _product, { scope }) =>
+    Promise.resolve(linkedResult([{ ...liveBatch, is_historical: scope === "history" }])),
+  );
+  view(<FarmDetail farmId={farm.id} productId="product-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Gỡ sản phẩm" }));
+  const dialog = within(screen.getByRole("dialog", { name: /Gỡ Rau muống/ }));
+  fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
+  expect(await screen.findByText("Đã gỡ", { exact: true })).toBeVisible();
+  expect(mocks.removeLink).toHaveBeenCalledExactlyOnceWith(farm.id, "product-1", prior);
+  await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(2));
+  expect(mocks.batches.mock.calls.map((call) => call[2].scope)).toEqual(["current", "history"]);
+  expect(screen.queryByRole("button", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.linked).not.toHaveBeenCalled();
+  expect(mocks.history).not.toHaveBeenCalled();
+});
+
+it("shows open allocation order links and never fetches an order to determine whether Remove is allowed", async () => {
+  prepareInventory();
+  const order = { id: "318f0fda-8297-48da-aa0d-5597a884966b", reference_code: "ORD-24" };
+  mocks.source.mockResolvedValue({
+    ...supplying,
+    capabilities: {
+      ...supplying.capabilities,
+      can_remove: false,
+      blockers: {
+        ...supplying.capabilities.blockers,
+        remove: {
+          code: "farm_product_has_open_allocations",
+          context: { orders: [order], has_more: true },
+        },
+      },
+    },
+  });
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  expect(await screen.findByRole("link", { name: "ORD-24" })).toHaveAttribute(
+    "href",
+    "/store-orders/" + order.id,
+  );
+  expect(screen.getByText("Còn đơn hàng chưa hoàn tất khác.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
+  expect(mocks.removeLink).not.toHaveBeenCalled();
+});
+
+it("refreshes a late Remove blocker and never repeats the mutation after capabilities change", async () => {
+  prepareInventory();
+  const blocker = {
+    code: "farm_product_supply_shortfall",
+    context: { required_units: 10, remaining_units: 6, shortfall_units: 4 },
+  };
+  mocks.source.mockResolvedValueOnce(supplying).mockResolvedValueOnce({
+    ...supplying,
+    capabilities: { ...supplying.capabilities, can_remove: false, blockers: { remove: blocker } },
+  });
+  mocks.removeLink.mockRejectedValue(fail(blocker.code, 409, blocker.context));
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Gỡ sản phẩm" }));
+  const dialog = within(screen.getByRole("dialog", { name: /Gỡ Rau muống/ }));
+  fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
+  expect(await dialog.findByText(/Cần thêm 4 đơn vị/)).toBeVisible();
+  expect(dialog.getByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+  fireEvent.click(await dialog.findByRole("button", { name: "Đóng và xem lại" }));
+  expect(screen.queryByRole("button", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
+  expect(mocks.removeLink).toHaveBeenCalledTimes(1);
+  expect(mocks.source).toHaveBeenCalledTimes(2);
+});
+
+it("keeps Remove locked through failed and old GETs, then reads removed state without a success toast", async () => {
+  prepareInventory();
+  mocks.source
+    .mockResolvedValueOnce(supplying)
+    .mockRejectedValueOnce(fail("network_error", 503))
+    .mockResolvedValueOnce(supplying)
+    .mockResolvedValueOnce(removedSupply);
+  mocks.removeLink.mockRejectedValue(fail("invalid_response", 200));
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Gỡ sản phẩm" }));
+  const dialog = within(screen.getByRole("dialog", { name: /Gỡ Rau muống/ }));
+  fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
+  const verify = await dialog.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" });
+  fireEvent.click(verify);
+  expect(await dialog.findByText(/Chưa đủ dữ liệu/)).toBeVisible();
+  expect(dialog.getByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+  fireEvent.click(dialog.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  expect(await dialog.findByText(/Chưa đủ dữ liệu/)).toBeVisible();
+  fireEvent.click(dialog.getByRole("button", { name: "Hủy" }));
+  expect(await screen.findByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  expect(await screen.findByText(/Dữ liệu hiện tại khớp/)).toBeVisible();
+  expect(mocks.removeLink).toHaveBeenCalledTimes(1);
+  expect(mocks.source).toHaveBeenCalledTimes(4);
+  expect(screen.queryByText("Đã gỡ sản phẩm khỏi trang trại.")).not.toBeInTheDocument();
+});
+
+it("re-adds the same source with a fresh batch and keeps old batches read-only", async () => {
+  prepareInventory();
+  const renewed = { ...supplying, version: 4, supply_generation: 2 };
+  mocks.source.mockResolvedValueOnce(removedSupply).mockResolvedValueOnce(renewed);
+  mocks.readd.mockResolvedValue({ ...renewed, first_batch_id: "batch-new" });
+  mocks.batches.mockImplementation((_farm, _product, { scope }) =>
+    Promise.resolve(
+      linkedResult(
+        scope === "history"
+          ? [{ ...liveBatch, is_historical: true, remaining_quantity: 7, available_quantity: 0 }]
+          : [{ ...liveBatch, id: "batch-new", supply_generation: 2 }],
+      ),
+    ),
+  );
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  expect(await screen.findByText("Thuộc lịch sử")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Thêm lại sản phẩm" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Thêm lại sản phẩm" }));
+  const submit = dialog.getByRole("button", { name: "Thêm lại sản phẩm" });
+  fireEvent.click(submit);
+  expect(mocks.readd).not.toHaveBeenCalled();
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "2" } });
+  fireEvent.click(submit);
+  await waitFor(() =>
+    expect(mocks.readd).toHaveBeenCalledExactlyOnceWith(farm.id, "product-1", removedSupply, {
+      start_date: "2026-10-26",
+      end_date: "2026-11-01",
+      quantity_units: 2,
+    }),
+  );
+  expect(await screen.findByRole("button", { name: "Sửa đợt cung cấp" })).toBeVisible();
+  expect(mocks.batches.mock.calls.map((call) => call[2].scope)).toEqual(["history", "current"]);
+});
+
+it("loads lifecycle events by page on intent and distinguishes system classification from removal", async () => {
+  mocks.history.mockImplementation((_farm, _product, { page }) =>
+    Promise.resolve(
+      linkedResult(
+        page === 1
+          ? [
+              {
+                id: "event-1",
+                action: "farm.product.lifecycle_backfill",
+                actor: null,
+                created_at: "2026-10-25T00:00:00Z",
+                context: {
+                  provenance: "legacy_disabled_link",
+                  classified_at: "2026-10-25T03:00:00Z",
+                },
+              },
+            ]
+          : [
+              {
+                id: "event-2",
+                action: "farm.product.update",
+                actor: { name: "Admin Mai" },
+                created_at: "2026-10-25T00:00:00Z",
+                context: {},
+              },
+            ],
+        page,
+        21,
+      ),
+    ),
+  );
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  const open = await screen.findByRole("button", { name: "Xem lịch sử nguồn cung" });
+  expect(mocks.history).not.toHaveBeenCalled();
+  fireEvent.click(open);
+  expect(await screen.findByText(/khi hệ thống cập nhật dữ liệu/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Sau" }));
+  expect(await screen.findByText("Admin Mai")).toBeVisible();
+  expect(screen.getByText("Cập nhật liên kết (dữ liệu cũ)")).toBeVisible();
+  expect(mocks.history.mock.calls.map((call) => call[2].page)).toEqual([1, 2]);
+  expect(mocks.batches).toHaveBeenCalledTimes(1);
+});
+
+it("retires the verified source and its actions when a linked read loses access", async () => {
+  mocks.history.mockRejectedValue(fail("forbidden", 403));
+  view(<FarmDetail farmId={farm.id} productId="product-1" />);
+  expect(await screen.findByRole("heading", { name: "Rau muống" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Xem lịch sử nguồn cung" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "Rau muống" })).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("button", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
+});
+
+it("keeps a source write that lost its route locked on return until an explicit GET reviews it", async () => {
+  prepareInventory();
+  const pending = deferred<FarmProduct>();
+  mocks.removeLink.mockReturnValue(pending.promise);
+  mocks.source
+    .mockResolvedValueOnce(supplying)
+    .mockResolvedValueOnce(supplying)
+    .mockResolvedValueOnce(removedSupply);
+  const scope = (id?: string) => (
+    <AdminI18nProvider initialLocale="vi">
+      <ToastProvider>
+        <AdminQueryProvider>
+          {id ? <FarmSourceDetail farm={farm} productId={id} /> : <p>Other route</p>}
+        </AdminQueryProvider>
+      </ToastProvider>
+    </AdminI18nProvider>
+  );
+  const rendered = render(scope("product-1"));
+  fireEvent.click(await screen.findByRole("button", { name: "Gỡ sản phẩm" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Gỡ sản phẩm" }));
+  await waitFor(() => expect(mocks.removeLink).toHaveBeenCalledTimes(1));
+  rendered.rerender(scope());
+  // The transport rejects after the first source route has unmounted.
+  // Use a controllable rejection without remounting the session provider.
+  await act(async () => pending.reject(fail("request_timeout", 408)));
+  rendered.rerender(scope("product-1"));
+  const remove = await screen.findByRole("button", { name: "Gỡ sản phẩm" });
+  expect(remove).toBeDisabled();
+  fireEvent.click(await screen.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  expect(await screen.findByText(/Dữ liệu hiện tại khớp/)).toBeVisible();
+  expect(mocks.removeLink).toHaveBeenCalledTimes(1);
+});
+
+it("requires checking a pending Add after leaving and returning to the supply route", async () => {
+  prepareInventory();
+  const pending = deferred<FarmProduct>();
+  mocks.add.mockReturnValue(pending.promise);
+  const scope = (opened: boolean) => (
+    <AdminI18nProvider initialLocale="vi">
+      <ToastProvider>
+        <AdminQueryProvider>
+          {opened ? <FarmProducts farm={farm} /> : <p>Other route</p>}
+        </AdminQueryProvider>
+      </ToastProvider>
+    </AdminI18nProvider>
+  );
+  const rendered = render(scope(true));
+  const dialog = await openAdd();
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "9" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Thêm sản phẩm" }));
+  await waitFor(() => expect(mocks.add).toHaveBeenCalledTimes(1));
+  rendered.rerender(scope(false));
+  await act(async () => pending.reject(fail("request_timeout", 408)));
+  rendered.rerender(scope(true));
+  fireEvent.click(await screen.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  const open = await screen.findByRole("link", { name: "Mở chi tiết nguồn cung" });
+  expect(open).toHaveAttribute("href", "/farms/farm-1/products/product-1");
+  expect(mocks.source).toHaveBeenCalledTimes(1);
+  expect(mocks.add).toHaveBeenCalledTimes(1);
+});
+
+it("keeps Farm query context while changing supply filters, and reuses no per-row detail", async () => {
+  setRoute("/farms/farm-1?search=Hue&page=2");
+  mocks.linked.mockImplementation((_farm, { supplyStatus, page }) =>
+    Promise.resolve(linkedResult(supplyStatus === "removed" ? [removedSupply] : [supplying], page)),
+  );
+  view(<FarmProducts farm={farm} />);
+  expect(await screen.findByRole("link", { name: "Rau muống" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: "Trạng thái nguồn cung" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Đã gỡ" }));
+  expect(await screen.findByRole("link", { name: "Rau muống" })).toHaveAttribute(
+    "href",
+    "/farms/farm-1/products/product-1?search=Hue&page=2&supply_status=removed",
+  );
+  expect(mocks.linked.mock.calls.map((call) => call[1].supplyStatus)).toEqual([
+    "supplying",
+    "removed",
+  ]);
+  expect(mocks.source).not.toHaveBeenCalled();
+  expect(mocks.batches).not.toHaveBeenCalled();
+});
+
+it("keeps date status separate from history and protects old batches in all scopes", async () => {
+  prepareInventory();
+  const former = { ...liveBatch, id: "batch-old", is_historical: true, available_quantity: 0 };
+  const current = { ...liveBatch, id: "batch-new", supply_generation: 2 };
+  mocks.source.mockResolvedValue({ ...supplying, supply_generation: 2, version: 4 });
+  mocks.batches.mockImplementation((_farm, _product, { scope }) =>
+    Promise.resolve(
+      linkedResult(
+        scope === "all" ? [former, current] : scope === "history" ? [former] : [current],
+      ),
+    ),
+  );
+  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  expect(await screen.findByRole("button", { name: "Sửa đợt cung cấp" })).toBeVisible();
+  const filter = screen.getByRole("combobox", { name: "Phạm vi đợt cung cấp" });
+  fireEvent.click(filter);
+  fireEvent.click(await screen.findByRole("option", { name: "Đợt lịch sử" }));
+  expect(await screen.findByText("Thuộc lịch sử")).toBeVisible();
+  expect(screen.getByText("Theo ngày: Đang hiệu lực")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument();
+  fireEvent.click(filter);
+  fireEvent.click(await screen.findByRole("option", { name: "Tất cả đợt" }));
+  expect(await screen.findByRole("button", { name: "Sửa đợt cung cấp" })).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "Sửa đợt cung cấp" })).toHaveLength(1);
+  expect(mocks.batches.mock.calls.map((call) => call[2].scope)).toEqual([
+    "current",
+    "history",
+    "all",
+  ]);
 });

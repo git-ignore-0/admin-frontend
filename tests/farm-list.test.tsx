@@ -1,4 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import type { NextRouter } from "next/router";
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import { afterEach, expect, it, vi } from "vitest";
@@ -38,7 +40,7 @@ const farm: Farm = {
   updated_at: "2026-01-01",
 };
 
-function renderFarmList(locale: "en" | "vi" = "vi") {
+function renderFarmList(locale: "en" | "vi" = "vi", adjacent?: ReactNode) {
   render(
     <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
@@ -46,6 +48,7 @@ function renderFarmList(locale: "en" | "vi" = "vi") {
           <RouterContext.Provider value={router as unknown as NextRouter}>
             <AdminNavigationProvider value={navigate}>
               <FarmList />
+              {adjacent}
             </AdminNavigationProvider>
           </RouterContext.Provider>
         </AdminQueryProvider>
@@ -146,4 +149,44 @@ it("shows total supplied products and current stock coverage in one column", asy
   expect(within(table).queryByText(/tồn khả dụng|hết hàng/i)).not.toBeInTheDocument();
   expect(api).not.toHaveBeenCalled();
   expect(apiEnvelope).toHaveBeenCalledTimes(1);
+});
+
+function RereadFarmCounts() {
+  const client = useQueryClient();
+  return (
+    <button onClick={() => void client.invalidateQueries({ queryKey: ["farms", "list"] })}>
+      Revalidate counts
+    </button>
+  );
+}
+
+it("refreshes counts after Farm list invalidation without fetching individual farms", async () => {
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce({ data: [farm], meta: { page: 1, page_size: 20, total: 1 } })
+    .mockResolvedValueOnce({
+      data: [{ ...farm, in_stock_product_count: 3, out_of_stock_product_count: 4 }],
+      meta: { page: 1, page_size: 20, total: 1 },
+    });
+  renderFarmList("en", <RereadFarmCounts />);
+  expect(await screen.findByText("12 products")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Revalidate counts" }));
+  expect(await screen.findByText("7 products")).toBeVisible();
+  expect(apiEnvelope).toHaveBeenCalledTimes(2);
+  expect(api).not.toHaveBeenCalled();
+});
+
+it("hides the cached Farm rows after a protected refresh fails", async () => {
+  const results = { data: [farm], meta: { page: 1, page_size: 20, total: 1 } };
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce(results)
+    .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }))
+    .mockResolvedValueOnce(results);
+  renderFarmList("en", <RereadFarmCounts />);
+  expect(await screen.findByRole("link", { name: farm.name_en })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Revalidate counts" }));
+  const denied = await screen.findByRole("alert");
+  expect(screen.queryByRole("link", { name: farm.name_en })).toBeNull();
+  fireEvent.click(within(denied).getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("link", { name: farm.name_en })).toBeVisible();
+  expect(apiEnvelope).toHaveBeenCalledTimes(3);
 });

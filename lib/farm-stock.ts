@@ -1,5 +1,6 @@
 import { adminDateInputToIso, adminTodayIso, isoDateToAdminInput } from "@/lib/admin-date";
 import { parsePositiveInteger } from "@/lib/numeric-input";
+import type { ClientApiError } from "@/lib/client-error";
 import type { StockBatchInput } from "@/lib/types";
 
 export type StockBatchPreset = "week" | "month" | "custom";
@@ -13,7 +14,13 @@ export type StockBatchDraft = {
 export type StockBatchFieldErrors = Partial<
   Record<
     keyof StockBatchDraft,
-    "required" | "invalid_date" | "date_order" | "expired" | "positive_integer" | "integer_range"
+    | "required"
+    | "invalid_date"
+    | "date_order"
+    | "expired"
+    | "positive_integer"
+    | "integer_range"
+    | "stock_sold"
   >
 >;
 
@@ -100,4 +107,16 @@ export function formatStockQuantityTotal(
     .padStart(fraction.length, "0")
     .replace(/0+$/, "");
   return `${whole}${remainder ? `.${remainder}` : ""} ${unitLabel}`;
+}
+
+/** A write may have committed before a transport or response failure. */
+export function isUncertainFarmSupplyWrite(cause: unknown) {
+  if (!(cause instanceof Error)) return true;
+  const { status, message } = cause as ClientApiError;
+  return (
+    status === 408 ||
+    status === 404 ||
+    (status ?? 0) >= 500 ||
+    ["invalid_response", "network_error", "request_timeout", "upstream_timeout"].includes(message)
+  );
 }

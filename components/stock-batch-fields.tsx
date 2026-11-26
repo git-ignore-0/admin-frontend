@@ -34,6 +34,7 @@ type Labels = {
   expiredDate: string;
   positiveInteger: string;
   integerRange: string;
+  stockSold: string;
 };
 
 type Props = {
@@ -55,6 +56,7 @@ function errorMessage(error: StockBatchFieldErrors[keyof StockBatchFieldErrors],
   if (error === "invalid_date") return labels.invalidDate;
   if (error === "date_order") return labels.invalidDateOrder;
   if (error === "expired") return labels.expiredDate;
+  if (error === "stock_sold") return labels.stockSold;
   if (error === "integer_range") return labels.integerRange;
   if (error === "positive_integer") return labels.positiveInteger;
   return undefined;

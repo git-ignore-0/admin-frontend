@@ -10,6 +10,7 @@ import { adminOrigin, authOrigin } from "@/lib/config";
 import { ADMIN_PAGE_SESSION_HEADER, isTrustedAdminRequest } from "@/lib/csrf";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { adminSessionBinding, clearSession, readSession, writeSession } from "@/lib/session";
+import { farmBatchScopes, farmSupplyFilters, stockBatchStatuses } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +39,40 @@ function hasDuplicateQuery(params: URLSearchParams, ...keys: string[]) {
   return keys.some((key) => params.getAll(key).length > 1);
 }
 
+function invalidFarmQuery(method: string, path: string[], params: URLSearchParams) {
+  if (params.size === 0) return false;
+  if (method !== "GET") return true;
+
+  const [, , farm, collection, product, sourceAction] = path;
+  let allowed: string[] = [];
+  if (farm === undefined) {
+    allowed = ["page", "search", "is_active"];
+  } else if (collection === "available-products") {
+    allowed = ["page", "search"];
+  } else if (collection === "products" && product === undefined) {
+    allowed = ["page", "search", "supply_status"];
+  } else if (sourceAction === "batches" && path.length === 6) {
+    allowed = ["page", "scope", "status"];
+  } else if (sourceAction === "history") {
+    allowed = ["page"];
+  }
+
+  const page = params.get("page");
+  const supplyStatus = params.get("supply_status");
+  const scope = params.get("scope");
+  const status = params.get("status");
+  const activity = params.get("is_active");
+  return (
+    [...params.keys()].some((key) => !allowed.includes(key) || params.getAll(key).length !== 1) ||
+    (page !== null && (!/^[1-9]\d*$/u.test(page) || Number(page) > 10_000)) ||
+    Array.from(params.get("search") ?? "").length > 200 ||
+    (activity !== null && activity !== "true" && activity !== "false") ||
+    (supplyStatus !== null && !farmSupplyFilters.some((value) => value === supplyStatus)) ||
+    (scope !== null && !farmBatchScopes.some((value) => value === scope)) ||
+    (status !== null && !stockBatchStatuses.some((value) => value === status))
+  );
+}
+
 function invalidBackendQuery(request: NextRequest, path: string[]) {
   const params = request.nextUrl.searchParams;
   if (path[0] === "public" && path[1] === "shipping-areas") {
@@ -48,6 +83,7 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
   const [, resource, id, action, extra] = path;
+  if (resource === "farms") return invalidFarmQuery(request.method, path, params);
   if (resource === "csa-round-configurations") {
     const isCollection = id === undefined;
     if (request.method !== "GET" || (!isCollection && action !== "rounds")) return params.size > 0;

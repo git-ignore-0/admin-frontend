@@ -6,14 +6,20 @@ import {
   createFarmStockBatch,
   deleteFarmImage,
   getFarm,
+  getFarmProduct,
   listFarms,
   listFarmProducts,
+  listFarmProductHistory,
   listAvailableFarmProducts,
   listFarmStockBatches,
   saveFarm,
+  parseFarmSourceBlocker,
+  readdFarmProduct,
+  removeFarmProduct,
   updateFarmStockBatch,
   enableFarmTracker,
 } from "@/lib/farms-api";
+import type { FarmProduct, FarmStockBatch, StockBatchInput } from "@/lib/types";
 
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
@@ -47,7 +53,7 @@ const farm = {
   created_at: "2026-10-26T00:00:00Z",
   updated_at: "2026-10-26T00:00:00Z",
 };
-const farmProduct = {
+const farmProduct: FarmProduct = {
   id: linkId,
   farm_id: farmId,
   product_id: productId,
@@ -59,6 +65,10 @@ const farmProduct = {
   unit_label_en: "kg",
   product_status: "active",
   is_active: true,
+  supply_status: "supplying",
+  removed_at: null,
+  version: 1,
+  supply_generation: 1,
   initial_quantity: 10,
   net_sold_quantity: 0,
   available_quantity: 10,
@@ -67,7 +77,7 @@ const farmProduct = {
   has_supply_history: true,
   next_expiry_date: "2026-11-01",
 };
-const stockBatch = {
+const stockBatch: FarmStockBatch = {
   id: batchId,
   farm_product_id: linkId,
   start_date: "2026-10-26",
@@ -77,10 +87,217 @@ const stockBatch = {
   remaining_quantity: 10,
   available_quantity: 10,
   version: 3,
+  source_version: 2,
+  supply_generation: 1,
+  is_historical: false,
   status: "active",
   created_at: "2026-10-26T00:00:00Z",
   updated_at: "2026-10-26T00:00:00Z",
 };
+
+const batchInput: StockBatchInput = {
+  start_date: stockBatch.start_date,
+  end_date: stockBatch.end_date,
+  quantity_units: stockBatch.quantity_units,
+};
+const sourceRemoved: FarmProduct = {
+  ...farmProduct,
+  is_active: false,
+  supply_status: "removed",
+  removed_at: "2026-10-26T00:00:00Z",
+  version: 2,
+  initial_quantity: 0,
+  available_quantity: 0,
+  active_batch_count: 0,
+  next_expiry_date: null,
+};
+const sourceCapabilities = {
+  can_remove: true,
+  can_readd: false,
+  can_create_batch: true,
+  blockers: { readd: { code: "farm_product_not_removed" } },
+};
+const sourceDetail = { ...farmProduct, capabilities: sourceCapabilities };
+const sourceHistoryEvent = {
+  id: batchId,
+  action: "farm.product.lifecycle_backfill",
+  created_at: "2026-10-26T00:00:00Z",
+  actor: null,
+  context: {
+    farm_id: farmId,
+    product_id: productId,
+    supply_generation: 1,
+    provenance: "legacy_disabled_link",
+    classified_at: "2026-10-26T00:00:00Z",
+  },
+};
+
+it("validates source detail and passes the request signal to the BFF", async () => {
+  const controller = new AbortController();
+  fetchMock.mockResolvedValueOnce(Response.json({ data: sourceDetail }));
+  await expect(getFarmProduct(farmId, productId, controller.signal)).resolves.toEqual(sourceDetail);
+  expect(fetchMock).toHaveBeenCalledWith(
+    `/api/backend/admin/farms/${farmId}/products/${productId}`,
+    expect.objectContaining({ signal: controller.signal }),
+  );
+});
+
+it.each([
+  { product_id: batchId },
+  { supply_status: "active" },
+  { removed_at: "2026-10-26T00:00:00Z" },
+  { supply_generation: 0 },
+  { version: undefined },
+  { batch_count: -1 },
+  { capabilities: undefined },
+  { capabilities: { ...sourceCapabilities, can_remove: "yes" } },
+  { capabilities: { ...sourceCapabilities, blockers: { readd: {} } } },
+])("rejects malformed source detail (%j)", async (override) => {
+  fetchMock.mockResolvedValueOnce(Response.json({ data: { ...sourceDetail, ...override } }));
+  await expect(getFarmProduct(farmId, productId)).rejects.toThrow("invalid_response");
+});
+
+it("preserves the order references and remaining supply reported in blocker context", async () => {
+  const open = {
+    code: "farm_product_has_open_allocations",
+    context: { orders: [{ id: batchId, reference_code: "EX-1" }], has_more: false },
+  };
+  const shortfall = {
+    code: "farm_product_supply_shortfall",
+    context: { required_units: 10, remaining_units: 6, shortfall_units: 4 },
+  };
+  for (const blocker of [open, shortfall]) {
+    expect(parseFarmSourceBlocker(blocker)).toEqual(blocker);
+    const data = {
+      ...sourceDetail,
+      capabilities: {
+        ...sourceCapabilities,
+        can_remove: false,
+        blockers: { ...sourceCapabilities.blockers, remove: blocker },
+      },
+    };
+    fetchMock.mockResolvedValueOnce(Response.json({ data }));
+    await expect(getFarmProduct(farmId, productId)).resolves.toEqual(data);
+  }
+  expect(
+    parseFarmSourceBlocker({ ...open, context: { orders: [{ id: "free-text" }] } }),
+  ).toBeUndefined();
+  expect(
+    parseFarmSourceBlocker({
+      ...shortfall,
+      context: { ...shortfall.context, shortfall_units: -1 },
+    }),
+  ).toBeUndefined();
+});
+
+it("fetches paginated lifecycle history with a nullable actor and migration provenance", async () => {
+  const envelope = { data: [sourceHistoryEvent], meta: { page: 2, page_size: 20, total: 21 } };
+  fetchMock.mockResolvedValueOnce(Response.json(envelope));
+  await expect(listFarmProductHistory(farmId, productId, { page: 2 })).resolves.toEqual(envelope);
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    `/api/backend/admin/farms/${farmId}/products/${productId}/history?page=2`,
+  );
+});
+
+it.each([
+  { action: "farm.legacy.unknown" },
+  { actor: { id: "foreign", name: "User" } },
+  { context: { farm_id: productId } },
+  { context: { classified_at: "yesterday" } },
+])("rejects malformed or wrongly scoped source history (%j)", async (override) => {
+  fetchMock.mockResolvedValueOnce(
+    Response.json({
+      data: [{ ...sourceHistoryEvent, ...override }],
+      meta: { page: 1, page_size: 20, total: 1 },
+    }),
+  );
+  await expect(listFarmProductHistory(farmId, productId)).rejects.toThrow("invalid_response");
+});
+
+it("removes and re-adds a source using the original link identity and source revision", async () => {
+  const readded = {
+    ...farmProduct,
+    version: 3,
+    supply_generation: 2,
+    first_batch_id: batchId,
+  };
+  fetchMock.mockResolvedValueOnce(Response.json({ data: sourceRemoved }));
+  fetchMock.mockResolvedValueOnce(Response.json({ data: readded }));
+  await expect(removeFarmProduct(farmId, productId, farmProduct)).resolves.toEqual(sourceRemoved);
+  await expect(readdFarmProduct(farmId, productId, sourceRemoved, batchInput)).resolves.toEqual(
+    readded,
+  );
+
+  const source = `/api/backend/admin/farms/${farmId}/products/${productId}`;
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    `${source}/remove`,
+    `${source}/re-add`,
+  ]);
+  expect(fetchMock.mock.calls.map(([, request]) => request.method)).toEqual(["POST", "POST"]);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    expected_link_id: linkId,
+    expected_version: 1,
+  });
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+    ...batchInput,
+    expected_link_id: linkId,
+    expected_version: 2,
+  });
+});
+
+it.each([
+  { id: batchId },
+  { version: 1 },
+  { supply_generation: 2 },
+  { supply_status: "supplying" },
+])(
+  "rejects a remove response that cannot confirm the requested lifecycle change (%j)",
+  async (override) => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: { ...sourceRemoved, ...override } }));
+    await expect(removeFarmProduct(farmId, productId, farmProduct)).rejects.toThrow(
+      "invalid_response",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  },
+);
+
+it("cannot confirm a re-add that returns the previous generation or omits the first batch ID", async () => {
+  const readded = {
+    ...farmProduct,
+    version: 3,
+    supply_generation: 2,
+    first_batch_id: batchId,
+  };
+  for (const data of [
+    { ...readded, supply_generation: 1 },
+    { ...readded, first_batch_id: undefined },
+  ]) {
+    fetchMock.mockResolvedValueOnce(Response.json({ data }));
+    await expect(readdFarmProduct(farmId, productId, sourceRemoved, batchInput)).rejects.toThrow(
+      "invalid_response",
+    );
+  }
+});
+
+it("rejects absent picker units and wrong pagination", async () => {
+  const page = { page: 1, page_size: 30, total: 1 };
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ data: [{ ...farmProduct, unit_label_en: undefined }], meta: page }),
+  );
+  await expect(listAvailableFarmProducts(farmId)).rejects.toThrow("invalid_response");
+
+  fetchMock.mockResolvedValueOnce(Response.json({ data: [], meta: { ...page, page_size: 20 } }));
+  await expect(listAvailableFarmProducts(farmId)).rejects.toThrow("invalid_response");
+});
+
+it("keeps backend permission errors distinct from response validation", async () => {
+  fetchMock.mockResolvedValueOnce(Response.json({ detail: "Forbidden" }, { status: 403 }));
+  await expect(getFarmProduct(farmId, productId)).rejects.toMatchObject({
+    status: 403,
+    message: "forbidden",
+  });
+  expect(fetchMock).toHaveBeenCalledOnce();
+});
 
 it("rejects Farm product data for a different Farm or without a supported lifecycle", async () => {
   for (const data of [
@@ -105,11 +322,15 @@ it("rejects a 2xx stock mutation with malformed fields or a mismatched row ID", 
     { ...stockBatch, end_date: "2026-02-31" },
     { ...stockBatch, remaining_quantity: "10" },
     { ...stockBatch, status: "stopped" },
+    { ...stockBatch, source_version: 0 },
+    { ...stockBatch, version: 2 },
+    { ...stockBatch, supply_generation: 2 },
+    { ...stockBatch, is_historical: true },
   ]) {
     fetchMock.mockResolvedValueOnce(Response.json({ data }));
-    await expect(updateFarmStockBatch(farmId, productId, batchId, { version: 2 })).rejects.toThrow(
-      "invalid_response",
-    );
+    await expect(
+      updateFarmStockBatch(farmId, productId, batchId, { version: 2 }, farmProduct),
+    ).rejects.toThrow("invalid_response");
   }
 });
 
@@ -128,7 +349,7 @@ it("forwards the inventory signal and rejects stock rows from another Farm link"
       {},
       {
         signal: controller.signal,
-        linkId,
+        source: farmProduct,
       },
     ),
   ).rejects.toThrow("invalid_response");
@@ -178,7 +399,7 @@ it("queries linked Farm products through the BFF with server-side search and pag
   );
   await listFarmProducts("farm-1", { page: 2, search: "rau muống" });
   expect(fetchMock.mock.calls[0][0]).toBe(
-    "/api/backend/admin/farms/farm-1/products?page=2&search=rau+mu%E1%BB%91ng",
+    "/api/backend/admin/farms/farm-1/products?page=2&supply_status=supplying&search=rau+mu%E1%BB%91ng",
   );
 });
 
@@ -274,7 +495,9 @@ it("does not treat a Farm save with a missing record ID as authoritative", async
 });
 
 it("creates a Farm product together with its first stock batch", async () => {
-  fetchMock.mockResolvedValue(Response.json({ data: farmProduct }, { status: 201 }));
+  fetchMock.mockResolvedValue(
+    Response.json({ data: { ...farmProduct, first_batch_id: batchId } }, { status: 201 }),
+  );
 
   await addFarmProduct(farmId, productId, {
     start_date: "2026-10-26",
@@ -292,32 +515,55 @@ it("creates a Farm product together with its first stock batch", async () => {
   });
 });
 
-it("lists, creates, updates, and cancels Farm stock batches through the BFF", async () => {
+it("writes only the appropriate source or batch revision and accepts a newer source snapshot after editing", async () => {
   fetchMock
     .mockResolvedValueOnce(Response.json({ data: [], meta: { page: 2, page_size: 20, total: 0 } }))
-    .mockImplementation(() => Promise.resolve(Response.json({ data: stockBatch })));
+    .mockResolvedValueOnce(Response.json({ data: { ...stockBatch, version: 1 } }))
+    .mockResolvedValueOnce(
+      Response.json({
+        data: { ...stockBatch, quantity_units: 12, end_date: "2026-11-02", source_version: 4 },
+      }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({
+        data: {
+          ...stockBatch,
+          status: "cancelled",
+          available_quantity: 0,
+          version: 4,
+          source_version: 4,
+        },
+      }),
+    );
 
-  await listFarmStockBatches(farmId, productId, { page: 2, status: "active" });
-  await createFarmStockBatch(farmId, productId, {
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
-  });
-  await updateFarmStockBatch(farmId, productId, batchId, {
-    version: 2,
-    end_date: "2026-11-02",
-    quantity_units: 12,
-  });
-  await cancelFarmStockBatch(farmId, productId, batchId, 3);
+  await listFarmStockBatches(
+    farmId,
+    productId,
+    { page: 2, status: "active", scope: "current" },
+    { source: farmProduct },
+  );
+  await createFarmStockBatch(farmId, productId, batchInput, farmProduct);
+  await updateFarmStockBatch(
+    farmId,
+    productId,
+    batchId,
+    {
+      version: 2,
+      end_date: "2026-11-02",
+      quantity_units: 12,
+    },
+    farmProduct,
+  );
+  await cancelFarmStockBatch(farmId, productId, batchId, 3, farmProduct);
 
   const base = `/api/backend/admin/farms/${farmId}/products/${productId}/batches`;
-  expect(fetchMock.mock.calls[0][0]).toBe(`${base}?page=2&status=active`);
+  expect(fetchMock.mock.calls[0][0]).toBe(`${base}?page=2&scope=current&status=active`);
   expect(fetchMock.mock.calls[1][0]).toBe(base);
   expect(fetchMock.mock.calls[1][1].method).toBe("POST");
   expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
+    expected_link_id: linkId,
+    expected_version: farmProduct.version,
+    ...batchInput,
   });
   expect(fetchMock.mock.calls[2][0]).toBe(`${base}/${batchId}`);
   expect(fetchMock.mock.calls[2][1].method).toBe("PATCH");
@@ -329,6 +575,20 @@ it("lists, creates, updates, and cancels Farm stock batches through the BFF", as
   expect(fetchMock.mock.calls[3][0]).toBe(`${base}/${batchId}/cancel`);
   expect(fetchMock.mock.calls[3][1].method).toBe("POST");
   expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ version: 3 });
+});
+
+it("accepts historical batches with active date status but keeps them out of current scope", async () => {
+  const data = { ...stockBatch, is_historical: true, available_quantity: 0, source_version: 3 };
+  const envelope = { data: [data], meta: { page: 1, page_size: 20, total: 1 } };
+  const readded: FarmProduct = { ...farmProduct, version: 3, supply_generation: 2 };
+  fetchMock.mockResolvedValueOnce(Response.json(envelope));
+  await expect(
+    listFarmStockBatches(farmId, productId, { scope: "history" }, { source: readded }),
+  ).resolves.toEqual(envelope);
+  fetchMock.mockResolvedValueOnce(Response.json(envelope));
+  await expect(
+    listFarmStockBatches(farmId, productId, { scope: "current" }, { source: readded }),
+  ).rejects.toThrow("invalid_response");
 });
 
 it("enables an existing Farm profile", async () => {
