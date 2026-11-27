@@ -30,20 +30,22 @@ export function CSASelectionHistory({
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!opened) return;
-    let active = true;
+    const controller = new AbortController();
+    const { signal } = controller;
     setResult(undefined);
     setError(null);
-    getSelectionEvents(selectionId, page).then(
+    getSelectionEvents(selectionId, page, signal).then(
       (value) => {
-        if (active) setResult(value);
+        if (signal.aborted) return;
+        const last = Math.max(1, Math.ceil(value.meta.total / value.meta.page_size));
+        if (page > last) setPage(last);
+        else setResult(value);
       },
       (e) => {
-        if (active) setError(e);
+        if (!signal.aborted) setError(e);
       },
     );
-    return () => {
-      active = false;
-    };
+    return () => controller.abort();
   }, [opened, page, selectionId, retry, refreshToken]);
   return (
     <details className={styles.history} onToggle={(event) => setOpened(event.currentTarget.open)}>

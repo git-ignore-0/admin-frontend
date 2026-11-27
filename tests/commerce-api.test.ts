@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deleteStoreProductImage,
   getStoreProduct,
+  getStoreProductCreation,
   transitionStoreProduct,
   listStoreCategories,
   listStoreProducts,
@@ -20,6 +21,7 @@ beforeEach(() => fetchMock.mockReset());
 const productId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
 const categoryId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
 const productResponse = {
+  version: 1,
   id: productId,
   category_id: categoryId,
   category_slug: "rau",
@@ -73,6 +75,28 @@ describe("Commerce API and compatibility adapter", () => {
       translations: [],
     };
     await expect(saveStoreProduct(payload)).rejects.toThrow("invalid_response");
+  });
+
+  it("recognizes a committed Product creation whose Product was subsequently deleted", async () => {
+    const key = "7b4950c1-940f-4279-b0c2-f56b17d9ff0c";
+    const envelope = {
+      data: null,
+      meta: {
+        action_receipt: { action: "create_product", resource_id: productId, idempotency_key: key },
+      },
+    };
+    fetchMock
+      .mockResolvedValueOnce(Response.json(envelope))
+      .mockResolvedValueOnce(Response.json(envelope));
+    await expect(saveStoreProduct({ sku: "RAU-1", idempotency_key: key })).resolves.toEqual({
+      id: productId,
+      removed: true,
+    });
+    await expect(getStoreProductCreation(key)).resolves.toEqual({ id: productId, removed: true });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `/api/backend/admin/store-products?creation_key=${key}`,
+    );
+    expect(fetchMock.mock.calls[1][1].method).toBeUndefined();
   });
 
   it("serializes product filters through the existing same-origin BFF", async () => {
@@ -158,11 +182,11 @@ describe("Commerce API and compatibility adapter", () => {
     fetchMock.mockResolvedValueOnce(Response.json({ data: { ...detail, id: categoryId } }));
     await expect(saveStoreProduct({ sku: "RAU-1" }, productId)).rejects.toThrow("invalid_response");
     fetchMock.mockResolvedValueOnce(Response.json({ data: detail }));
-    await expect(transitionStoreProduct(productId, "draft", "active")).rejects.toThrow(
+    await expect(transitionStoreProduct(productId, "draft", "active", 1)).rejects.toThrow(
       "invalid_response",
     );
     fetchMock.mockResolvedValueOnce(Response.json({ data: { ...detail, status: "active" } }));
-    await expect(transitionStoreProduct(productId, "draft", "active")).resolves.toMatchObject({
+    await expect(transitionStoreProduct(productId, "draft", "active", 1)).resolves.toMatchObject({
       status: "active",
     });
   });

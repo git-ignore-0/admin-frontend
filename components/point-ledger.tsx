@@ -8,14 +8,23 @@ import { Button, Table, Alert } from "@mantine/core";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { Pagination } from "@/components/pagination";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
-import { api, apiEnvelope } from "@/lib/client-api";
+import { useAdminMutationIntent } from "@/lib/admin-mutation-intent";
+import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
+import { apiEnvelope } from "@/lib/client-api";
 import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
-import { requestErrorMessage } from "@/lib/client-error";
+import {
+  invalidApiResponse,
+  isApiObject,
+  isProtectedDataError,
+  isUncertainMutationError,
+  requestErrorMessage,
+} from "@/lib/client-error";
 import {
   numericInputErrorMessage,
   parsePositiveInteger,
@@ -33,13 +42,21 @@ export function PointLedger({
   userId,
   userName,
   onBalanceChange,
+  onAccessLost,
 }: {
   userId: string;
   userName: string;
   onBalanceChange?: (balance: number) => void;
+  onAccessLost?: (error: unknown) => void;
 }) {
   const { t } = useAdminI18n();
   const toast = useToast();
+  const isCurrent = useIsAdminQueryScopeCurrent();
+  const { intent, controls } = useAdminMutationIntent<
+    PendingTransaction & { idempotency_key: string }
+  >("points", userId);
+  const replay = intent?.phase === "unknown" ? intent.payload : null;
+  const mounted = useRef(false);
   const [items, setItems] = useState<PointTransaction[] | null>(null);
   const [meta, setMeta] = useState<PointHistoryMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -55,8 +72,23 @@ export function PointLedger({
   const savingRef = useRef(false);
   const historyRequest = useRef<AbortController | null>(null);
   const canAdjustPoints = meta?.can_adjust_points === true && !targetProtected;
+  const busy = saving || intent?.phase === "pending";
+
+  const retire = useCallback(
+    (caught: unknown) => {
+      controls.retire();
+      historyRequest.current?.abort();
+      setItems(null);
+      setMeta(null);
+      setPendingTransaction(null);
+      setMessage("");
+      onAccessLost?.(caught);
+    },
+    [controls, onAccessLost],
+  );
 
   const load = useCallback(() => {
+    if (!isCurrent()) return;
     historyRequest.current?.abort();
     const request = new AbortController();
     historyRequest.current = request;
@@ -66,29 +98,40 @@ export function PointLedger({
       signal: request.signal,
     })
       .then((payload) => {
-        if (request.signal.aborted) return;
+        if (request.signal.aborted || !mounted.current || !isCurrent()) return;
         const { data, meta } = requirePaginatedList(payload, requireResponseEntity);
         setItems(data);
         setMeta(meta);
         if (meta.can_adjust_points !== true) setPendingTransaction(null);
       })
       .catch((caught) => {
-        if (request.signal.aborted) return;
+        if (request.signal.aborted || !mounted.current || !isCurrent()) return;
+        if (isProtectedDataError(caught)) retire(caught);
         setMeta(null);
         setPendingTransaction(null);
         setLoadError(requestErrorMessage(caught, t));
       });
-  }, [page, t, userId]);
+  }, [isCurrent, page, retire, t, userId]);
 
   useEffect(() => {
+    mounted.current = true;
     load();
-    return () => historyRequest.current?.abort();
+    return () => {
+      mounted.current = false;
+      historyRequest.current?.abort();
+    };
   }, [load]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!canAdjustPoints || savingRef.current) return;
+    if (!canAdjustPoints || savingRef.current || !isCurrent()) return;
     setError("");
+    if (replay) {
+      setPendingTransaction(replay);
+      setError(t.points.adjustmentUncertain);
+      return;
+    }
+    if (controls.read()) return;
     const parsedAmount = parsePositiveInteger(amount);
     if (parsedAmount.error) {
       setAmountError(numericInputErrorMessage(parsedAmount.error, t.common.numericInput));
@@ -107,27 +150,66 @@ export function PointLedger({
   }
 
   async function confirmTransaction() {
-    if (!canAdjustPoints || !pendingTransaction || savingRef.current) return;
+    if (!canAdjustPoints || !pendingTransaction || savingRef.current || !isCurrent()) return;
+    const attempt = controls.begin(
+      replay ?? { ...pendingTransaction, idempotency_key: crypto.randomUUID() },
+    );
+    if (!attempt) return;
     savingRef.current = true;
     setSaving(true);
     setError("");
     try {
-      const result = await api<{ transaction: PointTransaction; balance: number }>(
+      const { data, meta: responseMeta } = await apiEnvelope<{
+        transaction: PointTransaction;
+        balance: number;
+      }>(
         `admin/users/${userId}/points`,
         {
           method: "POST",
-          body: JSON.stringify(pendingTransaction),
+          body: JSON.stringify(attempt.payload),
         },
+        { allowMissingData: true, shouldRedirectToLogin: () => mounted.current && isCurrent() },
       );
+      const receipt = responseMeta?.action_receipt;
+      if (
+        !isApiObject(receipt) ||
+        receipt.action !== "adjust_points" ||
+        receipt.user_id !== userId ||
+        receipt.idempotency_key !== attempt.payload.idempotency_key ||
+        typeof receipt.transaction_id !== "string" ||
+        !UUID_PATH_SEGMENT.test(receipt.transaction_id)
+      ) {
+        throw invalidApiResponse();
+      }
+      if (!isCurrent() || !controls.settle(attempt, null) || !mounted.current) return;
       setMessage("");
-      setMeta((current) => (current ? { ...current, balance: result.balance } : current));
-      onBalanceChange?.(result.balance);
+      if (
+        data?.transaction?.id === receipt.transaction_id &&
+        Number.isSafeInteger(data.balance) &&
+        data.balance >= 0
+      ) {
+        setMeta((current) => (current ? { ...current, balance: data.balance } : current));
+        onBalanceChange?.(data.balance);
+      }
       setPendingTransaction(null);
       if (page === 1) load();
       else setPage(1);
       toast(t.points.created);
     } catch (caught) {
-      const apiError = caught as Error & { payload?: { errors?: Array<{ detail?: string }> } };
+      if (!isCurrent()) return;
+      const apiError = caught instanceof Error ? caught : null;
+      const denied = isProtectedDataError(caught);
+      const unknown =
+        isUncertainMutationError(caught) || (replay && apiError?.message === "csrf_rejected");
+      if (
+        !controls.settle(
+          attempt,
+          denied ? { phase: "retired" } : unknown ? { ...attempt, phase: "unknown" } : null,
+        ) ||
+        !mounted.current
+      )
+        return;
+      if (denied) retire(caught);
       if (apiError?.message === "account_target_protected") {
         setTargetProtected(true);
         setPendingTransaction(null);
@@ -135,13 +217,15 @@ export function PointLedger({
         return;
       }
       setError(
-        apiError?.payload?.errors?.[0]?.detail?.includes("Insufficient")
+        apiError?.message === "insufficient_points"
           ? t.points.insufficient
-          : requestErrorMessage(caught, t),
+          : unknown
+            ? t.points.adjustmentUncertain
+            : requestErrorMessage(caught, t),
       );
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (mounted.current && isCurrent()) setSaving(false);
     }
   }
 
@@ -200,8 +284,8 @@ export function PointLedger({
                 {error}
               </Alert>
             )}
-            <Button disabled={saving} type="submit">
-              {t.points.create}
+            <Button disabled={busy || intent?.phase === "retired"} type="submit">
+              {replay ? t.points.retryAdjustment : t.points.create}
             </Button>
           </form>
         </div>
@@ -272,7 +356,7 @@ export function PointLedger({
       </div>
       {canAdjustPoints && pendingTransaction && (
         <ConfirmationDialog
-          busy={saving}
+          busy={busy}
           busyLabel={t.points.creating}
           cancelLabel={t.points.cancel}
           confirmLabel={t.points.confirm}

@@ -4,6 +4,7 @@ import { Alert, Group } from "@mantine/core";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { CSAOrderPanel } from "@/components/csa-order-panel";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
@@ -23,7 +24,12 @@ import { StoreOrderStatusBadge } from "@/components/store-order-status";
 import { StoreOrderTotals, StoreRecipientSummary } from "@/components/store-order-summary";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
-import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
+import { useAdminMutationIntent } from "@/lib/admin-mutation-intent";
+import {
+  isProtectedDataError,
+  isUncertainMutationError,
+  requestErrorMessage,
+} from "@/lib/client-error";
 import {
   formatStoreMoney,
   getStoreOrder,
@@ -56,6 +62,13 @@ type StoreOrderActionPayload = {
   allocations?: StoreOrderAllocationDraft[] | { allocation_id: string; quantity: number }[];
 };
 
+type StoreOrderIntent = {
+  orderId: string;
+  action: StoreOrderAction;
+  payload: StoreOrderActionPayload & { idempotency_key: string };
+  confirmation: StoreOrderConfirmation;
+};
+
 function TimelineRow({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
   return (
@@ -75,16 +88,16 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const { locale, t } = useAdminI18n();
   const toast = useToast();
   const c = storeOrdersCopy(locale);
+  const isSessionCurrent = useIsAdminQueryScopeCurrent();
   const latestCopy = useRef({ t, c });
   latestCopy.current = { t, c };
   const mounted = useRef(false);
-  const isMounted = useCallback(() => mounted.current, []);
-  const [pendingIntent, setPendingIntent] = useState<{
-    orderId: string;
-    action: StoreOrderAction;
-    payload: StoreOrderActionPayload & { idempotency_key: string };
-    confirmation: StoreOrderConfirmation;
-  } | null>(null);
+  const isMounted = useCallback(() => mounted.current && isSessionCurrent(), [isSessionCurrent]);
+  const { intent: savedIntent, controls } = useAdminMutationIntent<
+    StoreOrderIntent,
+    StoreOrderConfirmation
+  >("store-order", orderId);
+  const pendingIntent = savedIntent?.phase === "unknown" ? savedIntent.payload : null;
   const unresolved = pendingIntent !== null;
   const [order, setOrder] = useState<StoreOrder | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,6 +108,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const csaRevision = useRef<string | null>(null);
   const receivedAt = useRef(performance.now());
   const requestId = useRef(0);
+  const readController = useRef<AbortController | null>(null);
+  const initialRead = useRef(false);
   const expiryReloaded = useRef<string | null>(null);
   const submitting = useRef(false);
   const idempotencyKeys = useRef(new IdempotencyKeyStore());
@@ -108,87 +123,102 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionConflict, setActionConflict] = useState(false);
-  const [reloadGate, setReloadGate] = useState<StoreOrderConfirmation | "conflict" | null>(null);
-  const reloadRequired = reloadGate !== null;
-  const confirmedAction = typeof reloadGate === "object" ? reloadGate : null;
-  const [actionBusy, setActionBusy] = useState(false);
+  const [reloadConflictGate, setReloadConflictGate] = useState(false);
+  const confirmedAction = savedIntent?.phase === "confirmed" ? savedIntent.receipt : null;
+  const intentRetired = savedIntent?.phase === "retired";
+  const reloadRequired = reloadConflictGate || confirmedAction !== null || intentRetired;
+  const actionBusy = savedIntent?.phase === "pending";
   const [restock, setRestock] = useState<Record<string, number>>({});
   const restockLedgerAtOpen = useRef<Record<string, number>>({});
 
-  const retireOrder = useCallback((discardIntent: boolean) => {
-    setOrder(null);
-    setDraft([]);
-    draftInitialized.current = false;
-    csaRevision.current = null;
-    expiryReloaded.current = null;
-    setAction(null);
-    setActionError("");
-    setActionConflict(false);
-    setReconciliationDialog(false);
-    setReconciliationChoice(null);
-    setConfirmed(false);
-    setReason("");
-    setNote("");
-    setRestock({});
-    restockLedgerAtOpen.current = {};
-    idempotencyKeys.current = new IdempotencyKeyStore();
-    if (discardIntent) {
-      setPendingIntent(null);
-    }
-    setReloadGate((previous) => (discardIntent ? "conflict" : (previous ?? "conflict")));
-  }, []);
-
-  const load = useCallback(
-    async (confirmation?: StoreOrderConfirmation) => {
-      if (!mounted.current || submitting.current) return;
-      const current = ++requestId.current;
-      const isCurrent = () => mounted.current && current === requestId.current;
-      setLoading(true);
-      try {
-        const next = await getStoreOrder(orderId, undefined, { shouldRedirectToLogin: isCurrent });
-        if (!isCurrent()) return;
-        if (confirmation && !reflectsStoreOrderAction(next, confirmation)) {
-          setError("");
-          return;
-        }
-        receivedAt.current = performance.now();
-        setOrder(next);
-        setError("");
-        setReloadGate(null);
-        const nextCSARevision = next.csa
-          ? `${next.csa.selection.revision}:${next.csa.selection.state}`
-          : null;
-        if (nextCSARevision !== csaRevision.current) {
-          draftInitialized.current = false;
-          csaRevision.current = nextCSARevision;
-        }
-        if (!draftInitialized.current) {
-          setDraft(next.allocation_suggestion ?? []);
-          draftInitialized.current = true;
-        }
-      } catch (caught) {
-        if (!isCurrent()) return;
-        const { message, status } = (caught ?? {}) as { message?: string; status?: number };
-        if (isProtectedDataError(caught) || status === 404) retireOrder(true);
-        else if (message === "invalid_response") retireOrder(false);
-        setError(requestErrorMessage(caught, latestCopy.current.t));
-      } finally {
-        if (isCurrent()) setLoading(false);
+  const retireOrder = useCallback(
+    (discardIntent: boolean) => {
+      setOrder(null);
+      setDraft([]);
+      draftInitialized.current = false;
+      csaRevision.current = null;
+      expiryReloaded.current = null;
+      setAction(null);
+      setActionError("");
+      setActionConflict(false);
+      setReconciliationDialog(false);
+      setReconciliationChoice(null);
+      setConfirmed(false);
+      setReason("");
+      setNote("");
+      setRestock({});
+      restockLedgerAtOpen.current = {};
+      idempotencyKeys.current = new IdempotencyKeyStore();
+      if (discardIntent) {
+        controls.retire();
       }
+      setReloadConflictGate(true);
     },
-    [orderId, retireOrder],
+    [controls],
   );
+
+  const load = useCallback(async () => {
+    const latestIntent = controls.read();
+    if (!isMounted() || submitting.current || latestIntent?.phase === "pending") return;
+    const confirmation = latestIntent?.phase === "confirmed" ? latestIntent.receipt : null;
+    const current = ++requestId.current;
+    readController.current?.abort();
+    const controller = new AbortController();
+    readController.current = controller;
+    const isCurrent = () =>
+      isMounted() && !controller.signal.aborted && current === requestId.current;
+    setLoading(true);
+    try {
+      const next = await getStoreOrder(orderId, controller.signal, {
+        shouldRedirectToLogin: isCurrent,
+      });
+      if (!isCurrent()) return;
+      if (confirmation && !reflectsStoreOrderAction(next, confirmation)) {
+        setError("");
+        return;
+      }
+      receivedAt.current = performance.now();
+      setOrder(next);
+      setError("");
+      setReloadConflictGate(false);
+      if (confirmation) controls.clear();
+      const nextCSARevision = next.csa
+        ? `${next.csa.selection.revision}:${next.csa.selection.state}`
+        : null;
+      if (nextCSARevision !== csaRevision.current) {
+        draftInitialized.current = false;
+        csaRevision.current = nextCSARevision;
+      }
+      if (!draftInitialized.current) {
+        setDraft(next.allocation_suggestion ?? []);
+        draftInitialized.current = true;
+      }
+    } catch (caught) {
+      if (!isCurrent()) return;
+      const { message, status } = (caught ?? {}) as { message?: string; status?: number };
+      if (isProtectedDataError(caught) || status === 404) retireOrder(true);
+      else if (message === "invalid_response") retireOrder(false);
+      setError(requestErrorMessage(caught, latestCopy.current.t));
+    } finally {
+      if (readController.current === controller) readController.current = null;
+      if (isCurrent()) setLoading(false);
+    }
+  }, [controls, isMounted, orderId, retireOrder]);
 
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       requestId.current += 1;
+      readController.current?.abort();
+      initialRead.current = false;
     };
   }, []);
   useEffect(() => {
+    if (actionBusy || initialRead.current) return;
+    initialRead.current = true;
     void load();
-  }, [load]);
+  }, [actionBusy, load]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 60_000);
@@ -213,7 +243,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     void load();
   }, [load, order, reloadRequired, remaining, tick]);
 
-  const refreshOrder = () => void load(confirmedAction ?? undefined);
+  const refreshOrder = () => void load();
 
   if (!order) {
     return (
@@ -266,10 +296,12 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
 
   function openAction(next: StoreOrderAction) {
     if (
+      !isMounted() ||
       currentOrder.id.toLowerCase() !== orderId ||
       loading ||
       error ||
       reloadRequired ||
+      actionBusy ||
       submitting.current
     )
       return;
@@ -293,6 +325,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         );
       }
       setAction(next);
+      setActionError(c.mutationUncertain);
       return;
     }
     if (!actions.includes(next)) return;
@@ -368,13 +401,16 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   function discardPendingReads() {
     // Mutation results (including conflicts) supersede every older GET response.
     requestId.current += 1;
+    readController.current?.abort();
     setLoading(false);
   }
 
   async function submitAction() {
     if (
+      !isMounted() ||
       !action ||
       currentOrder.id.toLowerCase() !== orderId ||
+      actionBusy ||
       submitting.current ||
       loading ||
       error ||
@@ -448,50 +484,67 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           : undefined,
       },
     };
+    const attempt = controls.begin(intent);
+    if (!attempt) return;
     discardPendingReads();
     submitting.current = true;
-    setActionBusy(true);
     setActionError("");
     setActionConflict(false);
     try {
-      const updated = await mutateStoreOrder(intent.orderId, intent.action, intent.payload, {
+      const sent = attempt.payload;
+      const updated = await mutateStoreOrder(sent.orderId, sent.action, sent.payload, {
         shouldRedirectToLogin: isMounted,
       });
-      if (!mounted.current) return;
+      const usable = updated && reflectsStoreOrderAction(updated, sent.confirmation);
+      if (
+        !isSessionCurrent() ||
+        !controls.settle(
+          attempt,
+          usable && isMounted()
+            ? null
+            : {
+                phase: "confirmed",
+                receipt: sent.confirmation,
+              },
+        ) ||
+        !isMounted()
+      )
+        return;
       discardPendingReads();
       idempotencyKeys.current.clear(action);
-      setPendingIntent(null);
       setAction(null);
       setError("");
-      if (reflectsStoreOrderAction(updated, intent.confirmation)) {
+      if (updated && usable) {
         receivedAt.current = performance.now();
         setOrder(updated);
-        setReloadGate(null);
+        setReloadConflictGate(false);
         toast(latestCopy.current.c.mutationSuccess);
       } else {
         draftInitialized.current = false;
-        setReloadGate(intent.confirmation);
       }
     } catch (caught) {
-      if (!mounted.current) return;
-      discardPendingReads();
       const { message, status } = (caught ?? {}) as { message?: string; status?: number };
-      if ((message !== "csrf_rejected" && isProtectedDataError(caught)) || status === 404) {
+      const denied =
+        (message !== "csrf_rejected" && isProtectedDataError(caught)) || status === 404;
+      const unknownResult =
+        !denied && (isUncertainMutationError(caught) || (replaying && message === "csrf_rejected"));
+      if (
+        !isSessionCurrent() ||
+        !controls.settle(
+          attempt,
+          denied ? { phase: "retired" } : unknownResult ? { ...attempt, phase: "unknown" } : null,
+        ) ||
+        !isMounted()
+      )
+        return;
+      discardPendingReads();
+      if (denied) {
         retireOrder(true);
         setError(requestErrorMessage(caught, latestCopy.current.t));
         return;
       }
-      const unknownResult =
-        status === undefined ||
-        status === 408 ||
-        status >= 500 ||
-        message === "invalid_response" ||
-        message === "request_timeout" ||
-        message === "upstream_timeout" ||
-        (replaying && message === "csrf_rejected");
-      setPendingIntent(unknownResult ? intent : null);
       if (!unknownResult && status === 409) {
-        setReloadGate("conflict");
+        setReloadConflictGate(true);
         setActionConflict(true);
         setActionError(latestCopy.current.c.conflict);
       } else {
@@ -504,7 +557,6 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       }
     } finally {
       submitting.current = false;
-      if (mounted.current) setActionBusy(false);
     }
   }
 
@@ -556,9 +608,11 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
             <span>
               {confirmedAction
                 ? c.mutationConfirmedReload
-                : error
-                  ? `${error} ${c.staleSnapshot}`
-                  : c.conflictReloadRequired}
+                : intentRetired
+                  ? c.mutationUncertain
+                  : error
+                    ? `${error} ${c.staleSnapshot}`
+                    : c.conflictReloadRequired}
             </span>
             <Button
               variant="outline"
@@ -590,6 +644,13 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         order={order}
         disabled={loading || Boolean(error) || reloadRequired || actionBusy || unresolved}
         onReload={refreshOrder}
+        onAccessDenied={(caught) => {
+          requestId.current += 1;
+          readController.current?.abort();
+          retireOrder(true);
+          setLoading(false);
+          setError(requestErrorMessage(caught, t));
+        }}
       />
       <div className="store-order-workspace">
         <div className="store-order-main">

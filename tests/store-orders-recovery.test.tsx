@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
@@ -25,7 +26,9 @@ afterEach(() => {
 const orderTree = (id: string) => (
   <AdminI18nProvider initialLocale="vi">
     <ToastProvider>
-      <StoreOrderDetail orderId={id} />
+      <AdminQueryProvider>
+        <StoreOrderDetail orderId={id} />
+      </AdminQueryProvider>
     </ToastProvider>
   </AdminI18nProvider>
 );
@@ -164,7 +167,6 @@ it.each([
     "an invalid HTTP 200 response",
     () => Promise.reject(Object.assign(new Error("invalid_response"), { status: 200 })),
   ],
-  ["an incomplete order", () => Promise.resolve({ id: "id" })],
 ])("keeps the unresolved restock intent after %s and a ledger refresh", async (_label, fail) => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
@@ -290,8 +292,7 @@ it("does not retire readable order details when a write fails the CSRF check", a
 it.each([
   ["HTTP 408", Object.assign(new Error("request_failed"), { status: 408 })],
   ["HTTP 502", Object.assign(new Error("unavailable"), { status: 502 })],
-  ["wrong response identity", otherOrder],
-  ["invalid response body", { ...storeOrderFixture(), lines: [null] }],
+  ["invalid envelope", new Error("invalid_response")],
 ])("keeps a single cancel intent for an explicit replay after %s", async (_, outcome) => {
   const item = storeOrderFixture({ expires_at: null });
   vi.mocked(api).mockResolvedValueOnce(item);
@@ -317,6 +318,37 @@ it.each([
   expect(first[0]).toBe(`admin/store-orders/${item.id}/cancel`);
   expect(second[0]).toBe(first[0]);
   expect(second[1]?.body).toBe(first[1]?.body);
+});
+
+it("replays the submitted bytes after leaving the route before a lost response", async () => {
+  const item = storeOrderFixture({ expires_at: null });
+  let rejectMutation!: (error: Error) => void;
+  vi.mocked(api)
+    .mockResolvedValueOnce(item)
+    .mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectMutation = reject;
+        }),
+    )
+    .mockResolvedValueOnce(otherOrder)
+    .mockResolvedValueOnce(item)
+    .mockResolvedValueOnce({ ...item, status: "cancelled", cancelled_at: "2026-10-31T10:01:00Z" });
+  const view = renderOrder(item.id);
+  await screen.findByText("Nguyễn An");
+  fireEvent.click(cancelOrder());
+  view.rerender(orderTree(otherOrder.id));
+  await screen.findByText("Other recipient");
+  await act(async () => rejectMutation(new Error("request_timeout")));
+  view.rerender(orderTree(item.id));
+  fireEvent.click(await screen.findByRole("button", { name: "Hủy đơn" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByLabelText("Lý do hủy")).toHaveValue("Hết hàng");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Hủy đơn" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const writes = vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(writes).toHaveLength(2);
+  expect(writes[1][1]?.body).toBe(writes[0][1]?.body);
 });
 
 it("keeps a stale readable snapshot after a network read error but blocks actions", async () => {

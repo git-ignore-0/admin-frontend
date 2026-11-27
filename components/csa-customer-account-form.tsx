@@ -1,7 +1,7 @@
 "use client";
 
 import { Alert, Button, Group, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, notifyManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -11,7 +11,12 @@ import { Pagination } from "@/components/pagination";
 import { requireAccountSearchRecord } from "@/lib/admin-users";
 import { requirePaginatedList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
-import { invalidApiResponse, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import {
+  invalidApiResponse,
+  isProtectedDataError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import {
   csaCustomerCreateError,
   getCSAAccountDetails,
@@ -58,8 +63,9 @@ export function CSACustomerAccountForm({
       searchInput.current?.focus();
     }
   }, [accountId]);
+  const matchKey = [...accountSearchKey, search];
   const matches = useQuery({
-    queryKey: [...accountSearchKey, search],
+    queryKey: matchKey,
     enabled: search !== null && accountId === null,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
@@ -69,12 +75,34 @@ export function CSACustomerAccountForm({
         search: search.term,
         has_csa_customer: "false",
       });
-      return requirePaginatedList(
-        await apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`, { signal }),
-        requireAccountSearchRecord,
-      );
+      try {
+        return requirePaginatedList(
+          await apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`, {
+            signal,
+          }),
+          requireAccountSearchRecord,
+          search.page,
+        );
+      } catch (caught) {
+        if (!signal.aborted && isProtectedDataError(caught)) {
+          notifyManager.batch(() => {
+            void queryClient.cancelQueries({
+              queryKey: accountSearchKey,
+              predicate: (query) => query.queryHash !== hashKey(matchKey),
+            });
+            queryClient.setQueriesData({ queryKey: accountSearchKey }, () => null);
+          });
+        }
+        throw caught;
+      }
     },
   });
+  const meta = matches.error ? undefined : matches.data?.meta;
+  useEffect(() => {
+    if (!meta || !search || matches.isFetching) return;
+    const last = Math.max(1, Math.ceil(meta.total / meta.page_size));
+    if (search.page > last) setSearch({ ...search, page: last });
+  }, [matches.isFetching, meta, search]);
   const searching = matches.fetchStatus !== "idle";
   const details = useQuery({
     queryKey: ["csa-customer-create", "account", accountId],

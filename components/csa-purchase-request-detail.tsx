@@ -25,6 +25,7 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminDateInput } from "@/components/admin-date-input";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { CSAPurchaseStatusBadge } from "@/components/csa-purchase-request-list";
 import { DetailPageHeading } from "@/components/detail-page-heading";
@@ -40,7 +41,13 @@ import {
   isoDateToAdminInput,
 } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
-import { apiErrorContext, requestErrorMessage } from "@/lib/client-error";
+import { requireResponseEntity } from "@/lib/api-response";
+import {
+  apiErrorContext,
+  isProtectedDataError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import { formatVietnamPhone } from "@/lib/phone-number";
 import type {
@@ -61,7 +68,12 @@ export function CSAPurchaseRequestDetail({
   requestId: string;
   backHref?: string;
 }) {
+  return <PurchaseRequestRecord key={requestId} requestId={requestId} backHref={backHref} />;
+}
+
+function PurchaseRequestRecord({ requestId, backHref }: { requestId: string; backHref: string }) {
   const { locale, t } = useAdminI18n();
+  const scope = useAdminRecordScope(requestId);
   const search = useSearchParams()?.toString();
   const copy = t.csaPurchases;
   const breadcrumbs = useMemo(
@@ -113,17 +125,46 @@ export function CSAPurchaseRequestDetail({
       : "";
   const displayedStartDateError = fieldError || clientStartDateError;
 
+  const retire = useCallback(
+    (caught: unknown) => {
+      if (!isProtectedDataError(caught) && (caught as ClientApiError | null)?.status !== 404)
+        return false;
+      scope.retire();
+      setItem(null);
+      setAction(null);
+      setResolutionContext(null);
+      setPaymentAction(null);
+      setPaymentAmount("");
+      setPaymentNote("");
+      setPaymentReason("");
+      savingRef.current = false;
+      paymentSavingRef.current = false;
+      setSaving(false);
+      setPaymentSaving(false);
+      setLoading(false);
+      setLoadError(requestErrorMessage(caught, t));
+      return true;
+    },
+    [scope, t],
+  );
+
   const load = useCallback(async () => {
+    const { signal, current } = scope.beginRead();
     setLoading(true);
     try {
-      setItem(await api<CSAPurchaseRequest>(`admin/csa-purchase-requests/${requestId}`));
+      const latest = requireResponseEntity(
+        await api<CSAPurchaseRequest>(`admin/csa-purchase-requests/${requestId}`, { signal }),
+        requestId,
+      );
+      if (!current()) return;
+      setItem(latest);
       setLoadError("");
     } catch (caught) {
-      setLoadError(requestErrorMessage(caught, t));
+      if (current() && !retire(caught)) setLoadError(requestErrorMessage(caught, t));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [requestId, t]);
+  }, [requestId, retire, scope, t]);
 
   useEffect(() => {
     void load();
@@ -151,7 +192,8 @@ export function CSAPurchaseRequestDetail({
   }
 
   async function confirmAction() {
-    if (!item || !action || savingRef.current) return;
+    const current = scope.capture();
+    if (!current() || !item || !action || savingRef.current) return;
     if (
       action === "mark-refunded" &&
       (item.status !== "rejected" || item.refund_status !== "pending")
@@ -194,7 +236,8 @@ export function CSAPurchaseRequestDetail({
         `admin/csa-purchase-requests/${item.id}/${action}`,
         { method: "POST", body: JSON.stringify(payload) },
       );
-      setItem(saved);
+      if (!current()) return;
+      setItem(requireResponseEntity(saved, requestId));
       setAction(null);
       setResolutionContext(null);
       setRefundFeedback("");
@@ -207,6 +250,7 @@ export function CSAPurchaseRequestDetail({
       );
       if (action === "mark-refunded") await load();
     } catch (caught) {
+      if (!current() || retire(caught)) return;
       const code = caught instanceof Error ? caught.message : "";
       if (action === "mark-refunded") {
         if (
@@ -255,8 +299,10 @@ export function CSAPurchaseRequestDetail({
         setActionError(requestErrorMessage(caught, t));
       }
     } finally {
-      savingRef.current = false;
-      setSaving(false);
+      if (current()) {
+        savingRef.current = false;
+        setSaving(false);
+      }
     }
   }
 
@@ -272,7 +318,8 @@ export function CSAPurchaseRequestDetail({
   }
 
   async function submitPaymentAction() {
-    if (!item || !paymentAction || paymentSavingRef.current) return;
+    const current = scope.capture();
+    if (!current() || !item || !paymentAction || paymentSavingRef.current) return;
     const payment = item.payments?.find(
       (entry) => entry.installment_sequence === paymentAction.sequence,
     );
@@ -305,11 +352,14 @@ export function CSAPurchaseRequestDetail({
         `admin/csa-purchase-requests/${item.id}/payments/${payment.installment_sequence}/${paymentAction.kind}`,
         { method: "POST", body: JSON.stringify(payload) },
       );
-      setItem(updated);
+      if (!current()) return;
+      setItem(requireResponseEntity(updated, requestId));
       setPaymentAction(null);
       await load();
-      toast(paymentAction.kind === "confirm" ? labels.confirmSuccess : labels.rejectSuccess);
+      if (current())
+        toast(paymentAction.kind === "confirm" ? labels.confirmSuccess : labels.rejectSuccess);
     } catch (caught) {
+      if (!current() || retire(caught)) return;
       const code = caught instanceof Error ? caught.message : "";
       if (code === "csa_payment_state_conflict" || code === "csa_payment_unavailable") {
         setPaymentAction(null);
@@ -321,8 +371,10 @@ export function CSAPurchaseRequestDetail({
         setPaymentActionError(labels.actionError);
       }
     } finally {
-      paymentSavingRef.current = false;
-      setPaymentSaving(false);
+      if (current()) {
+        paymentSavingRef.current = false;
+        setPaymentSaving(false);
+      }
     }
   }
 

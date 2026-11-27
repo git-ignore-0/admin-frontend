@@ -36,7 +36,12 @@ import { RecordDetailField, RecordDetailFields } from "@/components/record-detai
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { deleteStoreProduct, getStoreProduct, transitionStoreProduct } from "@/lib/commerce-api";
-import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import {
+  isProtectedDataError,
+  isUncertainMutationError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import { formatDecimalInput } from "@/lib/numeric-input";
@@ -218,17 +223,24 @@ function ProductDetailContent({ productId }: { productId: string }) {
     )
       return;
     inFlight.current = true;
+    const active = () => mounted.current && isCurrent();
     setBusy(true);
     setDialogError("");
     try {
       if (dialog === "delete") {
-        await deleteStoreProduct(item.id);
+        await deleteStoreProduct(item.id, item.version, active);
         if (!mounted.current || !isCurrent()) return;
         setItem(null);
         toast(copy.deleted);
         router.replace(listHref);
       } else {
-        const updated = await transitionStoreProduct(item.id, item.status, target);
+        const updated = await transitionStoreProduct(
+          item.id,
+          item.status,
+          target,
+          item.version,
+          active,
+        );
         if (!mounted.current || !isCurrent()) return;
         setItem(updated);
         toast(copy.success);
@@ -243,7 +255,10 @@ function ProductDetailContent({ productId }: { productId: string }) {
         setItem(null);
         setDialog(null);
         setLoadError({ cause: caught });
-      } else if (status === 400 && message !== "invalid_response") {
+      } else if (
+        message === "csrf_rejected" ||
+        (status === 400 && !isUncertainMutationError(caught))
+      ) {
         setDialogError(
           requestErrorMessage(caught, t, {
             translations: copy.translationSection,
@@ -259,7 +274,8 @@ function ProductDetailContent({ productId }: { productId: string }) {
           status === 409 &&
           (dialog === "delete" && message === "product_in_use"
             ? "productDeleteBlocked"
-            : dialog === "transition" && message === "product_status_changed"
+            : message === "version_conflict" ||
+                (dialog === "transition" && message === "product_status_changed")
               ? "statusConflict"
               : dialog === "transition" && message === "product_transition_invalid"
                 ? "productTransitionInvalid"

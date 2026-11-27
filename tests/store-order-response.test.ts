@@ -51,11 +51,21 @@ it.each([
   ["inventory", { source_inventory: { ...order.source_inventory, candidates: [null] } }],
   ["omitted admin inventory", { source_inventory: undefined }],
   ["CSA", { csa: { round: {}, selection: {} } }],
-])("rejects an invalid %s from a read or mutation", async (_, corrupt) => {
-  const data = { ...order, ...corrupt };
-  vi.mocked(api).mockResolvedValue(data);
-  vi.mocked(apiEnvelope).mockResolvedValue(cancelResponse(data));
-  await expect(getStoreOrder(order.id)).rejects.toThrow("invalid_response");
+])(
+  "rejects an invalid %s while recognizing a separately valid write receipt",
+  async (_, corrupt) => {
+    const data = { ...order, ...corrupt };
+    vi.mocked(api).mockResolvedValue(data);
+    vi.mocked(apiEnvelope).mockResolvedValue(cancelResponse(data));
+    await expect(getStoreOrder(order.id)).rejects.toThrow("invalid_response");
+    await expect(mutateStoreOrder(order.id, "cancel", cancelPayload)).resolves.toBeNull();
+  },
+);
+
+it("does not recognize a write with the wrong receipt key", async () => {
+  const response = cancelResponse(order);
+  response.meta.action_receipt.idempotency_key = other;
+  vi.mocked(apiEnvelope).mockResolvedValue(response);
   await expect(mutateStoreOrder(order.id, "cancel", cancelPayload)).rejects.toThrow(
     "invalid_response",
   );

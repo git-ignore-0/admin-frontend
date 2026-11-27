@@ -83,6 +83,15 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
   const [, resource, id, action, extra] = path;
+  if (params.has("creation_key")) {
+    return (
+      request.method !== "GET" ||
+      id !== undefined ||
+      !["store-products", "csa-round-configurations"].includes(resource) ||
+      params.size !== 1 ||
+      !UUID_PATH_SEGMENT.test(params.get("creation_key") ?? "")
+    );
+  }
   if (resource === "farms") return invalidFarmQuery(request.method, path, params);
   if (resource === "csa-round-configurations") {
     const isCollection = id === undefined;

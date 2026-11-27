@@ -6,6 +6,7 @@ import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import { formatMembershipUnits } from "@/lib/membership-format";
 import type { AdminLocale } from "@/lib/admin-i18n";
 import { couponDateTimeInput, couponDateTimeToApi } from "@/lib/csa-coupons";
+import { requireCreationReceipt } from "@/lib/creation-receipt";
 
 export const csaRoundStatuses = [
   "draft",
@@ -41,6 +42,7 @@ export type CSARecurrence = {
   occurrence_count: number;
 };
 export type AdminCSARound = CSARound & {
+  version: number;
   can_edit: boolean;
   recurrence: CSARecurrence | null;
   configuration_id: string;
@@ -58,6 +60,7 @@ export type CSARoundConfigurationSummary = {
 };
 export type CSARoundConfiguration = CSARoundConfigurationSummary &
   RoundDates & {
+    version: number;
     recurrence_mode: CSARecurrenceMode | null;
     published_at: string | null;
   };
@@ -151,14 +154,16 @@ export function csaOrderReopenUntil(order: StoreOrder, selectionId: string, deli
   return Date.parse(order.server_time) < until ? until : null;
 }
 export function getRound(id: string, signal?: AbortSignal) {
-  return api<AdminCSARound>(`admin/csa-rounds/${id}`, { signal });
+  return api<AdminCSARound>(`admin/csa-rounds/${id}`, { signal }).then((round) =>
+    requireVersionedRecord(round, id),
+  );
 }
 
-export function cancelRound(id: string, reason: string) {
+export function cancelRound(id: string, reason: string, version: number) {
   return api<AdminCSARound>(`admin/csa-rounds/${id}/cancel`, {
     method: "POST",
-    body: JSON.stringify({ reason: reason.trim() }),
-  });
+    body: JSON.stringify({ reason: reason.trim(), version }),
+  }).then((round) => requireVersionedRecord(round, id));
 }
 
 const configurationEndpoint = "admin/csa-round-configurations";
@@ -187,7 +192,18 @@ export async function getRoundConfigurations(
 export function getRoundConfiguration(rootId: string, signal?: AbortSignal) {
   return api<CSARoundConfiguration>(`${configurationEndpoint}/${encodeURIComponent(rootId)}`, {
     signal,
-  }).then(requireResponseEntity);
+  }).then((configuration) => requireVersionedRecord(configuration, rootId));
+}
+
+function requireVersionedRecord<T extends { id: string; version: number }>(record: T, id: string) {
+  requireResponseEntity(record);
+  if (
+    record.id.toLowerCase() !== id.toLowerCase() ||
+    !Number.isSafeInteger(record.version) ||
+    record.version < 1
+  )
+    throw invalidApiResponse();
+  return record;
 }
 
 export async function getRoundOccurrences(
@@ -205,37 +221,85 @@ export async function getRoundOccurrences(
   return requirePaginatedList(payload, requireResponseEntity);
 }
 
-export function mutateRoundConfiguration(id: string, action: "publish" | "stop") {
+export function mutateRoundConfiguration(
+  id: string,
+  action: "publish" | "stop",
+  version: number,
+  active: () => boolean,
+) {
   return api<CSARoundConfiguration>(
     `${configurationEndpoint}/${encodeURIComponent(id)}/${action}`,
     {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({ version }),
     },
-  ).then(requireResponseEntity);
+    { shouldRedirectToLogin: active },
+  ).then((record) => requireVersionedRecord(record, id));
 }
 
-export function deleteRoundConfiguration(id: string) {
+export function deleteRoundConfiguration(id: string, version: number, active: () => boolean) {
   return api(
     `${configurationEndpoint}/${encodeURIComponent(id)}`,
-    { method: "DELETE" },
+    { method: "DELETE", body: JSON.stringify({ version }) },
     {
       response: "no-content",
+      shouldRedirectToLogin: active,
     },
   );
 }
 
-export function saveRoundConfiguration(
-  body: RoundDates & { name: string; recurrence_mode: CSARecurrenceMode | null },
+export type RoundConfigurationInput = RoundDates & {
+  name: string;
+  recurrence_mode: CSARecurrenceMode | null;
+};
+
+export async function saveRoundConfiguration(
+  body: RoundConfigurationInput & { version?: number; idempotency_key?: string },
   id?: string,
+  active?: () => boolean,
 ) {
-  return api<CSARoundConfiguration>(
+  const init = { method: id ? "PATCH" : "POST", body: JSON.stringify(body) };
+  if (!id && body.idempotency_key) {
+    const { data, meta } = await apiEnvelope<CSARoundConfiguration>(configurationEndpoint, init, {
+      allowMissingData: true,
+      shouldRedirectToLogin: active,
+    });
+    return configurationCreation(data, meta, body.idempotency_key);
+  }
+  const snapshot = await api<CSARoundConfiguration>(
     id ? `${configurationEndpoint}/${encodeURIComponent(id)}` : configurationEndpoint,
-    {
-      method: id ? "PATCH" : "POST",
-      body: JSON.stringify(body),
-    },
-  ).then(requireResponseEntity);
+    init,
+    { shouldRedirectToLogin: active },
+  );
+  return {
+    id: snapshot.id,
+    snapshot: requireVersionedRecord(snapshot, id ?? snapshot.id),
+    removed: false,
+  };
+}
+
+function configurationCreation(
+  data: CSARoundConfiguration | null | undefined,
+  meta: unknown,
+  key: string,
+) {
+  const id = requireCreationReceipt(meta, key, "create_csa_configuration");
+  let snapshot: CSARoundConfiguration | null = null;
+  try {
+    if (data) snapshot = requireVersionedRecord(data, id);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "invalid_response") throw error;
+  }
+  return { id, snapshot, removed: data === null };
+}
+
+export async function getRoundConfigurationCreation(key: string, signal: AbortSignal) {
+  const { data, meta } = await apiEnvelope<CSARoundConfiguration>(
+    `${configurationEndpoint}?${new URLSearchParams({ creation_key: key })}`,
+    { signal },
+    { allowMissingData: true },
+  );
+  return configurationCreation(data, meta, key);
 }
 
 function isCsaProductQuantity(value: unknown): value is RoundParticipants["demand"][number] {
@@ -268,13 +332,15 @@ export async function getRoundParticipants(
   const payload = signal
     ? await apiEnvelope<CSASelection[], PaginationMeta>(path, { signal })
     : await apiEnvelope<CSASelection[], PaginationMeta>(path);
-  const pageResult = requirePaginatedList(payload);
+  const pageResult = requirePaginatedList(payload, undefined, page);
   if (
     !hasRoundDemand(pageResult) ||
     !pageResult.data.every(
       (row) =>
         isApiObject(row) &&
         typeof row.id === "string" &&
+        (row.round_id === undefined ||
+          (typeof row.round_id === "string" && row.round_id.toLowerCase() === id.toLowerCase())) &&
         Array.isArray(row.lines) &&
         row.lines.every(isCsaProductQuantity),
     )
@@ -283,21 +349,34 @@ export async function getRoundParticipants(
   }
   return pageResult;
 }
-export async function getSelectionEvents(id: string, page = 1) {
+export async function getSelectionEvents(id: string, page = 1, signal?: AbortSignal) {
   const payload = await apiEnvelope<CSASelectionEvent[], PaginationMeta>(
     `admin/csa-selections/${id}/events?page=${page}&page_size=20`,
+    { signal },
   );
-  return requirePaginatedList(payload, (event) => {
-    if (!isApiObject(event) || typeof event.action !== "string" || !isApiObject(event.context)) {
-      throw invalidApiResponse();
-    }
-  });
+  return requirePaginatedList(
+    payload,
+    (event) => {
+      if (!isApiObject(event) || typeof event.action !== "string" || !isApiObject(event.context)) {
+        throw invalidApiResponse();
+      }
+    },
+    page,
+  );
 }
-export function saveRound(body: RoundDates & { name: string }, id: string) {
-  return api<AdminCSARound>(`admin/csa-rounds/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  }).then(requireResponseEntity);
+export function saveRound(
+  body: RoundDates & { name: string; version: number },
+  id: string,
+  active?: () => boolean,
+) {
+  return api<AdminCSARound>(
+    `admin/csa-rounds/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    },
+    { shouldRedirectToLogin: active },
+  ).then((record) => requireVersionedRecord(record, id));
 }
 
 /** Quantity counts selling units; the base-unit label belongs to each unit's size. */

@@ -10,9 +10,11 @@ import { useRouter } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { useToast } from "@/components/toast-provider";
+import { requireResponseEntity } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
 import { isSupportedImageFile } from "@/lib/image-validation";
 import {
@@ -21,6 +23,7 @@ import {
   sanitizeIntegerInput,
 } from "@/lib/numeric-input";
 import type { Locale, MediaAsset, Reward } from "@/lib/types";
+import { requireReward } from "@/lib/rewards";
 
 type TranslationForm = { name: string; shortDescription: string };
 type TranslationState = Record<Locale, TranslationForm>;
@@ -47,10 +50,15 @@ function translationsFromReward(reward: Reward): TranslationState {
 }
 
 export function RewardEditor({ rewardId }: { rewardId?: string }) {
+  return <RewardRecord key={rewardId ?? "new"} rewardId={rewardId} />;
+}
+
+function RewardRecord({ rewardId }: { rewardId?: string }) {
   const { t } = useAdminI18n();
   const toast = useToast();
   const router = useRouter();
   const savingRef = useRef(false);
+  const scope = useAdminRecordScope(rewardId ?? "new-reward");
   const [loading, setLoading] = useState(Boolean(rewardId));
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -67,12 +75,13 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
 
   useEffect(() => {
     if (!rewardId) return;
-    const controller = new AbortController();
+    const { signal, current } = scope.beginRead();
     setLoading(true);
     setLoadError(null);
-    api<Reward>(`admin/rewards/${rewardId}`, { signal: controller.signal })
-      .then((reward) => {
-        if (controller.signal.aborted) return;
+    api<Reward>(`admin/rewards/${rewardId}`, { signal })
+      .then((row) => {
+        if (!current()) return;
+        const reward = requireReward(row, rewardId);
         setPointCost(String(reward.point_cost));
         setIsActive(reward.is_active);
         setImage(reward.image);
@@ -80,13 +89,21 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
         setTranslations(translationsFromReward(reward));
       })
       .catch((caught) => {
-        if (!controller.signal.aborted) setLoadError(() => caught);
+        if (!current()) return;
+        if (isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404) {
+          scope.retire();
+          setPointCost("");
+          setImage(null);
+          setSelectedImage(null);
+          setTranslations(emptyTranslations);
+          setLoading(false);
+        }
+        setLoadError(() => caught);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (current()) setLoading(false);
       });
-    return () => controller.abort();
-  }, [loadAttempt, rewardId]);
+  }, [loadAttempt, rewardId, scope]);
 
   useEffect(() => {
     if (!selectedImage || typeof URL.createObjectURL !== "function") {
@@ -119,7 +136,8 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (savingRef.current || uploading) return;
+    const current = scope.capture();
+    if (!current() || loadError || loading || savingRef.current || uploading) return;
     setError("");
     const parsedPointCost = parsePositiveInteger(pointCost);
     if (parsedPointCost.error) {
@@ -146,6 +164,8 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
         const body = new FormData();
         body.append("image", selectedImage);
         savedImage = await api<MediaAsset>("admin/rewards/media", { method: "POST", body });
+        if (!current()) return;
+        requireResponseEntity(savedImage);
         setImage(savedImage);
         setSelectedImage(null);
         setUploading(false);
@@ -165,6 +185,8 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
         method: rewardId ? "PATCH" : "POST",
         body: JSON.stringify(payload),
       });
+      if (!current()) return;
+      requireReward(reward, rewardId);
       toast(rewardId ? t.rewards.updated : t.rewards.created);
       if (!rewardId) {
         router.replace(`/rewards/${reward.id}`);
@@ -176,10 +198,24 @@ export function RewardEditor({ rewardId }: { rewardId?: string }) {
         setTranslations(translationsFromReward(reward));
       }
     } catch (caught) {
+      if (!current()) return;
+      if (isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404) {
+        scope.retire();
+        setLoading(false);
+        setUploading(false);
+        savingRef.current = false;
+        setSaving(false);
+        setPointCost("");
+        setImage(null);
+        setSelectedImage(null);
+        setTranslations(emptyTranslations);
+        setLoadError(() => caught);
+        return;
+      }
       setError(requestErrorMessage(caught, t));
     } finally {
-      setUploading(false);
-      if (!keepLockedForNavigation) {
+      if (current()) setUploading(false);
+      if (current() && !keepLockedForNavigation) {
         savingRef.current = false;
         setSaving(false);
       }

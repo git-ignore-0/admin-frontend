@@ -892,6 +892,7 @@ describe("admin backend proxy", () => {
 
   it.each([
     { suffix: [], search: "?type=weekly&status=published&page=2&page_size=20" },
+    { suffix: [], search: `?creation_key=${membershipId}` },
     { suffix: [membershipId], search: "" },
     { suffix: [membershipId, "rounds"], search: "?status=draft&page=2&page_size=100" },
     {

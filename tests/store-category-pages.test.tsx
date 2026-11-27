@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StoreCategoryEditor } from "@/components/store-category-editor";
 import { StoreCategoryDetail } from "@/components/store-category-detail";
 import { StoreCategoryList } from "@/components/store-category-list";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { adminDictionaries } from "@/lib/admin-i18n";
 
 const mocks = vi.hoisted(() => ({
@@ -105,7 +106,11 @@ describe("store category administration", () => {
     mocks.get.mockResolvedValue(category("root", null, 1));
     mocks.remove.mockRejectedValue({ status: 409 });
     mocks.save.mockResolvedValue({ ...category("root", null, 1), is_active: false });
-    render(<StoreCategoryDetail categoryId="root" />);
+    render(
+      <AdminQueryProvider>
+        <StoreCategoryDetail categoryId="root" />
+      </AdminQueryProvider>,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
     expect(await screen.findByText(/đang được sử dụng/)).toBeVisible();
@@ -122,7 +127,11 @@ describe("store category administration", () => {
     mocks.get
       .mockRejectedValueOnce(new Error("network_error"))
       .mockResolvedValueOnce(category("root", null, 1));
-    render(<StoreCategoryDetail categoryId="root" />);
+    render(
+      <AdminQueryProvider>
+        <StoreCategoryDetail categoryId="root" />
+      </AdminQueryProvider>,
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "Thử lại" }));
 

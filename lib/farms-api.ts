@@ -47,7 +47,7 @@ export function listFarms(
   if (query.search) params.set("search", query.search);
   if (query.is_active !== undefined) params.set("is_active", String(query.is_active));
   return apiEnvelope<Farm[], PaginationMeta>(`admin/farms?${params}`, { signal }).then((payload) =>
-    requirePaginatedList(payload, requireResponseEntity),
+    requirePaginatedList(payload, (row) => requireFarm(row), query.page ?? 1),
   );
 }
 
@@ -624,8 +624,23 @@ export function cancelFarmStockBatch(
   });
 }
 
+function requireFarmTracker(data: TrackerFarm, farmId: string) {
+  requireResponseEntity(data, farmId);
+  if (
+    !uuid(data.id) ||
+    !integer(data.version, 1) ||
+    !integer(data.signup_count) ||
+    (data.one_month_signup_count !== undefined && !integer(data.one_month_signup_count)) ||
+    typeof data.is_visible !== "boolean"
+  )
+    throw invalidApiResponse();
+  return data;
+}
+
 export function getFarmTracker(farmId: string, signal?: AbortSignal) {
-  return api<TrackerFarm>(`admin/farms/${farmId}/growth-tracker`, { signal });
+  return api<TrackerFarm>(`admin/farms/${farmId}/growth-tracker`, { signal }).then((row) =>
+    requireFarmTracker(row, farmId),
+  );
 }
 
 export function enableFarmTracker(
@@ -635,7 +650,7 @@ export function enableFarmTracker(
   return api<TrackerFarm>(`admin/farms/${farmId}/growth-tracker`, {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }).then((row) => requireFarmTracker(row, farmId));
 }
 
 export function updateFarmTracker(
@@ -650,5 +665,5 @@ export function updateFarmTracker(
   return api<TrackerFarm>(`admin/farms/${farmId}/growth-tracker`, {
     method: "PATCH",
     body: JSON.stringify(payload),
-  });
+  }).then((row) => requireFarmTracker(row, farmId));
 }

@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { requirePaginatedList, requireResponseList } from "@/lib/api-response";
 import type { ApiEnvelope } from "@/lib/client-api";
-import { isRequestCanceled } from "@/lib/client-error";
+import { isProtectedDataError, isRequestCanceled } from "@/lib/client-error";
 import type { PaginationMeta } from "@/lib/types";
 
 type PaginatedListOptions<T, M extends PaginationMeta> = {
@@ -37,22 +37,52 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadVersion, setReloadVersion] = useState(0);
-  const key = requestKey === undefined ? undefined : JSON.stringify([requestKey, page]);
-  const [settledKey, setSettledKey] = useState<string | undefined>();
+  const key = useMemo(() => ({ page, requestKey, fetchPage }), [fetchPage, page, requestKey]);
+  const [settledKey, setSettledKey] = useState<typeof key>();
+  const activeKey = useRef(key);
   const activeRequest = useRef<AbortController | null>(null);
+  const revision = useRef(0);
+  const mounted = useRef(false);
+  const denied = useRef(false);
   const cancelActiveRequest = useCallback(() => {
     const previous = activeRequest.current;
     activeRequest.current = null;
     previous?.abort();
   }, []);
 
+  useLayoutEffect(() => {
+    mounted.current = true;
+    activeKey.current = key;
+    setItems(null);
+    setMeta(null);
+    setError("");
+    return () => {
+      mounted.current = false;
+      revision.current += 1;
+      cancelActiveRequest();
+    };
+  }, [cancelActiveRequest, enabled, key]);
+
+  const retire = useCallback(
+    (caught: unknown) => {
+      if (!mounted.current) return;
+      cancelActiveRequest();
+      revision.current += 1;
+      denied.current = true;
+      setItems(null);
+      setMeta(null);
+      setError(getErrorMessage(caught));
+      setSettledKey(activeKey.current);
+      setLoading(false);
+    },
+    [cancelActiveRequest, getErrorMessage],
+  );
+
   useEffect(() => {
     if (!enabled) {
-      if (key !== undefined) {
-        setItems(null);
-        setMeta(null);
-        setError("");
-      }
+      setItems(null);
+      setMeta(null);
+      setError("");
       return;
     }
     const controller = new AbortController();
@@ -64,14 +94,20 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
       try {
         const payload = await fetchPage(page, controller.signal);
         if (activeRequest.current !== controller) return;
-        const { data, meta } = requirePaginatedList(payload, validateRecord);
+        const { data, meta } = requirePaginatedList(payload, validateRecord, page);
+        const lastPage = Math.max(1, Math.ceil(meta.total / meta.page_size));
+        if (controlledPage === undefined && page > lastPage) {
+          setLocalPage(lastPage);
+          return;
+        }
+        denied.current = false;
         setItems(data);
         setMeta(meta);
       } catch (error) {
         if (activeRequest.current === controller && !isRequestCanceled(error, controller.signal)) {
-          if (key !== undefined) {
-            setItems(null);
-            setMeta(null);
+          if (isProtectedDataError(error)) {
+            retire(error);
+            return;
           }
           setError(getErrorMessage(error));
         }
@@ -90,21 +126,27 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
     };
   }, [
     cancelActiveRequest,
+    controlledPage,
     enabled,
     fetchPage,
     getErrorMessage,
     key,
     page,
     reloadVersion,
+    retire,
     validateRecord,
   ]);
 
   const reload = useCallback(() => {
+    revision.current += 1;
     cancelActiveRequest();
     setReloadVersion((current) => current + 1);
   }, [cancelActiveRequest]);
+  const capturedRevision = revision.current;
   const replaceData = useCallback(
     (nextItems: T[], nextMeta?: M | null) => {
+      if (!mounted.current || !enabled || denied.current || revision.current !== capturedRevision)
+        return;
       requireResponseList(nextItems, validateRecord);
       cancelActiveRequest();
       setItems(nextItems);
@@ -113,18 +155,19 @@ export function usePaginatedList<T, M extends PaginationMeta = PaginationMeta>({
       setSettledKey(key);
       setLoading(false);
     },
-    [cancelActiveRequest, key, validateRecord],
+    [cancelActiveRequest, capturedRevision, enabled, key, validateRecord],
   );
 
-  const showResult = key === undefined || (enabled && key === settledKey);
+  const showResult = enabled && key === settledKey;
   return {
     error: showResult ? error : "",
     items: showResult ? items : null,
-    loading: key === undefined ? loading : enabled && (!showResult || loading),
+    loading: enabled && (!showResult || loading),
     meta: showResult ? meta : null,
     page,
     reload,
     replaceData,
+    retire,
     setPage,
   };
 }

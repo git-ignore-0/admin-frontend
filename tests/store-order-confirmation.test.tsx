@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import type { StoreOrder } from "@/lib/types";
@@ -24,7 +25,10 @@ function orderTree(item: StoreOrder) {
   return (
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
-        <StoreOrderDetail orderId={item.id} />
+        <AdminQueryProvider>
+          {" "}
+          <StoreOrderDetail orderId={item.id} />{" "}
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>
   );
@@ -158,14 +162,6 @@ it.each([
   ["another order", (key: string) => wire(cancelled, receipt(otherUuid, "cancel", key))],
   ["another action", (key: string) => wire(cancelled, receipt(initial.id, "deliver", key))],
   ["another key", () => wire(cancelled, receipt(initial.id, "cancel", otherUuid))],
-  [
-    "an invalid DTO despite a matching receipt",
-    (key: string) =>
-      wire(
-        { ...cancelled, status: "unknown" } as unknown as StoreOrder,
-        receipt(initial.id, "cancel", key),
-      ),
-  ],
 ])("holds the write intent after a 200 with %s", async (_, response) => {
   const fetch = fetchOrders(
     () => initial,
@@ -178,6 +174,27 @@ it.each([
   expect(within(dialog).getByLabelText("Lý do hủy")).toBeDisabled();
   expect(screen.queryByText("Đã cập nhật đơn hàng.")).not.toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("confirms the receipt with an invalid DTO and recovers through GET only", async () => {
+  let reads = 0;
+  const write = vi.fn(({ key }: { key: string }) =>
+    wire(
+      { ...cancelled, id: otherUuid, status: "unexpected" } as unknown as StoreOrder,
+      receipt(initial.id, "cancel", key),
+    ),
+  );
+  const fetch = fetchOrders(() => (++reads === 1 ? initial : cancelled), write);
+  render(orderTree(initial));
+  const { confirm } = await openCancel();
+  fireEvent.click(confirm);
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/đã xác nhận/i);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(within(alert).getByRole("button"));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 
 const batchId = "0eb05ea3-2160-49f4-9e6f-d7099a1f6afa";

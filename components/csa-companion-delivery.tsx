@@ -1,7 +1,7 @@
 "use client";
 import { Alert } from "@mantine/core";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import {
   Button,
@@ -12,7 +12,7 @@ import {
   Status,
 } from "@/components/nfv-controls";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import {
   getCompanionDelivery,
   updateCompanionDelivery,
@@ -61,7 +61,7 @@ export function CSACompanionDelivery(props: Props) {
   }, []);
   const currentRound = useRef(props.round.id);
   currentRound.current = props.round.id;
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -110,19 +110,20 @@ function CompanionDeliveryForm({
   const [, tick] = useState(0);
   const alive = useRef(true);
   const dirty = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
     };
   }, []);
   useEffect(() => {
-    let active = true;
+    const controller = new AbortController();
+    const { signal } = controller;
     setLoading(true);
     setLoadError(null);
-    void getCompanionDelivery(round.id)
+    void getCompanionDelivery(round.id, signal)
       .then((value) => {
-        if (!active) return;
+        if (signal.aborted) return;
         setConfig(value);
         if (!dirty.current) {
           setDeadline(
@@ -131,14 +132,18 @@ function CompanionDeliveryForm({
         }
       })
       .catch((e) => {
-        if (active) setLoadError(e);
+        if (signal.aborted) return;
+        setLoadError(e);
+        if (isProtectedDataError(e)) {
+          setConfig(null);
+          setDeadline("");
+          dirty.current = false;
+        }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (!signal.aborted) setLoading(false);
       });
-    return () => {
-      active = false;
-    };
+    return () => controller.abort();
   }, [round.id, retry, refreshKey]);
   useEffect(() => {
     const timer = setInterval(() => tick((value) => value + 1), 1000);
@@ -161,7 +166,7 @@ function CompanionDeliveryForm({
       ? companionDeliveryStatus(config, round, now)
       : "not_enabled";
   async function submit(close: boolean) {
-    if (blocked || (!close && (unchanged || !valid))) return;
+    if (!config || blocked || (!close && (unchanged || !valid))) return;
     const currentNow = roundServerNow(round, receivedAt);
     if (!close && (!value || !validateReopenDeadline(value, round.delivery_date, currentNow))) {
       setError(new Error("csa_companion_deadline_invalid"));
@@ -174,8 +179,12 @@ function CompanionDeliveryForm({
       const result = await updateCompanionDelivery(
         round.id,
         close
-          ? { companion_delivery_enabled: false }
-          : { companion_delivery_enabled: true, companion_delivery_cutoff: value! },
+          ? { version: config.version, companion_delivery_enabled: false }
+          : {
+              version: config.version,
+              companion_delivery_enabled: true,
+              companion_delivery_cutoff: value!,
+            },
       );
       if (!alive.current) {
         onStaleMutation(round.id);
@@ -187,7 +196,17 @@ function CompanionDeliveryForm({
         result.companion_delivery_cutoff ? roundDateInput(result.companion_delivery_cutoff) : "",
       );
     } catch (e) {
-      if (alive.current) setError(e);
+      if (alive.current) {
+        setError(e);
+        if (isProtectedDataError(e)) {
+          setConfig(null);
+          setDeadline("");
+          dirty.current = false;
+          setLoadError(e);
+        } else if (e instanceof Error && e.message === "version_conflict") {
+          setRetry((value) => value + 1);
+        }
+      }
     } finally {
       release();
       if (alive.current) {

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { Button, DataState, FormInput, FormSelect, Status } from "@/components/nfv-controls";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { api } from "@/lib/client-api";
@@ -12,12 +13,14 @@ import {
   couponDateTimeInput,
   couponDateTimeToApi,
   couponErrorMessage,
+  requireAdminCoupon,
   type AdminCoupon,
   type CouponDiscountType,
   type CouponApplicationScope,
 } from "@/lib/csa-coupons";
 import { PageHeading } from "@/components/page-heading";
 import { parsePositiveInteger } from "@/lib/numeric-input";
+import { isProtectedDataError, type ClientApiError } from "@/lib/client-error";
 
 type Draft = {
   application_scope: CouponApplicationScope;
@@ -97,14 +100,18 @@ function timestampForPayload(value: string, previous?: string, end = false) {
 }
 
 export function CSACouponEditor({ couponId }: { couponId?: string }) {
+  return <CouponRecord key={couponId ?? "new"} couponId={couponId} />;
+}
+
+function CouponRecord({ couponId }: { couponId?: string }) {
   const router = useRouter();
+  const scope = useAdminRecordScope(couponId ?? "new-voucher");
   const { locale, t } = useAdminI18n();
   const [focusedMoney, setFocusedMoney] = useState<
     "discount_value" | "minimum_amount" | "maximum_discount_amount" | null
   >(null);
   const copy = t.csaCoupons;
   const busyRef = useRef(false);
-  const initialLoadRef = useRef(false);
   const savedId = useRef<string | null>(couponId ?? null);
   const [coupon, setCoupon] = useState<AdminCoupon | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -115,12 +122,31 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
   const [busy, setBusy] = useState(false);
   const [needsReload, setNeedsReload] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const retire = useCallback(
+    (caught: unknown) => {
+      if (!isProtectedDataError(caught) && (caught as ClientApiError | null)?.status !== 404)
+        return false;
+      scope.retire();
+      setCoupon(null);
+      setDraft(emptyDraft);
+      setConfirmDeactivate(false);
+      setLoadError(couponErrorMessage(caught, t));
+      setLoading(false);
+      busyRef.current = false;
+      setBusy(false);
+      return true;
+    },
+    [scope, t],
+  );
   const reload = useCallback(async () => {
+    const { signal, current } = scope.beginRead();
     setLoadError("");
     try {
-      const latest = savedId.current
-        ? await api<AdminCoupon>(`admin/vouchers/${savedId.current}`)
+      const id = savedId.current;
+      const latest = id
+        ? requireAdminCoupon(await api<AdminCoupon>(`admin/vouchers/${id}`, { signal }), id)
         : null;
+      if (!current()) return;
       if (latest) {
         setCoupon(latest);
         setDraft(draftFromCoupon(latest));
@@ -129,17 +155,16 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
       setSubmitError("");
       if (!couponId && latest) router.replace(`/csa-coupons/${latest.id}`);
     } catch (error) {
-      setLoadError(couponErrorMessage(error, t));
+      if (current() && !retire(error)) setLoadError(couponErrorMessage(error, t));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [couponId, router, t]);
+  }, [couponId, retire, router, scope, t]);
 
+  const initialLoad = useRef(reload);
   useEffect(() => {
-    if (initialLoadRef.current) return;
-    initialLoadRef.current = true;
-    void reload();
-  }, [reload]);
+    void initialLoad.current();
+  }, []);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -233,7 +258,8 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
     event.preventDefault();
     const errors = getValidationErrors();
     setFieldErrors(errors);
-    if (busyRef.current || Object.keys(errors).length) {
+    const current = scope.capture();
+    if (!current() || busyRef.current || loadError || Object.keys(errors).length) {
       focusFirstError(errors);
       return;
     }
@@ -248,69 +274,94 @@ export function CSACouponEditor({ couponId }: { couponId?: string }) {
           body: JSON.stringify(locked ? { usage_limit: Number(draft.usage_limit) } : payload()),
         },
       );
-      savedId.current = saved.id;
+      if (!current()) return;
+      savedId.current = requireAdminCoupon(saved, savedId.current ?? undefined).id;
       setNeedsReload(true);
       try {
-        const latest = await api<AdminCoupon>(`admin/vouchers/${saved.id}`);
+        const { signal, current: reading } = scope.beginRead();
+        const latest = requireAdminCoupon(
+          await api<AdminCoupon>(`admin/vouchers/${saved.id}`, { signal }),
+          saved.id,
+        );
+        if (!reading()) return;
         setCoupon(latest);
         setDraft(draftFromCoupon(latest));
         setNeedsReload(false);
         if (!couponId) router.replace(`/csa-coupons/${saved.id}`);
-      } catch {
-        setSubmitError(copy.reloadFailed);
+      } catch (caught) {
+        if (current() && !retire(caught)) setSubmitError(copy.reloadFailed);
       }
     } catch (error) {
-      setSubmitError(couponErrorMessage(error, t));
+      if (current() && !retire(error)) setSubmitError(couponErrorMessage(error, t));
     } finally {
-      busyRef.current = false;
-      setBusy(false);
+      if (current()) {
+        busyRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
   async function deactivate() {
-    if (!coupon || busyRef.current) return;
+    const current = scope.capture();
+    if (!current() || !coupon || busyRef.current || loadError) return;
     busyRef.current = true;
     setBusy(true);
     try {
-      await api<AdminCoupon>(`admin/vouchers/${coupon.id}/deactivate`, {
+      const saved = await api<AdminCoupon>(`admin/vouchers/${coupon.id}/deactivate`, {
         method: "POST",
         body: "{}",
       });
+      if (!current()) return;
+      requireAdminCoupon(saved, coupon.id);
       setConfirmDeactivate(false);
       setNeedsReload(true);
       try {
-        const latest = await api<AdminCoupon>(`admin/vouchers/${coupon.id}`);
+        const { signal, current: reading } = scope.beginRead();
+        const latest = requireAdminCoupon(
+          await api<AdminCoupon>(`admin/vouchers/${coupon.id}`, { signal }),
+          coupon.id,
+        );
+        if (!reading()) return;
         setCoupon(latest);
         setDraft(draftFromCoupon(latest));
         setNeedsReload(false);
-      } catch {
-        setSubmitError(copy.reloadFailed);
+      } catch (caught) {
+        if (current() && !retire(caught)) setSubmitError(copy.reloadFailed);
       }
     } catch (error) {
-      setSubmitError(couponErrorMessage(error, t));
-      setConfirmDeactivate(false);
+      if (current() && !retire(error)) {
+        setSubmitError(couponErrorMessage(error, t));
+        setConfirmDeactivate(false);
+      }
     } finally {
-      busyRef.current = false;
-      setBusy(false);
+      if (current()) {
+        busyRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
   async function activate() {
-    if (!coupon || busyRef.current) return;
+    const current = scope.capture();
+    if (!current() || !coupon || busyRef.current || loadError) return;
     busyRef.current = true;
     setBusy(true);
     try {
-      await api<AdminCoupon>(`admin/vouchers/${coupon.id}/activate`, {
+      const saved = await api<AdminCoupon>(`admin/vouchers/${coupon.id}/activate`, {
         method: "POST",
         body: "{}",
       });
+      if (!current()) return;
+      requireAdminCoupon(saved, coupon.id);
       setNeedsReload(true);
       await reload();
     } catch (error) {
-      setSubmitError(couponErrorMessage(error, t));
+      if (current() && !retire(error)) setSubmitError(couponErrorMessage(error, t));
     } finally {
-      busyRef.current = false;
-      setBusy(false);
+      if (current()) {
+        busyRef.current = false;
+        setBusy(false);
+      }
     }
   }
 

@@ -1,4 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminBreadcrumbProvider,
@@ -6,6 +14,8 @@ import {
 } from "@/components/admin-breadcrumb-context";
 import { AdminHeaderContent } from "@/components/admin-header";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import type { ReactElement } from "react";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSARoundEditor } from "@/components/csa-round-editor";
 import { CSARoundList } from "@/components/csa-round-list";
 import { storeCancellationReason } from "@/lib/store-orders-copy";
@@ -20,6 +30,9 @@ import type { CSASelection } from "@/lib/csa-rounds";
 import { storeOrderFixture } from "./store-orders-fixture";
 import { selectOption } from "./select-option";
 
+function render(ui: ReactElement) {
+  return renderView(ui, { wrapper: AdminQueryProvider });
+}
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 const push = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", async () => {
@@ -113,7 +126,16 @@ describe("CSA rounds", () => {
   it("saves a draft with Vietnam timestamps and no product configuration", async () => {
     const search = "?status=draft&page=2";
     window.history.replaceState(null, "", `/csa-rounds/new${search}`);
-    vi.mocked(api).mockResolvedValueOnce({ id });
+    vi.mocked(apiEnvelope).mockImplementationOnce(async (_path, init) => ({
+      data: { id, version: 1 },
+      meta: {
+        action_receipt: {
+          action: "create_csa_configuration",
+          resource_id: id,
+          idempotency_key: JSON.parse(String(init?.body)).idempotency_key,
+        },
+      },
+    }));
     render(
       <AdminI18nProvider initialLocale="en">
         <AdminBreadcrumbProvider pathname="/csa-rounds/new" search={search}>
@@ -137,17 +159,18 @@ describe("CSA rounds", () => {
     ])
       fireEvent.change(screen.getByLabelText(new RegExp(`^${label}`)), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() =>
-      expect(api).toHaveBeenCalledWith(
-        "admin/csa-round-configurations",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ name: "Week 1", ...dates, recurrence_mode: null }),
-        }),
-      ),
-    );
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(1));
+    const [path, init] = vi.mocked(apiEnvelope).mock.calls[0];
+    expect(path).toBe("admin/csa-round-configurations");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      name: "Week 1",
+      ...dates,
+      recurrence_mode: null,
+      idempotency_key: expect.stringMatching(/^[a-f0-9-]{36}$/),
+    });
     expect(push).toHaveBeenCalledWith(`/csa-rounds/configurations/${id}?status=draft&page=2`);
-    expect(api).toHaveBeenCalledTimes(1);
+    expect(api).not.toHaveBeenCalled();
   });
   it("blocks reopening an allocated order", async () => {
     vi.mocked(api).mockResolvedValue(
@@ -171,6 +194,7 @@ describe("CSA rounds", () => {
 });
 
 const round = {
+  version: 1,
   id,
   sequence: 1,
   name: "Week 1",
@@ -257,13 +281,17 @@ it("reopens with a Vietnam deadline, blocks duplicate submissions and calls refr
   fireEvent.click(confirm);
   fireEvent.click(confirm);
   expect(api).toHaveBeenCalledTimes(2);
-  expect(api).toHaveBeenLastCalledWith(`admin/csa-selections/${id}/reopen`, {
-    method: "POST",
-    body: JSON.stringify({
-      deadline: "2026-11-21T20:00:00+07:00",
-      expected_revision: selection.revision,
-    }),
-  });
+  expect(api).toHaveBeenLastCalledWith(
+    `admin/csa-selections/${id}/reopen`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        deadline: "2026-11-21T20:00:00+07:00",
+        expected_revision: selection.revision,
+      }),
+    },
+    { shouldRedirectToLogin: expect.any(Function) },
+  );
   resolve(selection);
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
 });
@@ -587,10 +615,14 @@ it("shows the authoritative schedule error when saving a published round", async
     "Selection must close after it opens and before the delivery day.",
   );
   expect(screen.getByRole("textbox", { name: "Round name" })).toHaveValue("Week 1");
-  expect(api).toHaveBeenLastCalledWith(`admin/csa-rounds/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ name: "Week 1", ...dates }),
-  });
+  expect(api).toHaveBeenLastCalledWith(
+    `admin/csa-rounds/${id}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Week 1", ...dates, version: 1 }),
+    },
+    { shouldRedirectToLogin: expect.any(Function) },
+  );
 });
 
 it("translates expired CSA reselection cancellation in Store orders", () => {

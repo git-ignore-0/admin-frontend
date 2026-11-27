@@ -4,21 +4,52 @@ import { Alert } from "@mantine/core";
 import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { PageHeading } from "@/components/page-heading";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import {
+  invalidApiResponse,
+  isApiObject,
+  isProtectedDataError,
+  requestErrorMessage,
+} from "@/lib/client-error";
 import type { Dashboard } from "@/lib/types";
 
 export default function DashboardPage() {
   const { t } = useAdminI18n();
+  const scope = useAdminRecordScope("dashboard");
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    api<Dashboard>("admin/dashboard")
-      .then(setData)
-      .catch((caught) => setError(requestErrorMessage(caught, t)));
-  }, [t]);
+    const { current, signal } = scope.beginRead();
+    api<Dashboard>("admin/dashboard", { signal })
+      .then((row) => {
+        if (!current()) return;
+        if (
+          !isApiObject(row) ||
+          ![row.upcoming, row.drafts, row.incomplete_translations].every(
+            (count) => Number.isSafeInteger(count) && count >= 0,
+          ) ||
+          !Array.isArray(row.recent_activity) ||
+          row.recent_activity.some(
+            (item) =>
+              !isApiObject(item) ||
+              typeof item.action !== "string" ||
+              typeof item.entity_id !== "string" ||
+              typeof item.created_at !== "string",
+          )
+        )
+          throw invalidApiResponse();
+        setData(row);
+        setError("");
+      })
+      .catch((caught) => {
+        if (!current()) return;
+        if (isProtectedDataError(caught)) setData(null);
+        setError(requestErrorMessage(caught, t));
+      });
+  }, [scope, t]);
   const labels: Record<string, string> = {
     "site_settings.update": t.dashboard.actions.siteSettingsUpdate,
     "workshop.create": t.dashboard.actions.workshopCreate,

@@ -135,6 +135,7 @@ describe("testimonial list", () => {
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope)).toHaveBeenLastCalledWith(
         expect.stringContaining("search=%C4%90%E1%BB%93ng+Nai"),
+        { signal: expect.any(AbortSignal) },
       ),
     );
     expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain("status=published");

@@ -23,7 +23,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const farm: Farm = {
-  id: "farm-1",
+  id: "24803641-2dce-4cac-8fc4-91e55f03e95f",
   name_en: "Green Valley",
   name_vi: "Thung lũng Xanh",
   location_en: "Da Lat",
@@ -76,7 +76,7 @@ it("shows a single directory with normal farm links for obsolete Tracker list co
 
   expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   const farmLink = await screen.findByRole("link", { name: "Green Valley" });
-  expect(farmLink).toHaveAttribute("href", "/farms/farm-1?search=green&is_active=true&page=3");
+  expect(farmLink).toHaveAttribute("href", `/farms/${farm.id}?search=green&is_active=true&page=3`);
   expect(screen.getByRole("link", { name: "Add farm" })).toHaveAttribute(
     "href",
     "/farms/new?search=green&is_active=true&page=3",
@@ -98,7 +98,7 @@ it("shows a single directory with normal farm links for obsolete Tracker list co
   expect(navigate).not.toHaveBeenCalled();
   fireEvent.click(farmLink);
   expect(navigate).toHaveBeenCalledExactlyOnceWith(
-    "/farms/farm-1?search=green&is_active=true&page=3",
+    `/farms/${farm.id}?search=green&is_active=true&page=3`,
     { replace: undefined, scroll: undefined },
   );
 });
@@ -109,14 +109,14 @@ it("shows total supplied products and current stock coverage in one column", asy
       farm,
       {
         ...farm,
-        id: "farm-2",
+        id: "24803641-2dce-4cac-8fc4-91e55f03e950",
         name_vi: "Trang trại Sông",
         in_stock_product_count: 6,
         out_of_stock_product_count: 0,
       },
       {
         ...farm,
-        id: "farm-3",
+        id: "24803641-2dce-4cac-8fc4-91e55f03e951",
         name_vi: "Trang trại Núi",
         in_stock_product_count: 0,
         out_of_stock_product_count: 4,
@@ -124,7 +124,7 @@ it("shows total supplied products and current stock coverage in one column", asy
       },
       {
         ...farm,
-        id: "farm-4",
+        id: "24803641-2dce-4cac-8fc4-91e55f03e952",
         name_vi: "Trang trại Mới",
         in_stock_product_count: 0,
         out_of_stock_product_count: 0,

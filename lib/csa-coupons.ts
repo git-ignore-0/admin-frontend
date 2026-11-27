@@ -1,6 +1,7 @@
 import type { AdminDictionary, AdminLocale } from "@/lib/admin-i18n";
 import { adminDateInputToIso, formatAdminDate } from "@/lib/admin-date";
-import { requestErrorMessage } from "@/lib/client-error";
+import { requireResponseEntity } from "@/lib/api-response";
+import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 
 export type CouponStatus = "active" | "inactive" | "scheduled" | "expired" | "exhausted";
@@ -35,6 +36,36 @@ export type AdminCoupon = {
   created_at: string;
   updated_at: string;
 };
+
+export function requireAdminCoupon(row: AdminCoupon, id?: string) {
+  requireResponseEntity(row, id);
+  const money = (value: unknown) => typeof value === "string" && /^\d+(?:\.\d+)?$/u.test(value);
+  if (
+    typeof row.code !== "string" ||
+    !["percent", "fixed"].includes(row.discount_type) ||
+    !["active", "inactive", "scheduled", "expired", "exhausted"].includes(row.status) ||
+    (row.application_scope !== undefined &&
+      !["csa", "store", "both"].includes(row.application_scope)) ||
+    typeof row.is_active !== "boolean" ||
+    !money(row.discount_value) ||
+    (row.maximum_discount_amount !== null && !money(row.maximum_discount_amount)) ||
+    (row.minimum_amount !== null && !money(row.minimum_amount)) ||
+    !Number.isSafeInteger(row.usage_limit) ||
+    row.usage_limit < 1 ||
+    !Number.isSafeInteger(row.used_count) ||
+    row.used_count < 0 ||
+    ![row.starts_at, row.expires_at].every(
+      (date) => typeof date === "string" && Number.isFinite(Date.parse(date)),
+    ) ||
+    !isApiObject(row.scope) ||
+    !Array.isArray(row.scope.packages) ||
+    !Array.isArray(row.scope.price_options) ||
+    !Array.isArray(row.scope.payment_types) ||
+    !Array.isArray(row.scope.installment_counts)
+  )
+    throw invalidApiResponse();
+  return row;
+}
 
 export function couponOffer(
   coupon: Pick<AdminCoupon, "discount_type" | "discount_value">,

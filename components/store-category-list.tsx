@@ -9,7 +9,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { listStoreCategories } from "@/lib/commerce-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { categoryName, categoryTreeRows } from "@/lib/store-categories";
 import type { StoreCategory } from "@/lib/types";
 
@@ -19,33 +19,33 @@ export function StoreCategoryList() {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [active, setActive] = useState("");
-  const [items, setItems] = useState<StoreCategory[] | null>(null);
+  const [snapshot, setSnapshot] = useState<{ key: string; rows: StoreCategory[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+  const key = JSON.stringify([search, active]);
+  const items = snapshot?.key === key ? snapshot.rows : null;
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    const { signal } = controller;
     setLoading(true);
     setError("");
-    listStoreCategories({
-      search,
-      ...(active ? { is_active: active === "true" } : {}),
-    })
+    listStoreCategories({ search, ...(active ? { is_active: active === "true" } : {}) }, signal)
       .then((result) => {
-        if (!cancelled) setItems(result);
+        if (!signal.aborted) setSnapshot({ key, rows: result });
       })
       .catch((caught) => {
-        if (!cancelled) setError(requestErrorMessage(caught, t));
+        if (signal.aborted) return;
+        if (isProtectedDataError(caught)) setSnapshot(null);
+        setError(requestErrorMessage(caught, t));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!signal.aborted) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [search, active, reloadKey, t]);
+    return () => controller.abort();
+  }, [search, active, key, reloadKey, t]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -483,6 +483,9 @@ const vi = {
     amount: "Số điểm",
     messageRequired: "Hãy nhập nội dung giao dịch.",
     insufficient: "Số dư hiện tại không đủ cho giao dịch trừ điểm này.",
+    adjustmentUncertain:
+      "Chưa xác nhận được giao dịch điểm. Gửi lại yêu cầu đã lưu để kiểm tra hoặc hoàn tất giao dịch.",
+    retryAdjustment: "Gửi lại giao dịch đã lưu",
     create: "Tạo giao dịch",
     creating: "Đang tạo…",
     created: "Đã tạo giao dịch điểm.",
@@ -737,8 +740,14 @@ const vi = {
     productSaveUncertain:
       "Có thể sản phẩm đã được lưu. Hãy kiểm tra thông tin sản phẩm trước khi lưu lại. Các chỉnh sửa vẫn còn trong biểu mẫu.",
     productCreateUncertain:
-      "Có thể bản nháp đã được tạo. Hãy tìm SKU {sku} trong danh sách sản phẩm trước khi tạo lại.",
-    productSearchAttemptedSku: "Tìm SKU đã gửi (mở thẻ mới)",
+      "Có thể bản nháp với SKU {sku} đã được tạo. Hãy kiểm tra kết quả trước khi tạo lại.",
+    productCheckCreate: "Kiểm tra kết quả tạo",
+    productRetryCreate: "Gửi lại yêu cầu đã lưu",
+    productCreateStillUnknown:
+      "Chưa xác nhận được kết quả. Bạn có thể kiểm tra lại hoặc gửi lại yêu cầu đã lưu.",
+    productCreateRemoved: "Bản nháp đã được tạo và sau đó đã bị xóa.",
+    productOpenCreated: "Mở sản phẩm đã tạo",
+    productUseLatestVersion: "Dùng phiên bản mới và giữ bản nháp",
     productTransitionInvalid:
       "Không thể chuyển sang trạng thái đã chọn. Hãy kiểm tra trạng thái hiện tại.",
     productResultUncertain:
@@ -1390,6 +1399,9 @@ const vi = {
     confirmUsage: "Ghi nhận sản phẩm đã nhận",
     creatingUsage: "Đang ghi nhận…",
     usageCreated: "Đã ghi nhận sản phẩm đã nhận và cập nhật số lượng còn lại.",
+    usageUncertain:
+      "Chưa xác nhận được lần ghi nhận này. Gửi lại yêu cầu đã lưu để kiểm tra hoặc hoàn tất.",
+    retryUsage: "Gửi lại yêu cầu sử dụng đã lưu",
     usageValidation:
       "Chọn ít nhất một sản phẩm, không trùng nhau; nhập 0.25, 0.5, 0.75 hoặc số nguyên từ 1.",
     quotaUnitsFormat: "Chỉ nhập 0.25, 0.5, 0.75 hoặc số nguyên từ 1.",
@@ -1989,6 +2001,9 @@ const en: AdminDictionary = {
     amount: "Points",
     messageRequired: "Enter a transaction message.",
     insufficient: "The current balance is too low for this debit.",
+    adjustmentUncertain:
+      "The points adjustment could not be confirmed. Retry the saved request to check or complete it.",
+    retryAdjustment: "Retry saved transaction",
     create: "Create transaction",
     creating: "Creating…",
     created: "Point transaction created.",
@@ -2244,8 +2259,14 @@ const en: AdminDictionary = {
     productSaveUncertain:
       "The product may have been saved. Check the product details before saving again. Your edits are still in the form.",
     productCreateUncertain:
-      "The draft may have been created. Search the product list for SKU {sku} before creating it again.",
-    productSearchAttemptedSku: "Find the submitted SKU (opens in a new tab)",
+      "The draft with SKU {sku} may have been created. Check the outcome before creating it again.",
+    productCheckCreate: "Check creation outcome",
+    productRetryCreate: "Retry the saved request",
+    productCreateStillUnknown:
+      "The outcome is still unknown. Check again or retry the saved request.",
+    productCreateRemoved: "The draft was created and later deleted.",
+    productOpenCreated: "Open the created product",
+    productUseLatestVersion: "Use the latest version and keep my draft",
     productTransitionInvalid: "This transition is unavailable. Review the current status.",
     productResultUncertain:
       "The result could not be confirmed. Review the refreshed product before deciding what to do next.",
@@ -2898,6 +2919,9 @@ const en: AdminDictionary = {
     confirmUsage: "Record received products",
     creatingUsage: "Recording received products…",
     usageCreated: "Received products recorded and remaining quantity updated.",
+    usageUncertain:
+      "The quota usage could not be confirmed. Retry the saved request to check or complete it.",
+    retryUsage: "Retry saved quota usage",
     usageValidation:
       "Choose at least one unique product; enter 0.25, 0.5, 0.75 or a whole number of at least 1.",
     quotaUnitsFormat: "Enter 0.25, 0.5, 0.75 or a whole number of at least 1.",

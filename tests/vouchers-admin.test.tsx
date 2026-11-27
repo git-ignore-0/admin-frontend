@@ -2,6 +2,7 @@ import { selectOption } from "@/tests/select-option";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSACouponEditor } from "@/components/csa-coupon-editor";
 import { CSACouponList } from "@/components/csa-coupon-list";
 import { api, apiEnvelope } from "@/lib/client-api";
@@ -45,7 +46,9 @@ function editor(id?: string, item = saved) {
   vi.mocked(api).mockResolvedValue(item);
   render(
     <AdminI18nProvider initialLocale="en">
-      <CSACouponEditor couponId={id} />
+      <AdminQueryProvider>
+        <CSACouponEditor couponId={id} />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
 }

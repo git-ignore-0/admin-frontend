@@ -80,7 +80,10 @@ export type StoreProduct = {
   updated_at: string;
 };
 
-export type StoreProductDetail = StoreProduct & { capabilities: ProductCapabilities };
+export type StoreProductDetail = StoreProduct & {
+  capabilities: ProductCapabilities;
+  version: number;
+};
 
 export type MembershipStatus = "scheduled" | "active" | "frozen" | "ended" | "revoked";
 export type MembershipQuotaPolicy = "expire" | "rollover";

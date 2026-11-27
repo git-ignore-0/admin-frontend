@@ -32,11 +32,27 @@ export type ClientApiError = Error & {
 export function isProtectedDataError(caught: unknown): boolean {
   if (!(caught instanceof Error)) return false;
   const { status, message } = caught as ClientApiError;
+  if (message === "csrf_rejected") return false;
   return (
     status === 401 ||
-    status === 403 ||
+    (status === 403 && message !== "request_timeout") ||
     message === "session_expired" ||
     message === "session_changed"
+  );
+}
+
+export function isUncertainMutationError(caught: unknown): boolean {
+  if (!(caught instanceof Error)) return true;
+  const { status, message } = caught as ClientApiError;
+  if (isProtectedDataError(caught) || message === "csrf_rejected") return false;
+  return (
+    message === "invalid_response" ||
+    message === "network_error" ||
+    message === "request_timeout" ||
+    status === undefined ||
+    status < 400 ||
+    status === 408 ||
+    status >= 500
   );
 }
 

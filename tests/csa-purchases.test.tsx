@@ -9,6 +9,7 @@ import {
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSAPurchaseRequestDetail } from "@/components/csa-purchase-request-detail";
 import { CSAPurchaseRequestList } from "@/components/csa-purchase-request-list";
 import { MembershipPaymentSettingsForm } from "@/components/membership-payment-settings-form";
@@ -166,7 +167,9 @@ function renderWithProviders(node: React.ReactNode, locale: "vi" | "en" = "vi") 
   return render(
     <RouterContext.Provider value={navigation as unknown as NextRouter}>
       <AdminI18nProvider initialLocale={locale}>
-        <ToastProvider>{node}</ToastProvider>
+        <AdminQueryProvider>
+          <ToastProvider>{node}</ToastProvider>
+        </AdminQueryProvider>
       </AdminI18nProvider>
     </RouterContext.Provider>,
   );

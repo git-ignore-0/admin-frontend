@@ -1,12 +1,13 @@
 "use client";
 import { Alert, Box, TextInput } from "@mantine/core";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DataState } from "@/components/nfv-controls";
 import { RecordDetailField } from "@/components/record-detail-fields";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { formatAdminDate } from "@/lib/admin-date";
 import {
   csaDeadlineInputMax,
@@ -24,14 +25,17 @@ export function CSAReopenDialog({
   deliveryDate,
   onClose,
   onSaved,
+  onAccessDenied,
 }: {
   selectionId: string;
   orderId: string;
   deliveryDate: string;
   onClose: () => void;
   onSaved: () => void;
+  onAccessDenied?: (error: unknown) => void;
 }) {
   const { locale, t } = useAdminI18n();
+  const scope = useAdminRecordScope(`${orderId}:${selectionId}`);
   const c = csaRoundsCopy(locale);
   const [extending, setExtending] = useState(false);
   const [deadline, setDeadline] = useState("");
@@ -45,14 +49,27 @@ export function CSAReopenDialog({
   const [, tick] = useState(0);
   const lock = useRef(false);
   const mounted = useRef(true);
-  const generation = useRef(0);
   const clock = useRef({ server: 0, received: 0 });
   const revision = useRef<number | null>(null);
   const [actualDelivery, setActualDelivery] = useState(deliveryDate);
-  const savedCallback = useRef(onSaved);
-  savedCallback.current = onSaved;
+  const callbacks = useRef({ onSaved, onAccessDenied });
+  callbacks.current = { onSaved, onAccessDenied };
+  const retireAccess = useCallback(
+    (caught: unknown) => {
+      scope.retire();
+      revision.current = null;
+      setEligibleUntil(null);
+      setDeadline("");
+      setExtending(false);
+      setActualDelivery(deliveryDate);
+      setLoading(false);
+      setLoadError(caught);
+      callbacks.current.onAccessDenied?.(caught);
+    },
+    [deliveryDate, scope],
+  );
   useEffect(() => {
-    const current = ++generation.current;
+    const { current, signal } = scope.beginRead();
     setLoading(true);
     setLoadError(null);
     setError(null);
@@ -60,9 +77,9 @@ export function CSAReopenDialog({
     setReloadRequired(false);
     setDeadline("");
     revision.current = null;
-    void getStoreOrder(orderId)
+    void getStoreOrder(orderId, signal, { shouldRedirectToLogin: current })
       .then((order) => {
-        if (current !== generation.current) return;
+        if (!current()) return;
         const selected = order.csa?.selection;
         setExtending(selected?.state === "reselecting");
         revision.current = selected?.revision ?? null;
@@ -75,15 +92,15 @@ export function CSAReopenDialog({
         if (selected?.reopen_until) setDeadline(roundDateInput(selected.reopen_until));
       })
       .catch((e) => {
-        if (current === generation.current) setLoadError(e);
+        if (!current()) return;
+        if (isProtectedDataError(e)) retireAccess(e);
+        else setLoadError(e);
       })
       .finally(() => {
-        if (current === generation.current) setLoading(false);
+        if (current()) setLoading(false);
       });
-    return () => {
-      generation.current += 1;
-    };
-  }, [orderId, selectionId, deliveryDate, reload]);
+    return scope.retire;
+  }, [orderId, selectionId, deliveryDate, reload, retireAccess, scope]);
   useEffect(() => {
     mounted.current = true;
     const timer = setInterval(() => tick((value) => value + 1), 1000);
@@ -97,7 +114,8 @@ export function CSAReopenDialog({
   const value = roundDateToApi(deadline);
   const valid = Boolean(value && validateReopenDeadline(value, actualDelivery, now));
   async function confirm() {
-    if (lock.current || !eligible || revision.current === null || !valid) return;
+    const current = scope.capture();
+    if (lock.current || !eligible || revision.current === null || !valid || !current()) return;
     const currentNow =
       clock.current.server + Math.max(0, performance.now() - clock.current.received);
     if (eligibleUntil === null || currentNow >= eligibleUntil) {
@@ -109,18 +127,25 @@ export function CSAReopenDialog({
       setError(new Error("csa_reselection_deadline_invalid"));
       return;
     }
-    const current = generation.current;
     lock.current = true;
     setBusy(true);
     setError(null);
     try {
-      await api(`admin/csa-selections/${selectionId}/reopen`, {
-        method: "POST",
-        body: JSON.stringify({ deadline: value, expected_revision: revision.current }),
-      });
-      if (current === generation.current) savedCallback.current();
+      await api(
+        `admin/csa-selections/${selectionId}/reopen`,
+        {
+          method: "POST",
+          body: JSON.stringify({ deadline: value, expected_revision: revision.current }),
+        },
+        { shouldRedirectToLogin: current },
+      );
+      if (current()) callbacks.current.onSaved();
     } catch (e) {
-      if (current === generation.current) {
+      if (current()) {
+        if (isProtectedDataError(e)) {
+          retireAccess(e);
+          return;
+        }
         setError(e);
         if (
           (e as { status?: number }).status === 409 &&

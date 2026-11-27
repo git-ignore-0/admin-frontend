@@ -7,20 +7,27 @@ import { Button, Alert, Badge, Group } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { formatVietnamPhone } from "@/lib/phone-number";
+import { requireRedemptionDetail } from "@/lib/rewards";
 import type { RedemptionDetail, RedemptionStatus, RedemptionTransaction } from "@/lib/types";
 
 type RedemptionAction = "mark-contacted" | "complete" | "reject";
 
 export function RedemptionDetailView({ redemptionId }: { redemptionId: string }) {
+  return <RedemptionDetailRecord key={redemptionId} redemptionId={redemptionId} />;
+}
+
+function RedemptionDetailRecord({ redemptionId }: { redemptionId: string }) {
   const { locale, t } = useAdminI18n();
   const toast = useToast();
+  const scope = useAdminRecordScope(redemptionId);
   const savingRef = useRef(false);
   const summaryFocusRef = useRef<HTMLHeadingElement>(null);
   const [item, setItem] = useState<RedemptionDetail | null>(null);
@@ -34,21 +41,44 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
   const [stale, setStale] = useState(false);
   const [actionsLocked, setActionsLocked] = useState(false);
 
+  const retire = useCallback(
+    (caught: unknown) => {
+      if (!isProtectedDataError(caught) && (caught as ClientApiError | null)?.status !== 404)
+        return false;
+      scope.retire();
+      setItem(null);
+      setAction(null);
+      setInternalNote("");
+      setRejectionMessage("");
+      setLoadError(caught);
+      setLoading(false);
+      savingRef.current = false;
+      setSaving(false);
+      return true;
+    },
+    [scope],
+  );
+
   const load = useCallback(async () => {
+    const { signal, current } = scope.beginRead();
     setLoading(true);
     try {
-      const latest = await api<RedemptionDetail>(`admin/redemptions/${redemptionId}`);
+      const latest = requireRedemptionDetail(
+        await api<RedemptionDetail>(`admin/redemptions/${redemptionId}`, { signal }),
+        redemptionId,
+      );
+      if (!current()) return null;
       setItem(latest);
       setLoadError(null);
       setActionsLocked(false);
       return latest;
     } catch (caught) {
-      setLoadError(() => caught);
+      if (current() && !retire(caught)) setLoadError(() => caught);
       return null;
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [redemptionId]);
+  }, [redemptionId, retire, scope]);
 
   useEffect(() => {
     void load();
@@ -70,7 +100,8 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
   }
 
   async function confirmAction() {
-    if (!item || !action || savingRef.current || stale) return;
+    const current = scope.capture();
+    if (!current() || !item || !action || savingRef.current || stale || actionsLocked) return;
     if (action === "reject" && !rejectionMessage.trim()) {
       setActionError(t.redemptions.rejectionRequired);
       return;
@@ -86,14 +117,17 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
         `admin/redemptions/${item.id}/${action}`,
         { method: "POST", body: JSON.stringify(payload) },
       );
-      setItem(result.redemption);
+      if (!current()) return;
+      setItem(requireRedemptionDetail(result?.redemption, redemptionId));
       setAction(null);
       toast(t.redemptions.actionSuccess[action]);
     } catch (caught) {
+      if (!current() || retire(caught)) return;
       const apiError = caught as Error & { status?: number };
       if (apiError.status === 409) {
         setActionsLocked(true);
         const latest = await load();
+        if (!current()) return;
         setStale(true);
         setActionsLocked(!latest);
         setActionError(latest ? t.redemptions.conflict : t.redemptions.conflictRefreshFailed);
@@ -101,8 +135,10 @@ export function RedemptionDetailView({ redemptionId }: { redemptionId: string })
         setActionError(requestErrorMessage(caught, t));
       }
     } finally {
-      savingRef.current = false;
-      setSaving(false);
+      if (current()) {
+        savingRef.current = false;
+        setSaving(false);
+      }
     }
   }
 

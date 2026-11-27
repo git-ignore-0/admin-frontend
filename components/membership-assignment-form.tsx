@@ -25,9 +25,14 @@ import { AdminDateInput } from "@/components/admin-date-input";
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import {
+  useAdminRecordScope,
+  useIsAdminQueryScopeCurrent,
+} from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { MembershipStatusBadge } from "@/components/membership-status-badge";
 import { DataState, Status } from "@/components/nfv-controls";
+import { Pagination } from "@/components/pagination";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
@@ -38,11 +43,23 @@ import {
   membershipLastReceiptDate,
 } from "@/lib/admin-date";
 import { api, apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import {
+  requirePaginatedList,
+  requireResponseEntity,
+  requireResponseList,
+} from "@/lib/api-response";
+import {
+  invalidApiResponse,
+  isProtectedDataError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import {
   csaCustomerDetailKey,
   csaCustomerListKey,
   csaCustomerPath,
+  requireCSACustomer,
+  retireCSACustomers,
 } from "@/lib/csa-customers-query";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
@@ -89,11 +106,14 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
   const copy = t.memberships;
   const router = useRouter();
   const client = useQueryClient();
+  const isCurrent = useIsAdminQueryScopeCurrent();
+  const recordScope = useAdminRecordScope(customerId ?? "assignment");
   const toast = useToast();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const assignButtonRef = useRef<HTMLButtonElement>(null);
   const orderReferenceRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef(false);
+  const [packagePage, setPackagePage] = useState(1);
   const [packageId, setPackageId] = useState("");
   const [priceOptionId, setPriceOptionId] = useState("");
   const [orderReference, setOrderReference] = useState("");
@@ -102,28 +122,80 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
   const [formError, setFormError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [accessError, setAccessError] = useState<unknown>(null);
 
   const customerKey = csaCustomerDetailKey(customerId ?? "");
   const customerQuery = useQuery({
     queryKey: customerKey,
     enabled: Boolean(customerId),
-    queryFn: ({ signal }) =>
-      api<CSACustomer>(`admin/csa-customers/${encodeURIComponent(customerId ?? "")}`, { signal }),
+    queryFn: async ({ signal }) => {
+      try {
+        const row = await api<CSACustomer>(
+          `admin/csa-customers/${encodeURIComponent(customerId ?? "")}`,
+          { signal },
+        );
+        signal.throwIfAborted();
+        return requireCSACustomer(row, customerId);
+      } catch (caught) {
+        if (!signal.aborted && isCurrent() && isProtectedDataError(caught))
+          retireCSACustomers(client, customerKey);
+        throw caught;
+      }
+    },
   });
-  const customer = customerQuery.error ? undefined : customerQuery.data;
+  const customerError = accessError ?? customerQuery.error;
+  const customer = customerError ? undefined : customerQuery.data;
   const packageQuery = useQuery({
-    queryKey: ["csa-assignment-packages"],
+    queryKey: ["csa-assignment-packages", packagePage],
     enabled: Boolean(customer),
     queryFn: async ({ signal }) => {
       const result = await apiEnvelope<MembershipPackage[], PaginationMeta>(
-        "admin/membership-packages?active=true&page=1",
+        `admin/membership-packages?active=true&page=${packagePage}`,
         { signal },
       );
-      return result.data.filter((item) => item.is_active);
+      return requirePaginatedList(
+        result,
+        (item) => {
+          requireResponseEntity(item);
+          if (typeof item.is_active !== "boolean" || typeof item.name !== "string")
+            throw invalidApiResponse();
+          requireResponseList(item.translations);
+          requireResponseList(item.price_options, (option) => {
+            requireResponseEntity(option);
+            if (
+              !Number.isSafeInteger(option.duration_months) ||
+              option.duration_months <= 0 ||
+              typeof option.is_active !== "boolean" ||
+              typeof option.monthly_price_vnd !== "string" ||
+              typeof option.total_price_vnd !== "string"
+            )
+              throw invalidApiResponse();
+          });
+        },
+        packagePage,
+      );
     },
   });
-  const packages = packageQuery.error ? undefined : packageQuery.data;
+  const packageMeta = packageQuery.error ? undefined : packageQuery.data?.meta;
+  const packages = packageQuery.error
+    ? undefined
+    : packageQuery.data?.data.filter((item) => item.is_active);
   const packagesLoading = packageQuery.isPending && !packageQuery.error;
+  useEffect(() => {
+    if (!packageMeta) return;
+    const last = Math.max(1, Math.ceil(packageMeta.total / packageMeta.page_size));
+    if (packagePage > last) setPackagePage(last);
+  }, [packageMeta, packagePage]);
+  useEffect(() => {
+    if (isProtectedDataError(packageQuery.error)) {
+      setPackageId("");
+      setPriceOptionId("");
+      client.removeQueries({
+        queryKey: ["csa-assignment-packages"],
+        type: "inactive",
+      });
+    }
+  }, [client, packageQuery.error]);
   const { provinceName, wardName } = useAdministrativeUnitNames(
     customer?.province_code ?? null,
     customer?.ward_code ?? null,
@@ -177,7 +249,16 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
       .replace("{price}", formatMembershipMoney(monthly, locale));
 
   async function assign() {
-    if (!formReady || !customer || !selectedPackage || !selectedOption || submitRef.current) return;
+    const current = recordScope.capture();
+    if (
+      !formReady ||
+      !customer ||
+      !selectedPackage ||
+      !selectedOption ||
+      submitRef.current ||
+      !current()
+    )
+      return;
     submitRef.current = true;
     setSaving(true);
     setFormError("");
@@ -189,22 +270,48 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
         start_date: startDate,
         farmbrite_order_reference: orderReference.trim(),
       };
-      await api<AdminMembership>(`admin/memberships?locale=${locale}`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const membership = await api<AdminMembership>(
+        `admin/memberships?locale=${locale}`,
+        { method: "POST", body: JSON.stringify(body) },
+        { shouldRedirectToLogin: current },
+      );
+      if (!current()) return;
+      const readError = client.getQueryState(customerKey)?.error as ClientApiError | null;
+      if (
+        !client.getQueryData(customerKey) ||
+        isProtectedDataError(readError) ||
+        readError?.status === 404
+      ) {
+        submitRef.current = false;
+        setSaving(false);
+        return;
+      }
+      requireResponseEntity(membership);
       void client.invalidateQueries({ queryKey: customerKey, refetchType: "none" });
       void client.invalidateQueries({ queryKey: csaCustomerListKey, refetchType: "none" });
       toast(copy.assignmentCreated);
       router.replace(backHref ?? `${csaCustomerPath}/${encodeURIComponent(customer.id)}`);
     } catch (caught) {
+      if (!current()) return;
       const code = caught instanceof Error ? caught.message : "";
       submitRef.current = false;
       setSaving(false);
       setConfirmOpen(false);
+      if (isProtectedDataError(caught)) {
+        retireCSACustomers(client);
+        recordScope.retire();
+        setAccessError(caught);
+        setOrderReference("");
+        setStartDateInput("");
+        setPackageId("");
+        setPriceOptionId("");
+        return;
+      }
       if (code === "duplicate_farmbrite_order_reference") {
         setOrderReferenceError(copy.duplicateOrderReference);
-        window.setTimeout(() => orderReferenceRef.current?.focus(), 0);
+        window.setTimeout(() => {
+          if (current()) orderReferenceRef.current?.focus();
+        }, 0);
         return;
       }
       setFormError(
@@ -231,11 +338,15 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
               {copy.backToCustomers}
             </Button>
           </Stack>
-        ) : customerQuery.error ? (
+        ) : customerError ? (
           <Stack gap="sm" align="flex-start">
             <RecoveryAlert
-              message={requestErrorMessage(customerQuery.error, t)}
-              onRetry={() => void customerQuery.refetch()}
+              message={requestErrorMessage(customerError, t)}
+              onRetry={() => {
+                void customerQuery.refetch().then(({ isSuccess }) => {
+                  if (isCurrent() && isSuccess) setAccessError(null);
+                });
+              }}
               retryLabel={t.common.retry}
               loading={customerQuery.isFetching}
             />
@@ -363,6 +474,18 @@ function MembershipAssignment({ customerId, backHref, listHref }: Props & { list
                   );
                 })}
               </Stack>
+            )}
+            {packageMeta && (
+              <Pagination
+                page={packageMeta.page}
+                pageSize={packageMeta.page_size}
+                total={packageMeta.total}
+                onPage={setPackagePage}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+                disabled={packageQuery.isFetching || saving}
+              />
             )}
 
             <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="md">

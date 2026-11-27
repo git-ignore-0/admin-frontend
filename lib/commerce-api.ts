@@ -6,6 +6,7 @@ import {
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
+import { requireCreationReceipt } from "@/lib/creation-receipt";
 import { parsePositiveBigInteger, parsePositiveDecimal } from "@/lib/numeric-input";
 import type {
   MediaAsset,
@@ -37,7 +38,33 @@ export type ProductInput = {
   csa_quota_cost: number;
   primary_image_id: string | null;
   translations: StoreProduct["translations"];
+  version?: number;
+  idempotency_key?: string;
 };
+
+function requireStoreCategory(category: StoreCategory, id?: string) {
+  requireResponseEntity(category, id);
+  if (
+    typeof category.slug !== "string" ||
+    typeof category.is_active !== "boolean" ||
+    typeof category.has_children !== "boolean" ||
+    !(category.parent_id === null || typeof category.parent_id === "string") ||
+    ![category.depth, category.sort_order, category.product_count].every(Number.isSafeInteger) ||
+    category.depth < 1 ||
+    category.product_count < 0
+  )
+    throw invalidApiResponse();
+  requireResponseList(category.translations, (translation) => {
+    if (
+      !isApiObject(translation) ||
+      !isLocale(translation.locale) ||
+      typeof translation.name !== "string" ||
+      typeof translation.description !== "string"
+    )
+      throw invalidApiResponse();
+  });
+  return category;
+}
 
 export function listStoreCategories(
   query?: { search?: string; is_active?: boolean },
@@ -48,27 +75,20 @@ export function listStoreCategories(
   if (query?.is_active !== undefined) params.set("is_active", String(query.is_active));
   return api<StoreCategory[]>(`admin/store-categories${params.size ? `?${params}` : ""}`, {
     signal,
-  }).then((data) =>
-    requireResponseList(data, (category) => {
-      requireResponseEntity(category);
-      requireResponseList(category.translations, (translation) => {
-        if (!isApiObject(translation) || typeof translation.name !== "string") {
-          throw invalidApiResponse();
-        }
-      });
-    }),
-  );
+  }).then((data) => requireResponseList(data, requireStoreCategory));
 }
 
-export function getStoreCategory(id: string) {
-  return api<StoreCategory>(`admin/store-categories/${id}`);
+export function getStoreCategory(id: string, signal?: AbortSignal) {
+  return api<StoreCategory>(`admin/store-categories/${id}`, { signal }).then((data) =>
+    requireStoreCategory(data, id),
+  );
 }
 
 export function saveStoreCategory(payload: CategoryInput, id?: string) {
   return api<StoreCategory>(id ? `admin/store-categories/${id}` : "admin/store-categories", {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(payload),
-  }).then(requireResponseEntity);
+  }).then((data) => requireStoreCategory(data, id));
 }
 
 export function deleteStoreCategory(id: string) {
@@ -193,6 +213,8 @@ function requireStoreProductDetail(
   if (
     (id !== undefined && product.id.toLowerCase() !== id.toLowerCase()) ||
     (status !== undefined && product.status !== status) ||
+    !Number.isSafeInteger(product.version) ||
+    product.version < 1 ||
     !isApiObject(product.capabilities)
   )
     throw invalidApiResponse();
@@ -238,34 +260,84 @@ export function getStoreProduct(id: string, signal?: AbortSignal) {
   );
 }
 
-export function saveStoreProduct(payload: Partial<ProductInput>, id?: string) {
-  return api<StoreProductDetail>(id ? `admin/store-products/${id}` : "admin/store-products", {
+export async function saveStoreProduct(
+  payload: Partial<ProductInput>,
+  id?: string,
+  active?: () => boolean,
+) {
+  const init = {
     method: id ? "PATCH" : "POST",
     body: JSON.stringify(payload),
-  }).then((product) => requireStoreProductDetail(product, id, id ? undefined : "draft"));
+  };
+  if (!id && payload.idempotency_key) {
+    const { data, meta } = await apiEnvelope("admin/store-products", init, {
+      allowMissingData: true,
+      shouldRedirectToLogin: active,
+    });
+    return {
+      id: requireCreationReceipt(meta, payload.idempotency_key, "create_product"),
+      removed: data === null,
+    };
+  }
+  const product = await api<StoreProductDetail>(
+    id ? `admin/store-products/${id}` : "admin/store-products",
+    init,
+    { shouldRedirectToLogin: active },
+  );
+  return { ...requireStoreProductDetail(product, id, id ? undefined : "draft"), removed: false };
 }
 
-export function transitionStoreProduct(id: string, expected: ProductStatus, target: ProductStatus) {
-  return api<StoreProductDetail>(`admin/store-products/${id}/transition`, {
-    method: "POST",
-    body: JSON.stringify({ expected_status: expected, target_status: target }),
-  }).then((product) => requireStoreProductDetail(product, id, target));
+export async function getStoreProductCreation(key: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ creation_key: key });
+  const { data, meta } = await apiEnvelope(
+    `admin/store-products?${query}`,
+    { signal },
+    {
+      allowMissingData: true,
+    },
+  );
+  return { id: requireCreationReceipt(meta, key, "create_product"), removed: data === null };
 }
 
-export function deleteStoreProduct(id: string) {
-  return api(`admin/store-products/${id}`, { method: "DELETE" }, { response: "no-content" });
+export function transitionStoreProduct(
+  id: string,
+  expected: ProductStatus,
+  target: ProductStatus,
+  version: number,
+  active?: () => boolean,
+) {
+  return api<StoreProductDetail>(
+    `admin/store-products/${id}/transition`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_status: expected, target_status: target, version }),
+    },
+    { shouldRedirectToLogin: active },
+  ).then((product) => requireStoreProductDetail(product, id, target));
 }
 
-export function uploadStoreProductImage(file: File) {
+export function deleteStoreProduct(id: string, version: number, active?: () => boolean) {
+  return api(
+    `admin/store-products/${id}`,
+    { method: "DELETE", body: JSON.stringify({ version }) },
+    { response: "no-content", shouldRedirectToLogin: active },
+  );
+}
+
+export function uploadStoreProductImage(file: File, active?: () => boolean) {
   const body = new FormData();
   body.append("image", file);
-  return api<MediaAsset>("admin/store-products/media", { method: "POST", body });
+  return api<MediaAsset>(
+    "admin/store-products/media",
+    { method: "POST", body },
+    { shouldRedirectToLogin: active },
+  );
 }
 
 export function deleteStoreProductImage(id: string, options?: { keepalive?: boolean }) {
   return api(
     `admin/store-products/media/${id}`,
     { method: "DELETE", keepalive: options?.keepalive },
-    { response: "no-content" },
+    { response: "no-content", shouldRedirectToLogin: options?.keepalive ? () => false : undefined },
   );
 }

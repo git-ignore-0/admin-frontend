@@ -2,6 +2,7 @@ import { selectOption } from "@/tests/select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider, useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
@@ -40,7 +41,10 @@ function tree(id: string) {
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
         {localeControl()}
-        <StoreOrderDetail orderId={id} />
+        <AdminQueryProvider>
+          {" "}
+          <StoreOrderDetail orderId={id} />{" "}
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>
   );

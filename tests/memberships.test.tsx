@@ -23,6 +23,7 @@ import {
   AdminBreadcrumbProvider,
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { MembershipPackageDetail } from "@/components/membership-catalog-detail";
 import {
@@ -66,7 +67,9 @@ afterEach(() => {
 function providers(children: React.ReactNode, locale: "vi" | "en" = "en") {
   return render(
     <AdminI18nProvider initialLocale={locale}>
-      <ToastProvider>{children}</ToastProvider>
+      <ToastProvider>
+        <AdminQueryProvider>{children}</AdminQueryProvider>
+      </ToastProvider>
     </AdminI18nProvider>,
   );
 }
@@ -1000,6 +1003,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=vi&version_id=${oldVersion.id}`,
+      { signal: expect.any(AbortSignal) },
     );
     expect(downloads).toEqual(["CSA-CODE.v1.vi.pdf"]);
     expect(click).toHaveBeenCalledTimes(1);
@@ -1012,6 +1016,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=en&version_id=${currentVersion.id}`,
+      { signal: expect.any(AbortSignal) },
     );
     expect(createObjectURL).toHaveBeenCalledTimes(2);
     expect(screen.getByText(contract.reference_code)).toBeVisible();
@@ -1061,6 +1066,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=vi`,
+      { signal: expect.any(AbortSignal) },
     );
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).not.toHaveBeenCalled();
@@ -1074,6 +1080,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     });
     expect(apiFile).toHaveBeenCalledWith(
       `admin/memberships/${membership.id}/contract/pdf?locale=en`,
+      { signal: expect.any(AbortSignal) },
     );
     expect(click).toHaveBeenCalledTimes(2);
     expect(createObjectURL).toHaveBeenCalledTimes(2);
@@ -1299,8 +1306,43 @@ describe("Membership detail snapshots and usage regressions", () => {
           method: "POST",
           body: JSON.stringify({ reason: "Entered twice" }),
         }),
+        { shouldRedirectToLogin: expect.any(Function) },
       ),
     );
+  });
+
+  it("reopens an unresolved quota usage with the exact submitted amount and key", async () => {
+    const sent: string[] = [];
+    vi.mocked(apiEnvelope).mockResolvedValue({ data: [], meta: { ...meta, total: 0 } });
+    vi.mocked(api).mockImplementation(async (path, init) => {
+      if (path === `admin/memberships/${membership.id}?locale=en`) return membership;
+      if (path === "admin/membership-usage?locale=en") {
+        sent.push(String(init?.body));
+        if (sent.length === 1) throw new Error("request_timeout");
+        return {
+          id: "ac7d02ac-d36c-4558-b839-9124620dde44",
+          membership_id: membership.id,
+          status: "applied",
+        };
+      }
+      throw new Error(path);
+    });
+    providers(<MembershipDetail membershipId={membership.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Record received products" }));
+    let dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Units 1"), { target: { value: "2" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Record received products" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(/could not be confirmed/i);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Retry saved quota usage" }));
+    dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByLabelText("Units 1")).toHaveValue("2");
+    expect(dialog.getByLabelText("Units 1")).toBeDisabled();
+    fireEvent.click(dialog.getByRole("button", { name: "Record received products" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toBe(sent[1]);
   });
 
   it.each([
@@ -1433,6 +1475,7 @@ describe("Membership detail snapshots and usage regressions", () => {
     expect(api).toHaveBeenCalledWith(
       `admin/membership-usage/${usage.id}/undo?locale=en`,
       expect.objectContaining({ method: "POST" }),
+      { shouldRedirectToLogin: expect.any(Function) },
     );
     expect(screen.getByRole("dialog", { name: "Confirm product collection undo" })).toBeVisible();
   });
@@ -1539,10 +1582,14 @@ describe("Membership detail snapshots and usage regressions", () => {
           ([path]) => path === `admin/memberships/${membership.id}/revoke?locale=en`,
         ),
     ).toHaveLength(1);
-    expect(api).toHaveBeenCalledWith(`admin/memberships/${membership.id}/revoke?locale=en`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Assigned by mistake" }),
-    });
+    expect(api).toHaveBeenCalledWith(
+      `admin/memberships/${membership.id}/revoke?locale=en`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason: "Assigned by mistake" }),
+      },
+      { shouldRedirectToLogin: expect.any(Function) },
+    );
 
     await act(async () => resolveRevoke(revoked));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

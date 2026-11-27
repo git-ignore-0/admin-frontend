@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
@@ -81,7 +82,10 @@ function view() {
   return render(
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
-        <StoreOrderDetail orderId="11111111-1111-4111-8111-111111111111" />
+        <AdminQueryProvider>
+          {" "}
+          <StoreOrderDetail orderId="11111111-1111-4111-8111-111111111111" />{" "}
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>,
   );

@@ -30,8 +30,9 @@ export function toLegacyPackageItems(allowances: PackageAllowance[]): Membership
   }));
 }
 
-export function listActiveQuotaGroups(page: number) {
-  return apiEnvelope<CSAQuotaGroup[], PaginationMeta>(
-    `admin/membership-products?page=${page}&active=true`,
-  );
+export function listActiveQuotaGroups(page: number, signal?: AbortSignal) {
+  const path = `admin/membership-products?page=${page}&active=true`;
+  return signal
+    ? apiEnvelope<CSAQuotaGroup[], PaginationMeta>(path, { signal })
+    : apiEnvelope<CSAQuotaGroup[], PaginationMeta>(path);
 }

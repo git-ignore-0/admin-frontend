@@ -32,7 +32,7 @@ export function TestimonialList() {
   const [status, setStatus] = useState<TestimonialStatus | "">("");
   const [type, setType] = useState<TestimonialType | "">("");
   const fetchPage = useCallback(
-    (page: number) => {
+    (page: number, signal: AbortSignal) => {
       const params = new URLSearchParams({
         page: String(page),
         page_size: "20",
@@ -40,7 +40,7 @@ export function TestimonialList() {
         status,
         type,
       });
-      return apiEnvelope<Testimonial[], PaginationMeta>(`admin/testimonials?${params}`);
+      return apiEnvelope<Testimonial[], PaginationMeta>(`admin/testimonials?${params}`, { signal });
     },
     [search, status, type],
   );

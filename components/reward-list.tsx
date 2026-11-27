@@ -9,34 +9,16 @@ import Link from "next/link";
 import { DragEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import {
-  requirePaginatedList,
-  requireResponseEntity,
-  requireResponseList,
-} from "@/lib/api-response";
+import { requirePaginatedList } from "@/lib/api-response";
 import { ListState } from "@/components/list-state";
 import { ListResultSummary } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 import { apiEnvelope } from "@/lib/client-api";
-import { invalidApiResponse, isApiObject, requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { mediaUrlForWidth } from "@/lib/media";
+import { requireReward } from "@/lib/rewards";
 import type { PaginationMeta, Reward } from "@/lib/types";
 import { usePaginatedList } from "@/lib/use-paginated-list";
-
-function validateRewardRecord(reward: Reward) {
-  requireResponseEntity(reward);
-  if (!isApiObject(reward.image) || typeof reward.image.url !== "string") {
-    throw invalidApiResponse();
-  }
-  requireResponseList(reward.image.variants, (variant) => {
-    if (!isApiObject(variant)) throw invalidApiResponse();
-  });
-  requireResponseList(reward.translations, (translation) => {
-    if (!isApiObject(translation) || typeof translation.name !== "string") {
-      throw invalidApiResponse();
-    }
-  });
-}
 
 export function RewardList() {
   const { locale, t } = useAdminI18n();
@@ -44,15 +26,17 @@ export function RewardList() {
   const [reordering, setReordering] = useState(false);
   const [draggedId, setDraggedId] = useState("");
   const fetchPage = useCallback(
-    (page: number) => apiEnvelope<Reward[], PaginationMeta>(`admin/rewards?page=${page}`),
+    (page: number, signal: AbortSignal) =>
+      apiEnvelope<Reward[], PaginationMeta>(`admin/rewards?page=${page}`, { signal }),
     [],
   );
   const getErrorMessage = useCallback((caught: unknown) => requestErrorMessage(caught, t), [t]);
-  const { error, items, loading, meta, page, reload, replaceData, setPage } = usePaginatedList({
-    fetchPage,
-    validateRecord: validateRewardRecord,
-    getErrorMessage,
-  });
+  const { error, items, loading, meta, page, reload, replaceData, retire, setPage } =
+    usePaginatedList({
+      fetchPage,
+      validateRecord: requireReward,
+      getErrorMessage,
+    });
   const busy = loading || reordering;
 
   async function moveReward(sourceId: string, targetId?: string) {
@@ -73,9 +57,13 @@ export function RewardList() {
         method: "POST",
         body: JSON.stringify({ page, reward_ids: ordered.map((item) => item.id) }),
       });
-      const { data, meta } = requirePaginatedList(payload);
+      const { data, meta } = requirePaginatedList(payload, requireReward, page);
       replaceData(data, meta);
     } catch (caught) {
+      if (isProtectedDataError(caught)) {
+        retire(caught);
+        return;
+      }
       replaceData(previous);
       setReorderError(
         caught instanceof Error && caught.message === "reward_reorder_conflict"

@@ -47,8 +47,9 @@ async function fetchBackend(
   } catch (error) {
     throw transportError(error, init.signal);
   }
-  enforceSession(response, binding, options);
+  enforceSession(response, binding, options, init.signal);
   if (!response.ok) throw await readHttpError(response, binding, init.signal);
+  init.signal?.throwIfAborted();
   return response;
 }
 
@@ -56,10 +57,17 @@ function mediaType(response: Response) {
   return response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
 }
 
-function enforceSession(response: Response, binding: string | undefined, options?: ApiOptions) {
+function enforceSession(
+  response: Response,
+  binding: string | undefined,
+  options?: ApiOptions,
+  signal?: AbortSignal | null,
+) {
   if (response.status !== 401) return;
   const shouldRedirect =
-    renderedSessionBinding() === binding && (options?.shouldRedirectToLogin?.() ?? true);
+    !signal?.aborted &&
+    renderedSessionBinding() === binding &&
+    (options?.shouldRedirectToLogin?.() ?? true);
   // Retire protected caches even when an obsolete operation opts out of redirecting.
   if (binding) notifySessionChanged(binding);
   if (shouldRedirect) {
@@ -152,6 +160,7 @@ async function readHttpError(
 export type ApiEnvelope<T, M = Record<string, unknown>> = { data: T; meta?: M };
 type ApiOptions = { shouldRedirectToLogin?: () => boolean };
 type JsonApiOptions = ApiOptions & { response?: never };
+type ReceiptApiOptions = JsonApiOptions & { allowMissingData: true };
 type NoContentApiOptions = ApiOptions & { response: "no-content" };
 
 async function fetchApiResponse(path: string, init?: RequestInit, options?: ApiOptions) {
@@ -167,11 +176,21 @@ async function fetchApiResponse(path: string, init?: RequestInit, options?: ApiO
   return fetchBackend(path, { ...init, headers }, binding, options);
 }
 
-export async function apiEnvelope<T, M = Record<string, unknown>>(
+export function apiEnvelope<T, M = Record<string, unknown>>(
+  path: string,
+  init: RequestInit | undefined,
+  options: ReceiptApiOptions,
+): Promise<ApiEnvelope<T | null | undefined, M>>;
+export function apiEnvelope<T, M = Record<string, unknown>>(
   path: string,
   init?: RequestInit,
   options?: JsonApiOptions,
-): Promise<ApiEnvelope<T, M>> {
+): Promise<ApiEnvelope<T, M>>;
+export async function apiEnvelope<T, M = Record<string, unknown>>(
+  path: string,
+  init?: RequestInit,
+  options?: JsonApiOptions & { allowMissingData?: true },
+): Promise<ApiEnvelope<T | null | undefined, M>> {
   const response = await fetchApiResponse(path, init, options);
   if (response.status === 204 || mediaType(response) !== "application/json") {
     throw invalidApiResponse(response.status);
@@ -185,11 +204,15 @@ export async function apiEnvelope<T, M = Record<string, unknown>>(
     }
     throw transportError(error, init?.signal);
   }
-  if (!isApiObject(payload) || !Object.hasOwn(payload, "data") || payload.data == null) {
+  init?.signal?.throwIfAborted();
+  if (
+    !isApiObject(payload) ||
+    (!options?.allowMissingData && (!Object.hasOwn(payload, "data") || payload.data == null))
+  ) {
     throw invalidApiResponse(response.status);
   }
   // Domain callers validate the specific data and metadata they depend on.
-  return payload as ApiEnvelope<T, M>;
+  return payload as ApiEnvelope<T | null | undefined, M>;
 }
 
 export function api(
@@ -219,15 +242,18 @@ export async function apiFile(path: string, { signal }: Pick<RequestInit, "signa
   const headers = new Headers();
   applySessionHeader(headers, binding);
   const response = await fetchBackend(path, { cache: "no-store", headers, signal }, binding);
-  if (response.body === null || mediaType(response) !== "application/pdf") {
-    throw Object.assign(new Error("csa_contract_pdf_unavailable"), { status: 502 });
-  }
+  const invalidFile = () =>
+    Object.assign(new Error("csa_contract_pdf_unavailable"), { status: 502 });
+  if (response.body === null || mediaType(response) !== "application/pdf") throw invalidFile();
   let blob: Blob;
   try {
     blob = await response.blob();
   } catch (error) {
     throw transportError(error, signal);
   }
+  const signature = await blob.slice(0, 5).text();
+  signal?.throwIfAborted();
+  if (signature !== "%PDF-") throw invalidFile();
   return {
     blob,
     filename:

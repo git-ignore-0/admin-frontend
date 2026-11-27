@@ -1,7 +1,17 @@
 import { selectOption } from "./select-option";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import type { Editor } from "@tiptap/react";
 import {
   AdminBreadcrumbProvider,
@@ -12,6 +22,15 @@ import { StoreProductEditor } from "@/components/store-product-editor";
 import ProductRouteLoading from "@/app/(admin)/store-catalog/products/loading";
 import { adminDictionaries } from "@/lib/admin-i18n";
 
+function render(ui: ReactElement) {
+  const client = new QueryClient();
+  return renderView(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
+
 const mocks = vi.hoisted(() => ({
   locale: "vi" as "vi" | "en",
   search: new URLSearchParams(),
@@ -20,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(),
   product: vi.fn(),
   save: vi.fn(),
+  creation: vi.fn(),
   transition: vi.fn(),
   refresh: vi.fn(),
   remove: vi.fn(),
@@ -36,6 +56,7 @@ const revokeObjectUrl = vi.fn();
 vi.mock("@/lib/commerce-api", () => ({
   listStoreCategories: mocks.categories,
   saveStoreProduct: mocks.save,
+  getStoreProductCreation: mocks.creation,
   transitionStoreProduct: mocks.transition,
   getStoreProduct: mocks.product,
   deleteStoreProduct: mocks.remove,
@@ -118,6 +139,7 @@ beforeEach(() => {
 });
 
 const storedProduct = {
+  version: 1,
   id: "product-1",
   category_id: "leaf",
   category_slug: "rau-la",
@@ -884,8 +906,9 @@ describe("store product editor", () => {
       ),
     );
     expect(mocks.save).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ retail_price_vnd: "95000" }),
+      expect.objectContaining({ retail_price_vnd: "95000", version: 1 }),
       "product-1",
+      expect.any(Function),
     );
     expect(mocks.transition).not.toHaveBeenCalled();
   });
@@ -988,10 +1011,7 @@ describe("store product editor", () => {
 
     const warning = await screen.findByRole("alert");
     expect(warning).toHaveTextContent(/SKU RAU-01.*trước khi tạo lại/i);
-    expect(within(warning).getByRole("link")).toHaveAttribute(
-      "href",
-      "/store-catalog/products?status=all&search=RAU-01",
-    );
+    expect(screen.getByRole("button", { name: "Lưu" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/Mã quản lý sản phẩm/), {
       target: { value: "RAU-CHANGED" },
     });
@@ -1001,8 +1021,41 @@ describe("store product editor", () => {
     expect(mocks.product).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalled();
     expect(mocks.replace).not.toHaveBeenCalled();
+    const sent = mocks.save.mock.calls[0][0];
+    mocks.creation.mockResolvedValueOnce({ id: "confirmed-product", removed: false });
+    fireEvent.click(within(warning).getByRole("button", { name: "Kiểm tra kết quả tạo" }));
+    await waitFor(() =>
+      expect(mocks.replace).toHaveBeenCalledWith("/store-catalog/products/confirmed-product"),
+    );
+    expect(mocks.creation).toHaveBeenCalledWith(sent.idempotency_key, expect.any(AbortSignal));
+    expect(mocks.save).toHaveBeenCalledTimes(1);
     unmount();
     expect(mocks.deleteImage).not.toHaveBeenCalled();
+  });
+
+  it("does not request CSA groups for a retail-only product", async () => {
+    mocks.product.mockResolvedValue({
+      ...storedProduct,
+      csa_quota_group_id: null,
+      csa_quota_group: null,
+      csa_quota_cost: 0,
+    });
+    render(<StoreProductEditor productId="product-1" />);
+    await screen.findByLabelText(/Mã quản lý sản phẩm/);
+    expect(mocks.groups).not.toHaveBeenCalled();
+  });
+
+  it("retains a product draft on CSRF rejection without a recovery read", async () => {
+    mocks.product.mockResolvedValue(storedProduct);
+    mocks.save.mockRejectedValueOnce(Object.assign(new Error("csrf_rejected"), { status: 403 }));
+    render(<StoreProductEditor productId="product-1" />);
+    const sku = await screen.findByLabelText(/Mã quản lý sản phẩm/);
+    fireEvent.change(sku, { target: { value: "MY-DRAFT" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lưu" }));
+    await screen.findByRole("alert");
+    expect(sku).toBeVisible();
+    expect(sku).toHaveValue("MY-DRAFT");
+    expect(mocks.product).toHaveBeenCalledTimes(1);
   });
 
   it("clears a transient load error after retrying", async () => {
@@ -1380,7 +1433,13 @@ describe("store product detail", () => {
     const dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Ngừng bán" }));
     await waitFor(() =>
-      expect(mocks.transition).toHaveBeenCalledWith("product-1", "active", "discontinued"),
+      expect(mocks.transition).toHaveBeenCalledWith(
+        "product-1",
+        "active",
+        "discontinued",
+        1,
+        expect.any(Function),
+      ),
     );
     expect(await screen.findByRole("button", { name: "Bán lại" })).toBeVisible();
     expect(mocks.save).not.toHaveBeenCalled();
@@ -1415,7 +1474,13 @@ describe("store product detail", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Bán lại" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Bán lại" }));
     expect(await screen.findByRole("button", { name: "Ngừng bán" })).toBeVisible();
-    expect(mocks.transition).toHaveBeenCalledExactlyOnceWith("product-1", "discontinued", "active");
+    expect(mocks.transition).toHaveBeenCalledExactlyOnceWith(
+      "product-1",
+      "discontinued",
+      "active",
+      1,
+      expect.any(Function),
+    );
   });
 
   it.each([

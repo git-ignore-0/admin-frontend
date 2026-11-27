@@ -13,13 +13,13 @@ import {
   Status,
 } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
-import { requireResponseEntity } from "@/lib/api-response";
 import { formatAdminDate } from "@/lib/admin-date";
 import { apiEnvelope } from "@/lib/client-api";
 import {
   couponErrorMessage,
   couponOffer,
   couponScopeSummary,
+  requireAdminCoupon,
   type AdminCoupon,
   type CouponApplicationScope,
   type CouponDiscountType,
@@ -36,19 +36,19 @@ export function CSACouponList() {
   const [discountType, setDiscountType] = useState<CouponDiscountType | "">("");
   const [applicationScope, setApplicationScope] = useState<CouponApplicationScope | "">("");
   const fetchPage = useCallback(
-    (page: number) => {
+    (page: number, signal: AbortSignal) => {
       const params = new URLSearchParams({ page: String(page) });
       if (status) params.set("status", status);
       if (discountType) params.set("discount_type", discountType);
       if (applicationScope) params.set("application_scope", applicationScope);
-      return apiEnvelope<AdminCoupon[], PaginationMeta>(`admin/vouchers?${params}`);
+      return apiEnvelope<AdminCoupon[], PaginationMeta>(`admin/vouchers?${params}`, { signal });
     },
     [status, discountType, applicationScope],
   );
   const getErrorMessage = useCallback((error: unknown) => couponErrorMessage(error, t), [t]);
   const { error, items, loading, meta, reload, setPage } = usePaginatedList({
     fetchPage,
-    validateRecord: requireResponseEntity,
+    validateRecord: requireAdminCoupon,
     getErrorMessage,
   });
 

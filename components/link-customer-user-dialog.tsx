@@ -2,13 +2,15 @@
 
 import { Alert, Button, Radio, SimpleGrid, Stack, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DataState, FormInput } from "@/components/nfv-controls";
+import { Pagination } from "@/components/pagination";
 import { requireAccountSearchRecord, userAccountPhone } from "@/lib/admin-users";
-import { requireResponseList } from "@/lib/api-response";
+import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { getCSAAccountDetails, isCSAAccountPermissionDenied } from "@/lib/csa-customer-creation";
@@ -35,10 +37,14 @@ export function LinkCustomerUserDialog({
   onLinked: (customer: CSACustomer) => void | Promise<void>;
 }) {
   const { locale, t } = useAdminI18n();
+  const isCurrent = useIsAdminQueryScopeCurrent();
   const copy = t.csaCustomers;
   const submitRef = useRef(false);
-  const pendingSearch = useRef<symbol | null>(null);
+  const mounted = useRef(false);
+  const pendingSearch = useRef<AbortController | null>(null);
   const [query, setQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
+  const [meta, setMeta] = useState<PaginationMeta | null>(null);
   const [users, setUsers] = useState<AdminUserListItem[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,24 +72,44 @@ export function LinkCustomerUserDialog({
     locale,
   );
 
-  async function search(event: FormEvent) {
-    event.preventDefault();
-    if (!query.trim() || submitRef.current) return;
-    const request = Symbol();
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      pendingSearch.current?.abort();
+      pendingSearch.current = null;
+    };
+  }, [customerId]);
+
+  async function searchUsers(text: string, page: number) {
+    if (!text || submitRef.current || !isCurrent()) return;
+    pendingSearch.current?.abort();
+    const request = new AbortController();
     pendingSearch.current = request;
+    setAppliedQuery(text);
     setUsers(null);
+    setMeta(null);
     setSelectedId(null);
     setBusy(true);
     setError("");
     try {
       const result = await apiEnvelope<AdminUserListItem[], PaginationMeta>(
-        `admin/users?page=1&search=${encodeURIComponent(query.trim())}`,
+        `admin/users?page=${page}&search=${encodeURIComponent(text)}`,
+        { signal: request.signal },
       );
-      if (request === pendingSearch.current) {
-        setUsers(requireResponseList(result.data, requireAccountSearchRecord));
+      if (request === pendingSearch.current && isCurrent()) {
+        const verified = requirePaginatedList(result, requireAccountSearchRecord, page);
+        const last = Math.max(1, Math.ceil(verified.meta.total / verified.meta.page_size));
+        if (page > last) {
+          void searchUsers(text, last);
+          return;
+        }
+        setUsers(verified.data);
+        setMeta(verified.meta);
       }
     } catch (caught) {
-      if (request === pendingSearch.current) setError(requestErrorMessage(caught, t));
+      if (request === pendingSearch.current && isCurrent())
+        setError(requestErrorMessage(caught, t));
     } finally {
       if (request === pendingSearch.current) {
         pendingSearch.current = null;
@@ -93,20 +119,36 @@ export function LinkCustomerUserDialog({
   }
 
   async function linkUser() {
-    if (!selectedUser || !canLink || !address || pendingSearch.current || submitRef.current) return;
+    if (
+      !selectedUser ||
+      !canLink ||
+      !address ||
+      pendingSearch.current ||
+      submitRef.current ||
+      !isCurrent()
+    )
+      return;
     submitRef.current = true;
     setBusy(true);
     setError("");
     try {
-      const customer = await api<CSACustomer>(`admin/csa-customers/${customerId}/link-user`, {
-        method: "POST",
-        body: JSON.stringify({
-          user_id: selectedUser.id,
-          expected_shipping_address_updated_at: address.updated_at,
-        }),
-      });
+      const customer = await api<CSACustomer>(
+        `admin/csa-customers/${customerId}/link-user`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: selectedUser.id,
+            expected_shipping_address_updated_at: address.updated_at,
+          }),
+        },
+        { shouldRedirectToLogin: () => mounted.current && isCurrent() },
+      );
+      if (!mounted.current || !isCurrent()) return;
+      requireResponseEntity(customer, customerId);
+      if (customer.user?.id !== selectedUser.id) throw invalidApiResponse();
       await onLinked(customer);
     } catch (caught) {
+      if (!mounted.current || !isCurrent()) return;
       const code = caught instanceof Error ? caught.message : "";
       if (code === "csa_customer_shipping_address_changed") {
         setError(copy.shippingAddressChanged);
@@ -120,13 +162,16 @@ export function LinkCustomerUserDialog({
         await onConflict?.();
       } else if ((caught as ClientApiError | null)?.status === 404) {
         setUsers(null);
+        setMeta(null);
         setSelectedId(null);
         setError(requestErrorMessage(caught, t));
         void onConflict?.();
       } else if (isCSAAccountPermissionDenied(caught)) {
         const verified = await preview.refetch();
+        if (!mounted.current || !isCurrent()) return;
         if (!verified.isSuccess) {
           setUsers(null);
+          setMeta(null);
           setSelectedId(null);
         }
         setError(requestErrorMessage(caught, t));
@@ -135,7 +180,7 @@ export function LinkCustomerUserDialog({
       }
     } finally {
       submitRef.current = false;
-      setBusy(false);
+      if (mounted.current && isCurrent()) setBusy(false);
     }
   }
 
@@ -156,7 +201,14 @@ export function LinkCustomerUserDialog({
       <Alert color="yellow" role="note">
         {t.csaCustomers.linkWarning}
       </Alert>
-      <form aria-label={t.csaCustomers.findUser} className="dialog-search" onSubmit={search}>
+      <form
+        aria-label={t.csaCustomers.findUser}
+        className="dialog-search"
+        onSubmit={(event: FormEvent) => {
+          event.preventDefault();
+          void searchUsers(query.trim(), 1);
+        }}
+      >
         <label className="field">
           <span>{t.csaCustomers.findUser}</span>
           <FormInput
@@ -209,6 +261,18 @@ export function LinkCustomerUserDialog({
             </label>
           ))}
         </div>
+      )}
+      {meta && (
+        <Pagination
+          page={meta.page}
+          pageSize={meta.page_size}
+          total={meta.total}
+          onPage={(page) => void searchUsers(appliedQuery, page)}
+          previousLabel={t.common.previous}
+          nextLabel={t.common.next}
+          summary={t.common.pagination}
+          disabled={busy}
+        />
       )}
       {!selectedUser && users?.length ? (
         <p className="field-help">{t.csaCustomers.selectUserHelp}</p>

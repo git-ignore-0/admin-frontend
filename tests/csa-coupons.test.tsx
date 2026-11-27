@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSACouponEditor } from "@/components/csa-coupon-editor";
 import { CSACouponList } from "@/components/csa-coupon-list";
 import { api, apiEnvelope } from "@/lib/client-api";
@@ -54,7 +55,9 @@ const coupon: AdminCoupon = {
 function showEditor(id?: string) {
   render(
     <AdminI18nProvider initialLocale="en">
-      <CSACouponEditor couponId={id} />
+      <AdminQueryProvider>
+        <CSACouponEditor couponId={id} />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
 }
@@ -62,6 +65,13 @@ function showEditor(id?: string) {
 function mockEditorApi(item: AdminCoupon = coupon) {
   vi.mocked(api).mockResolvedValue(item);
 }
+
+it("never displays a voucher returned for a different ID", async () => {
+  mockEditorApi();
+  showEditor(packageId);
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.queryByDisplayValue(coupon.code)).not.toBeInTheDocument();
+});
 
 function chooseCouponDateTime(label: string, value: string) {
   const input = screen.getByLabelText(label);

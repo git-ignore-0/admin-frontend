@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
@@ -70,7 +71,10 @@ function view(item: StoreOrder = pending(), locale: AdminLocale = "vi") {
   return render(
     <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
-        <StoreOrderDetail orderId={item.id} />
+        <AdminQueryProvider>
+          {" "}
+          <StoreOrderDetail orderId={item.id} />{" "}
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>,
   );
@@ -464,9 +468,9 @@ describe("Store order actions", () => {
     expect(
       vi.mocked(api).mock.calls.map(([path, init]) => [path, ...(init ? [init] : [])]),
     ).toEqual([
-      [`admin/store-orders/${item.id}`],
+      [`admin/store-orders/${item.id}`, { signal: expect.any(AbortSignal) }],
       [`admin/store-orders/${item.id}/approve`, expect.objectContaining({ method: "POST" })],
-      [`admin/store-orders/${item.id}`],
+      [`admin/store-orders/${item.id}`, { signal: expect.any(AbortSignal) }],
     ]);
   });
 
@@ -482,7 +486,10 @@ describe("Store order actions", () => {
     render(
       <AdminI18nProvider initialLocale="vi">
         <ToastProvider>
-          <StoreOrderDetail orderId={item.id} />
+          <AdminQueryProvider>
+            {" "}
+            <StoreOrderDetail orderId={item.id} />{" "}
+          </AdminQueryProvider>
         </ToastProvider>
       </AdminI18nProvider>,
     );

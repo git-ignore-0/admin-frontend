@@ -113,6 +113,23 @@ describe("Store order list", () => {
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
 
+  it("never restores a previously cached tab after a later tab denies access", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [storeOrderFixture({ reference_code: "PRIVATE-ORDER" })],
+        meta: { page: 1, page_size: 20, total: 21 },
+      })
+      .mockRejectedValue(Object.assign(new Error("forbidden"), { status: 403 }));
+    view();
+    expect(await screen.findByText("PRIVATE-ORDER")).toBeVisible();
+    const tabs = within(screen.getByRole("radiogroup", { name: "Trạng thái" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Đã giao" }));
+    await screen.findByRole("alert");
+    fireEvent.click(tabs.getByRole("radio", { name: "Tất cả" }));
+    expect(screen.queryByText("PRIVATE-ORDER")).not.toBeInTheDocument();
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps payment-status filters distinct while cancelled includes every refund claim", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [

@@ -58,6 +58,7 @@ const filters = {
   page: "3",
 };
 const storedProduct: Product = {
+  version: 1,
   id: productId,
   category_id: categoryId,
   category_slug: "rau-la",

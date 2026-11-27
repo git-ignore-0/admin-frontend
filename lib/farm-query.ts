@@ -131,7 +131,7 @@ export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
 
 export function farmAccessDenied(cause: unknown): cause is Error {
   // The BFF can reject a write's CSRF marker without revoking website-admin reads.
-  return cause instanceof Error && cause.message !== "csrf_rejected" && isProtectedDataError(cause);
+  return cause instanceof Error && isProtectedDataError(cause);
 }
 
 export function farmAccess(client: QueryClient) {

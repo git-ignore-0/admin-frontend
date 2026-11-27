@@ -15,7 +15,7 @@ import {
 } from "@/lib/admin-users";
 import { requirePaginatedList, requireResponseList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
-import type { ClientApiError } from "@/lib/client-error";
+import { isProtectedDataError } from "@/lib/client-error";
 import type {
   AdminUserDetail,
   AdminUserListItem,
@@ -75,13 +75,8 @@ export async function fetchAdminUsers(
   return requirePaginatedList(
     await apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`, { signal }),
     requireAdminUserRecord,
+    page,
   );
-}
-
-function isAccessDenied(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const { status } = error as ClientApiError;
-  return status === 403 || status === 401 || error.message === "session_changed";
 }
 
 function useAdminUsersAccess() {
@@ -132,7 +127,7 @@ function useAdminUsersRead<T>(
         retain?.(snapshot);
         return snapshot;
       } catch (error) {
-        if (!isAccessDenied(error) || !current()) throw error;
+        if (!isProtectedDataError(error) || !current()) throw error;
 
         // The Core admin permission is shared by all Users list and detail reads.
         client.setQueryData<UsersAccess>(accessKey, { status: "denied", revision: revision + 1 });

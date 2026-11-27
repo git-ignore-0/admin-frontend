@@ -99,10 +99,15 @@ function hasStoreOrderSummary(order: StoreOrder) {
   );
 }
 
-export async function listStoreOrders(query: StoreOrderQuery = {}) {
-  const payload = await apiEnvelope<StoreOrder[], PaginationMeta>(
-    `admin/store-orders?${buildStoreOrderQuery(query)}`,
-  ).then(requirePaginatedList);
+export async function listStoreOrders(query: StoreOrderQuery = {}, signal?: AbortSignal) {
+  const payload = requirePaginatedList(
+    await apiEnvelope<StoreOrder[], PaginationMeta>(
+      `admin/store-orders?${buildStoreOrderQuery(query)}`,
+      { signal },
+    ),
+    undefined,
+    query.page ?? 1,
+  );
   if (!payload.data.every(hasStoreOrderSummary)) throw invalidApiResponse();
   return payload;
 }
@@ -321,8 +326,10 @@ export async function mutateStoreOrder(
     method: "POST",
     body: JSON.stringify(payload),
   };
-  const { data, meta } = await apiEnvelope<StoreOrder>(path, init, options);
-  const order = requireStoreOrderDetail(data, orderId);
+  const { data, meta } = await apiEnvelope<StoreOrder>(path, init, {
+    ...options,
+    allowMissingData: true,
+  });
   const receipt = isApiObject(meta) ? meta.action_receipt : undefined;
   if (
     !isApiObject(receipt) ||
@@ -334,7 +341,13 @@ export async function mutateStoreOrder(
   ) {
     throw invalidApiResponse();
   }
-  return order;
+  if (!data) return null;
+  try {
+    return requireStoreOrderDetail(data, orderId);
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid_response") return null;
+    throw error;
+  }
 }
 
 export type StoreOrderConfirmation = {

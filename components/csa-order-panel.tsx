@@ -11,10 +11,12 @@ export function CSAOrderPanel({
   order,
   disabled,
   onReload,
+  onAccessDenied,
 }: {
   order: StoreOrder;
   disabled: boolean;
   onReload: () => void;
+  onAccessDenied: (error: unknown) => void;
 }) {
   const { locale } = useAdminI18n();
   const c = csaRoundsCopy(locale);
@@ -71,6 +73,7 @@ export function CSAOrderPanel({
           orderId={order.id}
           deliveryDate={round.delivery_date}
           onClose={() => setOpen(false)}
+          onAccessDenied={onAccessDenied}
           onSaved={() => {
             setOpen(false);
             onReload();

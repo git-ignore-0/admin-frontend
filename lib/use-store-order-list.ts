@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ApiEnvelope } from "@/lib/client-api";
+import { isProtectedDataError, isRequestCanceled } from "@/lib/client-error";
 import {
   listStoreOrders,
   storeOrderStatusQuery,
@@ -13,6 +14,7 @@ import {
 import type { PaginationMeta, StoreOrder, StoreOrderSort, StorePaymentStatus } from "@/lib/types";
 
 type OrderPage = ApiEnvelope<StoreOrder[], PaginationMeta> & { receivedAt: number };
+const MAX_CACHED_PAGES = 24;
 
 /** Cache belongs to this mounted list; explicit reload invalidates every tab. */
 export function useStoreOrderList({
@@ -30,11 +32,13 @@ export function useStoreOrderList({
 }) {
   const [page, setPage] = useState(1);
   const [cache, setCache] = useState<Map<string, OrderPage>>(() => new Map());
-  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
-  const [version, setVersion] = useState(0);
+  const [failure, setFailure] = useState<{ key?: string; message: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState<string | null>(null);
   const requestId = useRef(0);
   const expiredReloads = useRef(new Set<string>());
+  const denied = failure !== null && failure.key === undefined;
   const key = JSON.stringify([search, sort, status, paymentStatus, page]);
+  const failedCurrentPage = failure?.key === key;
   const allKey = JSON.stringify([search, sort, "", "", 1]);
   const payload = useMemo(() => {
     const exact = cache.get(key);
@@ -64,8 +68,12 @@ export function useStoreOrderList({
 
   useEffect(() => {
     const current = ++requestId.current;
-    if (!payload) {
-      void listStoreOrders({ page, search, sort, paymentStatus, ...storeOrderStatusQuery(status) })
+    const controller = new AbortController();
+    if (!denied && ((!payload && !failedCurrentPage) || refreshKey === key)) {
+      void listStoreOrders(
+        { page, search, sort, paymentStatus, ...storeOrderStatusQuery(status) },
+        controller.signal,
+      )
         .then((next) => {
           if (current !== requestId.current) return;
           if (next.meta) {
@@ -79,26 +87,56 @@ export function useStoreOrderList({
               return;
             }
           }
-          setCache((previous) =>
-            new Map(previous).set(key, { ...next, receivedAt: performance.now() }),
-          );
+          setCache((previous) => {
+            const pages = new Map(previous);
+            pages.delete(key);
+            pages.set(key, { ...next, receivedAt: performance.now() });
+            if (pages.size > MAX_CACHED_PAGES) {
+              const oldest = pages.keys().next().value;
+              if (oldest !== undefined) pages.delete(oldest);
+            }
+            return pages;
+          });
           setFailure(null);
         })
         .catch((error: unknown) => {
-          if (current === requestId.current) setFailure({ key, message: getErrorMessage(error) });
+          if (current !== requestId.current || isRequestCanceled(error, controller.signal)) return;
+          const message = getErrorMessage(error);
+          if (isProtectedDataError(error)) {
+            setCache(new Map());
+            expiredReloads.current.clear();
+            setFailure({ message });
+          } else {
+            setFailure({ key, message });
+          }
+        })
+        .finally(() => {
+          if (current === requestId.current) setRefreshKey(null);
         });
     }
     return () => {
       if (current === requestId.current) requestId.current += 1;
+      controller.abort();
     };
-  }, [getErrorMessage, key, page, payload, search, sort, status, paymentStatus, version]);
+  }, [
+    denied,
+    failedCurrentPage,
+    getErrorMessage,
+    key,
+    page,
+    payload,
+    search,
+    sort,
+    status,
+    paymentStatus,
+    refreshKey,
+  ]);
 
   const reload = useCallback(() => {
-    requestId.current += 1;
-    setCache(new Map());
+    setCache(payload ? new Map([[key, payload]]) : new Map());
     setFailure(null);
-    setVersion((current) => current + 1);
-  }, []);
+    setRefreshKey(key);
+  }, [key, payload]);
   useEffect(() => {
     const now = performance.now();
     // Cached waiting orders may expire into the currently empty cancelled tab.
@@ -129,11 +167,11 @@ export function useStoreOrderList({
     return () => window.clearTimeout(timer);
   }, [cache, reload]);
 
-  const error = failure?.key === key ? failure.message : "";
+  const error = denied || failure?.key === key ? (failure?.message ?? "") : "";
   return {
-    items: payload?.data ?? null,
-    meta: payload?.meta ?? null,
-    loading: !payload && !error,
+    items: denied ? null : (payload?.data ?? null),
+    meta: denied ? null : (payload?.meta ?? null),
+    loading: refreshKey === key || (!payload && !error),
     error,
     page,
     setPage,

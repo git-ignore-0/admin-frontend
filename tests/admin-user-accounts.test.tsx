@@ -1797,11 +1797,11 @@ describe("CMS account administration", () => {
 
   it.each(["0912345678", "091", "4567"])("links a phone-only user found by %s", async (search) => {
     const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
-      if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
+      if (init?.method === "POST") return Response.json({ data: { id: "customer", user } });
       if (path.endsWith(`/admin/users/${userId}`)) {
         return Response.json({ data: { ...user, shipping_address: shippingAddress } });
       }
-      return Response.json({ data: [user] });
+      return Response.json({ data: [user], meta: { page: 1, page_size: 30, total: 1 } });
     });
     vi.stubGlobal("fetch", fetcher);
     show(
@@ -1844,7 +1844,8 @@ describe("CMS account administration", () => {
     async (_scenario, results) => {
       const nextSearch = deferredResponse();
       const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
-        if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
+        if (init?.method === "POST")
+          return Response.json({ data: { id: "customer", user: otherUser } });
         if (path.includes("/administrative-units/")) return Response.json({ data: [] });
         if (path.endsWith(`/admin/users/${userId}`)) {
           return Response.json({ data: { ...user, shipping_address: shippingAddress } });
@@ -1853,7 +1854,7 @@ describe("CMS account administration", () => {
           return Response.json({ data: { ...otherUser, shipping_address: shippingAddress } });
         }
         return path.includes("search=garden")
-          ? Response.json({ data: [user] })
+          ? Response.json({ data: [user], meta: { page: 1, page_size: 30, total: 1 } })
           : nextSearch.promise;
       });
       vi.stubGlobal("fetch", fetcher);
@@ -1883,7 +1884,14 @@ describe("CMS account administration", () => {
       const loadingConfirm = screen.getByRole("button", { name: /linking/i });
       expect(loadingConfirm).toBeDisabled();
       fireEvent.click(loadingConfirm);
-      await act(async () => nextSearch.resolve(Response.json({ data: results })));
+      await act(async () =>
+        nextSearch.resolve(
+          Response.json({
+            data: results,
+            meta: { page: 1, page_size: 30, total: results.length },
+          }),
+        ),
+      );
 
       const confirm = screen.getByRole("button", { name: "Confirm link" });
       fireEvent.click(confirm);
@@ -1896,7 +1904,9 @@ describe("CMS account administration", () => {
       fireEvent.click(screen.getByRole("radio", { name: /Orchard Member/ }));
       await waitFor(() => expect(confirm).toBeEnabled());
       fireEvent.click(confirm);
-      await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ id: "customer" }));
+      await waitFor(() =>
+        expect(onLinked).toHaveBeenCalledWith({ id: "customer", user: otherUser }),
+      );
       const posts = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
       expect(posts).toEqual([
         [
@@ -1916,7 +1926,8 @@ describe("CMS account administration", () => {
     const failedSearch = deferredResponse();
     let orchardSearches = 0;
     const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
-      if (init?.method === "POST") return Response.json({ data: { id: "customer" } });
+      if (init?.method === "POST")
+        return Response.json({ data: { id: "customer", user: otherUser } });
       if (path.includes("/administrative-units/")) return Response.json({ data: [] });
       if (path.endsWith(`/admin/users/${userId}`)) {
         return Response.json({ data: { ...user, shipping_address: shippingAddress } });
@@ -1924,8 +1935,15 @@ describe("CMS account administration", () => {
       if (path.endsWith(`/admin/users/${otherUserId}`)) {
         return Response.json({ data: { ...otherUser, shipping_address: shippingAddress } });
       }
-      if (path.includes("search=garden")) return Response.json({ data: [user] });
-      return ++orchardSearches === 1 ? failedSearch.promise : Response.json({ data: [otherUser] });
+      if (path.includes("search=garden")) {
+        return Response.json({ data: [user], meta: { page: 1, page_size: 30, total: 1 } });
+      }
+      return ++orchardSearches === 1
+        ? failedSearch.promise
+        : Response.json({
+            data: [otherUser],
+            meta: { page: 1, page_size: 30, total: 1 },
+          });
     });
     vi.stubGlobal("fetch", fetcher);
     const onLinked = vi.fn();
@@ -1964,7 +1982,7 @@ describe("CMS account administration", () => {
     fireEvent.click(await screen.findByRole("radio", { name: /Orchard Member/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Confirm link" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
-    await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ id: "customer" }));
+    await waitFor(() => expect(onLinked).toHaveBeenCalledWith({ id: "customer", user: otherUser }));
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([
       [
         "/api/backend/admin/csa-customers/customer/link-user",

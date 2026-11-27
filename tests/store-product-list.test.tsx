@@ -32,7 +32,10 @@ beforeEach(() => {
   mocks.categories.mockReset();
   mocks.products.mockReset();
   mocks.categories.mockResolvedValue([]);
-  mocks.products.mockResolvedValue({ data: [], meta: { page: 2, page_size: 30, total: 70 } });
+  mocks.products.mockImplementation(async ({ page = 1 }) => ({
+    data: [],
+    meta: { page, page_size: 30, total: 70 },
+  }));
 });
 afterEach(() => {
   cleanup();

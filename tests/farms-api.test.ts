@@ -486,6 +486,16 @@ it("rejects a Farm page with an invalid record despite valid metadata", async ()
   await expect(listFarms()).rejects.toThrow("invalid_response");
 });
 
+it.each([
+  { data: [{ ...farm, in_stock_product_count: -1 }], page: 1 },
+  { data: [{ ...farm, is_active: "yes" }], page: 1 },
+  { data: [farm, farm], page: 1 },
+  { data: [farm], page: 2 },
+])("rejects unexpected Farm list data or page %#", async ({ data, page }) => {
+  fetchMock.mockResolvedValue(Response.json({ data, meta: { page, page_size: 20, total: 2 } }));
+  await expect(listFarms()).rejects.toThrow("invalid_response");
+});
+
 it("queries linked Farm products through the BFF with server-side search and pagination", async () => {
   fetchMock.mockResolvedValue(
     Response.json({ data: [], meta: { page: 2, page_size: 20, total: 40 } }),
@@ -685,8 +695,17 @@ it("accepts historical batches with active date status but keeps them out of cur
 });
 
 it("enables an existing Farm profile", async () => {
-  fetchMock.mockResolvedValue(Response.json({ data: { id: "farm-1" } }));
-  await enableFarmTracker("farm-1", { signup_count: 4, one_month_signup_count: 1 });
-  expect(fetchMock.mock.calls[0][0]).toBe("/api/backend/admin/farms/farm-1/growth-tracker");
+  fetchMock.mockResolvedValue(
+    Response.json({
+      data: {
+        ...farm,
+        signup_count: 4,
+        one_month_signup_count: 1,
+        is_visible: true,
+      },
+    }),
+  );
+  await enableFarmTracker(farmId, { signup_count: 4, one_month_signup_count: 1 });
+  expect(fetchMock.mock.calls[0][0]).toBe(`/api/backend/admin/farms/${farmId}/growth-tracker`);
   expect(fetchMock.mock.calls[0][1].method).toBe("POST");
 });
