@@ -84,3 +84,31 @@
     align-items: stretch;
   }
 }
+
+/* Below Mantine sm, keep a single summary in the grid's normal scroll flow. */
+@media (width < 48em) {
+  .summaryColumn {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+  }
+
+  .summary {
+    position: static;
+    padding-bottom: calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .summaryContent {
+    gap: var(--mantine-spacing-xs);
+  }
+
+  .summaryDetails {
+    max-height: min(36dvh, 18rem);
+    overflow-y: auto;
+  }
+
+  /* A focused editor may open the software keyboard, so release the dock. */
+  .layout:has(.entry :is(input, textarea, [contenteditable="true"]):focus) .summaryColumn {
+    position: static;
+  }
+}

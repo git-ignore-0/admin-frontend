@@ -1,4 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import FarmBulkSupplyPage from "@/app/(admin)/farms/[id]/stock-batches/new/page";
@@ -6,8 +8,15 @@ import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { ToastProvider } from "@/components/toast-provider";
 import { FarmBulkSupply } from "@/components/farm-bulk-supply";
-import { getFarm, listFarmProducts } from "@/lib/farms-api";
-import type { Farm } from "@/lib/types";
+import { getFarm, listFarmProducts, postFarmBulkSupply } from "@/lib/farms-api";
+import type { FarmBulkSupplyDraft, FarmBulkSupplyInput } from "@/lib/farm-bulk-draft";
+import {
+  confirmFarmGone,
+  farmBulkDraftKey,
+  retireFarmAccess,
+  retryFarmAccess,
+} from "@/lib/farm-query";
+import type { Farm, FarmProduct } from "@/lib/types";
 
 const nav = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -31,16 +40,25 @@ vi.mock("@/lib/farms-api", async (original) => ({
   ...(await original<typeof import("@/lib/farms-api")>()),
   getFarm: vi.fn(),
   listFarmProducts: vi.fn(),
+  postFarmBulkSupply: vi.fn(),
 }));
 vi.mock("@/components/farm-bulk-supply-form", () => ({
   FarmSupplyForm: ({
     pagination,
     onSearch,
     onCancel,
+    draft,
+    onDraftChange,
+    onSubmit,
+    review,
   }: {
     pagination?: { page: number; onChange: (page: number) => void };
     onSearch: (value: string) => void;
     onCancel: () => void;
+    draft: FarmBulkSupplyDraft;
+    onDraftChange: (draft: FarmBulkSupplyDraft) => void;
+    onSubmit: (input: FarmBulkSupplyInput) => void;
+    review?: ReactNode;
   }) => (
     <>
       <button disabled={!pagination} onClick={() => pagination?.onChange(2)}>
@@ -48,6 +66,30 @@ vi.mock("@/components/farm-bulk-supply-form", () => ({
       </button>
       <button onClick={() => onSearch("  tomato  ")}>Apply search</button>
       <button onClick={onCancel}>Cancel route</button>
+      <button onClick={() => onDraftChange(unsavedDraft)}>Edit draft</button>
+      <button onClick={() => onDraftChange({ ...unsavedDraft, end_date: "20/12/2099" })}>
+        Edit again
+      </button>
+      <button
+        onClick={() =>
+          onSubmit({
+            start_date: "2099-11-30",
+            end_date: "2099-12-06",
+            items: [
+              {
+                product_id: product.product_id,
+                expected_link_id: product.id,
+                expected_version: 7,
+                quantity_units: 25,
+              },
+            ],
+          })
+        }
+      >
+        Send draft
+      </button>
+      {review}
+      <output data-testid="draft">{JSON.stringify(draft)}</output>
     </>
   ),
 }));
@@ -131,4 +173,153 @@ it("validates the Farm UUID and canonicalizes uppercase links", async () => {
     }),
   ).rejects.toThrow("redirect");
   expect(nav.redirect).toHaveBeenCalledWith(`/farms/${id}/stock-batches/new?supply_page=2`);
+});
+
+const otherId = "bbbbbbbb-1234-4567-8934-123456789abc";
+const product = {
+  id: "source-before-refresh",
+  farm_id: id,
+  product_id: "product-1",
+  version: 7,
+} as FarmProduct;
+const unsavedDraft: FarmBulkSupplyDraft = {
+  start_date: "30/11/2099",
+  end_date: "06/12/2099",
+  items: { "product-1": { product, quantity: "25" } },
+};
+
+function draftJourney() {
+  vi.mocked(getFarm).mockImplementation(async (farmId) => ({ ...farm, id: farmId }));
+  vi.mocked(listFarmProducts).mockImplementation(async (_id, query) => ({
+    data: [{ ...product, id: "source-after-refresh", version: 8 }],
+    meta: { page: query?.page ?? 1, page_size: 20, total: 1 },
+  }));
+  let client!: ReturnType<typeof useQueryClient>;
+  let retireSession: (() => void) | null = null;
+  function CaptureClient() {
+    client = useQueryClient();
+    return null;
+  }
+  function tree(farmId: string | null, session: string) {
+    return (
+      <AdminI18nProvider initialLocale="en">
+        <AdminQueryProvider
+          key={session}
+          ref={(retire) => {
+            retireSession = retire;
+          }}
+        >
+          <CaptureClient />
+          <ToastProvider>{farmId && <FarmBulkSupply farmId={farmId} />}</ToastProvider>
+        </AdminQueryProvider>
+      </AdminI18nProvider>
+    );
+  }
+  const view = render(tree(id, "first-session"));
+  return {
+    client: () => client,
+    navigate: (farmId: string | null, session = "first-session") =>
+      view.rerender(tree(farmId, session)),
+    retire: () => retireSession?.(),
+  };
+}
+
+function currentDraft(): FarmBulkSupplyDraft {
+  return JSON.parse(screen.getByTestId("draft").textContent ?? "");
+}
+
+it("keeps pre-submit dates, quantities and the original source revision across navigation within one Farm and session", async () => {
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  journey.navigate(null);
+  journey.navigate(otherId);
+  await screen.findByTestId("draft");
+  expect(currentDraft().items).toEqual({});
+  journey.navigate(id);
+  await screen.findByTestId("draft");
+  expect(currentDraft()).toEqual(unsavedDraft);
+});
+
+it("discards only the confirmed Farm draft", async () => {
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  journey.client().setQueryData(farmBulkDraftKey(otherId), unsavedDraft);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel route" }));
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toEqual(unsavedDraft);
+  fireEvent.click(await screen.findByRole("button", { name: "Discard draft" }));
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toBeUndefined();
+  expect(journey.client().getQueryData(farmBulkDraftKey(otherId))).toEqual(unsavedDraft);
+  journey.navigate(null);
+  journey.navigate(id);
+  await screen.findByTestId("draft");
+  expect(currentDraft().items).toEqual({});
+});
+
+it("retirement of Farm permission removes the observed draft before retrying access", async () => {
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toEqual(unsavedDraft);
+  act(() =>
+    retireFarmAccess(journey.client(), Object.assign(new Error("forbidden"), { status: 403 })),
+  );
+  await waitFor(() => expect(screen.queryByTestId("draft")).not.toBeInTheDocument());
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toBeUndefined();
+  act(() => retryFarmAccess(journey.client()));
+  await screen.findByTestId("draft");
+  expect(currentDraft().items).toEqual({});
+});
+
+it("confirmed Farm deletion removes only its draft", async () => {
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toEqual(unsavedDraft);
+  journey.client().setQueryData(farmBulkDraftKey(otherId), unsavedDraft);
+  act(() => confirmFarmGone(journey.client(), id));
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toBeUndefined();
+  expect(journey.client().getQueryData(farmBulkDraftKey(otherId))).toEqual(unsavedDraft);
+});
+
+it("retires the draft and never restores it in another admin session", async () => {
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  const previous = journey.client();
+  expect(previous.getQueryData(farmBulkDraftKey(id))).toEqual(unsavedDraft);
+  act(() => journey.retire());
+  expect(previous.getQueryData(farmBulkDraftKey(id))).toBeUndefined();
+  journey.navigate(id, "second-session");
+  await screen.findByTestId("draft");
+  expect(journey.client()).not.toBe(previous);
+  expect(currentDraft().items).toEqual({});
+});
+
+it("keeps pending and unknown submitted data intact when an edit arrives", async () => {
+  let fail!: (error: Error) => void;
+  vi.mocked(postFarmBulkSupply).mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send draft" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit again" }));
+  expect(journey.client().getQueryData(farmBulkDraftKey(id))).toEqual(unsavedDraft);
+  await waitFor(() => expect(fail).toBeTypeOf("function"));
+  await act(async () => {
+    fail(new Error("network_error"));
+  });
+  journey.navigate(null);
+  journey.navigate(id);
+  await screen.findByText("The outcome is unknown. Supply may have been saved.");
+  fireEvent.click(screen.getByRole("button", { name: "Edit again" }));
+  expect(currentDraft()).toEqual(unsavedDraft);
+  expect(postFarmBulkSupply).toHaveBeenCalledTimes(1);
+  const submitted = vi.mocked(postFarmBulkSupply).mock.calls[0][1];
+  expect(submitted.items[0]).toMatchObject({
+    expected_link_id: product.id,
+    expected_version: 7,
+    quantity_units: 25,
+  });
+  expect(Object.isFrozen(submitted)).toBe(true);
 });

@@ -186,7 +186,7 @@ export function FarmSupplyForm({
   }
 
   return (
-    <Grid gutter="md">
+    <Grid gutter="md" className={styles.layout}>
       <Grid.Col span={{ base: 12, lg: 8 }} miw={0}>
         <Paper p="md" className={styles.entry}>
           <Stack gap="md">
@@ -322,7 +322,7 @@ export function FarmSupplyForm({
         </Paper>
       </Grid.Col>
 
-      <Grid.Col span={{ base: 12, lg: 4 }} miw={0}>
+      <Grid.Col span={{ base: 12, lg: 4 }} miw={0} className={styles.summaryColumn}>
         <Paper p="md" className={styles.summary}>
           <form
             id={formId}
@@ -331,7 +331,7 @@ export function FarmSupplyForm({
               if (canSubmit && summary.input) onSubmit(summary.input);
             }}
           >
-            <Stack gap="md">
+            <Stack gap="md" className={styles.summaryContent}>
               <Title order={2}>{c.summary}</Title>
               <Group justify="space-between" gap="xs" align="flex-start">
                 <Stack gap={0}>
@@ -368,7 +368,7 @@ export function FarmSupplyForm({
                 </Text>
               )}
               <Collapse id={summaryId} in={desktop || summaryOpen}>
-                <Stack gap="sm">
+                <Stack gap="sm" className={styles.summaryDetails}>
                   <Stack gap={0}>
                     <Text size="sm" c="dimmed">
                       {c.period}

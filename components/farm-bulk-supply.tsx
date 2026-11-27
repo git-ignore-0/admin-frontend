@@ -63,10 +63,13 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const draftKey = farmBulkDraftKey(farmId);
-  useQuery({ queryKey: draftKey, queryFn: skipToken, gcTime: Infinity });
-  const [draft, setDraft] = useState(
-    () => client.getQueryData<FarmBulkSupplyDraft>(draftKey) ?? emptyFarmBulkSupplyDraft(),
-  );
+  const { data: cachedDraft } = useQuery<FarmBulkSupplyDraft>({
+    queryKey: draftKey,
+    queryFn: skipToken,
+    gcTime: Infinity,
+  });
+  const [emptyDraft] = useState(emptyFarmBulkSupplyDraft);
+  const draft = cachedDraft ?? emptyDraft;
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [review, setReview] = useState<Record<string, FarmProduct | null> | null>(null);
   const [reviewError, setReviewError] = useState("");
@@ -109,6 +112,11 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   });
   const accessCause = [farmQuery.error, products.error].find(farmAccessDenied);
   const farm = accessCause ? undefined : snapshot;
+  const missingFarm = farmNotFound(farmQuery.error);
+  useEffect(() => {
+    if (missingFarm && currentSession())
+      client.removeQueries({ queryKey: farmBulkDraftKey(farmId), exact: true });
+  }, [client, currentSession, farmId, missingFarm]);
   useEffect(() => {
     if (accessCause && currentSession()) retireFarmAccess(client, accessCause);
   }, [accessCause, client, currentSession]);
@@ -133,12 +141,10 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
 
   useEffect(() => {
     if (!confirmedIntent || !currentSession() || access.error) return;
-    setDraft(emptyFarmBulkSupplyDraft());
     acknowledgeSuccess();
   }, [confirmedIntent, acknowledgeSuccess, currentSession, access.error]);
 
   function saved(intent: FarmBulkIntent) {
-    setDraft(emptyFarmBulkSupplyDraft());
     toast(
       vi
         ? `Đã bổ sung nguồn cung cho ${intent.items.length} sản phẩm.`
@@ -191,11 +197,22 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   }
 
   function editDraft(next: FarmBulkSupplyDraft) {
-    if (!usable || write.locked || reviewing) return;
-    setDraft(next);
-    // The local draft is authoritative while mounted. Refresh its resume snapshot
-    // after a known rejection or explicit version review.
-    if (client.getQueryData(draftKey)) client.setQueryData(draftKey, next);
+    const currentAccess = farmAccess(client);
+    if (
+      !usable ||
+      !currentSession() ||
+      accessCause ||
+      missingFarm ||
+      currentAccess.error ||
+      currentAccess.revision !== access.revision ||
+      isFarmGone(client, farmId) ||
+      write.locked ||
+      confirmedIntent ||
+      reviewing ||
+      farmBulkBlocksWrite(client, farmId)
+    )
+      return;
+    client.setQueryData(draftKey, next);
     if (write.failure?.kind === "rejected") write.resetFailure();
   }
 
@@ -220,11 +237,11 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
 
   function cancel() {
     if (write.locked || farmBulkBlocksWrite(client, farmId)) return;
-    const defaults = emptyFarmBulkSupplyDraft();
+    const current = client.getQueryData<FarmBulkSupplyDraft>(draftKey) ?? emptyDraft;
     if (
-      Object.keys(draft.items).length ||
-      draft.start_date !== defaults.start_date ||
-      draft.end_date !== defaults.end_date
+      Object.keys(current.items).length ||
+      current.start_date !== emptyDraft.start_date ||
+      current.end_date !== emptyDraft.end_date
     )
       setConfirmDiscard(true);
     else discard();
@@ -404,8 +421,7 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
           onSubmit={(input) => {
             if (write.locked || write.blocked || failure?.kind === "conflict" || products.error)
               return;
-            const operation = write.submit(input, saved);
-            if (operation) client.setQueryData(draftKey, draft);
+            write.submit(input, saved);
           }}
           onCancel={cancel}
         />
