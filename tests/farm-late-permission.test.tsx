@@ -41,6 +41,7 @@ const farm: Farm = {
   image: null,
   photos: [],
   is_active: true,
+  capabilities: { delete: { allowed: true, reasons: [] } },
   version: 1,
   in_stock_product_count: 1,
   out_of_stock_product_count: 0,
@@ -307,15 +308,14 @@ it("retires Farm List when an obsolete Farm delete receives a same-session denia
   const screenView = render(screenFor("farm"));
   fireEvent.click(await screen.findByRole("button", { name: "Tùy chọn khác" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
-  fireEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa trang trại" }),
-  );
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
   await waitFor(() => expect(api.deleteFarm).toHaveBeenCalledOnce());
   screenView.rerender(screenFor("list"));
   expect(await screen.findByRole("link", { name: farm.name_vi })).toBeVisible();
   await act(async () => pending.reject(deny()));
   expect(await screen.findByRole("alert")).toHaveTextContent("không có quyền");
   expect(screen.queryByRole("link", { name: farm.name_vi })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Tùy chọn khác" })).not.toBeInTheDocument();
   expect(api.listFarms).toHaveBeenCalledTimes(1);
 });
 

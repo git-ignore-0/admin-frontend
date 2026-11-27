@@ -670,6 +670,18 @@ export type TrackerFarm = {
   updated_at: string;
 };
 
+export type FarmDeleteReason =
+  | {
+      code: "supplying_product" | "legacy_supply";
+      id: string;
+      label: string;
+      name_vi: string;
+      name_en: string;
+    }
+  | { code: "store_order"; id: string; label: string };
+
+export type FarmDeleteCapability = { allowed: boolean; reasons: FarmDeleteReason[] };
+
 export type Farm = {
   id: string;
   name_en: string;
@@ -683,6 +695,7 @@ export type Farm = {
   is_active: boolean;
   in_stock_product_count: number;
   out_of_stock_product_count: number;
+  capabilities?: { delete: FarmDeleteCapability };
   version: number;
   created_at: string;
   updated_at: string;

@@ -27,8 +27,10 @@ import { farmHref, normalizeFarmSupplySearch, readFarmSupplyContext } from "@/li
 import {
   farmAccess,
   farmAccessDenied,
+  farmDetailKey,
   farmListKey,
   farmSupplyKey,
+  farmSupplyWriteKey,
   retireFarmAccess,
 } from "@/lib/farm-query";
 import {
@@ -46,7 +48,7 @@ import type { AvailableFarmProduct, Farm, StockBatchInput } from "@/lib/types";
 type Props = { farm: Farm; isTabActive?: boolean; onAccessLost?: (cause: unknown) => void };
 type SupplyContext = ReturnType<typeof readFarmSupplyContext>;
 type AddAttempt = { product: AvailableFarmProduct; batch: StockBatchInput };
-const addMutationKey = (farmId: string) => [...farmSupplyKey(farmId), "write", "add"];
+const addMutationKey = (farmId: string) => [...farmSupplyWriteKey(farmId), "add"];
 
 export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) {
   const { locale, t } = useAdminI18n();
@@ -70,7 +72,7 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
   const accessLost = isProtectedDataError(query.error);
   const data = query.error ? undefined : query.data;
   const lastPage = data ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size)) : page;
-  const pendingWrite = useIsMutating({ mutationKey: [...farmSupplyKey(farm.id), "write"] }) > 0;
+  const pendingWrite = useIsMutating({ mutationKey: farmSupplyWriteKey(farm.id) }) > 0;
   const retained = useMutationState({
     filters: { mutationKey: addMutationKey(farm.id), exact: true, status: "error" },
     select: (entry) => entry,
@@ -341,6 +343,7 @@ function AddFarmProduct({
     try {
       await mutation.mutateAsync(attempt);
       if (!permitted()) return;
+      void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
       void queryClient.invalidateQueries({
         queryKey: [...farmSupplyKey(farm.id), "picker"],
         refetchType: "none",
@@ -368,6 +371,7 @@ function AddFarmProduct({
         context: apiErrorContext(cause) ?? undefined,
       });
       if (blocker?.code === "farm_product_removed" || blocker?.code === "product_already_linked") {
+        void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
         setError(
           blocker.code === "farm_product_removed" ? c.addPreviouslyRemoved : c.alreadyLinked,
         );
@@ -418,6 +422,7 @@ function AddFarmProduct({
       if (canUpdate()) {
         setFound(true);
         setCheckMessage(c.sourceFoundReview);
+        void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
         void queryClient.invalidateQueries({ queryKey: [...farmSupplyKey(farm.id), "list"] });
         void queryClient.invalidateQueries({ queryKey: farmListKey });
         void queryClient.invalidateQueries({

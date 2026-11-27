@@ -194,15 +194,22 @@ const copy = {
     integerRange: "Số lượng vượt quá giới hạn cho phép.",
     productRemovePrompt: "Gỡ {sku} khỏi trang trại?",
     farmDelete: "Xóa trang trại",
-    deleteFarmPrompt:
-      "Xóa {name}? Nếu trang trại đã có sản phẩm hoặc Growth Tracker, hãy tắt hoạt động.",
+    confirmDeleteFarm: "Xóa",
+    deleteFarmPrompt: "Xóa {name}? Thao tác này cũng xóa hồ sơ Growth Tracker đi kèm.",
     activate: "Bật hoạt động",
     deactivate: "Ngừng hoạt động",
     activatePrompt: "Bật hoạt động cho {name}?",
     deactivatePrompt: "Ngừng hoạt động của {name}?",
     deactivateBlocked:
       "Trang trại còn nguồn hàng cần để đáp ứng đơn đang giữ. Chưa thể ngừng hoạt động.",
-    protectedFarm: "Trang trại đã có sản phẩm hoặc Growth Tracker. Hãy tắt hoạt động thay vì xóa.",
+    protectedFarm: "Không thể xóa trang trại vì còn dữ liệu liên quan.",
+    deleteConflict: "Trang trại chưa được xóa. Cần kiểm tra lại điều kiện xóa.",
+    deleteUnverified: "Chưa xác minh được điều kiện xóa trang trại.",
+    deleteReasons: {
+      supplying_product: "Sản phẩm đang cung cấp",
+      store_order: "Đơn hàng",
+      legacy_supply: "Lịch sử cung cấp theo tuần",
+    },
   },
   en: {
     supplyStatus: "Supply status",
@@ -398,16 +405,22 @@ const copy = {
     integerRange: "Quantity exceeds the allowed limit.",
     productRemovePrompt: "Remove {sku} from this farm?",
     farmDelete: "Delete farm",
-    deleteFarmPrompt:
-      "Delete {name}? If the farm has products or Growth Tracker, deactivate it instead.",
+    confirmDeleteFarm: "Delete",
+    deleteFarmPrompt: "Delete {name}? This also deletes the farm’s Growth Tracker profile.",
     activate: "Activate",
     deactivate: "Deactivate",
     activatePrompt: "Activate {name}?",
     deactivatePrompt: "Deactivate {name}?",
     deactivateBlocked:
       "This farm still supplies stock needed for held orders. It cannot be deactivated yet.",
-    protectedFarm:
-      "This farm has products or a Growth Tracker profile. Deactivate it instead of deleting.",
+    protectedFarm: "This farm can’t be deleted because it has related records.",
+    deleteConflict: "The farm was not deleted. Check whether it can be deleted.",
+    deleteUnverified: "We couldn’t verify whether this farm can be deleted.",
+    deleteReasons: {
+      supplying_product: "Product currently supplied",
+      store_order: "Store order",
+      legacy_supply: "Archived weekly supply",
+    },
   },
 } as const;
 

@@ -1,5 +1,12 @@
-import { notifyManager, skipToken, useQuery, type QueryClient } from "@tanstack/react-query";
-import { isProtectedDataError } from "@/lib/client-error";
+import {
+  notifyManager,
+  skipToken,
+  useQuery,
+  type MutationFilters,
+  type QueryClient,
+} from "@tanstack/react-query";
+import { isApiObject, isProtectedDataError } from "@/lib/client-error";
+import { isUncertainFarmSupplyWrite } from "@/lib/farm-stock";
 
 const farmsKey = ["farms"] as const;
 const supplyKey = ["farm-supply"] as const;
@@ -11,6 +18,26 @@ export const farmListKey = [...farmsKey, "list"] as const;
 export const farmDetailKey = (farmId: string) =>
   [...farmsKey, "detail", farmId.toLowerCase()] as const;
 export const farmSupplyKey = (farmId: string) => [...supplyKey, farmId.toLowerCase()] as const;
+export const farmSupplyWriteKey = (farmId: string) => [...farmSupplyKey(farmId), "write"] as const;
+
+export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
+  const mutationKey = farmSupplyWriteKey(farmId);
+  return {
+    mutationKey,
+    exact: false,
+    predicate: ({ options, state }) => {
+      const { variables, status, error } = state;
+      const add = options.mutationKey?.[mutationKey.length] === "add";
+      const action =
+        isApiObject(variables) && isApiObject(variables.action) ? variables.action.kind : undefined;
+      return (
+        (add || action === "remove" || action === "readd") &&
+        (status === "pending" ||
+          (status === "error" && !farmAccessDenied(error) && isUncertainFarmSupplyWrite(error)))
+      );
+    },
+  };
+}
 
 export function farmAccessDenied(cause: unknown): cause is Error {
   // The BFF can reject a write's CSRF marker without revoking website-admin reads.

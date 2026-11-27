@@ -9,6 +9,8 @@ import type {
   Farm,
   AvailableFarmProduct,
   FarmBatchScope,
+  FarmDeleteCapability,
+  FarmDeleteReason,
   FarmProduct,
   FarmProductDetail,
   FarmProductHistoryEntry,
@@ -106,6 +108,31 @@ function nonempty(value: unknown): value is string {
   return typeof value === "string" && Boolean(value.trim());
 }
 
+function isFarmDeleteReason(value: unknown): value is FarmDeleteReason {
+  if (!isApiObject(value) || !uuid(value.id) || !nonempty(value.label)) return false;
+  if (value.code === "store_order") return true;
+  return (
+    (value.code === "supplying_product" || value.code === "legacy_supply") &&
+    typeof value.name_vi === "string" &&
+    typeof value.name_en === "string"
+  );
+}
+
+export function farmDeleteCapability(capabilities: unknown): FarmDeleteCapability | undefined {
+  if (!isApiObject(capabilities) || !isApiObject(capabilities.delete)) return;
+  const { allowed, reasons } = capabilities.delete;
+  if (
+    typeof allowed !== "boolean" ||
+    !Array.isArray(reasons) ||
+    reasons.length > 3 ||
+    (allowed && reasons.length > 0) ||
+    !reasons.every(isFarmDeleteReason) ||
+    new Set(reasons.map(({ code }) => code)).size !== reasons.length
+  )
+    return;
+  return { allowed, reasons };
+}
+
 function isImageSource(value: unknown): boolean {
   return (
     isApiObject(value) && nonempty(value.url) && integer(value.width, 1) && integer(value.height, 1)
@@ -122,7 +149,7 @@ function isFarmImage(value: unknown): boolean {
   );
 }
 
-function requireFarm(data: Farm, id?: string) {
+function requireFarm(data: Farm, id?: string): Farm {
   requireResponseEntity(data);
   if (
     !uuid(data.id, id) ||
@@ -144,7 +171,9 @@ function requireFarm(data: Farm, id?: string) {
   ) {
     throw invalidApiResponse();
   }
-  return data;
+  const { capabilities, ...farm } = data;
+  const deletion = farmDeleteCapability(capabilities);
+  return deletion ? { ...farm, capabilities: { delete: deletion } } : farm;
 }
 
 function day(value: unknown): boolean {

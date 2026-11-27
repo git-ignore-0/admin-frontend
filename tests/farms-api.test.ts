@@ -132,6 +132,74 @@ const sourceHistoryEvent = {
   },
 };
 
+it("preserves a validated delete capability consistently for GET and PATCH", async () => {
+  const capabilities = {
+    delete: {
+      allowed: false,
+      reasons: [
+        {
+          code: "supplying_product",
+          id: productId,
+          label: "R01",
+          name_vi: "Rau",
+          name_en: "Greens",
+        },
+        { code: "store_order", id: batchId, label: "NFV-000123" },
+        {
+          code: "legacy_supply",
+          id: linkId,
+          label: "R02",
+          name_vi: "Cải",
+          name_en: "Mustard greens",
+        },
+      ],
+    },
+  };
+  const detail = { ...farm, capabilities };
+  const patched = { ...detail, is_active: false, version: farm.version + 1 };
+  fetchMock
+    .mockResolvedValueOnce(Response.json({ data: detail }))
+    .mockResolvedValueOnce(Response.json({ data: patched }));
+  await expect(getFarm(farmId)).resolves.toEqual(detail);
+  await expect(saveFarm(farmId, { version: farm.version, is_active: false })).resolves.toEqual(
+    patched,
+  );
+});
+
+it.each([
+  null,
+  { delete: { allowed: "true", reasons: [] } },
+  { delete: { allowed: true } },
+  {
+    delete: { allowed: true, reasons: [{ code: "store_order", id: batchId, label: "NFV-000123" }] },
+  },
+  {
+    delete: {
+      allowed: false,
+      reasons: [{ code: "supplying_product", id: productId, label: "R01" }],
+    },
+  },
+  {
+    delete: {
+      allowed: false,
+      reasons: [{ code: "store_order", id: "wrong-id", label: "NFV-000123" }],
+    },
+  },
+  { delete: { allowed: false, reasons: [{ code: "growth_tracker", id: linkId, label: "Test" }] } },
+  {
+    delete: {
+      allowed: false,
+      reasons: Array(2).fill({ code: "store_order", id: batchId, label: "NFV-000123" }),
+    },
+  },
+])(
+  "keeps valid Farm information and omits unusable delete capabilities (%j)",
+  async (capabilities) => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: { ...farm, capabilities } }));
+    await expect(getFarm(farmId)).resolves.toEqual(farm);
+  },
+);
+
 it("validates source detail and passes the request signal to the BFF", async () => {
   const controller = new AbortController();
   fetchMock.mockResolvedValueOnce(Response.json({ data: sourceDetail }));

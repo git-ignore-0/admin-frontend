@@ -24,7 +24,10 @@ vi.mock("next/navigation", () => ({
   notFound,
   redirect,
 }));
-vi.mock("@/lib/farms-api", () => ({ getFarm: vi.fn() }));
+vi.mock("@/lib/farms-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/farms-api")>()),
+  getFarm: vi.fn(),
+}));
 vi.mock("@/components/farm-products", () => ({
   FarmProducts: () => <div>Supply directory</div>,
 }));

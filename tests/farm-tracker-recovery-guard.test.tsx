@@ -39,6 +39,7 @@ const farm: Farm = {
   image: null,
   photos: [],
   is_active: true,
+  capabilities: { delete: { allowed: true, reasons: [] } },
   in_stock_product_count: 8,
   out_of_stock_product_count: 4,
   version: 2,
@@ -53,7 +54,8 @@ const profile: TrackerFarm = {
   sort_order: 0,
   version: 7,
 };
-const header = () => screen.getByRole("button", { name: "Tùy chọn khác" });
+const header = () =>
+  within(screen.getByRole("banner")).getByRole("button", { name: "Tùy chọn khác" });
 const errorResponse = (message: string, status: number) =>
   Object.assign(new Error(message), { status });
 const checkTracker = () => screen.findByRole("button", { name: "Kiểm tra lại dữ liệu" });
@@ -112,8 +114,9 @@ it("blocks Farm mutations after a Tracker PATCH timeout until a new revision con
     signup_count: 25,
   });
   fireEvent.click(header());
-  expect(screen.queryByRole("menuitem", { name: "Ngừng hoạt động" })).not.toBeInTheDocument();
   expect(screen.queryByRole("menuitem", { name: "Xóa trang trại" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Ngừng hoạt động" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(api.saveFarm).not.toHaveBeenCalled();
   expect(api.deleteFarm).not.toHaveBeenCalled();
 
@@ -161,24 +164,28 @@ it("blocks Farm mutations after a Tracker POST timeout until the created profile
 });
 
 it.each(["Ngừng hoạt động", "Xóa trang trại"])(
-  "rejects an already-open Farm menu action (%s) after a malformed Tracker response",
+  "serializes the Farm confirmation (%s) with Tracker save and blocks it after a malformed response",
   async (action) => {
     api.updateFarmTracker.mockResolvedValue({ ...profile, signup_count: 25 });
     const count = await openInformation();
     fireEvent.change(count, { target: { value: "25" } });
+    const save = screen.getByRole("button", { name: "Lưu thay đổi" });
+    expect(save).toBeEnabled();
     fireEvent.click(header());
-    const menuItem = await screen.findByRole("menuitem", { name: action });
+    fireEvent.click(await screen.findByRole("menuitem", { name: action }));
+    const dialog = await screen.findByRole("dialog", { name: action });
+    expect(save).toBeDisabled();
+    await act(async () => fireEvent.submit(save.closest("form")!));
+    expect(api.updateFarmTracker).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Hủy" }));
 
-    // A click without a pointer-down leaves the Mantine dropdown open while Information saves.
     await saveInformation();
     await checkTracker();
+    expect(api.updateFarmTracker).toHaveBeenCalledTimes(1);
     expect(header()).toBeDisabled();
-    expect(menuItem).toBeVisible();
-    fireEvent.click(menuItem);
-    const dialog = screen.queryByRole("dialog", { name: action });
-    if (dialog) {
-      await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: action })));
-    }
+    fireEvent.click(header());
+    expect(screen.queryByRole("menuitem", { name: action })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(api.saveFarm).not.toHaveBeenCalled();
     expect(api.deleteFarm).not.toHaveBeenCalled();
   },

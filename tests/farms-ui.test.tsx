@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { FarmList } from "@/components/farm-list";
 import { FarmEditor } from "@/components/farm-editor";
@@ -15,6 +16,7 @@ import {
 } from "@/components/admin-breadcrumb-context";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ToastProvider } from "@/components/toast-provider";
+import { farmDetailKey, farmListKey, farmSupplyKey } from "@/lib/farm-query";
 import type {
   AvailableFarmProduct,
   Farm,
@@ -106,10 +108,23 @@ const farm = {
   is_active: true,
   in_stock_product_count: 8,
   out_of_stock_product_count: 4,
+  capabilities: { delete: { allowed: true, reasons: [] } },
   version: 2,
   created_at: "2026-01-01",
   updated_at: "2026-10-15",
 } as Farm;
+const supplyingDeleteReason = {
+  code: "supplying_product" as const,
+  id: "22222222-2222-4222-8222-222222222222",
+  label: "RAU-01",
+  name_vi: "Rau muống",
+  name_en: "Water spinach",
+};
+const orderDeleteReason = {
+  code: "store_order" as const,
+  id: "33333333-3333-4333-8333-333333333333",
+  label: "NFV-000123",
+};
 const trackerProfile: TrackerFarm = {
   ...farm,
   signup_count: 24,
@@ -191,6 +206,11 @@ function chooseFarmPhotos(...files: File[]) {
 function photoFile(name: string) {
   return new File(["image"], `${name}.webp`, { type: "image/webp" });
 }
+function CaptureQueryClient({ capture }: { capture: (client: QueryClient) => void }) {
+  const client = useQueryClient();
+  useEffect(() => capture(client), [capture, client]);
+  return null;
+}
 function view(node: React.ReactNode, locale: "vi" | "en" = "vi") {
   const shell = (content: React.ReactNode) => (
     <AdminI18nProvider initialLocale={locale}>
@@ -200,7 +220,11 @@ function view(node: React.ReactNode, locale: "vi" | "en" = "vi") {
     </AdminI18nProvider>
   );
   const rendered = render(shell(node));
-  return { ...rendered, close: () => rendered.rerender(shell(null)) };
+  return {
+    ...rendered,
+    change: (next: React.ReactNode) => rendered.rerender(shell(next)),
+    close: () => rendered.rerender(shell(null)),
+  };
 }
 function viewFarmInformation(extra?: React.ReactNode) {
   search = new URLSearchParams("tab=information");
@@ -339,6 +363,35 @@ it("opens and focuses the missing language field before creating a Farm", () => 
   expect(screen.getByRole("tab", { name: /English/ })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByLabelText("Địa điểm *")).toHaveFocus();
   expect(mocks.save).not.toHaveBeenCalled();
+});
+
+const farmMenu = () => screen.findByRole("button", { name: "Tùy chọn khác" });
+
+async function openFarmAction(action = "Xóa trang trại") {
+  const trigger = await farmMenu();
+  await waitFor(() => expect(trigger).toBeEnabled());
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole("menuitem", { name: action }));
+  return screen.findByRole("dialog", { name: action });
+}
+
+it("opens newly created Farm details with one canonical capability read", async () => {
+  setRoute("/farms/new?search=Hue&page=2");
+  mocks.save.mockResolvedValue({ ...farm, capabilities: undefined });
+  const rendered = view(<FarmEditor />);
+  fireEvent.change(screen.getByLabelText("Tên trang trại *"), { target: { value: farm.name_vi } });
+  fireEvent.change(screen.getByLabelText("Địa điểm *"), { target: { value: farm.location_vi } });
+  fireEvent.click(screen.getByRole("tab", { name: /English/ }));
+  fireEvent.change(screen.getByLabelText("Tên trang trại *"), { target: { value: farm.name_en } });
+  fireEvent.change(screen.getByLabelText("Địa điểm *"), { target: { value: farm.location_en } });
+  fireEvent.click(screen.getByRole("button", { name: "Tạo trang trại" }));
+  await waitFor(() =>
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith("/farms/farm-1?search=Hue&page=2"),
+  );
+  expect(mocks.get).not.toHaveBeenCalled();
+  rendered.change(<FarmDetail farmId={farm.id} />);
+  expect(within(await openFarmAction()).getByRole("button", { name: "Xóa" })).toBeEnabled();
+  expect(mocks.get).toHaveBeenCalledExactlyOnceWith(farm.id, expect.any(AbortSignal));
 });
 
 it.each(["vi", "en"] as const)(
@@ -591,12 +644,18 @@ it("opens the supplied products tab before loading Tracker on Information", asyn
   view(<FarmDetail farmId="farm-1" />);
   expect(await screen.findByRole("heading", { name: "Nông trại Xanh" })).toBeVisible();
   expect(screen.queryByRole("link", { name: "Sửa thông tin" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
-  expect(screen.getAllByRole("menuitem")).toHaveLength(2);
-  expect(screen.getByRole("menuitem", { name: "Ngừng hoạt động" })).toBeVisible();
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
-  expect(screen.getByRole("dialog", { name: "Xóa trang trại" })).toBeVisible();
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hủy" }));
+  const header = within(screen.getByRole("banner"));
+  const menu = await farmMenu();
+  expect(header.getAllByRole("button")).toEqual([menu]);
+  menu.focus();
+  const dialog = within(await openFarmAction());
+  expect(dialog.getAllByRole("button")).toEqual([
+    dialog.getByRole("button", { name: "Hủy" }),
+    dialog.getByRole("button", { name: "Xóa" }),
+  ]);
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  fireEvent.click(dialog.getByRole("button", { name: "Hủy" }));
+  await waitFor(() => expect(menu).toHaveFocus());
   expect(await screen.findByText("Trang trại chưa có sản phẩm nào.")).toBeVisible();
   await waitFor(() =>
     expect(mocks.linked).toHaveBeenCalledWith(
@@ -1181,20 +1240,40 @@ it("retires the Farm name and its breadcrumb when Tracker loses access", async (
   expect(screen.queryByRole("button", { name: "Tùy chọn khác" })).not.toBeInTheDocument();
 });
 
-it("keeps Farm deletion protection and confirms deactivation as a separate action", async () => {
+it("reads fresh Delete blockers on 409 and confirms deactivation as a separate action", async () => {
+  const blocked = {
+    ...farm,
+    capabilities: { delete: { allowed: false, reasons: [orderDeleteReason] } },
+  };
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(blocked);
+  mocks.tracker
+    .mockResolvedValueOnce(trackerProfile)
+    .mockResolvedValueOnce({ ...trackerProfile, version: 3 });
   mocks.removeFarm.mockRejectedValue(Object.assign(new Error("farm_in_use"), { status: 409 }));
-  mocks.save.mockResolvedValue({ ...farm, is_active: false, version: 3 });
+  mocks.save.mockResolvedValue({ ...blocked, is_active: false, version: 3 });
+  setRoute("/farms/farm-1?tab=information&search=Hue&supply_status=all");
   view(<FarmDetail farmId="farm-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Tùy chọn khác" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Xóa trang trại" }));
-  const deletion = within(screen.getByRole("dialog", { name: "Xóa trang trại" }));
-  fireEvent.click(deletion.getByRole("button", { name: "Xóa trang trại" }));
-  expect(await deletion.findByRole("alert")).toHaveTextContent(/thay vì xóa/);
-  expect(deletion.getAllByRole("button")).toHaveLength(2);
-  fireEvent.click(deletion.getByRole("button", { name: "Hủy" }));
-  fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Ngừng hoạt động" }));
-  const deactivation = within(screen.getByRole("dialog", { name: "Ngừng hoạt động" }));
+  fireEvent.change(await screen.findByDisplayValue(farm.name_vi), {
+    target: { value: "Bản nháp" },
+  });
+  const modal = await openFarmAction();
+  const deletion = within(modal);
+  act(() => {
+    const confirm = deletion.getByRole("button", { name: "Xóa" });
+    confirm.click();
+    confirm.click();
+  });
+  expect(await deletion.findByRole("link", { name: "NFV-000123" })).toHaveAttribute(
+    "href",
+    `/store-orders/${orderDeleteReason.id}`,
+  );
+  expect(screen.getByRole("dialog", { name: "Xóa trang trại" })).toBe(modal);
+  expect(deletion.getAllByRole("button")).toEqual([deletion.getByRole("button", { name: "Đóng" })]);
+  expect(mocks.get).toHaveBeenCalledTimes(2);
+  fireEvent.click(deletion.getByRole("button", { name: "Đóng" }));
+  expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Thông tin" })).toHaveAttribute("aria-selected", "true");
+  const deactivation = within(await openFarmAction("Ngừng hoạt động"));
   expect(mocks.save).not.toHaveBeenCalled();
   await act(async () =>
     fireEvent.click(deactivation.getByRole("button", { name: "Ngừng hoạt động" })),
@@ -1205,8 +1284,213 @@ it("keeps Farm deletion protection and confirms deactivation as a separate actio
   expect(mocks.disableTracker).not.toHaveBeenCalled();
   expect(mocks.replace).not.toHaveBeenCalled();
   expect(mocks.refresh).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Tùy chọn khác" }));
-  expect(await screen.findByRole("menuitem", { name: "Bật hoạt động" })).toBeVisible();
+  fireEvent.click(await farmMenu());
+  expect(await screen.findByRole("menuitem", { name: "Bật hoạt động" })).toBeEnabled();
+  expect(screen.getByDisplayValue("Bản nháp")).toBeVisible();
+});
+
+it("discloses only representative source, order, and archived supply links and preserves Farm context", async () => {
+  const archive = {
+    ...supplyingDeleteReason,
+    code: "legacy_supply" as const,
+    name_vi: "Rau archive",
+  };
+  mocks.get.mockResolvedValue({
+    ...farm,
+    capabilities: {
+      delete: { allowed: false, reasons: [supplyingDeleteReason, orderDeleteReason, archive] },
+    },
+  });
+  setRoute("/farms/farm-1?search=Hue&page=2&supply_status=all");
+  view(<FarmDetail farmId={farm.id} />);
+  const trigger = await farmMenu();
+  expect(
+    screen.queryByText("Không thể xóa trang trại vì còn dữ liệu liên quan."),
+  ).not.toBeInTheDocument();
+  const dialog = within(await openFarmAction());
+  expect(dialog.getByText("Không thể xóa trang trại vì còn dữ liệu liên quan.")).toBeVisible();
+  for (const name of ["Rau muống", "Rau archive"]) {
+    expect(dialog.getByRole("link", { name })).toHaveAttribute(
+      "href",
+      `/farms/${farm.id}/products/${supplyingDeleteReason.id}?search=Hue&page=2&supply_status=all`,
+    );
+  }
+  expect(dialog.getByRole("link", { name: "NFV-000123" })).toBeVisible();
+  expect(within(dialog.getByRole("list")).getAllByRole("listitem")).toHaveLength(3);
+  expect(dialog.queryByText(/Growth Tracker/)).not.toBeInTheDocument();
+  const close = dialog.getByRole("button", { name: "Đóng" });
+  expect(dialog.getAllByRole("button")).toEqual([close]);
+  fireEvent.click(close);
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  expect(mocks.removeFarm).not.toHaveBeenCalled();
+  expect(mocks.source).not.toHaveBeenCalled();
+});
+
+it.each([undefined, { delete: { allowed: true, reasons: [orderDeleteReason] } }])(
+  "verifies absent or malformed capabilities before allowing Delete (%j)",
+  async (capabilities) => {
+    mocks.get.mockResolvedValueOnce({ ...farm, capabilities }).mockResolvedValueOnce(farm);
+    view(<FarmDetail farmId={farm.id} />);
+    const dialog = within(await openFarmAction());
+    expect(dialog.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Đóng" })).toBeEnabled();
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    fireEvent.click(dialog.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+    expect(await dialog.findByRole("button", { name: "Xóa" })).toBeEnabled();
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.removeFarm).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps confirmation unavailable after a protected conflict when an immediate GET still reports the old capability", async () => {
+  mocks.removeFarm.mockRejectedValue(fail("farm_delete_protected", 409));
+  view(<FarmDetail farmId={farm.id} />);
+  const dialog = within(await openFarmAction());
+  fireEvent.click(dialog.getByRole("button", { name: "Xóa" }));
+  await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(2));
+  expect(dialog.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" })),
+  );
+  expect(mocks.get).toHaveBeenCalledTimes(3);
+  expect(dialog.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("keeps a newer same-version Farm capability when the Delete recovery GET returns late", async () => {
+  const pending = deferred<Farm>();
+  mocks.get
+    .mockResolvedValueOnce(farm)
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValueOnce({
+      ...farm,
+      capabilities: { delete: { allowed: false, reasons: [orderDeleteReason] } },
+    });
+  mocks.removeFarm.mockRejectedValue(fail("farm_product_changed", 409));
+  let client: QueryClient | undefined;
+  view(
+    <>
+      <CaptureQueryClient
+        capture={(value) => {
+          client = value;
+        }}
+      />
+      <FarmDetail farmId={farm.id} />
+    </>,
+  );
+  const dialog = within(await openFarmAction());
+  fireEvent.click(dialog.getByRole("button", { name: "Xóa" }));
+  await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(2));
+  await act(async () => client!.invalidateQueries({ queryKey: farmDetailKey(farm.id) }));
+  await act(async () =>
+    pending.resolve({
+      ...farm,
+      capabilities: { delete: { allowed: false, reasons: [supplyingDeleteReason] } },
+    }),
+  );
+  expect(await screen.findByRole("link", { name: "NFV-000123" })).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Rau muống" })).not.toBeInTheDocument();
+  expect(dialog.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(mocks.get).toHaveBeenCalledTimes(3);
+  expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
+});
+
+it("checks capability again before confirming a previously allowed Delete", async () => {
+  let client: QueryClient | undefined;
+  view(
+    <>
+      <CaptureQueryClient
+        capture={(value) => {
+          client = value;
+        }}
+      />
+      <FarmDetail farmId={farm.id} />
+    </>,
+  );
+  const modal = await openFarmAction();
+  const dialog = within(modal);
+  const confirm = dialog.getByRole("button", { name: "Xóa" });
+  await act(async () => {
+    client!.setQueryData(farmDetailKey(farm.id), {
+      ...farm,
+      capabilities: { delete: { allowed: false, reasons: [orderDeleteReason] } },
+    });
+    // React has not yet re-rendered the disabled confirmation.
+    confirm.click();
+  });
+  expect(mocks.removeFarm).not.toHaveBeenCalled();
+  expect(await dialog.findByRole("link", { name: "NFV-000123" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "Xóa trang trại" })).toBe(modal);
+  expect(dialog.getAllByRole("button")).toEqual([dialog.getByRole("button", { name: "Đóng" })]);
+});
+
+it("uses only GET to recover a timed-out Delete until a missing Farm confirms the result", async () => {
+  setRoute("/farms/farm-1?search=Hue&is_active=true&page=2");
+  mocks.removeFarm.mockRejectedValue(fail("request_timeout", 408));
+  mocks.get
+    .mockResolvedValueOnce(farm)
+    .mockResolvedValueOnce(farm)
+    .mockRejectedValueOnce(fail("request_timeout", 404))
+    .mockRejectedValueOnce(fail("request_failed", 404))
+    .mockRejectedValueOnce(
+      Object.assign(new Error("request_failed"), {
+        status: 404,
+        payload: { detail: "No Farm matches the given query." },
+      }),
+    );
+  view(<FarmDetail farmId={farm.id} />);
+  const dialog = within(await openFarmAction());
+  fireEvent.click(dialog.getByRole("button", { name: "Xóa" }));
+  const verify = () => screen.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" });
+  expect(await dialog.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" })).toBeVisible();
+  expect(dialog.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  fireEvent.click(dialog.getByRole("button", { name: "Đóng" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const check = await verify();
+    await act(async () => fireEvent.click(check));
+    expect(await farmMenu()).toBeDisabled();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  }
+  const check = await verify();
+  await act(async () => fireEvent.click(check));
+  expect(mocks.replace).toHaveBeenCalledExactlyOnceWith("/farms?search=Hue&is_active=true&page=2");
+  expect(screen.queryByRole("button", { name: "Tùy chọn khác" })).not.toBeInTheDocument();
+  expect(mocks.get).toHaveBeenCalledTimes(5);
+  expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
+});
+
+it("retires the Farm and supply cache after a confirmed Delete and restores list filters", async () => {
+  setRoute("/farms/farm-1?search=Hue&is_active=true&page=2");
+  mocks.removeFarm.mockResolvedValue(undefined);
+  let client: QueryClient | undefined;
+  view(
+    <>
+      <CaptureQueryClient
+        capture={(value) => {
+          client = value;
+        }}
+      />
+      <FarmDetail farmId={farm.id} />
+    </>,
+  );
+  const dialog = within(await openFarmAction());
+  const sourceKey = [...farmSupplyKey(farm.id), "source", linkedProduct.id];
+  client!.setQueryData(sourceKey, linkedProduct);
+  client!.setQueryData(farmListKey, [farm]);
+  const confirm = dialog.getByRole("button", { name: "Xóa" });
+  await act(async () => {
+    confirm.click();
+    confirm.click();
+  });
+  expect(mocks.removeFarm).toHaveBeenCalledExactlyOnceWith(farm.id);
+  expect(client!.getQueryData(farmDetailKey(farm.id))).toBeUndefined();
+  expect(client!.getQueryData(sourceKey)).toBeUndefined();
+  expect(client!.getQueryState(farmListKey)?.isInvalidated).toBe(true);
+  expect(mocks.replace).toHaveBeenCalledExactlyOnceWith("/farms?search=Hue&is_active=true&page=2");
+  expect(mocks.get).toHaveBeenCalledTimes(1);
 });
 
 it("opens supply through a contextual link without fetching capabilities or batches for rows", async () => {
@@ -1239,8 +1523,12 @@ async function openAdd() {
   return dialog;
 }
 
-it("uses picker units and a single Add with the first batch, then refreshes only the supply list", async () => {
+it("uses picker units and a single Add to refresh the supply list and Farm deletion capability", async () => {
   prepareInventory();
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce({
+    ...farm,
+    capabilities: { delete: { allowed: false, reasons: [supplyingDeleteReason] } },
+  });
   const result = deferred<FarmProduct>();
   mocks.add.mockReturnValue(result.promise);
   view(<FarmDetail farmId={farm.id} />);
@@ -1262,7 +1550,10 @@ it("uses picker units and a single Add with the first batch, then refreshes only
   );
   await act(async () => result.resolve(supplying));
   await waitFor(() => expect(mocks.linked).toHaveBeenCalledTimes(2));
-  expect(mocks.get).toHaveBeenCalledTimes(1);
+  const deletion = within(await openFarmAction());
+  expect(await deletion.findByRole("link", { name: "Rau muống" })).toBeVisible();
+  expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(mocks.get).toHaveBeenCalledTimes(2);
   expect(mocks.available).toHaveBeenCalledTimes(1);
   expect(mocks.source).not.toHaveBeenCalled();
   expect(mocks.productDetail).not.toHaveBeenCalled();
@@ -1350,28 +1641,52 @@ it("does not fetch a separate Product and handles rejection when it stops sellin
   expect(mocks.productDetail).not.toHaveBeenCalled();
 });
 
-it("removes even a discontinued Product when permitted and refreshes its history scope without loading Farm or events", async () => {
-  prepareInventory();
-  const prior = { ...supplying, product_status: "discontinued" as const };
-  const after = { ...removedSupply, product_status: "discontinued" as const };
-  mocks.source.mockResolvedValueOnce(prior).mockResolvedValueOnce(after);
-  mocks.removeLink.mockResolvedValue(after);
-  mocks.batches.mockImplementation((_farm, _product, { scope }) =>
-    Promise.resolve(linkedResult([{ ...liveBatch, is_historical: scope === "history" }])),
-  );
-  view(<FarmDetail farmId={farm.id} productId="product-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Gỡ sản phẩm" }));
-  const dialog = within(screen.getByRole("dialog", { name: /Gỡ Rau muống/ }));
-  fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
-  expect(await screen.findByText("Đã gỡ", { exact: true })).toBeVisible();
-  expect(mocks.removeLink).toHaveBeenCalledExactlyOnceWith(farm.id, "product-1", prior);
-  await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(2));
-  expect(mocks.batches.mock.calls.map((call) => call[2].scope)).toEqual(["current", "history"]);
-  expect(screen.queryByRole("button", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument();
-  expect(mocks.get).toHaveBeenCalledTimes(1);
-  expect(mocks.linked).not.toHaveBeenCalled();
-  expect(mocks.history).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "refreshes Farm capability after removing the last discontinued Product (order history: %s)",
+  async (hasOrder) => {
+    prepareInventory();
+    const prior = { ...supplying, product_status: "discontinued" as const };
+    const after = { ...removedSupply, product_status: "discontinued" as const };
+    mocks.get
+      .mockResolvedValueOnce({
+        ...farm,
+        capabilities: { delete: { allowed: false, reasons: [supplyingDeleteReason] } },
+      })
+      .mockResolvedValueOnce({
+        ...farm,
+        capabilities: {
+          delete: { allowed: !hasOrder, reasons: hasOrder ? [orderDeleteReason] : [] },
+        },
+      });
+    mocks.source.mockResolvedValueOnce(prior).mockResolvedValueOnce(after);
+    mocks.removeLink.mockResolvedValue(after);
+    mocks.batches.mockImplementation((_farm, _product, { scope }) =>
+      Promise.resolve(linkedResult([{ ...liveBatch, is_historical: scope === "history" }])),
+    );
+    const rendered = view(<FarmDetail farmId={farm.id} productId="product-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gỡ sản phẩm" }));
+    const dialog = within(screen.getByRole("dialog", { name: /Gỡ Rau muống/ }));
+    fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
+    expect(await screen.findByText("Đã gỡ", { exact: true })).toBeVisible();
+    expect(mocks.removeLink).toHaveBeenCalledExactlyOnceWith(farm.id, "product-1", prior);
+    await waitFor(() => expect(mocks.batches).toHaveBeenCalledTimes(2));
+    expect(mocks.batches.mock.calls.map((call) => call[2].scope)).toEqual(["current", "history"]);
+    expect(screen.queryByRole("button", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument();
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.linked).not.toHaveBeenCalled();
+    expect(mocks.history).not.toHaveBeenCalled();
+    rendered.change(<FarmDetail farmId={farm.id} />);
+    const deletion = within(await openFarmAction());
+    if (hasOrder) {
+      expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+      expect(deletion.getByRole("link", { name: "NFV-000123" })).toBeVisible();
+    } else {
+      expect(deletion.getByRole("button", { name: "Xóa" })).toBeEnabled();
+      expect(deletion.queryByRole("list")).not.toBeInTheDocument();
+    }
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+  },
+);
 
 it("shows open allocation order links and never fetches an order to determine whether Remove is allowed", async () => {
   prepareInventory();
@@ -1452,6 +1767,10 @@ it("keeps Remove locked through failed and old GETs, then reads removed state wi
 
 it("re-adds the same source with a fresh batch and keeps old batches read-only", async () => {
   prepareInventory();
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce({
+    ...farm,
+    capabilities: { delete: { allowed: false, reasons: [supplyingDeleteReason] } },
+  });
   const renewed = { ...supplying, version: 4, supply_generation: 2 };
   mocks.source.mockResolvedValueOnce(removedSupply).mockResolvedValueOnce(renewed);
   mocks.readd.mockResolvedValue({ ...renewed, first_batch_id: "batch-new" });
@@ -1464,7 +1783,7 @@ it("re-adds the same source with a fresh batch and keeps old batches read-only",
       ),
     ),
   );
-  view(<FarmSourceDetail farm={farm} productId="product-1" />);
+  const rendered = view(<FarmDetail farmId={farm.id} productId="product-1" />);
   expect(await screen.findByText("Thuộc lịch sử")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Sửa đợt cung cấp" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Thêm lại sản phẩm" }));
@@ -1483,6 +1802,12 @@ it("re-adds the same source with a fresh batch and keeps old batches read-only",
   );
   expect(await screen.findByRole("button", { name: "Sửa đợt cung cấp" })).toBeVisible();
   expect(mocks.batches.mock.calls.map((call) => call[2].scope)).toEqual(["history", "current"]);
+  expect(mocks.get).toHaveBeenCalledTimes(2);
+  rendered.change(<FarmDetail farmId={farm.id} />);
+  const deletion = within(await openFarmAction());
+  expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(deletion.getByRole("link", { name: "Rau muống" })).toBeVisible();
+  expect(mocks.get).toHaveBeenCalledTimes(2);
 });
 
 it("loads lifecycle events by page on intent and distinguishes system classification from removal", async () => {
@@ -1572,15 +1897,19 @@ it("keeps a source write that lost its route locked on return until an explicit 
   expect(mocks.removeLink).toHaveBeenCalledTimes(1);
 });
 
-it("requires checking a pending Add after leaving and returning to the supply route", async () => {
+it("locks Delete on returning to a Farm with an unconfirmed Add and reviews the exact source", async () => {
   prepareInventory();
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce({
+    ...farm,
+    capabilities: { delete: { allowed: false, reasons: [supplyingDeleteReason] } },
+  });
   const pending = deferred<FarmProduct>();
   mocks.add.mockReturnValue(pending.promise);
   const scope = (opened: boolean) => (
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
         <AdminQueryProvider>
-          {opened ? <FarmProducts farm={farm} /> : <p>Other route</p>}
+          {opened ? <FarmDetail farmId={farm.id} /> : <p>Other route</p>}
         </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>
@@ -1593,11 +1922,39 @@ it("requires checking a pending Add after leaving and returning to the supply ro
   rendered.rerender(scope(false));
   await act(async () => pending.reject(fail("request_timeout", 408)));
   rendered.rerender(scope(true));
+  const deletion = within(await openFarmAction());
+  expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+  fireEvent.click(deletion.getByRole("button", { name: "Đóng" }));
+  expect(mocks.removeFarm).not.toHaveBeenCalled();
   fireEvent.click(await screen.findByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
   const open = await screen.findByRole("link", { name: "Mở chi tiết nguồn cung" });
   expect(open).toHaveAttribute("href", "/farms/farm-1/products/product-1");
+  expect(mocks.get).toHaveBeenCalledTimes(2);
+  const reviewedDeletion = within(await openFarmAction());
+  expect(reviewedDeletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
   expect(mocks.source).toHaveBeenCalledTimes(1);
   expect(mocks.add).toHaveBeenCalledTimes(1);
+});
+
+it("locks Delete while the outcome of a re-add from the supply route remains uncertain", async () => {
+  prepareInventory();
+  mocks.source.mockResolvedValue(removedSupply);
+  const pending = deferred<FarmProduct>();
+  mocks.readd.mockReturnValue(pending.promise);
+  const rendered = view(<FarmDetail farmId={farm.id} productId="product-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Thêm lại sản phẩm" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Thêm lại sản phẩm" }));
+  fireEvent.change(dialog.getByLabelText("Số lượng đơn vị bán"), { target: { value: "2" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Thêm lại sản phẩm" }));
+  await waitFor(() => expect(mocks.readd).toHaveBeenCalledTimes(1));
+  rendered.change(<FarmDetail farmId={farm.id} />);
+  const deletion = within(await openFarmAction());
+  expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  await act(async () => pending.reject(fail("request_timeout", 408)));
+  expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(mocks.removeFarm).not.toHaveBeenCalled();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
 });
 
 it("keeps Farm query context while changing supply filters, and reuses no per-row detail", async () => {

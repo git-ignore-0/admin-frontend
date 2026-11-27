@@ -14,8 +14,10 @@ import { apiErrorContext, type ClientApiError } from "@/lib/client-error";
 import {
   farmAccess,
   farmAccessDenied,
+  farmDetailKey,
   farmListKey,
   farmSupplyKey,
+  farmSupplyWriteKey,
   retireFarmAccess,
 } from "@/lib/farm-query";
 import {
@@ -100,7 +102,7 @@ export function useFarmSourceWrite(
   const client = useQueryClient();
   const currentSession = useIsAdminQueryScopeCurrent();
   const scope = farmSupplyKey(farmId);
-  const writeScope = [...scope, "write"];
+  const writeScope = farmSupplyWriteKey(farmId);
   const mutationKey = [...writeScope, "source", productId];
   const isWriting = useIsMutating({ mutationKey: writeScope }) > 0;
   // Only uncertain outcomes survive the finally block until review or session retirement.
@@ -175,6 +177,7 @@ export function useFarmSourceWrite(
     void client.invalidateQueries({ queryKey: [...scope, "list"] });
     void client.invalidateQueries({ queryKey: farmListKey });
     if (lifecycle) {
+      void client.invalidateQueries({ queryKey: farmDetailKey(farmId) });
       void client.invalidateQueries({ queryKey: [...scope, "history", productId] });
     }
   }

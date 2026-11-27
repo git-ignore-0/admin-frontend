@@ -685,12 +685,14 @@ function FarmEditorForm({
       }
       setForm(fromFarm(result));
       setBaseline(result);
-      await publishFarm(result);
-      if (!canAct()) return;
       if (information) {
+        await publishFarm(result);
+        if (!canAct()) return;
         const synced = await tracker.syncAfterFarmWrite();
         if (canAct()) toast(synced ? c.savedChanges : c.farmSaved);
       } else {
+        // The create response has no delete capability. Let the detail query read its own snapshot.
+        void queryClient.invalidateQueries({ queryKey: farmListKey });
         toast(c.farmSaved);
         leavingAfterCreate = true;
         router.replace(farmHref(search, { id: result.id }));

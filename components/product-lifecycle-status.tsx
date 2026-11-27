@@ -1,11 +1,10 @@
 "use client";
 
-import { Anchor, Box, Button, Collapse, Group, List, Text } from "@mantine/core";
-import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import { Anchor, List, Text } from "@mantine/core";
 import Link from "next/link";
-import { useId, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { LockDisclosure, LockReasonList } from "@/components/lock-disclosure";
 import { Status } from "@/components/nfv-controls";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import type { ProductLockReason, ProductStatus } from "@/lib/types";
@@ -31,43 +30,14 @@ export function ProductLockDisclosure({
   const {
     t: { storeCatalog: copy },
   } = useAdminI18n();
-  const reasonsId = useId();
-  const summaryId = useId();
-  const [opened, setOpened] = useState(false);
-
-  if (!reasons.length) return <Text size="sm">{summary}</Text>;
-
   return (
-    <Box>
-      <Group gap="xs" align="baseline">
-        <Text id={summaryId} size="sm">
-          {summary}
-        </Text>
-        <Button
-          type="button"
-          size="xs"
-          variant="subtle"
-          rightSection={
-            opened ? (
-              <IconChevronUp size={14} aria-hidden />
-            ) : (
-              <IconChevronDown size={14} aria-hidden />
-            )
-          }
-          aria-controls={reasonsId}
-          aria-describedby={summaryId}
-          aria-expanded={opened}
-          onClick={() => setOpened((current) => !current)}
-        >
-          {opened ? copy.hideProductLockReasons : copy.showProductLockReasons}
-        </Button>
-      </Group>
-      <Box id={reasonsId}>
-        <Collapse in={opened}>
-          <ProductLockReasons reasons={reasons} />
-        </Collapse>
-      </Box>
-    </Box>
+    <LockDisclosure
+      summary={summary}
+      showLabel={copy.showProductLockReasons}
+      hideLabel={copy.hideProductLockReasons}
+    >
+      {reasons.length > 0 && <ProductLockReasons reasons={reasons} />}
+    </LockDisclosure>
   );
 }
 
@@ -78,7 +48,7 @@ export function ProductLockReasons({ reasons }: { reasons: ProductLockReason[] }
   } = useAdminI18n();
   if (!reasons.length) return null;
   return (
-    <List size="sm" spacing="xs" mt="xs" withPadding style={{ overflowWrap: "anywhere" }}>
+    <LockReasonList>
       {reasons.map((reason) => {
         const farm = ["stock_batch", "legacy_supply", "farm_link"].includes(reason.code);
         const order = ["store_order", "store_reservation"].includes(reason.code);
@@ -110,6 +80,6 @@ export function ProductLockReasons({ reasons }: { reasons: ProductLockReason[] }
           </List.Item>
         );
       })}
-    </List>
+    </LockReasonList>
   );
 }

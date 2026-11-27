@@ -8,8 +8,6 @@ type Props = {
   title: string;
   children: ReactNode;
   cancelLabel: string;
-  confirmLabel: string;
-  busyLabel: string;
   busy: boolean;
   size?: ModalProps["size"];
   danger?: boolean;
@@ -20,7 +18,12 @@ type Props = {
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onCancel: () => void;
-} & ({ formId: string; onConfirm?: never } | { formId?: never; onConfirm: () => void });
+} & (
+  | ({ confirmLabel: string; busyLabel: string } & (
+      { formId: string; onConfirm?: never } | { formId?: never; onConfirm: () => void }
+    ))
+  | { confirmLabel?: never; busyLabel?: never; formId?: never; onConfirm?: never }
+);
 
 /** Compatibility boundary for existing mutation dialogs; Mantine owns the portal and focus trap. */
 export function ConfirmationDialog({
@@ -42,6 +45,7 @@ export function ConfirmationDialog({
   onConfirm,
   formId,
 }: Props) {
+  const closeButton = useRef<HTMLButtonElement>(null);
   const originalFocus = useRef<HTMLElement | null>(
     typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
   );
@@ -65,6 +69,10 @@ export function ConfirmationDialog({
     // after portal removal; Mantine owns the focus trap inside the open dialog.
     return () => queueMicrotask(restoreFocus);
   }, [restoreFocus]);
+  useEffect(() => {
+    if (!confirmLabel && !busy && document.activeElement === document.body)
+      closeButton.current?.focus({ preventScroll: true });
+  }, [busy, confirmLabel]);
 
   return (
     <Modal.Root
@@ -96,7 +104,8 @@ export function ConfirmationDialog({
         </Modal.Body>
         <Group component="footer" className={layout.footer} justify="flex-end" gap="xs" p="md">
           <Button
-            data-autofocus={(danger && !formId && !busy) || undefined}
+            ref={closeButton}
+            data-autofocus={(!busy && (!confirmLabel || (danger && !formId))) || undefined}
             variant="default"
             disabled={busy}
             onClick={onCancel}
@@ -109,16 +118,18 @@ export function ConfirmationDialog({
               {alternateLabel}
             </Button>
           )}
-          <Button
-            color={danger ? "red" : undefined}
-            disabled={busy || confirmDisabled}
-            form={formId}
-            loading={busy}
-            onClick={onConfirm}
-            type={formId ? "submit" : "button"}
-          >
-            {busy ? busyLabel : confirmLabel}
-          </Button>
+          {confirmLabel && (
+            <Button
+              color={danger ? "red" : undefined}
+              disabled={busy || confirmDisabled}
+              form={formId}
+              loading={busy}
+              onClick={onConfirm}
+              type={formId ? "submit" : "button"}
+            >
+              {busy ? busyLabel : confirmLabel}
+            </Button>
+          )}
         </Group>
       </Modal.Content>
     </Modal.Root>
