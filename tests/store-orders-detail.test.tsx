@@ -1,11 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
+import { adminDictionaries, type AdminLocale } from "@/lib/admin-i18n";
+import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { api } from "@/lib/client-api";
+import layout from "@/components/store-order-detail.module.css";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
@@ -78,9 +81,9 @@ function detailOrder() {
   };
 }
 
-function view() {
+function view(locale: AdminLocale = "vi") {
   return render(
-    <AdminI18nProvider initialLocale="vi">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
         <AdminQueryProvider>
           {" "}
@@ -118,12 +121,12 @@ describe("Store order detail", () => {
     expect(screen.queryByText("Xem lịch sử")).not.toBeInTheDocument();
     expect(screen.getByText("Khách báo chuyển", { selector: "dt" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toHaveClass(
-      "mantine-Button-root",
+      "mantine-ActionIcon-root",
     );
     const editor = screen.getByRole("region", { name: "Phân bổ nguồn Farm / batch" });
     for (const control of [
       ...within(editor).getAllByRole("combobox"),
-      ...within(editor).getAllByRole("spinbutton"),
+      ...within(editor).getAllByRole("textbox", { name: /^Số lượng nguồn/u }),
     ]) {
       expect(control).toHaveClass("mantine-Input-input");
     }
@@ -139,16 +142,20 @@ describe("Store order detail", () => {
     expect(container.querySelector("details")).toBeNull();
   });
 
-  it("puts delivery ahead of secondary actions for an approved order", async () => {
+  it("gives delivery primary emphasis in the header of an approved order", async () => {
     vi.mocked(api).mockResolvedValue({
       ...detailOrder(),
       status: "pending_delivery",
       payment_status: "received",
     });
-    const { container } = view();
-    await screen.findByRole("heading", { name: "Sản phẩm & nguồn hàng" });
-    const buttons = container.querySelectorAll(".store-order-actions button");
-    expect(buttons[0]).toHaveTextContent("Xác nhận đã giao");
+    view();
+    const heading = await screen.findByRole("heading", { name: "NFV-STORE-001", level: 1 });
+    const header = within(heading.closest("header")!);
+    const actions = header.getByRole("group", { name: "Thao tác đơn hàng" });
+    const buttons = within(actions).getAllByRole("button");
+    expect(buttons.at(-1)).toHaveTextContent("Xác nhận đã giao");
+    expect(buttons.at(-1)).toHaveAttribute("data-variant", "filled");
+    expect(header.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeVisible();
     expect(
       screen.queryByRole("region", { name: "Phân bổ nguồn Farm / batch" }),
     ).not.toBeInTheDocument();
@@ -181,11 +188,11 @@ describe("Store order detail", () => {
         selector: ".store-order-status .mantine-Badge-label",
       }),
     ).toBeVisible();
-    expect(document.querySelectorAll(".store-order-state-line .mantine-Badge-root")).toHaveLength(
-      1,
-    );
+    const header = screen.getByRole("heading", { name: "NFV-STORE-001" }).closest("header")!;
+    expect(header.querySelectorAll(".mantine-Badge-root")).toHaveLength(1);
     expect(screen.queryByText("Dùng điểm CSA")).not.toBeInTheDocument();
-    expect(document.querySelector(".store-order-total-due dd")).toHaveTextContent(/^0\s*₫$/u);
+    const total = within(screen.getByRole("complementary")).getByText("Tổng phải trả");
+    expect(within(total.parentElement!).getByText(/^0\s*₫$/u)).toBeVisible();
     expect(
       screen.queryByRole("heading", { name: "Thông tin chuyển khoản" }),
     ).not.toBeInTheDocument();
@@ -196,11 +203,12 @@ describe("Store order detail", () => {
       ...detailOrder(),
       expires_at: "2026-10-31T18:00:00Z",
     });
-    const { container } = view();
+    view();
 
     expect(await screen.findByText("Hạn duyệt đơn")).toBeVisible();
-    expect(screen.getByText("Còn 480 phút")).toBeVisible();
-    expect(container.querySelector(".store-order-countdown")).not.toHaveAttribute("aria-live");
+    const countdown = screen.getByText("Còn 480 phút");
+    expect(countdown).toBeVisible();
+    expect(countdown.closest("[aria-live]")).toBeNull();
   });
 
   it("labels the five-minute payment window separately from the eight-hour review window", async () => {
@@ -247,7 +255,8 @@ describe("Store order detail", () => {
     });
     view();
 
-    expect(await screen.findByRole("heading", { name: "Sản phẩm & nguồn hàng" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "NFV-STORE-001", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sản phẩm & nguồn hàng" })).toBeVisible();
     expect(screen.getByText("Vườn A")).toBeVisible();
     expect(screen.getByText("Đã hoàn 1 · Còn có thể hoàn 2")).toBeVisible();
     expect(screen.getByText("Còn hàng chưa hoàn tồn")).toBeVisible();
@@ -283,15 +292,15 @@ describe("Store order detail", () => {
     view();
 
     const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    expect(within(editor).getAllByRole("spinbutton")).toHaveLength(2);
+    expect(within(editor).getAllByRole("textbox", { name: /^Số lượng nguồn/u })).toHaveLength(2);
     expect(within(editor).getByText("Đủ 3/3")).toBeVisible();
     fireEvent.change(within(editor).getByLabelText("Số lượng nguồn 1"), { target: { value: "1" } });
     expect(within(editor).getByText("Đã chọn 2/3 · Còn thiếu 1")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue(1);
-    expect(within(editor).getAllByRole("spinbutton")).toHaveLength(2);
+    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("1");
+    expect(within(editor).getAllByRole("textbox", { name: /^Số lượng nguồn/u })).toHaveLength(2);
   });
 
   it("keeps the snapshot and dirty draft visible when refresh fails, then clears the warning after retry", async () => {
@@ -314,12 +323,12 @@ describe("Store order detail", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/Không thể kết nối/);
     expect(alert).toHaveTextContent(/chưa được làm mới/i);
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue(1);
+    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("1");
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
 
     fireEvent.click(within(alert).getByRole("button", { name: "Thử lại" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue(1);
+    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("1");
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
   });
 
@@ -367,7 +376,7 @@ describe("Store order detail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
 
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue(2);
+    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("2");
     expect(within(editor).getByText("Nguồn chỉ còn 1, thấp hơn số lượng đã chọn.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
   });
@@ -395,4 +404,81 @@ describe("Store order detail", () => {
     });
     expect(within(editor).getByText("Số lượng nguồn phải là số nguyên dương.")).toBeVisible();
   });
+});
+
+it.each([
+  ["vi", "Đơn hàng", "Chi tiết đơn hàng", "Sản phẩm & nguồn hàng"],
+  ["en", "Orders", "Order details", "Products & sources"],
+] as const)(
+  "uses the AdminShell %s breadcrumb and one content heading",
+  async (locale, parent, detail, products) => {
+    const item = detailOrder();
+    const dictionary = adminDictionaries[locale];
+    const orders = adminNavigation(dictionary)
+      .flatMap(({ items }) => items)
+      .find(({ href }) => href === "/store-orders");
+    expect(resolveAdminBreadcrumbs(`/store-orders/${item.id}`, orders, dictionary)).toEqual([
+      { label: parent, href: "/store-orders" },
+      { label: detail },
+    ]);
+    vi.mocked(api).mockResolvedValue(item);
+    view(locale);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: item.reference_code }),
+    ).toBeVisible();
+    expect(screen.getAllByText(item.reference_code)).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: detail })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Danh sách đơn hàng|Store orders/u })).toBeNull();
+    expect(screen.getAllByRole("table", { name: products })).toHaveLength(1);
+  },
+);
+
+it("keeps the allocation draft and DOM input while the measured content crosses 880px", async () => {
+  const listeners = new Map<Element, (width: number) => void>();
+  const Observer = window.ResizeObserver;
+  window.ResizeObserver = class extends Observer {
+    private element?: Element;
+    constructor(private callback: ResizeObserverCallback) {
+      super(callback);
+    }
+    observe(element: Element) {
+      this.element = element;
+      listeners.set(element, (width) =>
+        this.callback([{ target: element, contentRect: { width } } as ResizeObserverEntry], this),
+      );
+    }
+    disconnect() {
+      if (this.element) listeners.delete(this.element);
+    }
+  };
+  try {
+    vi.mocked(api).mockResolvedValue(detailOrder());
+    view();
+    const input = await screen.findByRole("textbox", { name: "Số lượng nguồn 1" });
+    const table = screen.getByRole("table");
+    const grid = table.closest(".mantine-Grid-inner")!;
+    const content = screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
+    const setWidth = listeners.get(content)!;
+    const sidebar = screen.getByRole("complementary");
+    const timeline = screen.getByRole("region", { name: "Lịch sử xử lý" });
+    expect(table.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      sidebar.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.change(input, { target: { value: "1" } });
+    act(() => input.focus());
+    expect(input).toHaveFocus();
+
+    act(() => setWidth(880));
+    await waitFor(() => expect(grid).toHaveClass(layout.desktopGrid));
+    act(() => setWidth(879));
+    await waitFor(() => expect(grid).not.toHaveClass(layout.desktopGrid));
+    expect(screen.getByRole("textbox", { name: "Số lượng nguồn 1" })).toBe(input);
+    expect(input).toHaveValue("1");
+    expect(input).toHaveFocus();
+    expect(api).toHaveBeenCalledTimes(1);
+  } finally {
+    window.ResizeObserver = Observer;
+  }
 });

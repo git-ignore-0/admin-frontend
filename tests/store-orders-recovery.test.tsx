@@ -134,7 +134,9 @@ it.each([0, 1])(
     renderOrder();
     fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
     let dialog = screen.getByRole("dialog");
-    fireEvent.change(within(dialog).getByRole("spinbutton"), { target: { value: "1" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
+      target: { value: "1" },
+    });
     fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
     await within(dialog).findByRole("alert");
     const first = JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body));
@@ -145,7 +147,9 @@ it.each([0, 1])(
     );
     fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn" }));
     dialog = screen.getByRole("dialog");
-    fireEvent.change(within(dialog).getByRole("spinbutton"), { target: { value: "1" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
+      target: { value: "1" },
+    });
     fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
     const second = JSON.parse(String(vi.mocked(api).mock.calls[3][1]?.body));
     expect(second.allocations).toEqual(first.allocations);
@@ -154,7 +158,9 @@ it.each([0, 1])(
     vi.mocked(api).mockResolvedValueOnce(withRestock(2));
     fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn" }));
     const deliberate = screen.getByRole("dialog");
-    fireEvent.change(within(deliberate).getByRole("spinbutton"), { target: { value: "1" } });
+    fireEvent.change(within(deliberate).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
+      target: { value: "1" },
+    });
     fireEvent.click(within(deliberate).getByRole("button", { name: "Hoàn tồn" }));
     const third = JSON.parse(String(vi.mocked(api).mock.calls[4][1]?.body));
     expect(third.idempotency_key).not.toBe(first.idempotency_key);
@@ -189,7 +195,9 @@ it.each([
   renderOrder();
   fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
   const dialog = screen.getByRole("dialog");
-  fireEvent.change(within(dialog).getByRole("spinbutton"), { target: { value: "1" } });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
+    target: { value: "1" },
+  });
   const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn" });
   fireEvent.click(confirm);
   await within(dialog).findByRole("alert");

@@ -249,10 +249,16 @@ it("late receipt after elapsed payment deadline renders cancelled plus refund wi
     Promise.resolve(options?.method === "POST" ? cancelled : item),
   );
   render(tree(item.id));
-  const modal = await dialog("Ghi nhận đã nhận tiền");
+  // The elapsed deadline refresh must settle before the receipt action opens.
+  const trigger = await screen.findByRole("button", { name: "Ghi nhận đã nhận tiền" });
+  await waitFor(() => {
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(trigger).toBeEnabled();
+  });
+  fireEvent.click(trigger);
+  const modal = screen.getByRole("dialog");
   const confirm = within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" });
-  // An already elapsed deadline also refreshes the snapshot in the background.
-  await waitFor(() => expect(confirm).toBeEnabled());
+  expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(screen.getByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeVisible();
@@ -420,7 +426,7 @@ it("separates terminal recovery from order actions and replays the exact unresol
     .mockResolvedValueOnce(cancelled)
     .mockRejectedValueOnce(Object.assign(new Error("store_order_state_conflict"), { status: 409 }))
     .mockResolvedValueOnce(cancelled);
-  const view = render(tree(item.id));
+  render(tree(item.id));
   const modal = await dialog("Hủy đơn");
   fireEvent.change(within(modal).getByLabelText("Lý do hủy"), {
     target: { value: "Không đủ hàng" },
@@ -430,7 +436,7 @@ it("separates terminal recovery from order actions and replays the exact unresol
   fireEvent.click(within(modal).getByRole("button", { name: "Đóng" }));
   fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
   await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" });
-  expect(view.container.querySelector(".store-order-actions")).toBeNull();
+  expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Hủy đơn" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Thử lại yêu cầu trước" }));
   const retry = screen.getByRole("dialog");
@@ -442,7 +448,7 @@ it("separates terminal recovery from order actions and replays the exact unresol
   fireEvent.click(within(retry).getByRole("button", { name: "Tải trạng thái mới" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("button", { name: "Thử lại yêu cầu trước" })).toBeNull();
-  expect(view.container.querySelector(".store-order-actions")).toBeNull();
+  expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
 });
 
 it("keeps delivery actions when an inactive historical deadline has elapsed", async () => {
@@ -469,11 +475,9 @@ it("orders admin history by timestamp across goods approval and money confirmati
     payment_received_at: "2026-10-31T08:30:00Z",
   });
   vi.mocked(api).mockResolvedValue(item);
-  const view = render(tree(item.id));
-  await screen.findByText("Admin ghi nhận tiền");
-  const times = [...view.container.querySelectorAll(".store-order-history dd")].map(
-    (node) => node.textContent,
-  );
+  render(tree(item.id));
+  const history = await screen.findByRole("region", { name: "Lịch sử xử lý" });
+  const times = [...history.querySelectorAll("dd")].map((node) => node.textContent);
   expect(times).toEqual([
     "31/10/2026 15:00",
     "31/10/2026 15:10",
@@ -554,7 +558,7 @@ it.each(["record-payment", "close-refund-request"] as const)(
         Object.assign(new Error("store_order_state_conflict"), { status: 409 }),
       )
       .mockResolvedValueOnce(next);
-    const view = render(tree(item.id));
+    render(tree(item.id));
     let modal = await dialog("Xử lý đối soát");
     selectOption(within(modal).getByRole("combobox"), choice);
     fireEvent.change(within(modal).getByRole("textbox"), { target: { value: "Đã kiểm tra" } });
@@ -569,7 +573,7 @@ it.each(["record-payment", "close-refund-request"] as const)(
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeEnabled(),
     );
-    expect(view.container.querySelector(".store-order-actions")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
     modal = await dialog("Thử lại yêu cầu trước");
     expect(within(modal).getByRole("combobox")).toHaveValue(
       choice === "record-payment" ? "Đã nhận tiền" : "Không nhận tiền",
@@ -583,7 +587,7 @@ it.each(["record-payment", "close-refund-request"] as const)(
     fireEvent.click(within(modal).getByRole("button", { name: "Tải trạng thái mới" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByRole("button", { name: "Thử lại yêu cầu trước" })).toBeNull();
-    expect(view.container.querySelector(".store-order-actions")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
   },
 );
 

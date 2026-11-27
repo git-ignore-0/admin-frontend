@@ -480,12 +480,61 @@ export type StoreAllocationError =
   | "line_exceeded"
   | "batch_exceeded";
 
-export function validateStoreAllocations(order: StoreOrder, rows: StoreOrderAllocationDraft[]) {
-  const errors: StoreAllocationError[] = [];
-  const pairKeys = rows.map((row) => `${row.line_id}:${row.batch_id}`);
-  if (new Set(pairKeys).size !== pairKeys.length) {
-    return { valid: false as const, errors: ["duplicate" as const] };
+export type StoreOrderAllocationInput = Omit<StoreOrderAllocationDraft, "quantity"> & {
+  key: string;
+  quantity: string;
+};
+
+export const MAX_STORE_QUANTITY = 999999;
+
+const nonAsciiDigit = /[^0-9]/u;
+const maxStoreQuantityDigits = String(MAX_STORE_QUANTITY).length;
+
+export function parseStoreQuantity(raw: string, min: number, max = MAX_STORE_QUANTITY) {
+  if (!raw || raw.length > maxStoreQuantityDigits || nonAsciiDigit.test(raw)) return null;
+  const quantity = Number(raw);
+  return Number.isSafeInteger(quantity) &&
+    quantity >= min &&
+    quantity <= Math.min(max, MAX_STORE_QUANTITY)
+    ? quantity
+    : null;
+}
+
+export function storeQuantityDisplayValue(raw: string) {
+  return raw.replace(/[\r\n]/gu, "");
+}
+
+export function storeQuantityPasteReplacement(
+  input: HTMLInputElement,
+  pasted: string,
+  raw: string,
+) {
+  const { value, selectionStart, selectionEnd } = input;
+  const replacement =
+    value.slice(0, selectionStart ?? 0) + pasted + value.slice(selectionEnd ?? value.length);
+  // Preserve rejected clipboard data and let a valid replacement repair an unchanged display.
+  return nonAsciiDigit.test(pasted) ||
+    replacement.length > maxStoreQuantityDigits ||
+    (raw !== value && replacement === value)
+    ? replacement
+    : null;
+}
+
+export function storeQuantityInputValue(input: HTMLInputElement, nativeEvent: Event) {
+  if (nativeEvent instanceof InputEvent && nativeEvent.data && /[\r\n]/u.test(nativeEvent.data)) {
+    // The text input strips line breaks; retain them from the actual edit operation.
+    const end = input.selectionEnd ?? input.value.length;
+    const length = storeQuantityDisplayValue(nativeEvent.data).length;
+    return (
+      input.value.slice(0, Math.max(0, end - length)) + nativeEvent.data + input.value.slice(end)
+    );
   }
+  return input.value;
+}
+
+export function inspectStoreAllocations(order: StoreOrder, rows: StoreOrderAllocationDraft[]) {
+  const errors: StoreAllocationError[] = [];
+  const pairCounts = new Map<string, number>();
   const lines = new Map(order.lines.map((line) => [line.id, line]));
   const candidates = new Map(
     (order.source_inventory?.candidates ?? []).map((candidate) => [
@@ -495,13 +544,24 @@ export function validateStoreAllocations(order: StoreOrder, rows: StoreOrderAllo
   );
   const byLine = new Map<string, number>();
   const byBatch = new Map<string, number>();
+  const selectedByLine = new Map<string, number>();
   const availability = new Map<string, number>();
+  let duplicate = false;
   for (const row of rows) {
-    if (!Number.isSafeInteger(row.quantity) || row.quantity <= 0) {
+    const pair = `${row.line_id}:${row.batch_id}`;
+    const pairCount = (pairCounts.get(pair) ?? 0) + 1;
+    pairCounts.set(pair, pairCount);
+    if (pairCount > 1) duplicate = true;
+    if (
+      !Number.isSafeInteger(row.quantity) ||
+      row.quantity < 1 ||
+      row.quantity > MAX_STORE_QUANTITY
+    ) {
       errors.push("invalid_quantity");
       continue;
     }
-    const candidate = candidates.get(`${row.line_id}:${row.batch_id}`);
+    selectedByLine.set(row.line_id, (selectedByLine.get(row.line_id) ?? 0) + row.quantity);
+    const candidate = candidates.get(pair);
     if (!lines.has(row.line_id) || !candidate) {
       errors.push("source_invalid");
       continue;
@@ -515,11 +575,27 @@ export function validateStoreAllocations(order: StoreOrder, rows: StoreOrderAllo
     if (allocated < line.quantity) errors.push("line_incomplete");
     if (allocated > line.quantity) errors.push("line_exceeded");
   }
+  if (order.lines.length === 0 && rows.length === 0) errors.push("line_incomplete");
   for (const [batchId, allocated] of byBatch) {
     if (allocated > (availability.get(batchId) ?? 0)) errors.push("batch_exceeded");
   }
-  const uniqueErrors = [...new Set(errors)];
-  return { valid: uniqueErrors.length === 0, errors: uniqueErrors };
+  const uniqueErrors = duplicate ? ["duplicate" as const] : [...new Set(errors)];
+  return {
+    validation: { valid: uniqueErrors.length === 0, errors: uniqueErrors },
+    selectedByLine,
+    sourceError(row: Pick<StoreOrderAllocationDraft, "line_id" | "batch_id">) {
+      const pair = `${row.line_id}:${row.batch_id}`;
+      const candidate = candidates.get(pair);
+      if (!candidate) return "source_invalid";
+      if ((pairCounts.get(pair) ?? 0) > 1) return "duplicate";
+      if ((byBatch.get(row.batch_id) ?? 0) > candidate.available_quantity) return "batch_exceeded";
+      return null;
+    },
+  };
+}
+
+export function validateStoreAllocations(order: StoreOrder, rows: StoreOrderAllocationDraft[]) {
+  return inspectStoreAllocations(order, rows).validation;
 }
 
 function stableValue(value: unknown): unknown {

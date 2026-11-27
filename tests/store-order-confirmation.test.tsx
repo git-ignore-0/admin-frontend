@@ -282,7 +282,9 @@ function historicalRestock(quantity: number): StoreOrder {
 async function openRestock() {
   fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
   const dialog = screen.getByRole("dialog");
-  fireEvent.change(within(dialog).getByRole("spinbutton"), { target: { value: "1" } });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
+    target: { value: "1" },
+  });
   return { dialog, confirm: within(dialog).getByRole("button", { name: "Hoàn tồn" }) };
 }
 
@@ -308,7 +310,7 @@ it("uses the original restock key and ledger threshold after a newer GET", async
   await waitFor(() => expect(open).toBeEnabled());
   fireEvent.click(open);
   const replay = screen.getByRole("dialog");
-  expect(within(replay).getByRole("spinbutton")).toBeDisabled();
+  expect(within(replay).getByRole("textbox", { name: /^Số lượng hoàn/u })).toBeDisabled();
   fireEvent.click(within(replay).getByRole("button", { name: "Hoàn tồn" }));
   expect(await screen.findByText("Đã cập nhật đơn hàng.")).toBeVisible();
   expect(sent).toHaveLength(2);

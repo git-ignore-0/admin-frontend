@@ -11,6 +11,7 @@ import {
   getStoreOrderActions,
   getStoreOrderPrimaryAction,
   getStoreOrderDisplayStatus,
+  parseStoreQuantity,
   storeOrderStatusQuery,
   storeDeadlineRemainingMs,
   validateStoreAllocations,
@@ -249,6 +250,99 @@ describe("Store order admin domain", () => {
         { ...valid[1], quantity: 1 },
       ]),
     ).toEqual({ valid: false, errors: ["line_exceeded", "batch_exceeded"] });
+  });
+
+  it.each([
+    ["1", 1],
+    ["0001", 1],
+    ["0000001", null],
+    ["999999", 999999],
+    ["", null],
+    ["0", null],
+    ["1000000", null],
+    ["-2", null],
+    ["+2", null],
+    ["1.5", null],
+    ["1,000", null],
+    ["1e3", null],
+    ["abc", null],
+    ["12abc", null],
+    ["12 ", null],
+    ["\t12", null],
+    ["12\n", null],
+    ["1\r2", null],
+    ["１２", null],
+    ["٩", null],
+    ["12₫", null],
+    ["12🌱", null],
+    ["9007199254740992", null],
+    ["9".repeat(600), null],
+  ])("parses Store quantity %j before building an action payload", (raw, expected) => {
+    expect(parseStoreQuantity(raw, 1)).toBe(expected);
+  });
+
+  it("accepts a configurable minimum and maximum for restock eligibility", () => {
+    expect(parseStoreQuantity("0", 0, 0)).toBe(0);
+    expect(parseStoreQuantity("1", 0, 0)).toBeNull();
+    expect(parseStoreQuantity("3", 0, 3)).toBe(3);
+    expect(parseStoreQuantity("4", 0, 3)).toBeNull();
+    expect(parseStoreQuantity("1000000", 0, 2000000)).toBeNull();
+  });
+
+  it("enforces the backend allocation maximum independently of stock and line totals", () => {
+    const item = order();
+    const [line] = item.lines;
+    const inventory = item.source_inventory!;
+    const [candidate] = inventory.candidates;
+    function validateQuantity(quantity: number) {
+      return validateStoreAllocations(
+        {
+          ...item,
+          lines: [{ ...line, quantity }],
+          source_inventory: {
+            ...inventory,
+            candidates: [{ ...candidate, available_quantity: quantity }],
+          },
+        },
+        [{ line_id: line.id, batch_id: candidate.batch_id, quantity }],
+      );
+    }
+    expect(validateQuantity(999999)).toEqual({ valid: true, errors: [] });
+    expect(validateQuantity(1000000)).toEqual({
+      valid: false,
+      errors: ["invalid_quantity", "line_incomplete"],
+    });
+  });
+
+  it("validates the aggregate across different lines using the same batch", () => {
+    const item = order();
+    const [line] = item.lines;
+    const inventory = item.source_inventory!;
+    const [candidate] = inventory.candidates;
+    const second = { ...line, id: "second-line", quantity: 1 };
+    expect(
+      validateStoreAllocations(
+        {
+          ...item,
+          lines: [{ ...line, quantity: 2 }, second],
+          source_inventory: {
+            ...inventory,
+            candidates: [candidate, { ...candidate, line_id: second.id }],
+          },
+        },
+        [
+          { line_id: line.id, batch_id: candidate.batch_id, quantity: 2 },
+          { line_id: second.id, batch_id: candidate.batch_id, quantity: 1 },
+        ],
+      ),
+    ).toEqual({ valid: false, errors: ["batch_exceeded"] });
+  });
+
+  it("rejects an empty approve allocation array even when the order has no lines", () => {
+    expect(validateStoreAllocations(order({ lines: [] }), [])).toEqual({
+      valid: false,
+      errors: ["line_incomplete"],
+    });
   });
 
   it("keeps retry keys for an unchanged restock ledger and rotates only when the selected ledger changes", () => {
