@@ -86,6 +86,8 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (action === "growth-tracker")
       return path.length === 4 && new Set(["GET", "POST", "PATCH", "DELETE"]).has(normalizedMethod);
     if (action === "available-products") return path.length === 4 && normalizedMethod === "GET";
+    if (action === "stock-batches")
+      return path.length === 5 && extra === "bulk" && ["GET", "POST"].includes(normalizedMethod);
     if (action !== "products") return false;
     if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(extra)) return false;

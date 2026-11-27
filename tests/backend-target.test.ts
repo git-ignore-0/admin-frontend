@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 129 canonical route shapes and 179 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(129);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(129);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(179);
+  it("covers the 130 canonical route shapes and 181 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(130);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(130);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(181);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);
@@ -531,4 +531,15 @@ describe("backend API target", () => {
       "http://127.0.0.1:8000/api/v1/admin/tracker-farms/reorder",
     );
   });
+});
+
+it("allows only GET and POST on the exact Farm bulk stock path", () => {
+  const bulk = ["admin", "farms", uuid, "stock-batches", "bulk"];
+  for (const method of methods) {
+    expect(isAllowedBackendRequest(method, bulk)).toBe(["GET", "POST"].includes(method));
+  }
+  expect(
+    isAllowedBackendRequest("POST", ["admin", "farms", "bad-id", "stock-batches", "bulk"]),
+  ).toBe(false);
+  expect(isAllowedBackendRequest("GET", [...bulk, "extra"])).toBe(false);
 });

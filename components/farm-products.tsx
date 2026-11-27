@@ -28,12 +28,14 @@ import { farmHref, normalizeFarmSupplySearch, readFarmSupplyContext } from "@/li
 import {
   farmAccess,
   farmAccessDenied,
+  farmBulkBlocksWrite,
   farmDeleteBlocksWrite,
   farmListKey,
   farmSupplyKey,
   farmSupplyWriteKey,
   retireFarmAccess,
   useFarmDeleteBlocksWrite,
+  useFarmBulkBlocksWrite,
 } from "@/lib/farm-query";
 import {
   addFarmProduct,
@@ -76,6 +78,7 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
   const lastPage = data ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size)) : page;
   const pendingWrite = useIsMutating({ mutationKey: farmSupplyWriteKey(farm.id) }) > 0;
   const deletionLocked = useFarmDeleteBlocksWrite(farm.id);
+  const bulkLocked = useFarmBulkBlocksWrite(farm.id);
   const retained = useMutationState({
     filters: { mutationKey: addMutationKey(farm.id), exact: true, status: "error" },
     select: (entry) => entry,
@@ -149,13 +152,22 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
           loading: query.isFetching,
         }}
         primaryAction={
-          <Button
-            ref={addButton}
-            onClick={() => setAddOpen(true)}
-            disabled={deletionLocked || pendingWrite || Boolean(retained) || !data}
-          >
-            {c.addProduct}
-          </Button>
+          <Group gap="sm">
+            <Button
+              ref={addButton}
+              variant="default"
+              onClick={() => setAddOpen(true)}
+              disabled={deletionLocked || pendingWrite || bulkLocked || Boolean(retained) || !data}
+            >
+              {c.addProduct}
+            </Button>
+            <Button
+              component={AdminNavigationLink}
+              href={farmHref(params, { id: farm.id, bulk: true })}
+            >
+              {locale === "vi" ? "Bổ sung nguồn cung" : "Add supply"}
+            </Button>
+          </Group>
         }
       />
       <Paper miw={0}>
@@ -342,7 +354,9 @@ function AddFarmProduct({
       unconfirmed ||
       pending.current ||
       !currentSession() ||
-      farmDeleteBlocksWrite(queryClient, farm.id)
+      farmDeleteBlocksWrite(queryClient, farm.id) ||
+      farmBulkBlocksWrite(queryClient, farm.id) ||
+      queryClient.isMutating({ mutationKey: farmSupplyWriteKey(farm.id) }) > 0
     )
       return;
     pending.current = true;

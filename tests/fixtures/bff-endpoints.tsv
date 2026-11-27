@@ -21,6 +21,7 @@ admin/farms/media/{media}	DELETE	no
 admin/farms/{farm}	GET,PATCH,DELETE	no
 admin/farms/{farm}/growth-tracker	GET,POST,PATCH,DELETE	no
 admin/farms/{farm}/available-products	GET	no
+admin/farms/{farm}/stock-batches/bulk	GET,POST	no
 admin/farms/{farm}/products	GET,POST	no
 admin/farms/{farm}/products/{product}	GET	no
 admin/farms/{farm}/products/{product}/remove	POST	no

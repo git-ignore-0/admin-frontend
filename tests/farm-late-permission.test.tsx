@@ -36,6 +36,7 @@ const farm: Farm = {
   name_en: "Protected farm",
   location_vi: "Huế",
   location_en: "Hue",
+  contact_phone: "",
   description_vi: "",
   description_en: "",
   image: null,

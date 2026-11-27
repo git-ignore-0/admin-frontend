@@ -35,11 +35,17 @@ import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { BilingualContentFields } from "@/components/bilingual-content-fields";
 import { FarmTrackerFields, useFarmTracker } from "@/components/farm-tracker-profile-editor";
+import { FormField, FormInput } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
-import { type ClientApiError, invalidApiResponse, requestErrorMessage } from "@/lib/client-error";
+import {
+  apiErrorFields,
+  type ClientApiError,
+  invalidApiResponse,
+  requestErrorMessage,
+} from "@/lib/client-error";
 import { captureFarmDetail, publishFarmDetail } from "@/lib/farm-detail-snapshot";
 import { farmHref } from "@/lib/farm-navigation";
 import {
@@ -57,6 +63,7 @@ import { deleteFarmImage, getFarm, saveFarm, uploadFarmImage } from "@/lib/farms
 import { farmsCopy } from "@/lib/farms-copy";
 import { isSupportedImageFile } from "@/lib/image-validation";
 import { mediaUrlForWidth } from "@/lib/media";
+import { normalizeVietnamPhone } from "@/lib/phone-number";
 import type { Farm, MediaAsset } from "@/lib/types";
 
 type Form = {
@@ -64,6 +71,7 @@ type Form = {
   name_vi: string;
   location_en: string;
   location_vi: string;
+  contact_phone: string;
   description_en: string;
   description_vi: string;
   photos: MediaAsset[];
@@ -86,6 +94,7 @@ const emptyForm: Form = {
   name_vi: "",
   location_en: "",
   location_vi: "",
+  contact_phone: "",
   description_en: "",
   description_vi: "",
   photos: [],
@@ -96,6 +105,7 @@ function fromFarm(farm: Farm): Form {
     name_vi: farm.name_vi,
     location_en: farm.location_en,
     location_vi: farm.location_vi,
+    contact_phone: farm.contact_phone,
     description_en: farm.description_en,
     description_vi: farm.description_vi,
     photos: farm.photos.length ? farm.photos : farm.image ? [farm.image] : [],
@@ -139,7 +149,11 @@ const textFields = [
 function farmInformation(form: Form) {
   const { photos, ...texts } = form;
   for (const field of textFields) texts[field] = texts[field].trim();
-  return { ...texts, photo_ids: photoIds(photos) };
+  return { ...texts, contact_phone: texts.contact_phone.trim(), photo_ids: photoIds(photos) };
+}
+
+function phoneForComparison(value: string) {
+  return normalizeVietnamPhone(value) ?? value;
 }
 
 function photoIds(photos: MediaAsset[]) {
@@ -184,6 +198,9 @@ function changedFarmInformation(baseline: Form, draft: Form) {
   for (const field of textFields) {
     if (previous[field] !== current[field]) patch[field] = current[field];
   }
+  if (phoneForComparison(previous.contact_phone) !== phoneForComparison(current.contact_phone)) {
+    patch.contact_phone = current.contact_phone;
+  }
   if (!samePhotoOrder(previous.photo_ids, current.photo_ids)) {
     patch.photo_ids = current.photo_ids;
   }
@@ -199,10 +216,15 @@ function keepFarmEdits(
   latest: Farm,
   draft: Form,
   album: AlbumChoice,
+  serverPhoneChanged: boolean,
 ) {
   const next = fromFarm(latest);
   for (const field of textFields) {
     if (delta[field] !== undefined) next[field] = draft[field];
+  }
+  // A concurrent phone change requires a fresh edit from the reviewed baseline.
+  if (delta.contact_phone !== undefined && !serverPhoneChanged) {
+    next.contact_phone = draft.contact_phone;
   }
   if (album === "local") next.photos = draft.photos;
   return next;
@@ -262,6 +284,7 @@ function FarmEditorForm({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [phoneInvalid, setPhoneInvalid] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const [recovery, setRecovery] = useState<SaveRecovery | null>(null);
   const [checkingLatest, setCheckingLatest] = useState(false);
@@ -323,6 +346,9 @@ function FarmEditorForm({
   const delta = baselineForm ? changedFarmInformation(baselineForm, form) : {};
   const reviewedForm =
     recovery?.kind === "edit" && recovery.latest ? fromFarm(recovery.latest) : null;
+  const serverPhoneChanged = Boolean(
+    baselineForm && reviewedForm && baselineForm.contact_phone !== reviewedForm.contact_phone,
+  );
   const baselinePhotoIds = baselineForm && reviewedForm ? photoIds(baselineForm.photos) : null;
   const latestPhotoIds = reviewedForm ? photoIds(reviewedForm.photos) : null;
   const serverAlbumChanges =
@@ -379,6 +405,7 @@ function FarmEditorForm({
       setBaseline(farm);
     } else if (!dirty && farm.version > baseline.version) {
       setForm(fromFarm(farm));
+      setPhoneInvalid(false);
       setBaseline(farm);
       // This was an external Farm revision. Its Tracker may have changed too.
       void syncAfterFarmWrite(false);
@@ -570,6 +597,7 @@ function FarmEditorForm({
         latest,
         form,
         choice ?? (serverAlbumChanges || !delta.photo_ids ? "server" : "local"),
+        serverPhoneChanged,
       );
       if (choice === "server") discardTemporaryPhotos(uploadsRef.current, next.photos);
       setForm(next);
@@ -579,6 +607,7 @@ function FarmEditorForm({
       if (canAct()) {
         setRecovery(null);
         setError("");
+        setPhoneInvalid(false);
       }
     } finally {
       release();
@@ -599,6 +628,7 @@ function FarmEditorForm({
     setForm(fromFarm(baseline));
     tracker.reset();
     setError("");
+    setPhoneInvalid(false);
     setPhotoError("");
   }
 
@@ -637,6 +667,7 @@ function FarmEditorForm({
     saveLock.current = true;
     setSaving(true);
     setError("");
+    setPhoneInvalid(false);
     const version = baseline?.version;
     const fields = farmInformation(form);
     const patch = information ? { ...delta, version } : { ...fields, is_active: initialActive };
@@ -707,7 +738,17 @@ function FarmEditorForm({
         );
       } else if (sendingFarm && version !== undefined && problem?.status === 409) {
         setRecovery({ kind: "edit", version, conflict: true });
-      } else setError(requestErrorMessage(caught, translationRef.current));
+      } else {
+        const phoneRejected =
+          problem?.message === "validation_error" &&
+          (problem.field === "contact_phone" ||
+            "contact_phone" in apiErrorFields(problem) ||
+            "contact_phone" in (problem.payload ?? {}));
+        if (phoneRejected) setPhoneInvalid(true);
+        if (!phoneRejected || (problem.field && problem.field !== "contact_phone")) {
+          setError(requestErrorMessage(caught, translationRef.current));
+        }
+      }
     } finally {
       saveLock.current = leavingAfterCreate;
       release?.();
@@ -812,6 +853,13 @@ function FarmEditorForm({
                             {recovery.latest?.[field] || "—"}
                           </Text>
                         ))}
+                      {serverPhoneChanged && reviewedForm && (
+                        <Text size="sm">
+                          {c.contactPhone}
+                          {" · "}
+                          {reviewedForm.contact_phone || "—"}
+                        </Text>
+                      )}
                     </Stack>
                   )}
                   {serverAlbumChanges && reviewedForm && baselineForm && (
@@ -966,6 +1014,22 @@ function FarmEditorForm({
             </Grid.Col>
             <Grid.Col span={sectionSpan}>
               <Stack gap="md">
+                <FormField
+                  label={c.contactPhone}
+                  error={phoneInvalid ? c.invalidContactPhone : undefined}
+                >
+                  <FormInput
+                    type="tel"
+                    autoComplete="tel"
+                    disabled={fieldBusy}
+                    value={form.contact_phone}
+                    onChange={(event) => {
+                      const contact_phone = event.currentTarget.value;
+                      setForm((current) => ({ ...current, contact_phone }));
+                      setPhoneInvalid(false);
+                    }}
+                  />
+                </FormField>
                 <Paper component="section" aria-label={c.photos} p="md" withBorder miw={0}>
                   <Stack gap="md">
                     <Stack component="section" gap="xs">

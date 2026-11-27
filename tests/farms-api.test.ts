@@ -40,6 +40,7 @@ const farmImage = {
   variants: [{ url: "https://example.com/media/farms/photo-small.webp", width: 120, height: 90 }],
 };
 const farm = {
+  contact_phone: "",
   id: farmId,
   name_vi: "Nông trại Xanh",
   name_en: "Green Farm",
@@ -709,3 +710,82 @@ it("enables an existing Farm profile", async () => {
   expect(fetchMock.mock.calls[0][0]).toBe(`/api/backend/admin/farms/${farmId}/growth-tracker`);
   expect(fetchMock.mock.calls[0][1].method).toBe("POST");
 });
+
+it("filters eligible supply without altering the existing products request", async () => {
+  fetchMock.mockResolvedValueOnce(
+    Response.json({
+      data: [{ ...farmProduct, available_quantity: 0 }],
+      meta: { page: 2, page_size: 20, total: 21 },
+    }),
+  );
+  await listFarmProducts(farmId, { productStatus: "active", page: 2, search: "rau" });
+  expect(String(fetchMock.mock.calls[0][0])).toContain("product_status=active");
+});
+
+it("accepts only a bulk receipt matching the submitted farm, key and count", async () => {
+  const { postFarmBulkSupply, recoverFarmBulkSupply } = await import("@/lib/farms-api");
+  const intent = {
+    idempotency_key: batchId,
+    start_date: "2026-11-30",
+    end_date: "2026-12-06",
+    items: [
+      { product_id: productId, expected_link_id: linkId, expected_version: 1, quantity_units: 3 },
+    ],
+  };
+  const result = { farm_id: farmId, created_count: 1 };
+  const action_receipt = {
+    resource_id: farmId,
+    idempotency_key: batchId,
+    action: "create_farm_stock_batches",
+  };
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ data: result, meta: { idempotent_replay: false, action_receipt } }),
+  );
+  await expect(postFarmBulkSupply(farmId, intent)).resolves.toMatchObject(result);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(intent);
+  fetchMock.mockResolvedValueOnce(
+    Response.json({
+      data: { ...result, created_count: 2 },
+      meta: { idempotent_replay: true, action_receipt },
+    }),
+  );
+  await expect(recoverFarmBulkSupply(farmId, intent)).rejects.toThrow("invalid_response");
+  expect(String(fetchMock.mock.calls[1][0])).toContain("creation_key=" + batchId);
+});
+
+it.each(["farm", "action", "resource", "key", "replay"] as const)(
+  "rejects a bulk 2xx whose %s does not match the intent",
+  async (mismatch) => {
+    const { postFarmBulkSupply } = await import("@/lib/farms-api");
+    const intent = {
+      idempotency_key: batchId,
+      start_date: "2026-11-30",
+      end_date: "2026-12-06",
+      items: [
+        {
+          product_id: productId,
+          expected_link_id: linkId,
+          expected_version: 1,
+          quantity_units: 3,
+        },
+      ],
+    };
+    fetchMock.mockResolvedValueOnce(
+      Response.json(
+        {
+          data: { farm_id: mismatch === "farm" ? productId : farmId, created_count: 1 },
+          meta: {
+            idempotent_replay: mismatch === "replay" ? "false" : false,
+            action_receipt: {
+              action: mismatch === "action" ? "create_product" : "create_farm_stock_batches",
+              resource_id: mismatch === "resource" ? productId : farmId,
+              idempotency_key: mismatch === "key" ? productId : batchId,
+            },
+          },
+        },
+        { status: 201 },
+      ),
+    );
+    await expect(postFarmBulkSupply(farmId, intent)).rejects.toThrow("invalid_response");
+  },
+);

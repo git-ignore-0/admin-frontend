@@ -691,6 +691,7 @@ export type Farm = {
   name_vi: string;
   location_en: string;
   location_vi: string;
+  contact_phone: string;
   description_en: string;
   description_vi: string;
   image: MediaAsset | null;

@@ -156,3 +156,24 @@ it("normalizes unsupported supply filters and resets their page independently", 
     }),
   ).toBe("/farms/farm-1?search=hue&page=4&supply_status=all");
 });
+
+it("keeps both Farm browsing contexts for the bulk route and return", () => {
+  const params = new URLSearchParams(
+    "search=%2B8491&page=4&supply_search=rau&supply_page=2&supply_status=all",
+  );
+  expect(farmHref(params, { id: "farm-1", bulk: true })).toBe(
+    "/farms/farm-1/stock-batches/new?search=%2B8491&page=4&supply_search=rau&supply_status=all&supply_page=2",
+  );
+  expect(farmHref(params, { id: "farm-1", tab: "products" })).toBe(
+    "/farms/farm-1?search=%2B8491&page=4&supply_search=rau&supply_status=all&supply_page=2",
+  );
+});
+
+it("keeps the parent Farm breadcrumb while the bulk route loads", () => {
+  const t = adminDictionaries.vi;
+  const farms = adminNavigation(t).find(({ key }) => key === "farms")?.items[0];
+  expect(resolveAdminBreadcrumbs("/farms/farm-1/stock-batches/new", farms, t)).toEqual([
+    { label: "Danh sách trang trại", href: "/farms" },
+    { label: "Chi tiết trang trại", href: "/farms/farm-1" },
+  ]);
+});

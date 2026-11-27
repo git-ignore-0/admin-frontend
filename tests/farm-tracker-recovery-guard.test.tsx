@@ -34,6 +34,7 @@ const farm: Farm = {
   name_en: "Green Farm",
   location_vi: "Đà Lạt",
   location_en: "Da Lat",
+  contact_phone: "",
   description_vi: "Rau sạch",
   description_en: "Organic greens",
   image: null,

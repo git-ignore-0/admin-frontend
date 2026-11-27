@@ -1,0 +1,86 @@
+.entry {
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.tableRow .cell,
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.quantityCell {
+  width: 30%;
+}
+
+.compactStock {
+  display: none;
+}
+
+.summary {
+  position: sticky;
+  top: var(--mantine-spacing-md);
+}
+
+.summaryItems {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.summaryItem {
+  border-top: 1px solid var(--border);
+}
+
+.actions > * {
+  flex: 1;
+}
+
+@container (width < 34rem) {
+  .tableHeader,
+  .tableRow .stockCell {
+    display: none;
+  }
+
+  .tableRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 42%);
+    gap: var(--mantine-spacing-xs);
+    padding-block: var(--mantine-spacing-xs);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tableRow .cell {
+    padding: 0;
+    border: 0;
+  }
+
+  .productCell {
+    grid-row: span 2;
+  }
+
+  .tableRow .quantityCell {
+    width: auto;
+  }
+
+  .convertedCell {
+    text-align: right;
+  }
+
+  .compactStock {
+    display: inline;
+  }
+}
+
+/* The Mantine lg breakpoint uses two columns, with the summary actions outside the scroll area. */
+@media (min-width: 75em) {
+  .summaryItems {
+    max-height: min(45dvh, 26rem);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}

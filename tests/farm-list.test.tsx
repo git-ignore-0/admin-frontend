@@ -27,6 +27,7 @@ const farm: Farm = {
   name_en: "Green Valley",
   name_vi: "Thung lũng Xanh",
   location_en: "Da Lat",
+  contact_phone: "0912345678",
   location_vi: "Đà Lạt",
   description_en: "English description",
   description_vi: "Mô tả Việt",
@@ -149,6 +150,27 @@ it("shows total supplied products and current stock coverage in one column", asy
   expect(within(table).queryByText(/tồn khả dụng|hết hàng/i)).not.toBeInTheDocument();
   expect(api).not.toHaveBeenCalled();
   expect(apiEnvelope).toHaveBeenCalledTimes(1);
+});
+
+it("encodes the calling code in the Farm search URL and backend request", async () => {
+  vi.mocked(apiEnvelope).mockResolvedValue({
+    data: [farm],
+    meta: { page: 1, page_size: 20, total: 1 },
+  });
+  renderFarmList("en");
+  await screen.findByRole("link", { name: farm.name_en });
+  const field = screen.getByPlaceholderText("Name, location, or phone number");
+  fireEvent.change(field, { target: { value: "+84912345678" } });
+  fireEvent.submit(field.closest("form")!);
+  expect(router.push).toHaveBeenCalledWith("/farms?search=%2B84912345678", { scroll: false });
+
+  cleanup();
+  searchParams = new URLSearchParams("search=%2B84912345678");
+  renderFarmList("en");
+  await screen.findByRole("link", { name: farm.name_en });
+  expect(apiEnvelope).toHaveBeenLastCalledWith("admin/farms?page=1&search=%2B84912345678", {
+    signal: expect.any(AbortSignal),
+  });
 });
 
 function RereadFarmCounts() {

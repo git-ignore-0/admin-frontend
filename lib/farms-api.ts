@@ -1,5 +1,6 @@
 import { isoDateToAdminInput } from "@/lib/admin-date";
 import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
+import { requireCreationReceipt } from "@/lib/creation-receipt";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import { MAX_POSITIVE_INTEGER, parsePositiveDecimal } from "@/lib/numeric-input";
@@ -21,6 +22,7 @@ import type {
   FarmSupplyStatus,
   MediaAsset,
   PaginationMeta,
+  ProductStatus,
   StockBatchInput,
   StockBatchStatus,
   TrackerFarm,
@@ -35,6 +37,7 @@ export type FarmInput = Pick<
   | "description_en"
   | "description_vi"
   | "is_active"
+  | "contact_phone"
 > & { photo_ids: string[]; version?: number };
 
 const farmIdentityFields = ["name_vi", "name_en", "location_vi", "location_en"] as const;
@@ -158,6 +161,8 @@ function requireFarm(data: Farm, id?: string): Farm {
     !uuid(data.id, id) ||
     !integer(data.version, 1) ||
     typeof data.is_active !== "boolean" ||
+    typeof data.contact_phone !== "string" ||
+    (data.contact_phone !== "" && !/^0[1-9][0-9]{8,9}$/.test(data.contact_phone)) ||
     !farmIdentityFields.every((field) => typeof data[field] === "string") ||
     ![data.description_vi, data.description_en].every((value) => typeof value === "string") ||
     ![data.in_stock_product_count, data.out_of_stock_product_count].every((value) =>
@@ -386,21 +391,39 @@ export function listFarmProducts(
     page = 1,
     search,
     supplyStatus = "supplying",
+    productStatus,
   }: FarmPageQuery & {
     supplyStatus?: FarmSupplyFilter;
+    productStatus?: ProductStatus;
   } = {},
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams({ page: String(page), supply_status: supplyStatus });
   if (search) params.set("search", search);
+  if (productStatus) params.set("product_status", productStatus);
   return apiEnvelope<FarmProduct[], PaginationMeta>(`${supplyPath(farmId)}?${params}`, {
     signal,
-  }).then((payload) =>
-    requireFarmPage(payload, page, 20, (data) => {
+  }).then((payload) => {
+    const result = requireFarmPage(payload, page, 20, (data) => {
       requireFarmProduct(data, farmId);
       if (supplyStatus !== "all" && data.supply_status !== supplyStatus) throw invalidApiResponse();
-    }),
-  );
+      if (productStatus && data.product_status !== productStatus) throw invalidApiResponse();
+    });
+    if (productStatus) {
+      const { data, meta } = result;
+      const expectedLength = Math.min(
+        meta.page_size,
+        Math.max(0, meta.total - (page - 1) * meta.page_size),
+      );
+      if (
+        data.length !== expectedLength ||
+        new Set(data.map((row) => row.product_id.toLowerCase())).size !== data.length
+      ) {
+        throw invalidApiResponse();
+      }
+    }
+    return result;
+  });
 }
 
 export function listAvailableFarmProducts(
@@ -666,4 +689,69 @@ export function updateFarmTracker(
     method: "PATCH",
     body: JSON.stringify(payload),
   }).then((row) => requireFarmTracker(row, farmId));
+}
+
+export type FarmBulkIntent = Readonly<{
+  idempotency_key: string;
+  start_date: string;
+  end_date: string;
+  items: ReadonlyArray<
+    Readonly<{
+      product_id: string;
+      expected_link_id: string;
+      expected_version: number;
+      quantity_units: number;
+    }>
+  >;
+}>;
+
+function bulkSupplyPath(farmId: string) {
+  return `admin/farms/${farmId}/stock-batches/bulk`;
+}
+
+function requireBulkReceipt(
+  { data, meta }: ApiEnvelope<unknown>,
+  farmId: string,
+  intent: FarmBulkIntent,
+  recovery: boolean,
+) {
+  const resourceId = requireCreationReceipt(
+    meta,
+    intent.idempotency_key,
+    "create_farm_stock_batches",
+  );
+  if (
+    !uuid(resourceId, farmId) ||
+    !isApiObject(data) ||
+    !uuid(data.farm_id, farmId) ||
+    !integer(data.created_count, 1) ||
+    data.created_count !== intent.items.length ||
+    !isApiObject(meta) ||
+    typeof meta.idempotent_replay !== "boolean" ||
+    (recovery && !meta.idempotent_replay)
+  )
+    throw invalidApiResponse();
+  return {
+    farm_id: data.farm_id,
+    created_count: data.created_count,
+    idempotent_replay: meta.idempotent_replay,
+  };
+}
+
+export function postFarmBulkSupply(farmId: string, intent: FarmBulkIntent) {
+  return apiEnvelope<unknown>(bulkSupplyPath(farmId), {
+    method: "POST",
+    body: JSON.stringify(intent),
+  }).then((payload) => requireBulkReceipt(payload, farmId, intent, false));
+}
+
+export function recoverFarmBulkSupply(
+  farmId: string,
+  intent: FarmBulkIntent,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ creation_key: intent.idempotency_key });
+  return apiEnvelope<unknown>(`${bulkSupplyPath(farmId)}?${query}`, { signal }).then((payload) =>
+    requireBulkReceipt(payload, farmId, intent, true),
+  );
 }

@@ -15,11 +15,13 @@ import { invalidateFarmDetail } from "@/lib/farm-detail-snapshot";
 import {
   farmAccess,
   farmAccessDenied,
+  farmBulkBlocksWrite,
   farmDeleteBlocksWrite,
   farmListKey,
   farmSupplyKey,
   farmSupplyWriteKey,
   retireFarmAccess,
+  useFarmBulkBlocksWrite,
   useFarmDeleteBlocksWrite,
 } from "@/lib/farm-query";
 import {
@@ -108,7 +110,8 @@ export function useFarmSourceWrite(
   const mutationKey = [...writeScope, "source", productId];
   const supplyWriting = useIsMutating({ mutationKey: writeScope }) > 0;
   const deletionLocked = useFarmDeleteBlocksWrite(farmId);
-  const isWriting = supplyWriting || deletionLocked;
+  const bulkLocked = useFarmBulkBlocksWrite(farmId);
+  const isWriting = supplyWriting || deletionLocked || bulkLocked;
   // Only uncertain outcomes survive the finally block until review or session retirement.
   const mutation = useMutation({ mutationKey, mutationFn: writeSupply, gcTime: Infinity });
   const cache = client.getMutationCache();
@@ -312,7 +315,9 @@ export function useFarmSourceWrite(
       !sameAccess(revision) ||
       operation.current ||
       isWriting ||
-      farmDeleteBlocksWrite(client, farmId)
+      farmDeleteBlocksWrite(client, farmId) ||
+      farmBulkBlocksWrite(client, farmId) ||
+      client.isMutating({ mutationKey: writeScope }) > 0
     )
       return;
     operation.current = true;

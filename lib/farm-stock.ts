@@ -63,11 +63,10 @@ export function stockBatchRangeForPreset(
   };
 }
 
-export function validateStockBatchInput(
-  draft: StockBatchDraft,
-  today = adminTodayIso(),
-): { value: StockBatchInput | null; errors: StockBatchFieldErrors } {
-  const errors: StockBatchFieldErrors = {};
+export function validateStockBatchDates(draft: StockBatchDates, today = adminTodayIso()) {
+  const errors: Partial<
+    Record<keyof StockBatchDates, "required" | "invalid_date" | "date_order" | "expired">
+  > = {};
   const startDate = adminDateInputToIso(draft.start_date);
   const endDate = adminDateInputToIso(draft.end_date);
   if (!startDate) errors.start_date = draft.start_date ? "invalid_date" : "required";
@@ -76,20 +75,47 @@ export function validateStockBatchInput(
     if (endDate < startDate) errors.end_date = "date_order";
     else if (endDate < today) errors.end_date = "expired";
   }
+  const value =
+    startDate && endDate && !Object.keys(errors).length
+      ? { start_date: startDate, end_date: endDate }
+      : null;
+  return { value, errors };
+}
+
+export function validateStockBatchInput(
+  draft: StockBatchDraft,
+  today = adminTodayIso(),
+): { value: StockBatchInput | null; errors: StockBatchFieldErrors } {
+  const { value: dates, errors: dateErrors } = validateStockBatchDates(draft, today);
+  const errors: StockBatchFieldErrors = { ...dateErrors };
   const quantity = parsePositiveInteger(draft.quantity);
   if (quantity.error) {
     errors.quantity = quantity.error === "integer_range" ? "integer_range" : "positive_integer";
   }
-  if (!startDate || !endDate || quantity.error || Object.keys(errors).length)
-    return { value: null, errors };
   return {
-    value: {
-      start_date: startDate,
-      end_date: endDate,
-      quantity_units: quantity.value,
-    },
+    value: dates && !quantity.error ? { ...dates, quantity_units: quantity.value } : null,
     errors,
   };
+}
+
+export function stockQuantityAmount(quantityUnits: number, unitSize: string) {
+  const [integer = "0", fraction = ""] = unitSize.split(".");
+  const scale = 10n ** BigInt(fraction.length);
+  const scaledUnit = BigInt(integer || "0") * scale + BigInt(fraction || "0");
+  return { coefficient: scaledUnit * BigInt(quantityUnits), decimalPlaces: fraction.length };
+}
+
+export function formatStockQuantityAmount(
+  { coefficient, decimalPlaces }: ReturnType<typeof stockQuantityAmount>,
+  unitLabel: string,
+) {
+  const scale = 10n ** BigInt(decimalPlaces);
+  const whole = coefficient / scale;
+  const remainder = (coefficient % scale)
+    .toString()
+    .padStart(decimalPlaces, "0")
+    .replace(/0+$/, "");
+  return `${whole}${remainder ? `.${remainder}` : ""} ${unitLabel}`;
 }
 
 export function formatStockQuantityTotal(
@@ -97,16 +123,7 @@ export function formatStockQuantityTotal(
   unitSize: string,
   unitLabel: string,
 ) {
-  const [integer = "0", fraction = ""] = unitSize.split(".");
-  const scale = 10n ** BigInt(fraction.length);
-  const scaledUnit = BigInt(integer || "0") * scale + BigInt(fraction || "0");
-  const scaledTotal = scaledUnit * BigInt(quantityUnits);
-  const whole = scaledTotal / scale;
-  const remainder = (scaledTotal % scale)
-    .toString()
-    .padStart(fraction.length, "0")
-    .replace(/0+$/, "");
-  return `${whole}${remainder ? `.${remainder}` : ""} ${unitLabel}`;
+  return formatStockQuantityAmount(stockQuantityAmount(quantityUnits, unitSize), unitLabel);
 }
 
 /** A write may have committed before a transport or response failure. */

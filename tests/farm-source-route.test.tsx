@@ -53,6 +53,7 @@ const farm: Farm = {
   name_en: "Green Valley",
   name_vi: "Thung lũng Xanh",
   location_en: "Da Lat",
+  contact_phone: "",
   location_vi: "Đà Lạt",
   description_en: "",
   description_vi: "",

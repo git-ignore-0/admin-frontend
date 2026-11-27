@@ -271,6 +271,16 @@ export function resolveAdminBreadcrumbs(
     if (
       activeItem.href === "/farms" &&
       id &&
+      action === "stock-batches" &&
+      extra === "new" &&
+      pathname === `/farms/${id}/stock-batches/new` &&
+      isInternalAdminHref(`/farms/${id}`)
+    ) {
+      return [root, { label: labels.record, href: `/farms/${id}` }];
+    }
+    if (
+      activeItem.href === "/farms" &&
+      id &&
       extra &&
       action === "products" &&
       pathname === `/farms/${id}/products/${extra}` &&

@@ -52,6 +52,7 @@ const farm: Farm = {
   name_en: "Green Farm",
   location_vi: "Đà Lạt",
   location_en: "Da Lat",
+  contact_phone: "0912345678",
   description_vi: "Rau sạch",
   description_en: "Organic greens",
   image: null,
@@ -111,9 +112,10 @@ function page(
   scope?: Ref<() => void>,
   editorOpen = true,
   cache?: Ref<QueryClient>,
+  locale: "en" | "vi" = "vi",
 ) {
   return (
-    <AdminI18nProvider initialLocale="vi">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
         <AdminBreadcrumbProvider
           key={session}
@@ -258,6 +260,99 @@ it("saves only changed Farm information in place without creating a Tracker prof
   expect(screen.getByRole("heading", { name: "Tên mới", level: 1 })).toBeVisible();
   expect(save).toBeDisabled();
 });
+
+it("edits the single shared contact phone and recognizes the domestic save response", async () => {
+  const updated = { ...farm, contact_phone: "0987654321", version: 3 };
+  mocks.save.mockResolvedValue(updated);
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValue(updated);
+  renderEditor(farm.id);
+  const save = await informationReady();
+  const phone = screen.getByLabelText("Số điện thoại liên hệ");
+
+  expect(phone).toHaveValue("0912345678");
+  expect(phone).toHaveAttribute("type", "tel");
+  await click(screen.getByRole("tab", { name: /English/ }));
+  expect(screen.getByLabelText("Số điện thoại liên hệ")).toBe(phone);
+  change(phone, "+84912345678");
+  expect(save).toBeDisabled();
+  change(phone, "+84987654321");
+  await click(save);
+
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 2,
+    contact_phone: "+84987654321",
+  });
+  expect(phone).toHaveValue(updated.contact_phone);
+  expect(save).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Kiểm tra dữ liệu mới nhất" })).toBeNull();
+});
+
+it("maps phone validation to the field in English and can clear the number", async () => {
+  const updated = { ...farm, contact_phone: "", version: 3 };
+  mocks.search.set("tab", "information");
+  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValue(updated);
+  mocks.save
+    .mockRejectedValueOnce(
+      Object.assign(problem("validation_error", 400), {
+        field: "contact_phone",
+        payload: { contact_phone: ["Enter a valid Vietnamese phone number."] },
+      }),
+    )
+    .mockResolvedValueOnce(updated);
+  render(page(farm.id, "session-a", undefined, true, undefined, "en"));
+  const phone = await screen.findByLabelText("Contact phone");
+  const save = screen.getByRole("button", { name: "Save changes" });
+  await waitFor(() => expect(phone).toBeEnabled());
+
+  change(phone, "abc");
+  await click(save);
+  expect(phone).toHaveValue("abc");
+  expect(phone).toHaveAccessibleDescription("Enter a valid Vietnamese phone number.");
+  expect(phone).toHaveAttribute("aria-invalid", "true");
+  change(phone, "");
+  expect(phone).not.toHaveAttribute("aria-invalid");
+  await click(save);
+  expect(mocks.save).toHaveBeenLastCalledWith(farm.id, { version: 2, contact_phone: "" });
+  expect(phone).toHaveValue("");
+  expect(save).toBeDisabled();
+});
+
+it.each([
+  ["version_conflict", 409, "0321234567", "0321234567"],
+  ["request_timeout", undefined, "0912345678", "+84987654321"],
+] as const)(
+  "reviews the latest contact phone before saving again after %s",
+  async (message, status, serverPhone, expectedPhone) => {
+    const latest = { ...farm, contact_phone: serverPhone, version: 3 };
+    mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(farm).mockResolvedValue(latest);
+    mocks.save.mockRejectedValueOnce(problem(message, status));
+    renderEditor(farm.id);
+    const save = await informationReady();
+    const phone = screen.getByLabelText("Số điện thoại liên hệ");
+
+    change(phone, "+84987654321");
+    change(screen.getByDisplayValue(farm.description_vi), "Mô tả nháp");
+    await click(save);
+    await click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+    expect(phone).toHaveValue("+84987654321");
+    expect(save).toBeDisabled();
+    if (serverPhone !== farm.contact_phone) {
+      expect(screen.getByRole("alert")).toHaveTextContent(`Số điện thoại liên hệ · ${serverPhone}`);
+    }
+    await click(screen.getByRole("button", { name: "Dùng phiên bản mới nhất" }));
+    expect(phone).toHaveValue(expectedPhone);
+    expect(screen.getByDisplayValue("Mô tả nháp")).toBeVisible();
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    if (serverPhone !== farm.contact_phone) {
+      mocks.save.mockResolvedValue({ ...latest, description_vi: "Mô tả nháp", version: 4 });
+      await click(save);
+      expect(mocks.save).toHaveBeenLastCalledWith(farm.id, {
+        version: 3,
+        description_vi: "Mô tả nháp",
+      });
+    }
+  },
+);
 
 it("patches only visibility without deleting the Tracker profile or changing its numbers", async () => {
   mocks.getTracker.mockResolvedValue(tracker);
@@ -615,10 +710,29 @@ it("keeps create navigation in the filtered Farm list context", async () => {
   const form = create.closest("form")!;
   await click(create);
 
+  expect(mocks.save).toHaveBeenCalledWith(
+    undefined,
+    expect.objectContaining({ contact_phone: "" }),
+  );
   expect(mocks.replace).toHaveBeenCalledWith(`/farms/farm-1?${filters}`);
   expect(create).toBeDisabled();
   await act(async () => fireEvent.submit(form));
   expect(mocks.save).toHaveBeenCalledTimes(1);
+});
+
+it("creates a farm with its contact phone as a string including the leading zero", async () => {
+  mocks.save.mockResolvedValue(farm);
+  renderEditor();
+  fillNewFarm();
+  const phone = screen.getByLabelText("Số điện thoại liên hệ");
+  expect(phone).toHaveValue("");
+  change(phone, "0912345678");
+  await click(screen.getByRole("button", { name: "Tạo trang trại" }));
+
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(
+    undefined,
+    expect.objectContaining({ contact_phone: "0912345678" }),
+  );
 });
 
 it("keeps the persisted Farm name in the breadcrumb until inline save succeeds", async () => {
@@ -955,11 +1069,14 @@ it.each([
   mocks.deleteImage.mockResolvedValue(undefined);
   const editor = renderEditor();
   fillNewFarm();
+  const phone = screen.getByLabelText("Số điện thoại liên hệ");
+  change(phone, farm.contact_phone);
   await uploadPhotos(cover, album);
 
   const save = screen.getByRole("button", { name: "Tạo trang trại" });
   await act(async () => fireEvent.click(save));
   expect(screen.getByDisplayValue(farm.name_en)).toBeVisible();
+  expect(phone).toHaveValue(farm.contact_phone);
   expect(screen.getByRole("link", { name: "Kiểm tra danh sách trang trại" })).toHaveAttribute(
     "href",
     `/farms?search=${encodeURIComponent(farm.name_vi).replace(/%20/g, "+")}`,
