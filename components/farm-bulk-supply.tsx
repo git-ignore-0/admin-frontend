@@ -15,7 +15,12 @@ import { PageHeading } from "@/components/page-heading";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { requestErrorMessage } from "@/lib/client-error";
-import { emptyFarmBulkSupplyDraft, type FarmBulkSupplyDraft } from "@/lib/farm-bulk-draft";
+import {
+  emptyFarmBulkSupplyDraft,
+  farmBulkSupplyInput,
+  farmBulkSupplyProduct,
+  type FarmBulkSupplyDraft,
+} from "@/lib/farm-bulk-draft";
 import {
   captureFarmDetail,
   farmDetailNeedsRead,
@@ -221,7 +226,7 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
     const items = { ...draft.items };
     for (const [id, source] of Object.entries(review)) {
       if (!source && items[id]) return;
-      if (source && items[id]) items[id] = { ...items[id], product: source };
+      if (source && items[id]) items[id] = { ...items[id], product: farmBulkSupplyProduct(source) };
     }
     editDraft({ ...draft, items });
     setReview(null);
@@ -310,7 +315,7 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
         <RecoveryAlert
           message={
             vi
-              ? "Nguồn cung đã thay đổi. Đọc lại và kiểm tra quy cách trước khi lưu."
+              ? "Nguồn cung đã thay đổi. Đọc lại và kiểm tra đơn vị bán trước khi lưu."
               : "Supply has changed. Read the latest source and review its sale unit before saving."
           }
           retryLabel={vi ? "Đọc lại nguồn cung" : "Read latest supply"}
@@ -383,7 +388,9 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
           locale={locale}
           draft={draft}
           onDraftChange={editDraft}
-          products={products.error && !data ? undefined : data?.data}
+          products={data?.data.map(farmBulkSupplyProduct)}
+          remaining={(product) => product.available_quantity}
+          submitLabel={vi ? "Lưu nguồn cung" : "Save supply"}
           loading={products.isPending}
           refreshing={products.isFetching && !products.isPending}
           error={products.error ? requestErrorMessage(products.error, t) : undefined}
@@ -421,7 +428,7 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
           onSubmit={(input) => {
             if (write.locked || write.blocked || failure?.kind === "conflict" || products.error)
               return;
-            write.submit(input, saved);
+            write.submit(farmBulkSupplyInput(input), saved);
           }}
           onCancel={cancel}
         />

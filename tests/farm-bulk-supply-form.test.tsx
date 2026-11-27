@@ -3,7 +3,12 @@ import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { FarmSupplyForm } from "@/components/farm-bulk-supply-form";
-import { summarizeFarmBulkSupplyDraft, type FarmBulkSupplyDraft } from "@/lib/farm-bulk-draft";
+import { farmBulkSupplyInput, type FarmBulkSupplyDraft } from "@/lib/farm-bulk-draft";
+import {
+  summarizeFarmSupplyDraft,
+  type FarmSupplyDraft,
+  type FarmSupplyProduct,
+} from "@/lib/farm-supply-form";
 import type { FarmProduct } from "@/lib/types";
 
 function product(n: number, unit = "kg", size = "0.500", name = `Product ${n}`): FarmProduct {
@@ -47,7 +52,7 @@ it.each([
   ["2147483648", "integer_range"],
 ])("rejects the entered quantity %s", (quantity, error) => {
   const row = product(1);
-  const result = summarizeFarmBulkSupplyDraft(
+  const result = summarizeFarmSupplyDraft(
     { ...draft, items: { [row.product_id]: { product: row, quantity } } },
     "en",
     today,
@@ -59,7 +64,7 @@ it.each([
 it("uses JSON integers at the backend limit and skips blank inputs", () => {
   const first = product(1);
   const second = product(2);
-  const { input } = summarizeFarmBulkSupplyDraft(
+  const { input } = summarizeFarmSupplyDraft(
     {
       ...draft,
       items: {
@@ -70,7 +75,7 @@ it("uses JSON integers at the backend limit and skips blank inputs", () => {
     "en",
     today,
   );
-  expect(input).toEqual({
+  expect(input && farmBulkSupplyInput(input)).toEqual({
     start_date: "2099-11-30",
     end_date: "2099-12-06",
     items: [
@@ -93,7 +98,7 @@ it("sums compatible units exactly and keeps free-text units separate", () => {
     [product(5, "quả", "1"), "30"],
     [product(6, "gói 500g", "2"), "3"],
   ] as const;
-  const result = summarizeFarmBulkSupplyDraft(
+  const result = summarizeFarmSupplyDraft(
     {
       ...draft,
       items: Object.fromEntries(
@@ -119,24 +124,22 @@ it("permits an earlier start, rejects expired and reversed periods, and enforces
   const items = Object.fromEntries(
     rows.map((product) => [product.product_id, { product, quantity: "1" }]),
   );
-  expect(summarizeFarmBulkSupplyDraft({ ...draft, items }, "en", today).input).toBeNull();
+  expect(summarizeFarmSupplyDraft({ ...draft, items }, "en", today).input).toBeNull();
   delete items[rows.at(-1)!.product_id];
-  expect(summarizeFarmBulkSupplyDraft({ ...draft, items }, "en", today).input?.items).toHaveLength(
-    50,
-  );
+  expect(summarizeFarmSupplyDraft({ ...draft, items }, "en", today).input?.items).toHaveLength(50);
   expect(
-    summarizeFarmBulkSupplyDraft({ ...draft, items, start_date: "29/11/2099" }, "en", today).input,
+    summarizeFarmSupplyDraft({ ...draft, items, start_date: "29/11/2099" }, "en", today).input,
   ).not.toBeNull();
   expect(
-    summarizeFarmBulkSupplyDraft({ ...draft, items, end_date: "29/11/2099" }, "en", today)
-      .dateErrors.end_date,
+    summarizeFarmSupplyDraft({ ...draft, items, end_date: "29/11/2099" }, "en", today).dateErrors
+      .end_date,
   ).toBe("date_order");
   expect(
-    summarizeFarmBulkSupplyDraft({ ...draft, items }, "en", "2099-12-07").dateErrors.end_date,
+    summarizeFarmSupplyDraft({ ...draft, items }, "en", "2099-12-07").dateErrors.end_date,
   ).toBe("expired");
   expect(
-    summarizeFarmBulkSupplyDraft({ ...draft, items, start_date: "not a date" }, "en", today)
-      .dateErrors.start_date,
+    summarizeFarmSupplyDraft({ ...draft, items, start_date: "not a date" }, "en", today).dateErrors
+      .start_date,
   ).toBe("invalid_date");
 });
 
@@ -152,13 +155,14 @@ it("keeps an entered item through search and page changes, including its origina
     return (
       <FarmSupplyForm
         locale="en"
+        submitLabel="Save supply"
         draft={currentDraft}
         onDraftChange={setDraft}
         products={products}
         search={search}
         onSearch={setSearch}
         pagination={{ page, pageSize: 20, total: 80, onChange: setPage }}
-        onSubmit={onSubmit}
+        onSubmit={(input) => onSubmit(farmBulkSupplyInput(input))}
         onCancel={() => {}}
       />
     );
@@ -212,6 +216,7 @@ it("shows a keyed error for a product outside the active page and locks the supp
   render(
     <FarmSupplyForm
       locale="en"
+      submitLabel="Save supply"
       draft={{ ...draft, items: { [first.product_id]: { product: first, quantity: "100" } } }}
       onDraftChange={onDraftChange}
       products={[second]}
@@ -283,6 +288,7 @@ it("places the supply dates, search toolbar and Data List in separate Foundation
   render(
     <FarmSupplyForm
       locale="en"
+      submitLabel="Save supply"
       draft={draft}
       onDraftChange={() => {}}
       products={[product(1)]}
@@ -305,4 +311,102 @@ it("places the supply dates, search toolbar and Data List in separate Foundation
   expect(list).toContainElement(next);
   expect(next.closest("footer")).not.toBeNull();
   expect(list.querySelector("[role=separator]")).not.toBeNull();
+});
+
+it("rejects invalid clipboard text before the input can silently strip it", () => {
+  function TestForm() {
+    const [currentDraft, setDraft] = useState(draft);
+    return (
+      <FarmSupplyForm
+        locale="en"
+        submitLabel="Save supply"
+        draft={currentDraft}
+        onDraftChange={setDraft}
+        products={[product(1)]}
+        search=""
+        onSearch={() => {}}
+        onSubmit={() => {}}
+      />
+    );
+  }
+
+  render(<TestForm />);
+  const input = screen.getByRole<HTMLInputElement>("textbox", {
+    name: "Additional quantity — Product 1",
+  });
+  const submit = screen.getByRole("button", { name: "Save supply" });
+  expect(input).toHaveAttribute("inputmode", "numeric");
+  expect(input).toHaveValue("");
+  fireEvent.change(input, { target: { value: "12" } });
+  expect(submit).toBeEnabled();
+  input.select();
+  expect(fireEvent.paste(input, { clipboardData: { getData: () => "1e3" } })).toBe(false);
+  expect(input).toHaveValue("1e3");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(submit).toBeDisabled();
+  for (const invalid of ["1.5", "-12", "+12", "11E2", "abc123", "0", "2147483648"]) {
+    fireEvent.change(input, { target: { value: invalid } });
+    fireEvent.blur(input);
+    expect(input).toHaveValue(invalid);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(submit).toBeDisabled();
+  }
+  fireEvent.change(input, { target: { value: "2147483647" } });
+  expect(submit).toBeEnabled();
+  fireEvent.change(input, { target: { value: "" } });
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(submit).toBeDisabled();
+});
+
+it("renders a Farmer projection without stock and submits the product identity from first entry", () => {
+  const first = {
+    product_id: "product-1",
+    sku: "GREEN-MIX",
+    name_vi: "Rau xanh",
+    name_en: "Leafy greens",
+    unit_size: "0.500",
+    unit_label_en: "kg",
+    unit_label_vi: "kg",
+    product_identity: "a".repeat(64),
+  } satisfies FarmSupplyProduct & { product_identity: string };
+  const onSubmit = vi.fn();
+  function TestFarmer() {
+    const [currentDraft, setDraft] = useState<FarmSupplyDraft<typeof first>>({
+      ...dates,
+      items: {},
+    });
+    const [refreshed, setRefreshed] = useState(false);
+    return (
+      <>
+        <button onClick={() => setRefreshed(true)}>Change listing</button>
+        <FarmSupplyForm
+          locale="en"
+          draft={currentDraft}
+          onDraftChange={setDraft}
+          products={[
+            refreshed ? { ...first, unit_size: "1.000", product_identity: "b".repeat(64) } : first,
+          ]}
+          search=""
+          onSearch={() => {}}
+          submitLabel="Send request"
+          quantityLabel="Supply quantity"
+          onSubmit={onSubmit}
+        />
+      </>
+    );
+  }
+
+  render(<TestFarmer />);
+  expect(screen.queryByText(/Remaining/)).not.toBeInTheDocument();
+  const input = screen.getByRole("textbox", { name: "Supply quantity — Leafy greens" });
+  fireEvent.change(input, { target: { value: "100" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change listing" }));
+  fireEvent.change(input, { target: { value: "120" } });
+  expect(screen.getAllByText("60 kg").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+  expect(onSubmit).toHaveBeenCalledWith({
+    start_date: "2099-11-30",
+    end_date: "2099-12-06",
+    items: [{ product: first, quantity_units: 120 }],
+  });
 });

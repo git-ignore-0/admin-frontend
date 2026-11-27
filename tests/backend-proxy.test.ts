@@ -1761,3 +1761,45 @@ describe("admin backend proxy", () => {
     expect(writeSession).not.toHaveBeenCalled();
   });
 });
+
+it("checks supply request list filters and rejects query on link and decisions", async () => {
+  const id = "87703641-2dce-4cac-8fc4-91e55f03e95f";
+  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ data: [] })));
+  vi.stubGlobal("fetch", fetcher);
+  const origin = "https://admin.example.test";
+  const list = ["admin", "farm-supply-requests"];
+  const url = `${origin}/api/backend/${list.join("/")}`;
+  const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
+  for (const query of [
+    "status=all",
+    "farm_id=wrong",
+    "page=10001",
+    "page_size=20",
+    "search=a&search=b",
+  ]) {
+    expect((await GET(pageRequest(`${url}?${query}`), context(list))).status).toBe(404);
+  }
+  const link = ["admin", "farms", id, "farmer-link"];
+  expect(
+    (await GET(pageRequest(`${origin}/api/backend/${link.join("/")}?page=1`), context(link)))
+      .status,
+  ).toBe(404);
+  const decision = [...list, id, "approve"];
+  expect(
+    (
+      await POST(
+        pageRequest(`${origin}/api/backend/${decision.join("/")}?status=pending`, {
+          method: "POST",
+          headers: { origin, "x-nfv-admin-request": "1" },
+        }),
+        context(decision),
+      )
+    ).status,
+  ).toBe(404);
+  expect(fetcher).not.toHaveBeenCalled();
+  const valid = await GET(pageRequest(`${url}?farm_id=${id}&status=pending&page=2`), context(list));
+  expect(valid.status).toBe(200);
+  expect(String(fetcher.mock.calls[0][0])).toBe(
+    `https://auth.example.test/api/v1/admin/farm-supply-requests?farm_id=${id}&status=pending&page=2`,
+  );
+});

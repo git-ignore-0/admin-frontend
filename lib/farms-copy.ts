@@ -219,6 +219,7 @@ const copy = {
       supplying_product: "Sản phẩm đang cung cấp",
       store_order: "Đơn hàng",
       legacy_supply: "Lịch sử cung cấp theo tuần",
+      farm_supply_request: "Yêu cầu nhập sản phẩm",
     },
   },
   en: {
@@ -440,6 +441,7 @@ const copy = {
       supplying_product: "Product currently supplied",
       store_order: "Store order",
       legacy_supply: "Archived weekly supply",
+      farm_supply_request: "Supply request",
     },
   },
 } as const;

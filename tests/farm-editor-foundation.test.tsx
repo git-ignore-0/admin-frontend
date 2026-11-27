@@ -30,6 +30,14 @@ const mocks = vi.hoisted(() => ({
   search: new URLSearchParams(),
 }));
 
+// Keep these Farm editor assertions independent of the separate link request.
+vi.mock("@/lib/farm-supply-request-api", () => ({
+  farmerLink: vi.fn(async (farmId: string) => ({
+    farm_id: farmId,
+    url: `/farmer#token=${"A".repeat(43)}`,
+  })),
+}));
+
 vi.mock("@/lib/farms-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/farms-api")>()),
   getFarm: mocks.get,

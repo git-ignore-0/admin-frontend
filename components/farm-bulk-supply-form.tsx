@@ -24,18 +24,19 @@ import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { FormField } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
+import { adminDateInputToIso, adminTodayIso } from "@/lib/admin-date";
 import { adminDictionaries, type AdminLocale } from "@/lib/admin-i18n";
 import {
-  FARM_BULK_SUPPLY_LIMIT,
-  farmBulkProductName,
-  farmBulkProductUnit,
-  summarizeFarmBulkSupplyDraft,
-  type FarmBulkSupplyDraft,
-  type FarmBulkSupplyInput,
-} from "@/lib/farm-bulk-draft";
+  FARM_SUPPLY_LIMIT,
+  farmSupplyProductName,
+  farmSupplyProductUnit,
+  summarizeFarmSupplyDraft,
+  type FarmSupplyDraft,
+  type FarmSupplyInput,
+  type FarmSupplyProduct,
+} from "@/lib/farm-supply-form";
 import { farmsCopy } from "@/lib/farms-copy";
 import { formatDecimalInput, numericInputErrorMessage } from "@/lib/numeric-input";
-import type { FarmProduct } from "@/lib/types";
 
 import styles from "./farm-bulk-supply-form.module.css";
 
@@ -57,9 +58,10 @@ const labels = {
     view: "View details",
     hide: "Hide details",
     review: "Check the products highlighted in the summary.",
-    limit: "Enter quantities for up to {max} products per save.",
-    limitExceeded: "Remove products from the summary to save a maximum of {max} at a time.",
-    save: "Save supply",
+    limit: "Enter quantities for up to {max} products.",
+    limitExceeded: "Remove products from the summary to keep at most {max}.",
+    submit: "Submit",
+    refresh: "Refresh products",
   },
   vi: {
     summary: "Tổng hợp nguồn cung",
@@ -78,17 +80,23 @@ const labels = {
     view: "Xem chi tiết",
     hide: "Thu gọn chi tiết",
     review: "Kiểm tra các sản phẩm có lỗi trong phần tổng hợp.",
-    limit: "Mỗi lần lưu có thể nhập tối đa {max} sản phẩm.",
-    limitExceeded: "Bỏ bớt sản phẩm trong phần tổng hợp để lưu tối đa {max} sản phẩm mỗi lần.",
-    save: "Lưu nguồn cung",
+    limit: "Có thể nhập tối đa {max} sản phẩm.",
+    limitExceeded: "Bỏ bớt sản phẩm trong phần tổng hợp để còn tối đa {max}.",
+    submit: "Xác nhận",
+    refresh: "Làm mới danh sách sản phẩm",
   },
 };
 
-type Props = {
+type Props<P extends FarmSupplyProduct> = {
   locale: AdminLocale;
-  draft: FarmBulkSupplyDraft;
-  onDraftChange: (draft: FarmBulkSupplyDraft) => void;
-  products: FarmProduct[] | undefined;
+  draft: FarmSupplyDraft<P>;
+  onDraftChange: (draft: FarmSupplyDraft<P>) => void;
+  products: P[] | undefined;
+  remaining?: (product: P) => number;
+  submitLabel?: string;
+  quantityLabel?: string;
+  emptyLabel?: string;
+  noResultsLabel?: string;
   loading?: boolean;
   refreshing?: boolean;
   error?: string;
@@ -102,15 +110,20 @@ type Props = {
   submitting?: boolean;
   errors?: { start_date?: string; end_date?: string; items?: Record<string, string> };
   review?: ReactNode;
-  onSubmit: (input: FarmBulkSupplyInput) => void;
-  onCancel: () => void;
+  onSubmit: (input: FarmSupplyInput<P>) => void;
+  onCancel?: () => void;
 };
 
-export function FarmSupplyForm({
+export function FarmSupplyForm<P extends FarmSupplyProduct>({
   locale,
   draft,
   onDraftChange,
   products,
+  remaining,
+  submitLabel,
+  quantityLabel,
+  emptyLabel,
+  noResultsLabel,
   loading = false,
   refreshing = false,
   error = "",
@@ -126,7 +139,7 @@ export function FarmSupplyForm({
   review,
   onSubmit,
   onCancel,
-}: Props) {
+}: Props<P>) {
   const id = useId();
   const datesId = `${id}-dates`;
   const summaryHeadingId = `${id}-summary-heading`;
@@ -135,15 +148,18 @@ export function FarmSupplyForm({
   const [searchText, setSearchText] = useState(search);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const { ref: layoutRef, width: contentWidth } = useElementSize();
-  // At 880px, a 70/30 split leaves room for all four table columns and the summary.
+  // At 880px, the entry table and summary have room to sit side by side.
   const desktop = contentWidth >= 880;
   const c = labels[locale];
   const f = farmsCopy(locale);
   const t = adminDictionaries[locale];
   const number = new Intl.NumberFormat(locale);
-  const summary = summarizeFarmBulkSupplyDraft(draft, locale);
+  const today = adminTodayIso();
+  const startDate = adminDateInputToIso(draft.start_date);
+  const summary = summarizeFarmSupplyDraft(draft, locale, today);
+  const quantityTitle = quantityLabel ?? c.quantity;
   const entries = new Map(summary.items.map((item) => [item.product.product_id, item]));
-  const overLimit = summary.items.length > FARM_BULK_SUPPLY_LIMIT;
+  const overLimit = summary.items.length > FARM_SUPPLY_LIMIT;
   const hasProductErrors = summary.items.some(
     ({ product, quantityError }) => quantityError || errors?.items?.[product.product_id],
   );
@@ -169,7 +185,7 @@ export function FarmSupplyForm({
     onSearch("");
   }
 
-  function changeQuantity(product: FarmProduct, quantity: string) {
+  function changeQuantity(product: P, quantity: string) {
     if (fieldsLocked) return;
     const key = product.product_id;
     const items = { ...draft.items };
@@ -178,8 +194,8 @@ export function FarmSupplyForm({
     onDraftChange({ ...draft, items });
   }
 
-  function saleUnit(product: FarmProduct) {
-    return `${formatDecimalInput(product.unit_size)} ${farmBulkProductUnit(product, locale)}`;
+  function saleUnit(product: FarmSupplyProduct) {
+    return `${formatDecimalInput(product.unit_size)} ${farmSupplyProductUnit(product, locale)}`;
   }
 
   function quantityError(productId: string) {
@@ -215,6 +231,13 @@ export function FarmSupplyForm({
                           value={draft[field]}
                           disabled={fieldsLocked}
                           pickerLabel={start ? f.openStartDatePicker : f.openEndDatePicker}
+                          pickerMin={
+                            !start
+                              ? startDate && startDate > today
+                                ? startDate
+                                : today
+                              : undefined
+                          }
                           onValueChange={(value) => onDraftChange({ ...draft, [field]: value })}
                         />
                       </FormField>
@@ -224,6 +247,14 @@ export function FarmSupplyForm({
               </Stack>
             </Paper>
             <ListToolbar
+              refresh={
+                onRetry && {
+                  label: c.refresh,
+                  onRefresh: onRetry,
+                  loading: refreshing,
+                  disabled: loading,
+                }
+              }
               search={{
                 label: c.search,
                 submitLabel: f.searchButton,
@@ -243,55 +274,45 @@ export function FarmSupplyForm({
                   <Table
                     aria-label={f.products}
                     aria-busy={refreshing || undefined}
-                    classNames={{
-                      table: styles.table,
-                      thead: styles.tableHeader,
-                      tr: styles.tableRow,
-                      td: styles.cell,
-                    }}
-                    role="table"
+                    layout="fixed"
+                    classNames={{ td: styles.wrap, th: styles.wrap }}
+                    withRowBorders
                   >
                     <Table.Thead>
-                      <Table.Tr role="row">
+                      <Table.Tr>
                         <Table.Th scope="col">{f.productColumn}</Table.Th>
-                        <Table.Th scope="col" ta="right">
-                          {c.available}
+                        <Table.Th scope="col" w="36%">
+                          {quantityTitle}
                         </Table.Th>
-                        <Table.Th scope="col">{c.quantity}</Table.Th>
-                        <Table.Th scope="col" ta="right">
+                        <Table.Th scope="col" ta="right" w="23%">
                           {c.converted}
                         </Table.Th>
                       </Table.Tr>
                     </Table.Thead>
-                    <Table.Tbody role="rowgroup">
+                    <Table.Tbody>
                       {products?.map((row) => {
                         const entry = entries.get(row.product_id);
                         const product = entry?.product ?? row;
-                        const name = farmBulkProductName(product, locale);
-                        const remaining = number.format(row.available_quantity);
+                        const name = farmSupplyProductName(product, locale);
+                        const available = remaining?.(row);
                         const message = quantityError(product.product_id);
                         return (
-                          <Table.Tr key={row.product_id} role="row">
-                            <Table.Td role="cell" className={styles.productCell}>
+                          <Table.Tr key={row.product_id}>
+                            <Table.Td>
                               <Stack gap={4} miw={0}>
                                 <Text size="md" fw={600}>
                                   {name}
                                 </Text>
                                 <Text size="sm" c="dimmed">
                                   {product.sku} · {saleUnit(product)}
-                                  <span className={styles.compactStock}>
-                                    {" "}
-                                    · {c.available} {remaining}
-                                  </span>
+                                  {available !== undefined &&
+                                    ` · ${c.available} ${number.format(available)}`}
                                 </Text>
                               </Stack>
                             </Table.Td>
-                            <Table.Td role="cell" className={styles.stockCell} ta="right">
-                              {remaining}
-                            </Table.Td>
-                            <Table.Td role="cell" className={styles.quantityCell}>
+                            <Table.Td>
                               <TextInput
-                                aria-label={`${c.quantity} — ${name}`}
+                                aria-label={`${quantityTitle} — ${name}`}
                                 form={formId}
                                 type="text"
                                 inputMode="numeric"
@@ -299,11 +320,24 @@ export function FarmSupplyForm({
                                 value={entry?.quantity ?? ""}
                                 error={message}
                                 onChange={(event) => changeQuantity(row, event.currentTarget.value)}
+                                onPaste={(event) => {
+                                  const text = event.clipboardData.getData("text/plain");
+                                  if (!/\D/.test(text)) return;
+                                  // A text input can silently remove line breaks from a paste.
+                                  // Validate the original replacement before the browser changes it.
+                                  event.preventDefault();
+                                  const { value, selectionStart, selectionEnd } =
+                                    event.currentTarget;
+                                  changeQuantity(
+                                    row,
+                                    value.slice(0, selectionStart ?? 0) +
+                                      text +
+                                      value.slice(selectionEnd ?? value.length),
+                                  );
+                                }}
                               />
                             </Table.Td>
-                            <Table.Td role="cell" ta="right">
-                              {entry?.total ?? "—"}
-                            </Table.Td>
+                            <Table.Td ta="right">{entry?.total ?? "—"}</Table.Td>
                           </Table.Tr>
                         );
                       })}
@@ -314,8 +348,8 @@ export function FarmSupplyForm({
               <Box p={error || (refreshing && Boolean(products?.length)) ? "md" : undefined}>
                 <ListState
                   embedded
-                  empty={c.empty}
-                  noResults={search ? c.noResults : undefined}
+                  empty={emptyLabel ?? c.empty}
+                  noResults={search ? (noResultsLabel ?? c.noResults) : undefined}
                   loading={loading || refreshing}
                   loadingLabel={f.loadingSupply}
                   hasData={Boolean(products)}
@@ -434,7 +468,7 @@ export function FarmSupplyForm({
                         className={styles.summaryItems}
                       >
                         {summary.items.map(({ product, quantity, quantityError: code, total }) => {
-                          const name = farmBulkProductName(product, locale);
+                          const name = farmSupplyProductName(product, locale);
                           return (
                             <Stack
                               component="li"
@@ -495,20 +529,22 @@ export function FarmSupplyForm({
                 >
                   {(overLimit ? c.limitExceeded : c.limit).replace(
                     "{max}",
-                    String(FARM_BULK_SUPPLY_LIMIT),
+                    String(FARM_SUPPLY_LIMIT),
                   )}
                 </Text>
                 <Group className={styles.actions} gap="xs" wrap="nowrap">
-                  <Button
-                    type="button"
-                    variant="default"
-                    onClick={onCancel}
-                    disabled={cancelDisabled || submitting}
-                  >
-                    {f.cancel}
-                  </Button>
+                  {onCancel && (
+                    <Button
+                      type="button"
+                      variant="default"
+                      onClick={onCancel}
+                      disabled={cancelDisabled || submitting}
+                    >
+                      {f.cancel}
+                    </Button>
+                  )}
                   <Button type="submit" disabled={!canSubmit} loading={submitting}>
-                    {c.save}
+                    {submitLabel ?? c.submit}
                   </Button>
                 </Group>
               </Stack>

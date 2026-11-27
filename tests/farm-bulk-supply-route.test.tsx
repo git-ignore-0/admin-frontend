@@ -13,7 +13,8 @@ import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { ToastProvider } from "@/components/toast-provider";
 import { FarmBulkSupply } from "@/components/farm-bulk-supply";
 import { getFarm, listFarmProducts, postFarmBulkSupply } from "@/lib/farms-api";
-import type { FarmBulkSupplyDraft, FarmBulkSupplyInput } from "@/lib/farm-bulk-draft";
+import type { FarmBulkSupplyDraft, FarmBulkSupplyProduct } from "@/lib/farm-bulk-draft";
+import type { FarmSupplyInput } from "@/lib/farm-supply-form";
 import {
   confirmFarmGone,
   farmBulkDraftKey,
@@ -61,7 +62,7 @@ vi.mock("@/components/farm-bulk-supply-form", () => ({
     onCancel: () => void;
     draft: FarmBulkSupplyDraft;
     onDraftChange: (draft: FarmBulkSupplyDraft) => void;
-    onSubmit: (input: FarmBulkSupplyInput) => void;
+    onSubmit: (input: FarmSupplyInput<FarmBulkSupplyProduct>) => void;
     review?: ReactNode;
   }) => (
     <>
@@ -81,9 +82,7 @@ vi.mock("@/components/farm-bulk-supply-form", () => ({
             end_date: "2099-12-06",
             items: [
               {
-                product_id: product.product_id,
-                expected_link_id: product.id,
-                expected_version: 7,
+                product,
                 quantity_units: 25,
               },
             ],

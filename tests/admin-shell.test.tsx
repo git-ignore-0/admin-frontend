@@ -619,6 +619,7 @@ describe("admin sidebar navigation", () => {
       "/store-catalog/products",
       "/store-catalog/categories",
       "/farms",
+      "/farm-supply-requests",
       "/csa-rounds",
       "/csa-purchase-requests",
       "/csa-customers",
@@ -638,7 +639,7 @@ describe("admin sidebar navigation", () => {
     expect(new Set(routes).size).toBe(routes.length);
     expect(
       sections.find((section) => section.key === "farms")?.items.map((item) => item.label),
-    ).toEqual(["Farm list"]);
+    ).toEqual(["Farm list", "Supply requests"]);
     expect(sections.map((section) => section.key)).toEqual([
       "overview",
       "store",

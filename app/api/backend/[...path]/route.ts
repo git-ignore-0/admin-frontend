@@ -6,6 +6,7 @@ import {
   PROVINCE_CODE,
   UUID_PATH_SEGMENT,
 } from "@/lib/backend-target";
+import { validSupplyQuery } from "@/lib/farm-supply-request-contract";
 import { adminOrigin, authOrigin } from "@/lib/config";
 import { ADMIN_PAGE_SESSION_HEADER, isTrustedAdminRequest } from "@/lib/csrf";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
@@ -91,6 +92,11 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
       params.size !== 1 ||
       !UUID_PATH_SEGMENT.test(params.get("creation_key") ?? "")
     );
+  }
+  if (resource === "farm-supply-requests") {
+    return id !== undefined
+      ? params.size > 0
+      : !validSupplyQuery(params, ["page", "search", "status", "farm_id"]);
   }
   if (resource === "farms") return invalidFarmQuery(request.method, path, params);
   if (resource === "csa-round-configurations") {

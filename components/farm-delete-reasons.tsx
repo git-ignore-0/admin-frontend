@@ -24,16 +24,17 @@ export function FarmDeleteReasons({
   return (
     <LockReasonList>
       {reasons.map((reason) => {
-        const label =
-          reason.code === "store_order"
-            ? reason.label
-            : (locale === "vi"
-                ? reason.name_vi || reason.name_en
-                : reason.name_en || reason.name_vi) || reason.label;
+        const label = !("name_vi" in reason)
+          ? reason.label
+          : (locale === "vi"
+              ? reason.name_vi || reason.name_en
+              : reason.name_en || reason.name_vi) || reason.label;
         const href =
           reason.code === "store_order"
             ? `/store-orders/${reason.id}`
-            : farmHref(search, { id: farmId, productId: reason.id });
+            : reason.code === "farm_supply_request"
+              ? `/farm-supply-requests/${reason.id}`
+              : farmHref(search, { id: farmId, productId: reason.id });
         return (
           <List.Item key={reason.code}>
             {c.deleteReasons[reason.code]}

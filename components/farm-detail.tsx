@@ -17,6 +17,7 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { FarmFarmerLink } from "@/components/farm-farmer-link";
 import { FarmDeleteReasons } from "@/components/farm-delete-reasons";
 import {
   FarmInformation,
@@ -618,18 +619,29 @@ function FarmDetailContent({ farmId, productId }: Props) {
             )}
           </Tabs.Panel>
           <Tabs.Panel value="information">
-            {(visited.information || tab === "information") && (
-              <FarmInformation
-                ref={information}
-                farm={farm}
-                active={tab === "information"}
-                headerLocked={headerLocked || Boolean(dialog)}
-                ownToggle={ownToggle}
-                claimWrite={() => claimWrite("information")}
-                setInformationLocked={setInformationLocked}
-                onAccessLost={retireRecord}
-              />
-            )}
+            <Stack gap="md">
+              {(visited.information || tab === "information") && (
+                <FarmInformation
+                  ref={information}
+                  farm={farm}
+                  active={tab === "information"}
+                  headerLocked={headerLocked || Boolean(dialog)}
+                  ownToggle={ownToggle}
+                  claimWrite={() => claimWrite("information")}
+                  setInformationLocked={setInformationLocked}
+                  onAccessLost={retireRecord}
+                />
+              )}
+              {tab === "information" && (
+                <FarmFarmerLink
+                  key={farm.id}
+                  farmId={farm.id}
+                  writeBlocked={headerLocked || Boolean(dialog)}
+                  claimWrite={() => claimWrite("information")}
+                  onAccessLost={retireRecord}
+                />
+              )}
+            </Stack>
           </Tabs.Panel>
         </Tabs>
       </Stack>

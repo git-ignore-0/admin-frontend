@@ -1,19 +1,9 @@
 .dataList {
-  container-type: inline-size;
   overflow: hidden;
 }
 
-.tableRow .cell,
 .wrap {
   overflow-wrap: anywhere;
-}
-
-.quantityCell {
-  width: 28%;
-}
-
-.compactStock {
-  display: none;
 }
 
 .summaryItems {
@@ -26,47 +16,6 @@
 
 .actions > * {
   flex: 1;
-}
-
-@container (width < 34rem) {
-  .table {
-    table-layout: fixed;
-  }
-
-  .tableHeader,
-  .tableRow .stockCell {
-    display: none;
-  }
-
-  .tableRow {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 42%);
-    column-gap: var(--mantine-spacing-sm);
-    row-gap: calc(var(--mantine-spacing-xs) / 2);
-    padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .tableRow:last-child {
-    border-bottom: 0;
-  }
-
-  .tableRow .cell {
-    padding: 0;
-    border: 0;
-  }
-
-  .productCell {
-    grid-row: span 2;
-  }
-
-  .tableRow .quantityCell {
-    width: auto;
-  }
-
-  .compactStock {
-    display: inline;
-  }
 }
 
 .summary[data-wide] {

@@ -113,7 +113,7 @@ function nonempty(value: unknown): value is string {
 
 function isFarmDeleteReason(value: unknown): value is FarmDeleteReason {
   if (!isApiObject(value) || !uuid(value.id) || !nonempty(value.label)) return false;
-  if (value.code === "store_order") return true;
+  if (value.code === "store_order" || value.code === "farm_supply_request") return true;
   return (
     (value.code === "supplying_product" || value.code === "legacy_supply") &&
     typeof value.name_vi === "string" &&

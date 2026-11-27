@@ -54,6 +54,14 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   refresh: vi.fn(),
 }));
+// The independent link section has its own tests; provide its confirmed read here.
+vi.mock("@/lib/farm-supply-request-api", () => ({
+  farmerLink: vi.fn(async (farmId: string) => ({
+    farm_id: farmId,
+    url: `/farmer#token=${"A".repeat(43)}`,
+  })),
+}));
+
 vi.mock("@/lib/commerce-api", () => ({ getStoreProduct: mocks.productDetail }));
 vi.mock("@/lib/farms-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/farms-api")>()),

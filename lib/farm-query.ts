@@ -16,6 +16,11 @@ const accessKey = ["farm-access"] as const;
 const initialAccess = { revision: 0, error: null };
 type FarmAccess = { revision: number; error: Error | null };
 
+export const farmSupplyRequestsKey = [...farmsKey, "supply-requests"] as const;
+export const farmSupplyRequestDetailKey = (id: string) =>
+  [...farmSupplyRequestsKey, "detail", id.toLowerCase()] as const;
+export const farmSupplyRequestListKey = [...farmSupplyRequestsKey, "list"] as const;
+export const farmDecisionIntentKey = ["admin-mutation-intent", "farm-supply-decision"] as const;
 export const farmListKey = [...farmsKey, "list"] as const;
 export const farmDetailKey = (farmId: string) =>
   [...farmsKey, "detail", farmId.toLowerCase()] as const;
@@ -108,6 +113,7 @@ export function confirmFarmGone(client: QueryClient, farmId: string) {
   void client.cancelQueries({ queryKey: key, exact: true });
   client.setQueryData(key, null);
   retireFarmSupply(client, farmId);
+  retireFarmSupplyRequests(client, farmId);
   removeFarmMutations(client, farmDeleteMutationKey(farmId));
   void client.invalidateQueries({ queryKey: farmListKey });
 }
@@ -121,6 +127,7 @@ export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
       const { variables, status, error } = state;
       const writer = options.mutationKey?.[mutationKey.length];
       if (writer === "bulk") return bulkBlocksWrite({ state });
+      if (writer === "decision") return status === "pending" || state.data === "unknown";
       const action =
         isApiObject(variables) && isApiObject(variables.action) ? variables.action.kind : undefined;
       return (
@@ -188,7 +195,7 @@ export function retireFarmAccess(client: QueryClient, error: Error) {
   if (previous.error === error) return;
   notifyManager.batch(() => {
     client.setQueryData<FarmAccess>(accessKey, { revision: previous.revision + 1, error });
-    for (const queryKey of [farmsKey, supplyKey]) {
+    for (const queryKey of [farmsKey, supplyKey, farmDecisionIntentKey]) {
       const entries = client.getQueryCache().findAll({ queryKey });
       for (const query of entries) {
         if (query.getObserversCount()) query.reset();
@@ -214,4 +221,29 @@ function retireFarmSupply(client: QueryClient, farmId: string) {
   const scope = farmSupplyKey(farmId);
   client.removeQueries({ queryKey: scope });
   removeFarmMutations(client, scope);
+}
+
+function retireFarmSupplyRequests(client: QueryClient, farmId: string) {
+  const id = farmId.toLowerCase();
+  const belongsToFarm = (record: unknown) =>
+    isApiObject(record) && isApiObject(record.farm) && record.farm.id === id;
+  const cache = client.getQueryCache();
+  for (const query of cache.findAll({ queryKey: farmSupplyRequestsKey })) {
+    const { data } = query.state;
+    const filter = query.queryKey[farmSupplyRequestListKey.length];
+    if (
+      belongsToFarm(data) ||
+      (isApiObject(filter) && filter.farm_id === id) ||
+      (isApiObject(data) && Array.isArray(data.data) && data.data.some(belongsToFarm))
+    ) {
+      // Reset active readers so their observers drop the old snapshot immediately.
+      if (query.getObserversCount()) query.reset();
+      else cache.remove(query);
+    }
+  }
+  client.removeQueries({
+    queryKey: farmDecisionIntentKey,
+    predicate: ({ state: { data } }) =>
+      isApiObject(data) && isApiObject(data.payload) && data.payload.farmId === id,
+  });
 }

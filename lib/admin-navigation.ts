@@ -96,6 +96,12 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
           label: t.common.farmList,
           icon: "farms",
         },
+        {
+          href: "/farm-supply-requests",
+          label: t.common.farmSupplyRequests,
+          icon: "purchase",
+          childScreens: { record: t.breadcrumb.farmSupplyRequestDetails },
+        },
       ],
     },
     {

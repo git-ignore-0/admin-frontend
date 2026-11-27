@@ -75,6 +75,14 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
         (action === "events" && normalizedMethod === "GET"))
     );
   }
+  if (resource === "farm-supply-requests") {
+    if (id === undefined) return path.length === 2 && normalizedMethod === "GET";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    return (
+      (path.length === 3 && normalizedMethod === "GET") ||
+      (path.length === 4 && ["approve", "reject"].includes(action) && normalizedMethod === "POST")
+    );
+  }
   if (resource === "farms") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (id === "media") {
@@ -85,6 +93,11 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (action === undefined) return path.length === 3 && CRUD_DETAIL.has(normalizedMethod);
     if (action === "growth-tracker")
       return path.length === 4 && new Set(["GET", "POST", "PATCH", "DELETE"]).has(normalizedMethod);
+    if (action === "farmer-link")
+      return (
+        (path.length === 4 && ["GET", "POST"].includes(normalizedMethod)) ||
+        (path.length === 5 && extra === "rotate" && normalizedMethod === "POST")
+      );
     if (action === "available-products") return path.length === 4 && normalizedMethod === "GET";
     if (action === "stock-batches")
       return path.length === 5 && extra === "bulk" && ["GET", "POST"].includes(normalizedMethod);

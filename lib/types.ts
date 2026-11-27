@@ -681,7 +681,7 @@ export type FarmDeleteReason =
       name_vi: string;
       name_en: string;
     }
-  | { code: "store_order"; id: string; label: string };
+  | { code: "store_order" | "farm_supply_request"; id: string; label: string };
 
 export type FarmDeleteCapability = { allowed: boolean; reasons: FarmDeleteReason[] };
 

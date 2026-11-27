@@ -7,6 +7,18 @@ const nextConfig: NextConfig = {
     "/dev/ui-foundation{,/**}": ["./components/ui-foundation-showcase/**/*"],
   },
   poweredByHeader: false,
+  async headers() {
+    return [
+      {
+        source: "/farmer",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+    ];
+  },
   experimental: {
     optimizePackageImports: ["@mantine/core", "@mantine/hooks"],
   },
