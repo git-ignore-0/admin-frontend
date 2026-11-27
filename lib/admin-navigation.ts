@@ -95,10 +95,6 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
           href: "/farms",
           label: t.common.farmList,
           icon: "farms",
-          childScreens: {
-            new: t.breadcrumb.newFarm,
-            record: t.breadcrumb.farmDetails,
-          },
         },
       ],
     },
@@ -265,39 +261,23 @@ export function resolveAdminBreadcrumbs(
     return [root];
   }
 
+  if (activeItem.href === "/farms") {
+    if (pathname === "/farms/new") return [root, { label: t.breadcrumb.newFarm }];
+    if (/^\/farms\/[^/]+\/stock-batches\/new$/.test(pathname))
+      return [root, { label: t.breadcrumb.addFarmSupply }];
+    if (/^\/farms\/[^/]+\/products\/[^/]+$/.test(pathname))
+      return [root, { label: t.breadcrumb.productDetails }];
+    if (/^\/farms\/[^/]+(?:\/edit)?$/.test(pathname))
+      return [root, { label: t.breadcrumb.farmDetails }];
+    return [{ label: activeItem.label }];
+  }
+
   const labels = activeItem.childScreens;
   if (labels && pathname.startsWith(`${activeItem.href}/`)) {
     const [id, action, extra] = pathname.slice(activeItem.href.length + 1).split("/");
-    if (
-      activeItem.href === "/farms" &&
-      id &&
-      action === "stock-batches" &&
-      extra === "new" &&
-      pathname === `/farms/${id}/stock-batches/new` &&
-      isInternalAdminHref(`/farms/${id}`)
-    ) {
-      return [root, { label: labels.record, href: `/farms/${id}` }];
-    }
-    if (
-      activeItem.href === "/farms" &&
-      id &&
-      extra &&
-      action === "products" &&
-      pathname === `/farms/${id}/products/${extra}` &&
-      isInternalAdminHref(`/farms/${id}`)
-    ) {
-      return [
-        root,
-        { label: labels.record, href: `/farms/${id}` },
-        { label: t.breadcrumb.productDetails },
-      ];
-    }
     if (id && extra === undefined) {
       const createLabel = id === "new" ? labels.new : undefined;
       if (action === undefined) return [root, { label: createLabel ?? labels.record }];
-      if (!createLabel && activeItem.href === "/farms" && action === "edit") {
-        return [root, { label: labels.record }];
-      }
       if (!createLabel && action === "edit" && labels.edit) {
         const href = `${activeItem.href}/${id}`;
         if (isInternalAdminHref(href)) {

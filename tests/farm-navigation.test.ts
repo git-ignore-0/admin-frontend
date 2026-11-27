@@ -79,14 +79,17 @@ it("redirects old edit links to Information with both browsing contexts", async 
   );
 });
 
-it("uses the Farm detail breadcrumb while an old edit route redirects", () => {
-  const dictionary = adminDictionaries.vi;
-  const farms = adminNavigation(dictionary).find(({ key }) => key === "farms")?.items[0];
-  expect(resolveAdminBreadcrumbs("/farms/farm-1/edit", farms, dictionary)).toEqual([
-    { label: "Danh sách trang trại", href: "/farms" },
-    { label: "Chi tiết trang trại" },
-  ]);
-});
+it.each(["/farms/farm-1", "/farms/farm-1/edit"])(
+  "shows the Farm detail fallback until %s has a record name",
+  (path) => {
+    const dictionary = adminDictionaries.vi;
+    const farms = adminNavigation(dictionary).find(({ key }) => key === "farms")?.items[0];
+    expect(resolveAdminBreadcrumbs(path, farms, dictionary)).toEqual([
+      { label: "Danh sách trang trại", href: "/farms" },
+      { label: "Chi tiết trang trại" },
+    ]);
+  },
+);
 
 it.each([{ tab: "tracker" }, { setup: "tracker" }, { view: "tracker" }])(
   "normalizes an obsolete Farm list query with %j",
@@ -169,11 +172,11 @@ it("keeps both Farm browsing contexts for the bulk route and return", () => {
   );
 });
 
-it("keeps the parent Farm breadcrumb while the bulk route loads", () => {
+it("shows the bulk screen instead of a generic Farm detail while loading", () => {
   const t = adminDictionaries.vi;
   const farms = adminNavigation(t).find(({ key }) => key === "farms")?.items[0];
   expect(resolveAdminBreadcrumbs("/farms/farm-1/stock-batches/new", farms, t)).toEqual([
     { label: "Danh sách trang trại", href: "/farms" },
-    { label: "Chi tiết trang trại", href: "/farms/farm-1" },
+    { label: "Bổ sung nguồn cung" },
   ]);
 });

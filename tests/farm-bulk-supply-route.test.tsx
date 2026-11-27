@@ -4,6 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, expect, it, vi } from "vitest";
 
 import FarmBulkSupplyPage from "@/app/(admin)/farms/[id]/stock-batches/new/page";
+import {
+  AdminBreadcrumbProvider,
+  useAdminBreadcrumbs,
+} from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { ToastProvider } from "@/components/toast-provider";
@@ -134,7 +138,7 @@ it("fetches eligible pages only for the opened Farm and keeps return context", a
       </AdminQueryProvider>
     </AdminI18nProvider>,
   );
-  await screen.findByText("Green Farm");
+  expect(screen.getByRole("heading", { level: 1, name: "Add supply" })).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Page two" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Page two" }));
   await waitFor(() =>
@@ -322,4 +326,59 @@ it("keeps pending and unknown submitted data intact when an edit arrives", async
     quantity_units: 25,
   });
   expect(Object.isFrozen(submitted)).toBe(true);
+});
+
+it("registers the bulk breadcrumb immediately and adds the actual Farm name after loading", async () => {
+  let finish!: (value: Farm) => void;
+  vi.mocked(getFarm).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  vi.mocked(listFarmProducts).mockResolvedValue({
+    data: [],
+    meta: { page: 1, page_size: 20, total: 0 },
+  });
+  function HeaderTrail() {
+    const items = useAdminBreadcrumbs([]);
+    return (
+      <nav>
+        {items.map(({ label, href }) =>
+          href ? (
+            <a key={label} href={href}>
+              {label}
+            </a>
+          ) : (
+            <span key={label}>{label}</span>
+          ),
+        )}
+      </nav>
+    );
+  }
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <AdminQueryProvider>
+        <ToastProvider>
+          <AdminBreadcrumbProvider
+            pathname={`/farms/${id}/stock-batches/new`}
+            search={nav.search.toString()}
+          >
+            <HeaderTrail />
+            <FarmBulkSupply farmId={id} />
+          </AdminBreadcrumbProvider>
+        </ToastProvider>
+      </AdminQueryProvider>
+    </AdminI18nProvider>,
+  );
+  const trail = screen.getByRole("navigation");
+  expect(trail).toHaveTextContent("Add supply");
+  expect(trail).not.toHaveTextContent("Farm details");
+  await act(async () => {
+    finish(farm);
+  });
+  expect(await screen.findByRole("link", { name: farm.name_en })).toHaveAttribute(
+    "href",
+    `/farms/${id}?search=%2B8491&page=4&supply_search=rau&supply_status=all&supply_page=2`,
+  );
 });

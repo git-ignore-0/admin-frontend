@@ -50,7 +50,7 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const vi = locale === "vi";
-  const title = vi ? "Bổ sung nguồn cung" : "Add supply";
+  const title = t.breadcrumb.addFarmSupply;
   const client = useQueryClient();
   const currentSession = useIsAdminQueryScopeCurrent();
   const router = useRouter();
@@ -122,11 +122,11 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   }, [accessCause, client, currentSession]);
   const write = useFarmBulkWrite(farmId);
   const { confirmedIntent, acknowledgeSuccess } = write;
-  const farmName = farm ? (vi ? farm.name_vi : farm.name_en) : c.detailSections;
+  const farmName = farm ? (vi ? farm.name_vi : farm.name_en) : undefined;
   const crumbs = useMemo(
     () => [
       { label: c.list, href: listHref },
-      { label: farmName, href: returnHref },
+      ...(farmName ? [{ label: farmName, href: returnHref }] : []),
       { label: title },
     ],
     [c.list, listHref, farmName, returnHref, title],
@@ -363,7 +363,7 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   return (
     <>
       <AdminBreadcrumbForRoute pathname={path} search={params.toString()} items={crumbs} />
-      <PageHeading title={title} description={farm ? farmName : undefined} />
+      <PageHeading title={title} visuallyHiddenTitle />
       {!farm || detailError ? (
         <ListState
           empty={vi ? "Không tìm thấy trang trại" : "Farm not found"}

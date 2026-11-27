@@ -237,21 +237,16 @@ it("shows a keyed error for a product outside the active page and locks the supp
   expect(onDraftChange).not.toHaveBeenCalled();
 });
 
-it("preserves the same quantity field and draft on desktop and mobile", () => {
+it("preserves draft when content shrinks from collapsed to expanded sidebar width", async () => {
   const row = product(1);
-  let handleBreakpoint: EventListener | null = null;
-  const matchMedia = vi.mocked(window.matchMedia);
-  const original = matchMedia.getMockImplementation()!;
-  matchMedia.mockImplementation((query) => {
-    if (!query.startsWith("(min-width:")) return original(query);
-    return {
-      ...original(query),
-      matches: true,
-      addEventListener: (_: string, callback: EventListenerOrEventListenerObject | null) => {
-        handleBreakpoint = callback as EventListener;
-      },
-    };
-  });
+  const OriginalObserver = window.ResizeObserver;
+  let changeWidth!: (width: number) => void;
+  window.ResizeObserver = class extends OriginalObserver {
+    constructor(callback: ResizeObserverCallback) {
+      super(callback);
+      changeWidth = (width) => callback([{ contentRect: { width } } as ResizeObserverEntry], this);
+    }
+  };
   function TestForm() {
     const [currentDraft, setDraft] = useState(draft);
     return (
@@ -271,14 +266,43 @@ it("preserves the same quantity field and draft on desktop and mobile", () => {
     render(<TestForm />);
     const input = screen.getByRole("textbox", { name: "Số lượng bổ sung — Product 1" });
     fireEvent.change(input, { target: { value: "100" } });
-    expect(screen.getByRole("button", { name: "Bỏ Product 1" })).toBeVisible();
-    act(() => {
-      handleBreakpoint?.(Object.assign(new Event("change"), { matches: false }));
-    });
+    // 1024px viewport, 48px total content padding, sidebar 64px or 244px.
+    act(() => changeWidth(912));
+    expect(await screen.findByRole("button", { name: "Bỏ Product 1" })).toBeVisible();
+    act(() => changeWidth(732));
+    await screen.findByRole("button", { name: "Xem chi tiết" });
     expect(screen.queryByRole("button", { name: "Bỏ Product 1" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Số lượng bổ sung — Product 1" })).toBe(input);
     expect(input).toHaveValue("100");
   } finally {
-    matchMedia.mockImplementation(original);
+    window.ResizeObserver = OriginalObserver;
   }
+});
+
+it("places the supply dates, search toolbar and Data List in separate Foundation groups", () => {
+  render(
+    <FarmSupplyForm
+      locale="en"
+      draft={draft}
+      onDraftChange={() => {}}
+      products={[product(1)]}
+      search=""
+      onSearch={() => {}}
+      pagination={{ page: 1, pageSize: 20, total: 80, onChange: () => {} }}
+      onSubmit={() => {}}
+      onCancel={() => {}}
+    />,
+  );
+  const dates = screen.getByRole("region", { name: "Supply period" });
+  const list = screen.getByRole("region", { name: "Farm products" });
+  const search = screen.getByRole("searchbox", { name: "Search products" });
+  const table = screen.getByRole("table");
+  const next = screen.getByRole("button", { name: "Next" });
+  expect(dates).toContainElement(screen.getByLabelText("Start date"));
+  expect(dates).not.toContainElement(search);
+  expect(list).not.toContainElement(search);
+  expect(list).toContainElement(table);
+  expect(list).toContainElement(next);
+  expect(next.closest("footer")).not.toBeNull();
+  expect(list.querySelector("[role=separator]")).not.toBeNull();
 });

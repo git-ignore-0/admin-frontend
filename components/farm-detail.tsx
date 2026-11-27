@@ -137,18 +137,13 @@ function FarmDetailContent({ farmId, productId }: Props) {
     isCurrent() && !access.error && !unavailable && !gone && !recordUnavailable(farmQuery.error)
       ? farmQuery.data
       : null;
-  const name = farm ? (locale === "vi" ? farm.name_vi : farm.name_en) : t.breadcrumb.farmDetails;
+  const name = farm ? (locale === "vi" ? farm.name_vi : farm.name_en) : "";
   const listHref = farmHref(search);
-  const items = useMemo(
-    () => [
-      { label: c.list, href: listHref },
-      productId
-        ? { label: name, href: farmHref(search, { id: farmId, tab: "products" }) }
-        : { label: name },
-      ...(productId ? [{ label: t.breadcrumb.productDetails }] : []),
-    ],
-    [c.list, farmId, listHref, name, productId, search, t.breadcrumb.productDetails],
-  );
+  const items = useMemo(() => {
+    const list = { label: c.list, href: listHref };
+    if (!productId) return [list, { label: name || t.breadcrumb.farmDetails }];
+    return [list, { label: t.breadcrumb.productDetails }];
+  }, [c.list, listHref, name, productId, t.breadcrumb.farmDetails, t.breadcrumb.productDetails]);
   const breadcrumb = (
     <AdminBreadcrumbForRoute
       pathname={farmHref(null, { id: farmId, productId })}

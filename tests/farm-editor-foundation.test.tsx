@@ -273,9 +273,9 @@ it("edits the single shared contact phone and recognizes the domestic save respo
   expect(phone).toHaveAttribute("type", "tel");
   await click(screen.getByRole("tab", { name: /English/ }));
   expect(screen.getByLabelText("Số điện thoại liên hệ")).toBe(phone);
-  change(phone, "+84912345678");
+  change(phone, "0912345678");
   expect(save).toBeDisabled();
-  change(phone, "+84987654321");
+  change(phone, "0987654321");
   await click(save);
 
   expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
@@ -305,8 +305,24 @@ it("maps phone validation to the field in English and can clear the number", asy
   await waitFor(() => expect(phone).toBeEnabled());
 
   change(phone, "abc");
+  expect(phone).toHaveValue(farm.contact_phone);
+  expect(phone).toHaveAttribute("aria-invalid", "true");
+  const paste = fireEvent.paste(phone, { clipboardData: { getData: () => "09abc" } });
+  expect(paste).toBe(false);
+  expect(phone).toHaveValue(farm.contact_phone);
+  expect(phone).toHaveAttribute("maxlength", "10");
+  change(phone, "02412345678");
+  expect(phone).toHaveValue(farm.contact_phone);
+  expect(fireEvent.paste(phone, { clipboardData: { getData: () => "0".repeat(100) } })).toBe(false);
+  expect(phone).toHaveValue(farm.contact_phone);
+  change(phone, "091");
   await click(save);
-  expect(phone).toHaveValue("abc");
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(phone).toHaveValue("091");
+  change(phone, "0987654321");
+  await click(save);
+  expect(mocks.save).toHaveBeenCalledWith(farm.id, { version: 2, contact_phone: "+84987654321" });
+  expect(phone).toHaveValue("0987654321");
   expect(phone).toHaveAccessibleDescription("Enter a valid Vietnamese phone number.");
   expect(phone).toHaveAttribute("aria-invalid", "true");
   change(phone, "");
@@ -319,7 +335,7 @@ it("maps phone validation to the field in English and can clear the number", asy
 
 it.each([
   ["version_conflict", 409, "0321234567", "0321234567"],
-  ["request_timeout", undefined, "0912345678", "+84987654321"],
+  ["request_timeout", undefined, "0912345678", "0987654321"],
 ] as const)(
   "reviews the latest contact phone before saving again after %s",
   async (message, status, serverPhone, expectedPhone) => {
@@ -330,11 +346,11 @@ it.each([
     const save = await informationReady();
     const phone = screen.getByLabelText("Số điện thoại liên hệ");
 
-    change(phone, "+84987654321");
+    change(phone, "0987654321");
     change(screen.getByDisplayValue(farm.description_vi), "Mô tả nháp");
     await click(save);
     await click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
-    expect(phone).toHaveValue("+84987654321");
+    expect(phone).toHaveValue("0987654321");
     expect(save).toBeDisabled();
     if (serverPhone !== farm.contact_phone) {
       expect(screen.getByRole("alert")).toHaveTextContent(`Số điện thoại liên hệ · ${serverPhone}`);
@@ -720,7 +736,7 @@ it("keeps create navigation in the filtered Farm list context", async () => {
   expect(mocks.save).toHaveBeenCalledTimes(1);
 });
 
-it("creates a farm with its contact phone as a string including the leading zero", async () => {
+it("canonicalizes a 10-digit domestic Farm contact", async () => {
   mocks.save.mockResolvedValue(farm);
   renderEditor();
   fillNewFarm();
@@ -731,8 +747,27 @@ it("creates a farm with its contact phone as a string including the leading zero
 
   expect(mocks.save).toHaveBeenCalledExactlyOnceWith(
     undefined,
-    expect.objectContaining({ contact_phone: "0912345678" }),
+    expect.objectContaining({ contact_phone: "+84912345678" }),
   );
+});
+
+it("preserves an existing 11-digit contact when another Farm field is saved", async () => {
+  const existing = { ...farm, contact_phone: "02412345678" };
+  const updated = { ...existing, description_vi: "Mô tả mới", version: 3 };
+  mocks.get
+    .mockResolvedValueOnce(existing)
+    .mockResolvedValueOnce(existing)
+    .mockResolvedValue(updated);
+  mocks.save.mockResolvedValue(updated);
+  renderEditor(farm.id);
+  const save = await informationReady();
+  expect(screen.getByLabelText("Số điện thoại liên hệ")).toHaveValue("02412345678");
+  change(screen.getByDisplayValue(farm.description_vi), "Mô tả mới");
+  await click(save);
+  expect(mocks.save).toHaveBeenCalledExactlyOnceWith(farm.id, {
+    version: 2,
+    description_vi: "Mô tả mới",
+  });
 });
 
 it("keeps the persisted Farm name in the breadcrumb until inline save succeeds", async () => {

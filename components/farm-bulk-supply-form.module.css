@@ -1,6 +1,6 @@
-.entry {
-  min-width: 0;
+.dataList {
   container-type: inline-size;
+  overflow: hidden;
 }
 
 .tableRow .cell,
@@ -9,21 +9,14 @@
 }
 
 .quantityCell {
-  width: 30%;
+  width: 28%;
 }
 
 .compactStock {
   display: none;
 }
 
-.summary {
-  position: sticky;
-  top: var(--mantine-spacing-md);
-}
-
 .summaryItems {
-  margin: 0;
-  padding: 0;
   list-style: none;
 }
 
@@ -36,6 +29,10 @@
 }
 
 @container (width < 34rem) {
+  .table {
+    table-layout: fixed;
+  }
+
   .tableHeader,
   .tableRow .stockCell {
     display: none;
@@ -44,9 +41,14 @@
   .tableRow {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 42%);
-    gap: var(--mantine-spacing-xs);
-    padding-block: var(--mantine-spacing-xs);
+    column-gap: var(--mantine-spacing-sm);
+    row-gap: calc(var(--mantine-spacing-xs) / 2);
+    padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
     border-bottom: 1px solid var(--border);
+  }
+
+  .tableRow:last-child {
+    border-bottom: 0;
   }
 
   .tableRow .cell {
@@ -62,44 +64,36 @@
     width: auto;
   }
 
-  .convertedCell {
-    text-align: right;
-  }
-
   .compactStock {
     display: inline;
   }
 }
 
-/* The Mantine lg breakpoint uses two columns, with the summary actions outside the scroll area. */
-@media (min-width: 75em) {
-  .summaryItems {
-    max-height: min(45dvh, 26rem);
-    overflow-y: auto;
-    scrollbar-gutter: stable;
-  }
-
-  .actions {
-    flex-direction: column-reverse;
-    align-items: stretch;
-  }
+.summary[data-wide] {
+  position: sticky;
+  top: var(--mantine-spacing-md);
 }
 
-/* Below Mantine sm, keep a single summary in the grid's normal scroll flow. */
+.summary[data-wide] .summaryDetails {
+  max-height: min(45dvh, 26rem);
+  overflow-y: auto;
+}
+
+.summary[data-wide] .actions {
+  flex-direction: column-reverse;
+  align-items: stretch;
+}
+
+/* Below Mantine sm, the dock keeps its space at the end of the list. */
 @media (width < 48em) {
-  .summaryColumn {
+  .summaryColumn[data-docked] {
     position: sticky;
     bottom: 0;
     z-index: 1;
   }
 
   .summary {
-    position: static;
     padding-bottom: calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px));
-  }
-
-  .summaryContent {
-    gap: var(--mantine-spacing-xs);
   }
 
   .summaryDetails {
@@ -107,8 +101,8 @@
     overflow-y: auto;
   }
 
-  /* A focused editor may open the software keyboard, so release the dock. */
-  .layout:has(.entry :is(input, textarea, [contenteditable="true"]):focus) .summaryColumn {
+  /* Release the dock while an editor may have opened the software keyboard. */
+  .layout:has(.entry input:focus) .summaryColumn[data-docked] {
     position: static;
   }
 }

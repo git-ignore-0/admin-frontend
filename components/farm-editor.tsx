@@ -18,6 +18,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  type ClipboardEvent,
   type FormEvent,
   type Ref,
   useCallback,
@@ -63,8 +64,10 @@ import { deleteFarmImage, getFarm, saveFarm, uploadFarmImage } from "@/lib/farms
 import { farmsCopy } from "@/lib/farms-copy";
 import { isSupportedImageFile } from "@/lib/image-validation";
 import { mediaUrlForWidth } from "@/lib/media";
-import { normalizeVietnamPhone } from "@/lib/phone-number";
+import { handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
 import type { Farm, MediaAsset } from "@/lib/types";
+
+const MAX_CONTACT_PHONE_LENGTH = 10;
 
 type Form = {
   name_en: string;
@@ -149,11 +152,11 @@ const textFields = [
 function farmInformation(form: Form) {
   const { photos, ...texts } = form;
   for (const field of textFields) texts[field] = texts[field].trim();
-  return { ...texts, contact_phone: texts.contact_phone.trim(), photo_ids: photoIds(photos) };
-}
-
-function phoneForComparison(value: string) {
-  return normalizeVietnamPhone(value) ?? value;
+  return {
+    ...texts,
+    contact_phone: normalizeLocalPhone(texts.contact_phone, "contact") ?? texts.contact_phone,
+    photo_ids: photoIds(photos),
+  };
 }
 
 function photoIds(photos: MediaAsset[]) {
@@ -198,7 +201,7 @@ function changedFarmInformation(baseline: Form, draft: Form) {
   for (const field of textFields) {
     if (previous[field] !== current[field]) patch[field] = current[field];
   }
-  if (phoneForComparison(previous.contact_phone) !== phoneForComparison(current.contact_phone)) {
+  if (previous.contact_phone !== current.contact_phone) {
     patch.contact_phone = current.contact_phone;
   }
   if (!samePhotoOrder(previous.photo_ids, current.photo_ids)) {
@@ -632,6 +635,28 @@ function FarmEditorForm({
     setPhotoError("");
   }
 
+  function updateContactPhone(value: string) {
+    if (value.length > MAX_CONTACT_PHONE_LENGTH || /[^0-9]/.test(value)) {
+      setPhoneInvalid(true);
+      return;
+    }
+    setForm((current) => ({ ...current, contact_phone: value }));
+    setPhoneInvalid(false);
+  }
+
+  function pasteContactPhone(event: ClipboardEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const text = event.clipboardData.getData("text/plain");
+    const selectedLength = (input.selectionEnd ?? 0) - (input.selectionStart ?? 0);
+    if (input.value.length - selectedLength + text.length > MAX_CONTACT_PHONE_LENGTH) {
+      // Reject the whole paste before native maxlength can truncate it into a different number.
+      event.preventDefault();
+      setPhoneInvalid(true);
+      return;
+    }
+    handlePhonePaste(event, updateContactPhone);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (
@@ -660,6 +685,17 @@ function FarmEditorForm({
         setError(c.requiredBilingual);
         return;
       }
+    }
+
+    if (
+      form.contact_phone &&
+      form.contact_phone !== baseline?.contact_phone &&
+      (form.contact_phone.length !== MAX_CONTACT_PHONE_LENGTH ||
+        !normalizeLocalPhone(form.contact_phone, "contact"))
+    ) {
+      setPhoneInvalid(true);
+      formRef.current?.querySelector<HTMLInputElement>('[name="contact_phone"]')?.focus();
+      return;
     }
 
     const release = information?.claimWrite();
@@ -1020,14 +1056,14 @@ function FarmEditorForm({
                 >
                   <FormInput
                     type="tel"
+                    inputMode="tel"
+                    name="contact_phone"
+                    maxLength={MAX_CONTACT_PHONE_LENGTH}
                     autoComplete="tel"
                     disabled={fieldBusy}
                     value={form.contact_phone}
-                    onChange={(event) => {
-                      const contact_phone = event.currentTarget.value;
-                      setForm((current) => ({ ...current, contact_phone }));
-                      setPhoneInvalid(false);
-                    }}
+                    onChange={(event) => updateContactPhone(event.currentTarget.value)}
+                    onPaste={pasteContactPhone}
                   />
                 </FormField>
                 <Paper component="section" aria-label={c.photos} p="md" withBorder miw={0}>

@@ -73,10 +73,9 @@ describe("foundation breadcrumbs", () => {
     ]);
   });
 
-  it("keeps a real Farm ancestor for a direct source route fallback", () => {
+  it("keeps the real list ancestor while the direct source route loads", () => {
     expect(breadcrumbs("/farms/farm-1/products/product-1", "vi")).toEqual([
       { label: "Danh sách trang trại", href: "/farms" },
-      { label: "Chi tiết trang trại", href: "/farms/farm-1" },
       { label: "Chi tiết sản phẩm" },
     ]);
   });

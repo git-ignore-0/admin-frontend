@@ -93,9 +93,10 @@ const vi = {
     editCsaRound: "Sửa đợt",
     orderDetails: "Chi tiết đơn hàng",
     productDetails: "Chi tiết sản phẩm",
+    addFarmSupply: "Bổ sung nguồn cung",
+    farmDetails: "Chi tiết trang trại",
     categoryDetails: "Chi tiết danh mục",
     membershipDetails: "Chi tiết gói CSA",
-    farmDetails: "Chi tiết trang trại",
     newFarm: "Thêm trang trại",
   },
   shippingSettings: {
@@ -1608,9 +1609,10 @@ const en: AdminDictionary = {
     editCsaRound: "Edit round",
     orderDetails: "Order details",
     productDetails: "Product details",
+    addFarmSupply: "Add supply",
+    farmDetails: "Farm details",
     categoryDetails: "Category details",
     membershipDetails: "CSA membership details",
-    farmDetails: "Farm details",
     newFarm: "Add farm",
   },
   shippingSettings: {
