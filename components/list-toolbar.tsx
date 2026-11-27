@@ -61,6 +61,7 @@ type RefreshOptions = {
 type ToolbarProps = {
   busy?: boolean;
   search?: SearchOptions;
+  growSearch?: boolean;
   filterPopover?: FilterOptions;
   refresh?: RefreshOptions;
   primaryAction?: ReactNode;
@@ -88,12 +89,12 @@ type LegacyToolbarProps = {
 export function ListToolbar(props: ToolbarProps | LegacyToolbarProps) {
   if ("query" in props) return <LegacyToolbar {...props} />;
 
-  const { busy = false, search, filterPopover, refresh, primaryAction } = props;
+  const { busy = false, search, growSearch, filterPopover, refresh, primaryAction } = props;
   if (!search && !filterPopover && !refresh && !primaryAction) return null;
 
   return (
-    <div className={styles.container}>
-      <Flex gap="xs" align="flex-start" wrap="wrap">
+    <div className={styles.container} data-grow-search={growSearch || undefined}>
+      <Flex gap="xs" align="flex-start" wrap={growSearch ? "nowrap" : "wrap"}>
         {search && <ToolbarSearch search={search} busy={busy} />}
         {(filterPopover || refresh || primaryAction) && (
           <Group gap="sm" className={styles.actions}>

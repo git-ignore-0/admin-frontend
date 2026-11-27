@@ -324,11 +324,14 @@ it("preserves focused draft when Form and Data List change widths independently"
     const count = within(summaryRegion).getByText("1 product");
     const total = within(summaryRegion).getByText("Total: 50 kg");
     const save = within(summaryRegion).getByRole("button", { name: "Submit" });
+    const cancel = within(summaryRegion).getByRole("button", { name: "Cancel" });
     for (const [before, after] of [
-      [period, selectedProduct],
-      [selectedProduct, count],
+      [within(summaryRegion).getByRole("heading", { level: 2 }), count],
       [count, total],
-      [total, save],
+      [total, period],
+      [period, selectedProduct],
+      [selectedProduct, save],
+      [save, cancel],
     ]) {
       expect(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
@@ -353,7 +356,12 @@ it("preserves focused draft when Form and Data List change widths independently"
     expect(screen.getByRole("button", { name: "Remove Product 1" })).toBeVisible();
 
     sizes.resize(formLayout, 732);
-    await screen.findByRole("button", { name: "View details" });
+    const expand = await screen.findByRole("button", { name: "View details" });
+    expect(expand.parentElement).toContainElement(within(summaryRegion).getByRole("heading"));
+    expect(within(summaryRegion).getByText("1 product").parentElement).toContainElement(
+      within(summaryRegion).getByText("50 kg"),
+    );
+    expect(cancel.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove Product 1" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: inputLabel })).toBe(compactInput);
     expect(compactInput).toHaveValue("100");
@@ -397,7 +405,55 @@ it("places the supply dates, search toolbar and Data List in separate Foundation
   expect(list.querySelector("[role=separator]")).not.toBeNull();
 });
 
-it("rejects the entire invalid edit without adding a warning or changing the accepted value", () => {
+it("loads new results in the Data List and refreshes existing results through the toolbar alone", () => {
+  const onRetry = vi.fn();
+  const props = {
+    locale: "en" as const,
+    draft,
+    onDraftChange: vi.fn(),
+    onRetry,
+    onSearch: vi.fn(),
+    onSubmit: vi.fn(),
+  };
+  const { rerender } = render(<FarmSupplyForm {...props} search="" products={undefined} loading />);
+  const list = screen.getByRole("region", { name: "Farm products" });
+  const refresh = screen.getByRole("button", { name: "Refresh products" });
+  const toolbar = screen.getByRole("search").closest("[data-grow-search]");
+  expect(toolbar).toContainElement(refresh);
+  expect(within(list).getByRole("status")).toHaveTextContent("Loading supply…");
+  expect(refresh).toBeDisabled();
+  expect(refresh).not.toHaveAttribute("data-loading");
+
+  rerender(<FarmSupplyForm {...props} search="" products={[product(1)]} refreshing />);
+  expect(refresh).toHaveAttribute("data-loading");
+  expect(within(list).queryByRole("status")).not.toBeInTheDocument();
+  expect(within(list).getByText("Product 1")).toBeVisible();
+  expect(within(list).getByRole("list")).toHaveAttribute("aria-busy", "true");
+
+  rerender(<FarmSupplyForm {...props} search="missing" products={undefined} loading />);
+  expect(within(list).getByRole("status")).toHaveTextContent("Loading supply…");
+  expect(within(list).queryByText("Product 1")).not.toBeInTheDocument();
+  rerender(<FarmSupplyForm {...props} search="missing" products={[]} />);
+  expect(within(list).getByText("No eligible products match your search.")).toBeVisible();
+
+  const summaryColumn = screen.getByRole("region", { name: "Supply summary" }).parentElement;
+  expect(summaryColumn).toHaveAttribute("data-docked", "true");
+  rerender(
+    <FarmSupplyForm {...props} search="" products={[product(1)]} error="Catalog unavailable" />,
+  );
+  expect(within(list).getByText("Catalog unavailable")).toBeVisible();
+  fireEvent.click(within(list).getByRole("button", { name: "Try again" }));
+  expect(onRetry).toHaveBeenCalledOnce();
+  expect(summaryColumn).not.toHaveAttribute("data-docked");
+
+  rerender(
+    <FarmSupplyForm {...props} draft={{ ...draft, end_date: "" }} search="" products={undefined} />,
+  );
+  expect(screen.getByLabelText("End date")).toHaveAttribute("aria-invalid", "true");
+  expect(summaryColumn).not.toHaveAttribute("data-docked");
+});
+
+it("blocks invalid keys silently and rejects invalid replacements without submitting the old value", () => {
   const onSubmit = vi.fn();
   function TestForm() {
     const [currentDraft, setDraft] = useState(draft);
@@ -427,21 +483,29 @@ it("rejects the entire invalid edit without adding a warning or changing the acc
   for (const key of ["a", "e", "E", ".", ",", "-", "+", " ", "@", "３"]) {
     expect(fireEvent.keyDown(input, { key })).toBe(false);
   }
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(submit).toBeEnabled();
   input.setSelectionRange(0, 1);
   for (const invalid of ["1e3", "1.5", "-12", "+12", "11E2", "abc123", "2,3", "2 3"]) {
     expect(fireEvent.paste(input, { clipboardData: { getData: () => invalid } })).toBe(false);
-    fireEvent.change(input, { target: { value: invalid } });
     fireEvent.blur(input);
     expect(input).toHaveValue("12");
-    expect(input).not.toHaveAttribute("aria-invalid", "true");
-    expect(submit).toBeEnabled();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAccessibleDescription("Enter digits only.");
+    expect(submit).toBeDisabled();
+    fireEvent.submit(submit.closest("form")!);
+    expect(onSubmit).not.toHaveBeenCalled();
   }
   expect(fireEvent.paste(input, { clipboardData: { getData: () => "2\n3" } })).toBe(false);
+  input.setSelectionRange(0, 2);
+  expect(fireEvent.paste(input, { clipboardData: { getData: () => "12" } })).toBe(true);
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(submit).toBeEnabled();
   // The browser can normalize a single-line input's DOM value before the callback.
   fireEvent.input(input, { target: { value: "23" }, data: "2\n3", inputType: "insertText" });
   expect(input).toHaveValue("12");
-  expect(input).not.toHaveAttribute("aria-invalid", "true");
-  expect(screen.queryByText(/Use digits 0–9 only/)).not.toBeInTheDocument();
+  expect(input).toHaveAccessibleDescription("Enter digits only.");
+  expect(submit).toBeDisabled();
 
   input.setSelectionRange(0, 1);
   expect(fireEvent.paste(input, { clipboardData: { getData: () => "4" } })).toBe(true);
@@ -467,11 +531,45 @@ it("rejects the entire invalid edit without adding a warning or changing the acc
   expect(submit).toBeDisabled();
 });
 
-it("preserves the accepted quantity across pagination and form remount after a blocked paste", () => {
+it("requires clearing an invalid paste into a blank field before submitting other products", () => {
+  function TestForm() {
+    const [currentDraft, setDraft] = useState(draft);
+    return (
+      <FarmSupplyForm
+        locale="en"
+        draft={currentDraft}
+        onDraftChange={setDraft}
+        products={[product(1), product(2)]}
+        search=""
+        onSearch={() => {}}
+        onSubmit={() => {}}
+      />
+    );
+  }
+  render(<TestForm />);
+  const first = screen.getByRole("textbox", { name: "Additional quantity — Product 1" });
+  const blank = screen.getByRole("textbox", { name: "Additional quantity — Product 2" });
+  const submit = screen.getByRole("button", { name: "Submit" });
+  const summary = screen.getByRole("region", { name: "Supply summary" });
+  fireEvent.change(first, { target: { value: "12" } });
+  expect(submit).toBeEnabled();
+  expect(fireEvent.paste(blank, { clipboardData: { getData: () => "1e3" } })).toBe(false);
+  expect(blank).toHaveValue("");
+  expect(blank).toHaveAccessibleDescription("Enter digits only.");
+  expect(within(summary).getByText("1 product")).toBeVisible();
+  expect(within(summary).getByText("6 kg")).toBeVisible();
+  expect(submit).toBeDisabled();
+  fireEvent.keyDown(blank, { key: "Delete" });
+  expect(blank).not.toHaveAttribute("aria-invalid", "true");
+  expect(submit).toBeEnabled();
+});
+
+it("preserves the accepted quantity and the rejection across pagination, search and form remount", () => {
   const onSubmit = vi.fn();
   function TestForm() {
     const [currentDraft, setDraft] = useState(draft);
     const [page, setPage] = useState(1);
+    const [search, setSearch] = useState("");
     const [formVersion, setFormVersion] = useState(0);
     return (
       <>
@@ -482,9 +580,9 @@ it("preserves the accepted quantity across pagination and form remount after a b
           submitLabel="Save supply"
           draft={currentDraft}
           onDraftChange={setDraft}
-          products={[product(page)]}
-          search=""
-          onSearch={() => {}}
+          products={[product(search ? 2 : page)]}
+          search={search}
+          onSearch={setSearch}
           pagination={{ page, pageSize: 1, total: 2, onChange: setPage }}
           onSubmit={onSubmit}
         />
@@ -499,18 +597,19 @@ it("preserves the accepted quantity across pagination and form remount after a b
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   const secondInput = screen.getByRole("textbox", { name: "Additional quantity — Product 2" });
   fireEvent.change(secondInput, { target: { value: "20" } });
-  expect(screen.getByRole("button", { name: "Save supply" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Save supply" })).toBeDisabled();
+  const search = screen.getByRole("searchbox", { name: "Search products" });
+  fireEvent.change(search, { target: { value: "Product 2" } });
+  fireEvent.submit(search.closest("form")!);
   fireEvent.click(screen.getByRole("button", { name: "Remount the form" }));
   const save = screen.getByRole("button", { name: "Save supply" });
-  expect(save).toBeEnabled();
+  expect(save).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "View details" }));
   const summary = screen.getByRole("region", { name: "Supply summary" });
   expect(within(summary).getByRole("heading", { level: 2 })).toHaveTextContent("Supply summary");
-  expect(within(summary).getByText("2 products entered")).toBeVisible();
+  expect(within(summary).getByText("2 products")).toBeVisible();
   const compactTotal = within(summary).getByText("60 kg");
-  expect(compactTotal.parentElement).toContainElement(
-    within(summary).getByRole("button", { name: "Hide details" }),
-  );
+  expect(compactTotal.parentElement).toContainElement(within(summary).getByText("2 products"));
   const firstItem = within(summary).getAllByRole("listitem")[0];
   const remove = within(firstItem).getByRole("button", { name: "Remove Product 1" });
   const name = within(firstItem).getByText("Product 1");
@@ -519,14 +618,15 @@ it("preserves the accepted quantity across pagination and form remount after a b
   expect(remove.parentElement).toBe(name.parentElement);
   expect(converted.parentElement).toBe(quantity.parentElement);
   expect(name.parentElement?.nextElementSibling).toBe(quantity.parentElement);
-  expect(within(summary).queryByText(/Use digits 0–9 only/)).not.toBeInTheDocument();
+  expect(within(firstItem).getByText("Enter digits only.")).toBeVisible();
+  fireEvent.submit(save.closest("form")!);
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.click(remove);
+  expect(save).toBeEnabled();
   fireEvent.click(save);
   expect(onSubmit).toHaveBeenCalledWith(
     expect.objectContaining({
-      items: [
-        { product: product(1), quantity_units: 100 },
-        { product: product(2), quantity_units: 20 },
-      ],
+      items: [{ product: product(2), quantity_units: 20 }],
     }),
   );
 });
@@ -537,9 +637,9 @@ it("renders a Farmer projection without stock at either width and keeps the orig
     sku: "GREEN-MIX",
     name_vi: "Rau xanh",
     name_en: "Leafy greens",
-    unit_size: "0.500",
-    unit_label_en: "kg",
-    unit_label_vi: "kg",
+    unit_size: "500",
+    unit_label_en: "g",
+    unit_label_vi: "g",
     product_identity: "a".repeat(64),
   } satisfies FarmSupplyProduct & { product_identity: string };
   const onSubmit = vi.fn();
@@ -557,8 +657,9 @@ it("renders a Farmer projection without stock at either width and keeps the orig
           draft={currentDraft}
           onDraftChange={setDraft}
           products={[
-            refreshed ? { ...first, unit_size: "1.000", product_identity: "b".repeat(64) } : first,
+            refreshed ? { ...first, unit_size: "1000", product_identity: "b".repeat(64) } : first,
           ]}
+          showSaleUnitColumn
           search=""
           onSearch={() => {}}
           submitLabel="Send request"
@@ -573,11 +674,14 @@ it("renders a Farmer projection without stock at either width and keeps the orig
   try {
     render(<TestFarmer />);
     expect(screen.queryByText(/Remaining/)).not.toBeInTheDocument();
+    const dataList = screen.getByRole("region", { name: "Farm products" });
+    expect(within(dataList).getByText("GREEN-MIX · 500 g")).toBeVisible();
     const input = screen.getByRole("textbox", { name: "Supply quantity — Leafy greens" });
     fireEvent.change(input, { target: { value: "100" } });
     fireEvent.change(input, { target: { value: "1e3" } });
     expect(input).toHaveValue("100");
-    expect(screen.getByRole("button", { name: "Send request" })).toBeEnabled();
+    expect(input).toHaveAccessibleDescription("Enter digits only.");
+    expect(screen.getByRole("button", { name: "Send request" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Change listing" }));
     fireEvent.change(input, { target: { value: "120" } });
     expect(screen.getAllByText("60 kg").length).toBeGreaterThan(0);
@@ -587,14 +691,20 @@ it("renders a Farmer projection without stock at either width and keeps the orig
       end_date: "2099-12-06",
       items: [{ product: first, quantity_units: 120 }],
     });
-    const dataList = screen.getByRole("region", { name: "Farm products" });
     sizes.resize(dataList, 620);
     const table = await within(dataList).findByRole("table");
     expect(
       within(table)
         .getAllByRole("columnheader")
         .map((header) => header.textContent),
-    ).toEqual(["Product", "Supply quantity", "Converted quantity"]);
+    ).toEqual(["Product", "Sale unit", "Supply quantity", "Converted quantity"]);
+    const [productCell, saleUnitCell, quantityCell, convertedCell] =
+      within(table).getAllByRole("cell");
+    expect(productCell).toHaveTextContent("GREEN-MIX");
+    expect(productCell).not.toHaveTextContent("500 g");
+    expect(saleUnitCell).toHaveTextContent(/^500 g$/);
+    expect(within(quantityCell).getByRole("textbox")).toHaveValue("120");
+    expect(convertedCell).toHaveTextContent(/^60 kg$/);
     expect(within(table).queryByText(/Remaining/)).not.toBeInTheDocument();
   } finally {
     sizes.restore();

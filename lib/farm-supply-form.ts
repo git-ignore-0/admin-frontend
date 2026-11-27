@@ -29,7 +29,7 @@ export type FarmSupplyInput<P extends FarmSupplyProduct> = {
 export type FarmSupplyDraft<P extends FarmSupplyProduct> = {
   start_date: string;
   end_date: string;
-  items: Record<string, { product: P; quantity: string }>;
+  items: Record<string, { product: P; quantity: string; rejectedEdit?: true | "integer_range" }>;
 };
 
 type SummaryItem<P extends FarmSupplyProduct> = {
@@ -55,43 +55,46 @@ export function summarizeFarmSupplyDraft<P extends FarmSupplyProduct>(
   draft: FarmSupplyDraft<P>,
   locale: AdminLocale,
   today?: string,
+  quantityMax?: number,
 ) {
   const { value: dates, errors: dateErrors } = validateStockBatchDates(draft, today);
   const validatedItems: FarmSupplyInput<P>["items"] = [];
   const amounts = new Map<string, ReturnType<typeof stockQuantityAmount>>();
-  const items = Object.values(draft.items).flatMap<SummaryItem<P>>(({ product, quantity }) => {
-    if (quantity === "") return [];
-    const parsed = parsePositiveInteger(quantity);
-    if (parsed.error) return [{ product, quantity, quantityError: parsed.error, total: "—" }];
+  const items = Object.values(draft.items).flatMap<SummaryItem<P>>(
+    ({ product, quantity, rejectedEdit }) => {
+      if (quantity === "") return rejectedEdit ? [{ product, quantity, total: "—" }] : [];
+      const parsed = parsePositiveInteger(quantity, { max: quantityMax });
+      if (parsed.error) return [{ product, quantity, quantityError: parsed.error, total: "—" }];
 
-    validatedItems.push({ product, quantity_units: parsed.value });
+      if (!rejectedEdit) validatedItems.push({ product, quantity_units: parsed.value });
 
-    const amount = stockQuantityAmount(parsed.value, product.unit_size);
-    const unitLabel = farmSupplyProductUnit(product, locale).trim();
-    const unit = unitLabel.toLowerCase();
-    const label = unit === "g" || unit === "kg" ? "kg" : unitLabel;
-    if (unit === "g") amount.decimalPlaces += 3;
+      const amount = stockQuantityAmount(parsed.value, product.unit_size);
+      const unitLabel = farmSupplyProductUnit(product, locale).trim();
+      const unit = unitLabel.toLowerCase();
+      const label = unit === "g" || unit === "kg" ? "kg" : unitLabel;
+      if (unit === "g") amount.decimalPlaces += 3;
 
-    const previous = amounts.get(label);
-    if (previous) {
-      const decimalPlaces = Math.max(previous.decimalPlaces, amount.decimalPlaces);
-      amounts.set(label, {
-        coefficient:
-          previous.coefficient * 10n ** BigInt(decimalPlaces - previous.decimalPlaces) +
-          amount.coefficient * 10n ** BigInt(decimalPlaces - amount.decimalPlaces),
-        decimalPlaces,
-      });
-    } else {
-      amounts.set(label, amount);
-    }
-    return [
-      {
-        product,
-        quantity,
-        total: formatStockQuantityAmount(amount, label),
-      },
-    ];
-  });
+      const previous = amounts.get(label);
+      if (previous) {
+        const decimalPlaces = Math.max(previous.decimalPlaces, amount.decimalPlaces);
+        amounts.set(label, {
+          coefficient:
+            previous.coefficient * 10n ** BigInt(decimalPlaces - previous.decimalPlaces) +
+            amount.coefficient * 10n ** BigInt(decimalPlaces - amount.decimalPlaces),
+          decimalPlaces,
+        });
+      } else {
+        amounts.set(label, amount);
+      }
+      return [
+        {
+          product,
+          quantity,
+          total: formatStockQuantityAmount(amount, label),
+        },
+      ];
+    },
+  );
 
   const input =
     dates &&

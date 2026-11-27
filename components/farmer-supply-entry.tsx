@@ -62,6 +62,8 @@ type Reconciliation = {
 };
 type FieldErrors = { start_date?: string; end_date?: string; items?: Record<string, string> };
 
+const MAX_FARMER_QUANTITY = 10_000;
+
 const productConflicts = new Set([
   "product_identity_changed",
   "farm_product_identity_changed",
@@ -260,7 +262,7 @@ export function FarmerSupplyEntry({
     const outstanding = review.filter(({ previous, current }) => {
       if (!current) return true;
       const entry = items[previous.product_id];
-      if (!entry?.quantity) return true;
+      if (!entry?.quantity || entry.rejectedEdit) return true;
       // A failed refresh can leave an old row visible. Keep it out of the draft
       // until the farmer enters a quantity against freshly read product information.
       if (!sameFarmerProduct(entry.product, current)) {
@@ -412,8 +414,9 @@ export function FarmerSupplyEntry({
         draft={draft}
         onDraftChange={changeDraft}
         products={products.data?.data}
-        loading={products.isFetching}
-        refreshing={products.isRefetching}
+        showSaleUnitColumn
+        loading={products.isPending}
+        refreshing={products.isFetching && !products.isPending}
         error={products.error ? requestErrorMessage(products.error, t) : ""}
         onRetry={() => void products.refetch()}
         search={query.search}
@@ -431,6 +434,7 @@ export function FarmerSupplyEntry({
         submitDisabled={review.some(({ current }) => !!current)}
         submitLabel={c.send}
         quantityLabel={c.quantity}
+        quantityMax={MAX_FARMER_QUANTITY}
         emptyLabel={c.noProducts}
         noResultsLabel={c.noMatchingProducts}
         errors={fields}

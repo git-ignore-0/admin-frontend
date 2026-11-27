@@ -93,6 +93,23 @@ it("checks Farm existence after a missing link and creates only on explicit acti
   expect(link.mock.calls.map((parts) => parts[1])).toEqual(["read", "create"]);
 });
 
+it("groups the read-only URL with its adjacent actions without wrapping them in a form", async () => {
+  link.mockResolvedValue(route("A"));
+  mount();
+  const section = await screen.findByRole("region", { name: "URL nhập sản phẩm" });
+  const input = await within(section).findByRole("textbox", { name: "URL nhập sản phẩm" });
+  const copy = within(section).getByRole("button", { name: "Sao chép URL" });
+  const rotate = within(section).getByRole("button", { name: "Đổi link" });
+  expect(
+    within(section).getByRole("heading", { name: "URL nhập sản phẩm", level: 2 }),
+  ).toBeVisible();
+  expect(within(section).getByText("Chia sẻ đường dẫn để nông dân nhập sản phẩm.")).toBeVisible();
+  expect(input).toHaveAttribute("readonly");
+  expect(input.closest("form")).toBeNull();
+  expect(copy.parentElement).toBe(rotate.parentElement);
+  expect(copy.parentElement?.parentElement).toContainElement(input);
+});
+
 it("copies the confirmed URL and reports clipboard failure without displaying the secret in toast", async () => {
   link.mockResolvedValue(route("A"));
   writeText.mockRejectedValueOnce(new Error("denied")).mockResolvedValueOnce(undefined);

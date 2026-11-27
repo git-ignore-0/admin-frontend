@@ -9,6 +9,7 @@ import {
   Stack,
   Text,
   TextInput,
+  Title,
   Tooltip,
 } from "@mantine/core";
 import { IconCopy } from "@tabler/icons-react";
@@ -41,7 +42,7 @@ import { getFarm } from "@/lib/farms-api";
 const labels = {
   vi: {
     heading: "URL nhập sản phẩm",
-    description: "Chia sẻ URL này để nông dân gửi yêu cầu nhập sản phẩm và xem lịch sử.",
+    description: "Chia sẻ đường dẫn để nông dân nhập sản phẩm.",
     create: "Tạo link",
     rotate: "Đổi link",
     confirm: "Link cũ sẽ không còn hiệu lực. Bạn cần gửi link mới cho nông dân.",
@@ -56,7 +57,7 @@ const labels = {
   },
   en: {
     heading: "Product entry URL",
-    description: "Share this URL so farmers can submit supply requests and view their history.",
+    description: "Share this link so farmers can enter products.",
     create: "Create link",
     rotate: "Rotate link",
     confirm: "The previous link will stop working. Share the new link with the farmer.",
@@ -289,8 +290,8 @@ export function FarmFarmerLink({
     <Paper component="section" aria-labelledby={headingId} p="md" withBorder miw={0}>
       <Stack gap="sm">
         <Stack gap="xs">
-          <Text
-            component="h2"
+          <Title
+            order={2}
             id={headingId}
             ref={heading}
             tabIndex={-1}
@@ -299,12 +300,12 @@ export function FarmFarmerLink({
             c="var(--heading)"
           >
             {c.heading}
-          </Text>
+          </Title>
           <Text size="sm" c="dimmed">
             {c.description}
           </Text>
         </Stack>
-        {!unknown && !absoluteUrl && (busy || intent?.phase === "pending") && <Skeleton h={36} />}
+        {!problem && !confirm && state.url === undefined && busy && <Skeleton h={36} />}
         {problem && !confirm && (
           <RecoveryAlert
             message={problem}
@@ -328,13 +329,13 @@ export function FarmFarmerLink({
           </Group>
         )}
         {absoluteUrl && (
-          <Group align="flex-end" gap="xs">
+          <Group align="center" gap="xs">
             <TextInput
               aria-label={c.heading}
               type="url"
               readOnly
               value={absoluteUrl}
-              flex="1 1 22rem"
+              flex="1 1 min(100%, 22rem)"
               miw={0}
             />
             <Group gap="xs" wrap="nowrap">

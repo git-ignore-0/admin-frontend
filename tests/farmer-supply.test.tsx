@@ -181,8 +181,19 @@ describe("Farmer entry and history", () => {
     renderFarmer();
     const input = await quantity(1);
     expect(screen.queryByText(/Remaining|Internal inventory/)).not.toBeInTheDocument();
+    const send = screen.getByRole("button", { name: "Send request" });
+    fireEvent.change(input, { target: { value: "10000" } });
+    expect(input).toHaveValue("10000");
+    expect(send).toBeEnabled();
+    fireEvent.change(input, { target: { value: "10001" } });
+    expect(input).toHaveValue("10000");
+    expect(input).toHaveAccessibleDescription("The value must not exceed 10000.");
+    expect(send).toBeDisabled();
     fireEvent.change(input, { target: { value: "4" } });
     const search = screen.getByRole("searchbox", { name: "Search products" });
+    expect(search.closest("[data-grow-search]")).toContainElement(
+      screen.getByRole("button", { name: "Refresh products" }),
+    );
     fireEvent.change(search, { target: { value: "SKU1" } });
     fireEvent.submit(search.closest("form")!);
     await waitFor(() =>

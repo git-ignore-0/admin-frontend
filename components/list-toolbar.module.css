@@ -23,6 +23,14 @@
   min-inline-size: 0;
 }
 
+.container[data-grow-search] .search {
+  flex: 1 1 0;
+}
+
+.container[data-grow-search] .actions {
+  flex: 0 0 auto;
+}
+
 .primaryAction {
   margin-inline-start: auto;
   max-inline-size: 100%;

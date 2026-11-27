@@ -9,7 +9,6 @@ import {
   Flex,
   Grid,
   Group,
-  List,
   Paper,
   SimpleGrid,
   Stack,
@@ -17,7 +16,6 @@ import {
   Text,
   TextInput,
   Title,
-  VisuallyHidden,
 } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import { IconChevronDown, IconChevronUp, IconX } from "@tabler/icons-react";
@@ -41,7 +39,11 @@ import {
   type FarmSupplyProduct,
 } from "@/lib/farm-supply-form";
 import { farmsCopy } from "@/lib/farms-copy";
-import { formatDecimalInput, numericInputErrorMessage } from "@/lib/numeric-input";
+import {
+  formatDecimalInput,
+  numericInputErrorMessage,
+  parsePositiveInteger,
+} from "@/lib/numeric-input";
 
 import styles from "./farm-bulk-supply-form.module.css";
 
@@ -56,13 +58,12 @@ const labels = {
     empty: "This farm has no products eligible for additional supply.",
     noResults: "No eligible products match your search.",
     available: "Remaining",
+    saleUnit: "Sale unit",
     quantity: "Additional quantity",
     converted: "Converted quantity",
     remove: "Remove {name}",
     count: "{count} products",
     singular: "{count} product",
-    compactCount: "{count} products entered",
-    compactSingular: "{count} product entered",
     total: "Total",
     view: "View details",
     hide: "Hide details",
@@ -70,6 +71,7 @@ const labels = {
     limitExceeded: "Remove products from the summary to keep at most {max}.",
     submit: "Submit",
     refresh: "Refresh products",
+    digitsOnly: "Enter digits only.",
   },
   vi: {
     summary: "Tổng hợp nguồn cung",
@@ -79,13 +81,12 @@ const labels = {
     empty: "Trang trại chưa có sản phẩm đủ điều kiện bổ sung nguồn cung.",
     noResults: "Không tìm thấy sản phẩm đủ điều kiện khớp với tìm kiếm.",
     available: "Còn lại",
+    saleUnit: "Đơn vị bán",
     quantity: "Số lượng bổ sung",
     converted: "Quy đổi",
     remove: "Bỏ {name}",
     count: "{count} sản phẩm",
     singular: "{count} sản phẩm",
-    compactCount: "{count} sản phẩm đã nhập",
-    compactSingular: "{count} sản phẩm đã nhập",
     total: "Tổng",
     view: "Xem chi tiết",
     hide: "Thu gọn chi tiết",
@@ -93,6 +94,7 @@ const labels = {
     limitExceeded: "Bỏ bớt sản phẩm trong phần tổng hợp để còn tối đa {max}.",
     submit: "Xác nhận",
     refresh: "Làm mới danh sách sản phẩm",
+    digitsOnly: "Chỉ nhập chữ số.",
   },
 };
 
@@ -102,8 +104,10 @@ type Props<P extends FarmSupplyProduct> = {
   onDraftChange: (draft: FarmSupplyDraft<P>) => void;
   products: P[] | undefined;
   remaining?: (product: P) => number;
+  showSaleUnitColumn?: boolean;
   submitLabel?: string;
   quantityLabel?: string;
+  quantityMax?: number;
   emptyLabel?: string;
   noResultsLabel?: string;
   loading?: boolean;
@@ -129,8 +133,10 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
   onDraftChange,
   products,
   remaining,
+  showSaleUnitColumn = false,
   submitLabel,
   quantityLabel,
+  quantityMax,
   emptyLabel,
   noResultsLabel,
   loading = false,
@@ -169,21 +175,23 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
   const number = new Intl.NumberFormat(locale);
   const today = adminTodayIso();
   const startDate = adminDateInputToIso(draft.start_date);
-  const summary = summarizeFarmSupplyDraft(draft, locale, today);
+  const summary = summarizeFarmSupplyDraft(draft, locale, today, quantityMax);
   const quantityTitle = quantityLabel ?? c.quantity;
   const entries = new Map(summary.items.map((item) => [item.product.product_id, item]));
-  const overLimit = summary.items.length > FARM_SUPPLY_LIMIT;
-  const hasProductErrors = summary.items.some(
-    ({ product, quantityError }) => quantityError || errors?.items?.[product.product_id],
-  );
+  const productCount = summary.items.filter(({ quantity }) => quantity !== "").length;
+  const overLimit = productCount > FARM_SUPPLY_LIMIT;
+  const hasProductErrors = summary.items.some(({ product }) => quantityError(product.product_id));
   const fieldsLocked = locked || submitting;
-  const canSubmit =
-    Boolean(summary.input) &&
-    !fieldsLocked &&
-    !submitDisabled &&
-    !errors?.start_date &&
-    !errors?.end_date &&
-    !hasProductErrors;
+  const hasFieldErrors = Boolean(
+    hasProductErrors ||
+    errors?.start_date ||
+    errors?.end_date ||
+    summary.dateErrors.start_date ||
+    summary.dateErrors.end_date,
+  );
+  const blocked = fieldsLocked || submitDisabled || hasFieldErrors;
+  const canSubmit = Boolean(summary.input) && !blocked;
+  const dockSummary = !desktop && !blocked && !overLimit && !review && !error;
   const dateErrorMessages = {
     required: f.requiredField,
     invalid_date: f.invalidDate,
@@ -213,11 +221,37 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
 
   function changeQuantity(product: P, quantity: string) {
     if (fieldsLocked || NON_ASCII_DIGIT.test(quantity)) return;
+    if (
+      quantityMax !== undefined &&
+      parsePositiveInteger(quantity, { max: quantityMax }).error === "integer_range"
+    ) {
+      rejectQuantityEdit(product, "integer_range");
+      return;
+    }
     const key = product.product_id;
     const items = { ...draft.items };
+    const entry = items[key];
     if (quantity === "") delete items[key];
-    else items[key] = { product: items[key]?.product ?? product, quantity };
+    else items[key] = { product: entry?.quantity ? entry.product : product, quantity };
     onDraftChange({ ...draft, items });
+  }
+
+  function rejectQuantityEdit(product: P, reason: true | "integer_range" = true) {
+    if (fieldsLocked) return;
+    const key = product.product_id;
+    const entry = draft.items[key];
+    if (entry?.rejectedEdit === reason) return;
+    onDraftChange({
+      ...draft,
+      items: {
+        ...draft.items,
+        [key]: {
+          product: entry?.product ?? product,
+          quantity: entry?.quantity ?? "",
+          rejectedEdit: reason,
+        },
+      },
+    });
   }
 
   function saleUnit(product: FarmSupplyProduct) {
@@ -225,9 +259,11 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
   }
 
   function quantityError(productId: string) {
-    const code = entries.get(productId)?.quantityError;
+    const rejectedEdit = draft.items[productId]?.rejectedEdit;
+    if (rejectedEdit === true) return c.digitsOnly;
+    const code = rejectedEdit ?? entries.get(productId)?.quantityError;
     return code
-      ? numericInputErrorMessage(code, t.common.numericInput)
+      ? numericInputErrorMessage(code, t.common.numericInput, quantityMax)
       : errors?.items?.[productId];
   }
 
@@ -239,13 +275,14 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
         const name = farmSupplyProductName(product, locale);
         const available = remaining ? number.format(remaining(row)) : undefined;
         const total = entry?.total ?? "—";
+        const unit = saleUnit(product);
         const productInfo = (
-          <Stack gap={4} miw={0} className={styles.wrap}>
+          <Stack gap={4} miw={0} flex={compact ? 1 : undefined} className={styles.wrap}>
             <Text size="md" fw={600}>
               {name}
             </Text>
             <Text size="sm" c="dimmed">
-              {product.sku} · {saleUnit(product)}
+              {compact || !showSaleUnitColumn ? `${product.sku} · ${unit}` : product.sku}
             </Text>
             {compact && available !== undefined && (
               <Text size="sm" c="dimmed">
@@ -261,13 +298,19 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
             form={formId}
             type="text"
             inputMode="numeric"
+            size={showSaleUnitColumn ? "xs" : undefined}
+            maw={showSaleUnitColumn ? "6rem" : undefined}
             disabled={fieldsLocked}
             value={entry?.quantity ?? ""}
             error={quantityError(key)}
             onChange={(event) => {
+              const value = event.currentTarget.value;
               const data = event.nativeEvent instanceof InputEvent ? event.nativeEvent.data : null;
-              if (!data || !NON_ASCII_DIGIT.test(data))
-                changeQuantity(row, event.currentTarget.value);
+              if ((data && NON_ASCII_DIGIT.test(data)) || NON_ASCII_DIGIT.test(value)) {
+                rejectQuantityEdit(row);
+              } else {
+                changeQuantity(row, value);
+              }
             }}
             onFocus={(event) => {
               focusedQuantity.current = event.currentTarget;
@@ -276,6 +319,13 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
               if (event.currentTarget.isConnected) focusedQuantity.current = null;
             }}
             onKeyDown={(event) => {
+              if (
+                entry?.quantity === "" &&
+                draft.items[key]?.rejectedEdit &&
+                (event.key === "Backspace" || event.key === "Delete")
+              ) {
+                changeQuantity(row, "");
+              }
               if (
                 event.key.length === 1 &&
                 NON_ASCII_DIGIT.test(event.key) &&
@@ -290,8 +340,16 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
             onPaste={(event) => {
               // TextInput can strip line breaks before onChange. Check the whole
               // clipboard contents before any native normalization or insertion.
-              if (NON_ASCII_DIGIT.test(event.clipboardData.getData("text/plain")))
+              const pasted = event.clipboardData.getData("text/plain");
+              if (NON_ASCII_DIGIT.test(pasted)) {
                 event.preventDefault();
+                rejectQuantityEdit(row);
+              } else if (pasted && draft.items[key]?.rejectedEdit) {
+                const { value, selectionStart, selectionEnd } = event.currentTarget;
+                if (pasted === value.slice(selectionStart ?? 0, selectionEnd ?? 0)) {
+                  changeQuantity(row, value);
+                }
+              }
             }}
           />
         );
@@ -309,7 +367,12 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
             className={styles.compactRow}
           >
             {productInfo}
-            <Stack w="40%" miw={0} gap={4} className={styles.compactQuantity}>
+            <Stack
+              w={showSaleUnitColumn ? "6rem" : "clamp(7rem, 35%, 10rem)"}
+              maw="50%"
+              miw={0}
+              gap={4}
+            >
               {quantityInput}
               <Text size="sm" ta="right" className={styles.wrap}>
                 {total}
@@ -319,6 +382,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
         ) : (
           <Table.Tr key={key}>
             <Table.Td>{productInfo}</Table.Td>
+            {showSaleUnitColumn && <Table.Td>{unit}</Table.Td>}
             {showRemaining && <Table.Td ta="right">{available}</Table.Td>}
             <Table.Td>{quantityInput}</Table.Td>
             <Table.Td ta="right">{total}</Table.Td>
@@ -326,6 +390,32 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
         );
       })
     : undefined;
+
+  const saveButton = (
+    <Button
+      key="save"
+      type="submit"
+      flex={desktop ? undefined : 2}
+      miw={0}
+      disabled={!canSubmit}
+      loading={submitting}
+    >
+      {submitLabel ?? c.submit}
+    </Button>
+  );
+  const cancelButton = onCancel && (
+    <Button
+      key="cancel"
+      type="button"
+      flex={desktop ? undefined : 1}
+      miw={0}
+      variant="default"
+      onClick={onCancel}
+      disabled={cancelDisabled || submitting}
+    >
+      {f.cancel}
+    </Button>
+  );
 
   return (
     <Box ref={layoutRef} miw={0}>
@@ -369,6 +459,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
               </Stack>
             </Paper>
             <ListToolbar
+              growSearch
               refresh={
                 onRetry && {
                   label: c.refresh,
@@ -416,20 +507,34 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                       aria-label={f.products}
                       aria-busy={refreshing || undefined}
                       classNames={{ td: styles.wrap, th: styles.wrap }}
+                      layout="fixed"
                       withRowBorders
                     >
                       <Table.Thead>
                         <Table.Tr>
                           <Table.Th scope="col">{f.productColumn}</Table.Th>
+                          {showSaleUnitColumn && (
+                            <Table.Th scope="col" w="clamp(5rem, 16%, 8rem)">
+                              {c.saleUnit}
+                            </Table.Th>
+                          )}
                           {showRemaining && (
-                            <Table.Th scope="col" ta="right" w="1%" className={styles.columnLabel}>
+                            <Table.Th scope="col" ta="right" w="5.5rem">
                               {c.available}
                             </Table.Th>
                           )}
-                          <Table.Th scope="col" w="28%">
+                          <Table.Th
+                            scope="col"
+                            w={showSaleUnitColumn ? "10rem" : "9rem"}
+                            className={showSaleUnitColumn ? styles.quantityHeading : undefined}
+                          >
                             {quantityTitle}
                           </Table.Th>
-                          <Table.Th scope="col" ta="right" w="1%" className={styles.columnLabel}>
+                          <Table.Th
+                            scope="col"
+                            ta="right"
+                            w={showSaleUnitColumn ? "clamp(6.5rem, 18%, 9rem)" : "7rem"}
+                          >
                             {c.converted}
                           </Table.Th>
                         </Table.Tr>
@@ -438,16 +543,16 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                     </Table>
                   </Table.ScrollContainer>
                 ))}
-              <Box p={error || (refreshing && Boolean(products?.length)) ? "md" : undefined}>
+              <Box p={error && !refreshing ? "md" : undefined}>
                 <ListState
                   embedded
                   empty={emptyLabel ?? c.empty}
                   noResults={search ? (noResultsLabel ?? c.noResults) : undefined}
-                  loading={loading || refreshing}
+                  loading={loading && !products}
                   loadingLabel={f.loadingSupply}
                   hasData={Boolean(products)}
                   isEmpty={products?.length === 0}
-                  error={error}
+                  error={refreshing ? "" : error}
                   onRetry={() => onRetry?.()}
                   retryLabel={t.common.retry}
                   action={
@@ -486,7 +591,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
           span={desktop ? 3 : 10}
           miw={0}
           className={styles.summaryColumn}
-          data-docked={!review || undefined}
+          data-docked={dockSummary || undefined}
         >
           <Paper
             component="section"
@@ -503,153 +608,145 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
               }}
             >
               <Stack gap="sm">
-                {desktop ? (
-                  <Title order={2} id={summaryHeadingId} size="md" fw={600}>
+                <Group justify="space-between" gap="xs" wrap="nowrap">
+                  <Title
+                    order={2}
+                    id={summaryHeadingId}
+                    size="md"
+                    fw={600}
+                    miw={0}
+                    className={styles.wrap}
+                  >
                     {c.summary}
                   </Title>
-                ) : (
-                  <>
-                    <VisuallyHidden component="h2" id={summaryHeadingId}>
-                      {c.summary}
-                    </VisuallyHidden>
-                    <Stack gap={4}>
-                      <Text size="md" fw={600} aria-live="polite" aria-atomic="true">
-                        {(summary.items.length === 1 ? c.compactSingular : c.compactCount).replace(
-                          "{count}",
-                          number.format(summary.items.length),
-                        )}
-                      </Text>
-                      <Group justify="space-between" gap="xs" align="center" wrap="nowrap">
-                        <Text size="md" fw={600} miw={0} className={styles.wrap}>
-                          {summary.totals.join(" · ") || "—"}
-                        </Text>
-                        <Button
-                          type="button"
-                          size="compact-sm"
-                          variant="subtle"
-                          aria-controls={summaryId}
-                          aria-expanded={summaryOpen}
-                          rightSection={
-                            summaryOpen ? (
-                              <IconChevronUp size={16} />
-                            ) : (
-                              <IconChevronDown size={16} />
-                            )
-                          }
-                          onClick={() => setSummaryOpen((open) => !open)}
-                        >
-                          {summaryOpen ? c.hide : c.view}
-                        </Button>
-                      </Group>
-                    </Stack>
-                  </>
-                )}
-                {hasProductErrors && !desktop && !summaryOpen && (
-                  <Text size="sm" c="danger">
-                    {c.review}
+                  {!desktop && (
+                    <ActionIcon
+                      type="button"
+                      variant="subtle"
+                      aria-label={summaryOpen ? c.hide : c.view}
+                      aria-controls={summaryId}
+                      aria-expanded={summaryOpen}
+                      onClick={() => setSummaryOpen((open) => !open)}
+                    >
+                      {summaryOpen ? (
+                        <IconChevronUp size={16} aria-hidden />
+                      ) : (
+                        <IconChevronDown size={16} aria-hidden />
+                      )}
+                    </ActionIcon>
+                  )}
+                </Group>
+                <Flex
+                  direction={desktop ? "column" : "row"}
+                  justify="space-between"
+                  align="baseline"
+                  gap={desktop ? 4 : "xs"}
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <Text size="md" miw={0} className={styles.wrap}>
+                    {(productCount === 1 ? c.singular : c.count).replace(
+                      "{count}",
+                      number.format(productCount),
+                    )}
                   </Text>
-                )}
+                  <Text
+                    size="md"
+                    fw={600}
+                    ta={desktop ? undefined : "right"}
+                    miw={0}
+                    className={styles.wrap}
+                  >
+                    {desktop && `${c.total}: `}
+                    {summary.totals.join(" · ") || "—"}
+                  </Text>
+                </Flex>
                 <Collapse id={summaryId} in={desktop || summaryOpen}>
                   <Stack gap="sm" className={styles.summaryDetails}>
+                    <Divider />
                     <Box component="dl" m={0}>
                       <RecordDetailField label={c.period}>
                         {summary.dates ? `${draft.start_date} – ${draft.end_date}` : null}
                       </RecordDetailField>
                     </Box>
                     {summary.items.length > 0 && (
-                      <List aria-label={c.summary} listStyleType="none" m={0} p={0}>
+                      <Stack
+                        component="ul"
+                        aria-label={c.summary}
+                        gap="sm"
+                        m={0}
+                        p={0}
+                        className={styles.compactList}
+                      >
                         {summary.items.map(({ product, quantity, quantityError: code, total }) => {
                           const name = farmSupplyProductName(product, locale);
+                          const message = quantityError(product.product_id);
                           return (
-                            <List.Item
-                              key={product.product_id}
-                              styles={{
-                                itemWrapper: { width: "100%" },
-                                itemLabel: { flex: 1, minWidth: 0 },
-                              }}
-                            >
+                            <Stack component="li" key={product.product_id} gap={4}>
                               <Divider />
-                              <Stack gap={4} py="xs">
-                                <Group justify="space-between" wrap="nowrap" gap="xs">
-                                  <Text size="md" fw={600} miw={0} className={styles.wrap}>
-                                    {name}
-                                  </Text>
-                                  <ActionIcon
-                                    type="button"
-                                    variant="subtle"
-                                    color="gray"
-                                    size="xs"
-                                    disabled={fieldsLocked}
-                                    aria-label={c.remove.replace("{name}", name)}
-                                    onClick={() => changeQuantity(product, "")}
-                                  >
-                                    <IconX size={16} aria-hidden />
-                                  </ActionIcon>
-                                </Group>
-                                <Group gap="xs" justify="space-between" align="baseline">
-                                  <Text size="sm" c="dimmed" className={styles.wrap}>
+                              <Group justify="space-between" wrap="nowrap" gap="xs">
+                                <Text size="md" fw={600} miw={0} className={styles.wrap}>
+                                  {name}
+                                </Text>
+                                <ActionIcon
+                                  type="button"
+                                  variant="subtle"
+                                  color="gray"
+                                  disabled={fieldsLocked}
+                                  aria-label={c.remove.replace("{name}", name)}
+                                  onClick={() => changeQuantity(product, "")}
+                                >
+                                  <IconX size={16} aria-hidden />
+                                </ActionIcon>
+                              </Group>
+                              {quantity && (
+                                <Group
+                                  gap="xs"
+                                  justify="space-between"
+                                  align="baseline"
+                                  wrap="nowrap"
+                                >
+                                  <Text size="sm" c="dimmed" miw={0} className={styles.wrap}>
                                     {code ? quantity : number.format(Number(quantity))} ×{" "}
                                     {saleUnit(product)}
                                   </Text>
-                                  <Text size="sm" fw={600} ta="right" className={styles.wrap}>
+                                  <Text
+                                    size="sm"
+                                    fw={600}
+                                    ta="right"
+                                    miw={0}
+                                    className={styles.wrap}
+                                  >
                                     {total}
                                   </Text>
                                 </Group>
-                                {quantityError(product.product_id) && (
-                                  <Text size="sm" c="danger" className={styles.wrap}>
-                                    {quantityError(product.product_id)}
-                                  </Text>
-                                )}
-                              </Stack>
-                            </List.Item>
+                              )}
+                              {message && (
+                                <Text size="sm" c="danger" className={styles.wrap}>
+                                  {message}
+                                </Text>
+                              )}
+                            </Stack>
                           );
                         })}
-                      </List>
+                      </Stack>
                     )}
                   </Stack>
                 </Collapse>
-                {desktop && (
-                  <Stack gap={4}>
-                    <Text size="md" aria-live="polite" aria-atomic="true">
-                      {(summary.items.length === 1 ? c.singular : c.count).replace(
-                        "{count}",
-                        number.format(summary.items.length),
-                      )}
-                    </Text>
-                    {summary.totals.length > 0 && (
-                      <Text size="md" fw={600} className={styles.wrap}>
-                        {c.total}: {summary.totals.join(" · ")}
-                      </Text>
-                    )}
-                  </Stack>
-                )}
                 {review}
-                <Divider />
+                {hasProductErrors && !desktop && !summaryOpen && (
+                  <Text size="sm" c="danger">
+                    {c.review}
+                  </Text>
+                )}
                 {overLimit && (
                   <Text size="sm" c="danger" role="alert">
                     {c.limitExceeded.replace("{max}", String(FARM_SUPPLY_LIMIT))}
                   </Text>
                 )}
-                <Flex direction={desktop ? "column-reverse" : "row"} gap="xs">
-                  {onCancel && (
-                    <Button
-                      type="button"
-                      flex={desktop ? undefined : 1}
-                      variant="default"
-                      onClick={onCancel}
-                      disabled={cancelDisabled || submitting}
-                    >
-                      {f.cancel}
-                    </Button>
-                  )}
-                  <Button
-                    type="submit"
-                    flex={desktop ? undefined : 1}
-                    disabled={!canSubmit}
-                    loading={submitting}
-                  >
-                    {submitLabel ?? c.submit}
-                  </Button>
+                {(desktop || summaryOpen) && <Divider />}
+                <Flex direction={desktop ? "column" : "row"} gap="xs">
+                  {desktop ? [saveButton, cancelButton] : [cancelButton, saveButton]}
                 </Flex>
               </Stack>
             </form>
