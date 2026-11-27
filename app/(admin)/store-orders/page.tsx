@@ -12,7 +12,7 @@ export default async function Page() {
   const c = storeOrdersCopy(await getAdminLocale());
   return (
     <div className="store-orders-page">
-      <PageHeading title={c.title} description={c.description} />
+      <PageHeading title={c.title} visuallyHiddenTitle />
       <StoreOrderList />
     </div>
   );

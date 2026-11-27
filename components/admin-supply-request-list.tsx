@@ -1,6 +1,6 @@
 "use client";
 
-import { Anchor, Box, Divider, Paper, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
+import { Box, Divider, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
 import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -13,6 +13,8 @@ import {
   AdminSupplyRequestDetail,
   SupplyRequestStatusBadge,
 } from "@/components/admin-supply-request-detail";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeading } from "@/components/page-heading";
@@ -57,7 +59,6 @@ export function AdminSupplyRequestList() {
   const client = useQueryClient();
   const current = useIsAdminQueryScopeCurrent();
   const access = useFarmAccess();
-  const [searchText, setSearchText] = useState(search);
   const [filters, setFilters] = useState({ farm: farm_id, status });
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
@@ -78,7 +79,6 @@ export function AdminSupplyRequestList() {
   const columns = [copy.code, copy.farm, copy.period, copy.count, copy.submitted, copy.status];
   const openId = !access.error ? selectedId : undefined;
 
-  useEffect(() => setSearchText(search), [search]);
   useEffect(() => {
     if (access.error) {
       setSelectedId(undefined);
@@ -184,13 +184,11 @@ export function AdminSupplyRequestList() {
                   style={{ cursor: "pointer" }}
                 >
                   <Table.Td maw={200}>
-                    <Anchor
+                    <DataListRecordLink
                       component={AdminNavigationLink}
                       href={supplyRequestHref(context, row.id)}
                       data-record-link
                       aria-current={openId === row.id || undefined}
-                      fw={600}
-                      underline="hover"
                       style={{ overflowWrap: "anywhere" }}
                       onClick={(event) => {
                         opener.current = event.currentTarget;
@@ -203,7 +201,7 @@ export function AdminSupplyRequestList() {
                       }}
                     >
                       {row.code}
-                    </Anchor>
+                    </DataListRecordLink>
                   </Table.Td>
                   <Table.Td>{locale === "vi" ? row.farm.name_vi : row.farm.name_en}</Table.Td>
                   <Table.Td>
@@ -232,27 +230,10 @@ export function AdminSupplyRequestList() {
         <PageHeading title={t.common.farmSupplyRequests} visuallyHiddenTitle bottomSpacing={0} />
         <ListToolbar
           busy={Boolean(access.error)}
-          search={{
-            label: copy.search,
-            value: searchText,
-            onChange: setSearchText,
-            appliedValue: search,
-            formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
-            onSubmit: (value) => {
-              const next = normalizeFarmSupplySearch(value);
-              setSearchText(next);
-              if (next === search && page === 1) void reload();
-              else update({ search: next, page: 1 });
-            },
-            clearLabel: t.common.clearFilters,
-            onClear: () => {
-              setSearchText("");
-              update({ search: "", page: 1 });
-            },
-          }}
           filterPopover={{
             label: t.users.filter,
-            activeCount: Number(Boolean(status)) + Number(Boolean(farm_id)),
+            activeCount:
+              Number(Boolean(status)) + Number(Boolean(farm_id)) + Number(Boolean(search)),
             onOpen: () => {
               setFilters({ farm: farm_id, status });
               setFilterOpen(true);
@@ -262,10 +243,10 @@ export function AdminSupplyRequestList() {
               setFilterOpen(false);
             },
             clearLabel: t.common.clearFilters,
-            clearDisabled: !filters.status && !filters.farm && !status && !farm_id,
+            clearDisabled: !filters.status && !filters.farm && !status && !farm_id && !search,
             onClear: () => {
               setFilters({ farm: undefined, status: undefined });
-              update({ farm_id: undefined, status: undefined, page: 1 });
+              update({ farm_id: undefined, status: undefined, search: "", page: 1 });
             },
             apply: {
               label: t.users.applyFilters,
@@ -277,6 +258,11 @@ export function AdminSupplyRequestList() {
             },
             children: (
               <>
+                {search && (
+                  <Text size="sm" c="dimmed" style={{ overflowWrap: "anywhere" }}>
+                    {t.users.appliedSearch.replace("{query}", search)}
+                  </Text>
+                )}
                 {filterOpen && (
                   <SupplyRequestFarmFilter
                     value={filters.farm}
@@ -310,10 +296,11 @@ export function AdminSupplyRequestList() {
           refresh={{
             label: copy.refresh,
             onRefresh: reload,
-            loading: query.isFetching && Boolean(rows),
+            loading: query.isFetching && rows !== undefined,
+            disabled: firstLoad,
           }}
         />
-        <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+        <DataListPaper component="section">
           {Boolean(rows?.length) && table}
           <Box p={access.error || query.error ? "md" : undefined}>
             <ListState
@@ -322,7 +309,7 @@ export function AdminSupplyRequestList() {
               isEmpty={rows?.length === 0}
               empty={copy.empty}
               noResults={search || status || farm_id ? copy.noMatches : undefined}
-              loading={!access.error && (firstLoad || query.isFetching)}
+              loading={firstLoad}
               loadingLabel={copy.loading}
               loadingPlaceholder={table}
               error={
@@ -339,8 +326,9 @@ export function AdminSupplyRequestList() {
           {meta && (
             <>
               <Divider />
-              <Box px="md" py="sm">
+              <Box component="footer" px="md" py="sm">
                 <Pagination
+                  disabled={query.isFetching}
                   nextLabel={t.common.next}
                   onPage={(value) => update({ page: value })}
                   page={meta.page}
@@ -354,7 +342,7 @@ export function AdminSupplyRequestList() {
               </Box>
             </>
           )}
-        </Paper>
+        </DataListPaper>
       </Stack>
       {openId && !mobile && (
         <AdminSupplyRequestDetail key={openId} requestId={openId} onClose={closeDrawer} />

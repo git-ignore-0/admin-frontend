@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Anchor,
   Box,
   Button,
   Divider,
@@ -22,6 +21,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
 import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
@@ -234,13 +234,12 @@ export function StoreProductList() {
                           miw={0}
                           style={{ overflowWrap: "anywhere" }}
                         >
-                          <Anchor
+                          <DataListRecordLink
                             component={AdminNavigationLink}
                             href={storeProductHref(searchParams, item.id)}
-                            fw={600}
                           >
                             {name}
-                          </Anchor>
+                          </DataListRecordLink>
                           <Text size="sm" c="dimmed">
                             {item.sku}
                           </Text>
@@ -280,6 +279,12 @@ export function StoreProductList() {
       <PageHeading title={copy.products} visuallyHiddenTitle />
       <ListToolbar
         busy={loading}
+        refresh={{
+          label: t.common.refreshList,
+          onRefresh: reloadProducts,
+          loading: loading && items !== null,
+          disabled: initialLoading,
+        }}
         primaryAction={
           <Button
             component={AdminNavigationLink}
@@ -357,19 +362,18 @@ export function StoreProductList() {
           </Box>
         )}
         {Boolean(items?.length) && table}
-        <Box p={error || (loading && items !== null) ? "md" : undefined}>
+        <Box p={error && !loading ? "md" : undefined}>
           <ListState
             embedded
             empty={copy.noProducts}
-            error={error}
+            error={loading ? "" : error}
             hasData={items !== null}
             isEmpty={items?.length === 0}
-            loading={loading}
+            loading={initialLoading}
             loadingLabel={copy.loading}
             loadingPlaceholder={initialLoading ? table : undefined}
             noResults={hasAppliedFilters ? copy.noMatchingProducts : undefined}
             onRetry={reloadProducts}
-            refreshingLabel={copy.refreshing}
             retryLabel={t.common.retry}
           />
         </Box>

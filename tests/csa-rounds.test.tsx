@@ -389,7 +389,7 @@ it("opens a round through its name and refreshes the current list", async () => 
   fireEvent.click(refresh);
   const results = within(screen.getByRole("group", { name: "CSA round configurations" }));
   expect(results.queryByText("Loading CSA round…")).not.toBeInTheDocument();
-  expect(results.getByRole("status")).toHaveTextContent("Refreshing CSA list…");
+  expect(results.queryByRole("status")).not.toBeInTheDocument();
   expect(results.getByRole("table")).toHaveAttribute("aria-busy", "true");
   expect(name).toBeVisible();
   expect(refresh).toHaveAttribute("aria-busy", "true");

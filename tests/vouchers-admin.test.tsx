@@ -130,6 +130,7 @@ it("renders all scopes, treats old responses as CSA and filters via backend", as
   expect(screen.getByRole("cell", { name: /Both/ })).toBeVisible();
   expect(screen.getByRole("cell", { name: "Store orders" })).toBeVisible();
   expect(screen.getByRole("cell", { name: /CSA packages/ })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Filter" }));
   selectOption(screen.getByLabelText("Filter application scope"), "both");
   await waitFor(() =>
     expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("application_scope=both"),

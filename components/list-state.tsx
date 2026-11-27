@@ -1,6 +1,16 @@
 "use client";
 
-import { Box, Group, Loader, Paper, Stack, Text, VisuallyHidden } from "@mantine/core";
+import {
+  Box,
+  Group,
+  Loader,
+  Paper,
+  Skeleton,
+  Stack,
+  Table,
+  Text,
+  VisuallyHidden,
+} from "@mantine/core";
 import { IconInbox, IconSearch } from "@tabler/icons-react";
 import type { ReactNode } from "react";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -20,6 +30,7 @@ export function ListState({
   onRetry,
   refreshingLabel = loadingLabel,
   retryLabel,
+  tableColumns = 0,
 }: {
   /** Recovery or next action supplied by the caller for the current empty state. */
   action?: ReactNode;
@@ -38,13 +49,38 @@ export function ListState({
   onRetry: () => void;
   refreshingLabel?: string;
   retryLabel: string;
+  /** Use a table-shaped placeholder when the list has no current-query data. */
+  tableColumns?: number;
 }) {
   if (!hasData && loading) {
-    if (loadingPlaceholder)
+    if (loadingPlaceholder || tableColumns)
       return (
         <>
           <VisuallyHidden role="status">{loadingLabel}</VisuallyHidden>
-          {loadingPlaceholder}
+          {loadingPlaceholder ?? (
+            <Table aria-hidden withRowBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  {Array.from({ length: tableColumns }, (_, column) => (
+                    <Table.Th key={column}>
+                      <Skeleton height={12} width="65%" />
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {[0, 1, 2].map((row) => (
+                  <Table.Tr key={row}>
+                    {Array.from({ length: tableColumns }, (_, column) => (
+                      <Table.Td key={column}>
+                        <Skeleton height={16} width="80%" />
+                      </Table.Td>
+                    ))}
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          )}
         </>
       );
     const indicator = (

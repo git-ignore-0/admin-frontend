@@ -29,6 +29,8 @@ import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { CSAPurchaseStatusBadge } from "@/components/csa-purchase-request-list";
 import { DetailPageHeading } from "@/components/detail-page-heading";
+import { DataListPaper } from "@/components/data-list-paper";
+import { ListState } from "@/components/list-state";
 import { DataState, Section, Status } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -552,121 +554,126 @@ function PurchaseRequestRecord({ requestId, backHref }: { requestId: string; bac
               </RecordDetailField>
             </RecordDetailFields>
           )}
-          {orderedPayments.length ? (
-            <Table.ScrollContainer
-              aria-label={installmentCopy.schedule}
-              className={styles.installmentScroll}
-              minWidth={0}
-              role="region"
-              tabIndex={0}
-              type="native"
-            >
-              <Table
+          <DataListPaper>
+            {orderedPayments.length ? (
+              <Table.ScrollContainer
                 aria-label={installmentCopy.schedule}
-                className={styles.installmentTable}
-                role="table"
-                withRowBorders
+                minWidth={showInstallmentActions ? "55rem" : "43rem"}
+                role="region"
+                tabIndex={0}
+                type="native"
               >
-                <Table.Thead role="rowgroup">
-                  <Table.Tr role="row">
-                    {installmentColumns.map((label) => (
-                      <Table.Th key={label} role="columnheader" scope="col">
-                        {label}
-                      </Table.Th>
-                    ))}
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody role="rowgroup">
-                  {orderedPayments.map((payment) => {
-                    const paymentDetails = [
-                      [
-                        installmentCopy.confirmedAt,
-                        payment.confirmed_at && formatAdminDateTime(payment.confirmed_at),
-                      ],
-                      [installmentCopy.confirmedBy, payment.confirmed_by?.name],
-                      [
-                        installmentCopy.rejectedAt,
-                        payment.rejected_at && formatAdminDateTime(payment.rejected_at),
-                      ],
-                      [installmentCopy.rejectedBy, payment.rejected_by?.name],
-                      [installmentCopy.rejectionReason, payment.rejection_reason],
-                      [installmentCopy.note, payment.note],
-                    ] as const;
-                    return (
-                      <Table.Tr role="row" key={payment.id}>
-                        <Table.Th role="rowheader" scope="row">
-                          {installmentCopy.installmentNumber.replace(
-                            "{count}",
-                            String(payment.installment_sequence),
-                          )}
+                <Table
+                  aria-label={installmentCopy.schedule}
+                  className={styles.installmentTable}
+
+                  withRowBorders
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      {installmentColumns.map((label) => (
+                        <Table.Th key={label} scope="col">
+                          {label}
                         </Table.Th>
-                        <Table.Td role="cell" data-label={installmentCopy.dueAmount}>
-                          {formatMembershipMoney(payment.amount_due, locale)}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.paidAmount}>
-                          {payment.amount_paid
-                            ? formatMembershipMoney(payment.amount_paid, locale)
-                            : "—"}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.cycles}>
-                          {payment.cycle_count}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.dueAt}>
-                          {formatAdminDateTime(payment.due_at)}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.paymentStatus}>
-                          <Stack gap={4} align="flex-start">
-                            <Status
-                              domain="installment"
-                              status={payment.status}
-                              label={installmentCopy.statuses[payment.status]}
-                            />
-                            {paymentDetails.map(
-                              ([label, value]) =>
-                                value && (
-                                  <Text key={label} component="span" size="xs" c="dimmed">
-                                    {label}: {value}
-                                  </Text>
-                                ),
+                      ))}
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {orderedPayments.map((payment) => {
+                      const paymentDetails = [
+                        [
+                          installmentCopy.confirmedAt,
+                          payment.confirmed_at && formatAdminDateTime(payment.confirmed_at),
+                        ],
+                        [installmentCopy.confirmedBy, payment.confirmed_by?.name],
+                        [
+                          installmentCopy.rejectedAt,
+                          payment.rejected_at && formatAdminDateTime(payment.rejected_at),
+                        ],
+                        [installmentCopy.rejectedBy, payment.rejected_by?.name],
+                        [installmentCopy.rejectionReason, payment.rejection_reason],
+                        [installmentCopy.note, payment.note],
+                      ] as const;
+                      return (
+                        <Table.Tr key={payment.id}>
+                          <Table.Th scope="row">
+                            {installmentCopy.installmentNumber.replace(
+                              "{count}",
+                              String(payment.installment_sequence),
                             )}
-                          </Stack>
-                        </Table.Td>
-                        {showInstallmentActions && (
-                          <Table.Td role="cell">
-                            {payment.status === "reported" && (
-                              <Group gap="xs">
-                                <Button
-                                  variant="default"
-                                  size="xs"
-                                  disabled={paymentSaving}
-                                  onClick={() => openPaymentAction(payment, "confirm")}
-                                  type="button"
-                                >
-                                  {installmentCopy.confirm}
-                                </Button>
-                                <Button
-                                  color="red"
-                                  variant="light"
-                                  size="xs"
-                                  disabled={paymentSaving}
-                                  onClick={() => openPaymentAction(payment, "reject")}
-                                  type="button"
-                                >
-                                  {installmentCopy.reject}
-                                </Button>
-                              </Group>
-                            )}
+                          </Table.Th>
+                          <Table.Td>{formatMembershipMoney(payment.amount_due, locale)}</Table.Td>
+                          <Table.Td>
+                            {payment.amount_paid
+                              ? formatMembershipMoney(payment.amount_paid, locale)
+                              : "—"}
                           </Table.Td>
-                        )}
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          ) : (
-            <DataState kind="empty" title={installmentCopy.noSchedule} compact />
-          )}
+                          <Table.Td>{payment.cycle_count}</Table.Td>
+                          <Table.Td>{formatAdminDateTime(payment.due_at)}</Table.Td>
+                          <Table.Td>
+                            <Stack gap={4} align="flex-start">
+                              <Status
+                                domain="installment"
+                                status={payment.status}
+                                label={installmentCopy.statuses[payment.status]}
+                              />
+                              {paymentDetails.map(
+                                ([label, value]) =>
+                                  value && (
+                                    <Text key={label} component="span" size="xs" c="dimmed">
+                                      {label}: {value}
+                                    </Text>
+                                  ),
+                              )}
+                            </Stack>
+                          </Table.Td>
+                          {showInstallmentActions && (
+                            <Table.Td>
+                              {payment.status === "reported" && (
+                                <Group gap="xs">
+                                  <Button
+                                    variant="default"
+                                    size="xs"
+                                    disabled={paymentSaving}
+                                    onClick={() => openPaymentAction(payment, "confirm")}
+                                    type="button"
+                                  >
+                                    {installmentCopy.confirm}
+                                  </Button>
+                                  <Button
+                                    color="red"
+                                    variant="light"
+                                    size="xs"
+                                    disabled={paymentSaving}
+                                    onClick={() => openPaymentAction(payment, "reject")}
+                                    type="button"
+                                  >
+                                    {installmentCopy.reject}
+                                  </Button>
+                                </Group>
+                              )}
+                            </Table.Td>
+                          )}
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            ) : (
+              <ListState
+                embedded
+                empty={installmentCopy.noSchedule}
+                error=""
+                hasData
+                isEmpty
+                loading={false}
+                loadingLabel={copy.loadingDetail}
+                onRetry={() => undefined}
+                retryLabel={t.common.retry}
+              />
+            )}
+          </DataListPaper>
         </Section>
 
         <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">

@@ -1,6 +1,18 @@
 "use client";
 
-import { Alert, Anchor, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
+import {
+  Alert,
+  Anchor,
+  Box,
+  Button,
+  Divider,
+  Group,
+  Paper,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
@@ -13,6 +25,7 @@ import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FarmBatchDialog } from "@/components/farm-batch-dialog";
 import { FarmStockBatches } from "@/components/farm-stock-batches";
+import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { DataState, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -523,7 +536,7 @@ function FarmSourceHistory({
     "farm.product.delete": c.historyDelete,
   };
   return (
-    <>
+    <DataListPaper>
       {Boolean(data?.data.length) && (
         <Table.ScrollContainer
           type="native"
@@ -554,31 +567,39 @@ function FarmSourceHistory({
           </Table>
         </Table.ScrollContainer>
       )}
-      <ListState
-        embedded
-        loading={history.isPending}
-        loadingLabel={c.loadingSupply}
-        hasData={Boolean(data)}
-        isEmpty={data?.data.length === 0}
-        empty={c.historyEmpty}
-        error={history.error ? requestErrorMessage(history.error, t) : ""}
-        onRetry={() => void history.refetch()}
-        retryLabel={t.common.retry}
-      />
-      {data && data.meta.total > data.meta.page_size && (
-        <Pagination
-          page={page}
-          pageSize={data.meta.page_size}
-          total={data.meta.total}
-          disabled={history.isFetching}
-          onPage={setPage}
-          previousLabel={t.common.previous}
-          nextLabel={t.common.next}
-          summary={t.common.pagination}
-          resultCountLabel={t.common.resultCount}
-          resultCountSingularLabel={t.common.resultCountSingular}
+      <Box p={history.error || (data && history.isFetching) ? "md" : undefined}>
+        <ListState
+          embedded
+          tableColumns={3}
+          loading={history.isFetching}
+          loadingLabel={c.loadingSupply}
+          hasData={Boolean(data)}
+          isEmpty={data?.data.length === 0}
+          empty={c.historyEmpty}
+          error={history.error ? requestErrorMessage(history.error, t) : ""}
+          onRetry={() => void history.refetch()}
+          retryLabel={t.common.retry}
         />
+      </Box>
+      {data && (
+        <>
+          <Divider />
+          <Box component="footer" px="md" py="sm">
+            <Pagination
+              page={page}
+              pageSize={data.meta.page_size}
+              total={data.meta.total}
+              disabled={history.isFetching}
+              onPage={setPage}
+              previousLabel={t.common.previous}
+              nextLabel={t.common.next}
+              summary={t.common.pagination}
+              resultCountLabel={t.common.resultCount}
+              resultCountSingularLabel={t.common.resultCountSingular}
+            />
+          </Box>
+        </>
       )}
-    </>
+    </DataListPaper>
   );
 }

@@ -69,50 +69,52 @@ export function useStoreOrderList({
   useEffect(() => {
     const current = ++requestId.current;
     const controller = new AbortController();
-    if (!denied && ((!payload && !failedCurrentPage) || refreshKey === key)) {
-      void listStoreOrders(
-        { page, search, sort, paymentStatus, ...storeOrderStatusQuery(status) },
-        controller.signal,
-      )
-        .then((next) => {
-          if (current !== requestId.current) return;
-          if (next.meta) {
-            const lastPage = Math.max(1, Math.ceil(next.meta.total / next.meta.page_size));
-            if (page > lastPage) {
-              // Orders can leave a filtered list while another admin is viewing it.
-              // Drop older pages too, then fetch the last remaining valid page.
-              setCache(new Map());
-              setFailure(null);
-              setPage(lastPage);
-              return;
-            }
-          }
-          setCache((previous) => {
-            const pages = new Map(previous);
-            pages.delete(key);
-            pages.set(key, { ...next, receivedAt: performance.now() });
-            if (pages.size > MAX_CACHED_PAGES) {
-              const oldest = pages.keys().next().value;
-              if (oldest !== undefined) pages.delete(oldest);
-            }
-            return pages;
-          });
-          setFailure(null);
-        })
-        .catch((error: unknown) => {
-          if (current !== requestId.current || isRequestCanceled(error, controller.signal)) return;
-          const message = getErrorMessage(error);
-          if (isProtectedDataError(error)) {
+    async function loadPage() {
+      try {
+        const next = await listStoreOrders(
+          { page, search, sort, paymentStatus, ...storeOrderStatusQuery(status) },
+          controller.signal,
+        );
+        if (current !== requestId.current) return;
+        if (next.meta) {
+          const lastPage = Math.max(1, Math.ceil(next.meta.total / next.meta.page_size));
+          if (page > lastPage) {
+            // Orders can leave a filtered list while another admin is viewing it.
+            // Drop older pages too, then fetch the last remaining valid page.
             setCache(new Map());
-            expiredReloads.current.clear();
-            setFailure({ message });
-          } else {
-            setFailure({ key, message });
+            setFailure(null);
+            setPage(lastPage);
+            return;
           }
-        })
-        .finally(() => {
-          if (current === requestId.current) setRefreshKey(null);
+        }
+        setCache((previous) => {
+          const pages = new Map(previous);
+          pages.delete(key);
+          pages.set(key, { ...next, receivedAt: performance.now() });
+          if (pages.size > MAX_CACHED_PAGES) {
+            const oldest = pages.keys().next().value;
+            if (oldest !== undefined) pages.delete(oldest);
+          }
+          return pages;
         });
+        setFailure(null);
+      } catch (error) {
+        if (current !== requestId.current || isRequestCanceled(error, controller.signal)) return;
+        const message = getErrorMessage(error);
+        if (isProtectedDataError(error)) {
+          setCache(new Map());
+          expiredReloads.current.clear();
+          setFailure({ message });
+        } else {
+          setFailure({ key, message });
+        }
+      } finally {
+        // Publish the response and end its refresh in the same update.
+        if (current === requestId.current) setRefreshKey(null);
+      }
+    }
+    if (!denied && ((!payload && !failedCurrentPage) || refreshKey === key)) {
+      void loadPage();
     }
     return () => {
       if (current === requestId.current) requestId.current += 1;

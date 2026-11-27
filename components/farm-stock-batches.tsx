@@ -1,10 +1,11 @@
 "use client";
 
-import { Button, Group, Select, Stack, Table, Text, Title } from "@mantine/core";
+import { Box, Button, Divider, Group, Select, Stack, Table, Text, Title } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -108,128 +109,136 @@ export function FarmStockBatches({
           />
         </Group>
       </Group>
-      {Boolean(data?.data.length) && (
-        <Table.ScrollContainer
-          type="native"
-          minWidth={actions ? 600 : 490}
-          role="region"
-          aria-label={c.stockBatches}
-          tabIndex={0}
-        >
-          <Table
-            horizontalSpacing="sm"
+      <DataListPaper>
+        {Boolean(data?.data.length) && (
+          <Table.ScrollContainer
+            type="native"
+            minWidth={actions ? 600 : 490}
+            role="region"
             aria-label={c.stockBatches}
-            aria-busy={result.isFetching || undefined}
+            tabIndex={0}
           >
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th scope="col">{c.batchPeriod}</Table.Th>
-                <Table.Th scope="col">{c.batchInitial}</Table.Th>
-                <Table.Th scope="col">{c.batchBalance}</Table.Th>
-                <Table.Th scope="col">{c.status}</Table.Th>
-                {actions && <Table.Th scope="col">{c.moreActions}</Table.Th>}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {data?.data.map((batch) => {
-                const editable =
-                  actions &&
-                  !batch.is_historical &&
-                  (batch.status === "active" || batch.status === "upcoming");
-                return (
-                  <Table.Tr key={batch.id}>
-                    <Table.Td>
-                      {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
-                      {batch.id === reviewingBatchId && (
-                        <Text size="xs" c="dimmed">
-                          {c.batchPendingReview}
-                        </Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td>{num.format(batch.quantity_units)}</Table.Td>
-                    <Table.Td>
-                      {num.format(batch.remaining_quantity)}
-                      {batch.net_sold_quantity > 0 && (
-                        <Text size="xs" c="dimmed">
-                          {c.batchSold.replace("{count}", num.format(batch.net_sold_quantity))}
-                        </Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Status
-                        domain="farm-stock"
-                        status={batch.is_historical ? "inactive" : batch.status}
-                        label={batch.is_historical ? c.batchHistoryStatus : statuses[batch.status]}
-                      />
-                      {batch.is_historical && (
-                        <Text size="xs" c="dimmed">
-                          {c.batchDateStatus.replace("{status}", statuses[batch.status])}
-                        </Text>
-                      )}
-                    </Table.Td>
-                    {actions && (
+            <Table aria-label={c.stockBatches} aria-busy={result.isFetching || undefined}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th scope="col">{c.batchPeriod}</Table.Th>
+                  <Table.Th scope="col">{c.batchInitial}</Table.Th>
+                  <Table.Th scope="col">{c.batchBalance}</Table.Th>
+                  <Table.Th scope="col">{c.status}</Table.Th>
+                  {actions && <Table.Th scope="col">{c.moreActions}</Table.Th>}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {data?.data.map((batch) => {
+                  const editable =
+                    actions &&
+                    !batch.is_historical &&
+                    (batch.status === "active" || batch.status === "upcoming");
+                  return (
+                    <Table.Tr key={batch.id}>
                       <Table.Td>
-                        {editable && (
-                          <Group gap={4} wrap="wrap">
-                            <Button
-                              variant="subtle"
-                              disabled={locked || result.isFetching}
-                              aria-label={c.editBatch}
-                              onClick={() => onEdit(batch)}
-                            >
-                              {c.editBatchShort}
-                            </Button>
-                            <Button
-                              color="red"
-                              variant="subtle"
-                              disabled={locked || result.isFetching}
-                              aria-label={c.cancelBatch}
-                              onClick={() => onCancel(batch)}
-                            >
-                              {c.cancelBatchShort}
-                            </Button>
-                          </Group>
+                        {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
+                        {batch.id === reviewingBatchId && (
+                          <Text size="xs" c="dimmed">
+                            {c.batchPendingReview}
+                          </Text>
                         )}
                       </Table.Td>
-                    )}
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-      <ListState
-        embedded
-        loading={result.isPending || lastPage < filter.page}
-        loadingLabel={c.loadingSupply}
-        hasData={Boolean(data)}
-        isEmpty={data?.data.length === 0}
-        empty={
-          filter.scope === "history"
-            ? c.noHistoricalBatches
-            : filter.scope === "current"
-              ? c.noCurrentBatches
-              : c.batchEmpty
-        }
-        error={result.error ? requestErrorMessage(result.error, t) : ""}
-        onRetry={() => void result.refetch()}
-        retryLabel={t.common.retry}
-      />
-      {data && data.meta.total > data.meta.page_size && (
-        <Pagination
-          page={filter.page}
-          pageSize={data.meta.page_size}
-          total={data.meta.total}
-          disabled={result.isFetching || lastPage < filter.page}
-          onPage={(page) => onFilterChange({ ...filter, page })}
-          previousLabel={t.common.previous}
-          nextLabel={t.common.next}
-          summary={t.common.pagination}
-          resultCountLabel={t.common.resultCount}
-          resultCountSingularLabel={t.common.resultCountSingular}
-        />
-      )}
+                      <Table.Td>{num.format(batch.quantity_units)}</Table.Td>
+                      <Table.Td>
+                        {num.format(batch.remaining_quantity)}
+                        {batch.net_sold_quantity > 0 && (
+                          <Text size="xs" c="dimmed">
+                            {c.batchSold.replace("{count}", num.format(batch.net_sold_quantity))}
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td>
+                        <Status
+                          domain="farm-stock"
+                          status={batch.is_historical ? "inactive" : batch.status}
+                          label={
+                            batch.is_historical ? c.batchHistoryStatus : statuses[batch.status]
+                          }
+                        />
+                        {batch.is_historical && (
+                          <Text size="xs" c="dimmed">
+                            {c.batchDateStatus.replace("{status}", statuses[batch.status])}
+                          </Text>
+                        )}
+                      </Table.Td>
+                      {actions && (
+                        <Table.Td>
+                          {editable && (
+                            <Group gap={4} wrap="wrap">
+                              <Button
+                                variant="subtle"
+                                disabled={locked || result.isFetching}
+                                aria-label={c.editBatch}
+                                onClick={() => onEdit(batch)}
+                              >
+                                {c.editBatchShort}
+                              </Button>
+                              <Button
+                                color="red"
+                                variant="subtle"
+                                disabled={locked || result.isFetching}
+                                aria-label={c.cancelBatch}
+                                onClick={() => onCancel(batch)}
+                              >
+                                {c.cancelBatchShort}
+                              </Button>
+                            </Group>
+                          )}
+                        </Table.Td>
+                      )}
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+        <Box p={result.error || (data && result.isFetching) ? "md" : undefined}>
+          <ListState
+            embedded
+            tableColumns={actions ? 5 : 4}
+            loading={result.isFetching || lastPage < filter.page}
+            loadingLabel={c.loadingSupply}
+            hasData={Boolean(data)}
+            isEmpty={data?.data.length === 0}
+            empty={
+              filter.scope === "history"
+                ? c.noHistoricalBatches
+                : filter.scope === "current"
+                  ? c.noCurrentBatches
+                  : c.batchEmpty
+            }
+            error={result.error ? requestErrorMessage(result.error, t) : ""}
+            onRetry={() => void result.refetch()}
+            retryLabel={t.common.retry}
+          />
+        </Box>
+        {data && (
+          <>
+            <Divider />
+            <Box component="footer" px="md" py="sm">
+              <Pagination
+                page={filter.page}
+                pageSize={data.meta.page_size}
+                total={data.meta.total}
+                disabled={result.isFetching || lastPage < filter.page}
+                onPage={(page) => onFilterChange({ ...filter, page })}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+                resultCountLabel={t.common.resultCount}
+                resultCountSingularLabel={t.common.resultCountSingular}
+              />
+            </Box>
+          </>
+        )}
+      </DataListPaper>
     </Stack>
   );
 }

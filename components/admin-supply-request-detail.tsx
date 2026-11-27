@@ -21,6 +21,7 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { Status } from "@/components/nfv-controls";
 import { recordDetailDrawer } from "@/components/record-detail-drawer";
@@ -229,7 +230,7 @@ export function AdminSupplyRequestDetail({
       <ListState
         hasData={Boolean(item)}
         isEmpty={false}
-        loading={validId && !access.error && query.isFetching}
+        loading={validId && !access.error && query.isFetching && !item}
         loadingLabel={copy.loading}
         loadingPlaceholder={
           <Paper p="md">
@@ -275,14 +276,14 @@ export function AdminSupplyRequestDetail({
               </RecordDetailFields>
             </Stack>
           </Paper>
-          <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+          <DataListPaper component="section">
             <Box px="md" py="sm">
               <Text component="h2" fw={600} m={0}>
                 {copy.products}
               </Text>
             </Box>
             <SupplyRequestProducts items={item.items} locale={locale} />
-          </Paper>
+          </DataListPaper>
         </>
       )}
     </Stack>

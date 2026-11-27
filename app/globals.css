@@ -887,71 +887,9 @@
 .store-order-detail-page .table-secondary {
   font-size: var(--store-order-secondary-size);
 }
-.store-order-list-table strong,
 .store-allocation-line-heading strong,
 .store-order-deadline strong {
   font-weight: 600;
-}
-.store-order-list-table td:nth-child(3) {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.admin-list-table.store-order-list-table {
-  min-width: 720px;
-  table-layout: auto;
-}
-.store-order-list-table th:nth-child(1) {
-  width: 220px;
-}
-.store-order-list-table th:nth-child(2) {
-  min-width: 180px;
-}
-.store-order-list-table th:nth-child(3),
-.store-order-list-table td:nth-child(3) {
-  width: 1%;
-  white-space: nowrap;
-  text-align: right;
-}
-.store-order-list-table th:nth-child(4) {
-  width: 200px;
-}
-.store-order-list-table .store-order-reference {
-  display: block;
-  white-space: nowrap;
-  overflow-wrap: normal;
-  font-size: var(--store-order-text-size);
-  font-variant-numeric: tabular-nums;
-}
-.store-order-created time,
-.store-order-deadline-meta time,
-.store-order-contact {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.store-order-list-table th {
-  white-space: nowrap;
-}
-.store-order-list-table td {
-  vertical-align: top;
-}
-.store-order-list-table td:nth-child(3),
-.store-order-list-table td:nth-child(4) {
-  vertical-align: middle;
-}
-.store-order-list-table th + th,
-.store-order-list-table td + td {
-  border-left: 1px solid var(--border);
-}
-.store-order-directory .store-order-filters {
-  grid-column: 2;
-  grid-row: 1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.store-order-status-filters {
-  margin-bottom: 16px;
-}
-.store-order-directory .store-order-filters .nfv-field {
-  min-width: 0;
 }
 .store-order-detail-page {
   display: grid;
@@ -1231,9 +1169,6 @@
   .store-order-payment {
     order: -1;
   }
-  .store-order-filters {
-    grid-template-columns: 1fr;
-  }
   .store-order-detail-page:has(.store-order-actions) {
     padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px));
   }
@@ -1260,51 +1195,6 @@
   .store-allocation-line-heading {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .store-order-directory .store-order-list-table tr {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
-    column-gap: 8px;
-    padding-block: 4px;
-  }
-
-  .store-order-directory .store-order-list-table td,
-  .store-order-directory .store-order-list-table tbody tr:first-child td {
-    width: auto;
-    min-width: 0;
-    padding: 8px 12px;
-    border: 0;
-  }
-
-  .store-order-directory .store-order-list-table td:first-child,
-  .store-order-directory .store-order-list-table tbody tr:first-child td:first-child {
-    grid-column: 1 / -1;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .store-order-directory .store-order-list-table td:nth-child(3),
-  .store-order-directory .store-order-contact {
-    white-space: normal;
-  }
-
-  .store-order-directory .store-order-list-table td:nth-child(4) {
-    display: flex;
-    grid-column: 1 / -1;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 6px 12px;
-  }
-
-  .store-order-directory .store-order-list-table td:nth-child(4)::before {
-    margin-bottom: 0;
-  }
-
-  .store-order-directory .store-order-deadline-meta {
-    flex-basis: 100%;
-    margin-top: 0;
   }
 }
 .admin-list-clickable-row {
@@ -1851,30 +1741,6 @@
     padding-top: 0;
   }
 }
-.csa-list-primary-link,
-.admin-list-primary-link {
-  color: var(--text);
-  font-weight: 700;
-  text-decoration: none;
-}
-.csa-list-primary-link::after,
-.admin-list-primary-link::after {
-  margin-left: 5px;
-  color: var(--primary);
-  content: "→";
-}
-.csa-list-primary-link:hover,
-.admin-list-primary-link:hover {
-  color: var(--primary);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.csa-list-primary-link:focus-visible,
-.admin-list-primary-link:focus-visible {
-  border-radius: 3px;
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
 .package-lines {
   display: grid;
   gap: 10px;
@@ -2195,16 +2061,6 @@
   }
 }
 @media (max-width: 680px) {
-  .store-order-directory .store-order-filters {
-    grid-column: 1;
-    grid-row: 2;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .admin-list-table.store-order-list-table {
-    min-width: 0;
-  }
-
   .csa-list-wrap,
   .admin-list-wrap {
     --nfv-table-overflow-x: visible;
@@ -2395,7 +2251,4 @@
   height: 19px;
   display: block;
   flex: 0 0 auto;
-}
-.store-category-table .table-secondary {
-  display: block;
 }

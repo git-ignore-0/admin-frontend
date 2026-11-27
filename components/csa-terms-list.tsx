@@ -1,23 +1,14 @@
 "use client";
 
-import {
-  Anchor,
-  Box,
-  Button,
-  Divider,
-  Paper,
-  Select,
-  Skeleton,
-  Stack,
-  Table,
-  Text,
-} from "@mantine/core";
+import { Box, Button, Divider, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListResultSummary, ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
@@ -25,7 +16,7 @@ import { PageHeading } from "@/components/page-heading";
 import { openRecordFromRow } from "@/components/record-row-navigation";
 import { formatAdminDateTime } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import { parseCSATermsDocuments, type CSATermsStatus } from "@/lib/csa-terms";
 
 const statuses = ["draft", "published", "archived"] as const;
@@ -45,7 +36,7 @@ export function CSATermsList() {
   const error = list.error ? requestErrorMessage(list.error, t) : "";
   const initialLoading = list.isPending && !error;
   const query = search.toLowerCase();
-  const items = error
+  const items = isProtectedDataError(list.error)
     ? undefined
     : list.data?.filter(
         (item) =>
@@ -69,7 +60,6 @@ export function CSATermsList() {
       aria-label={copy.title}
       aria-hidden={initialLoading || undefined}
       tabIndex={initialLoading ? undefined : 0}
-      style={{ outlineOffset: -2 }}
     >
       <Table aria-label={copy.title} aria-busy={list.isFetching || undefined} withRowBorders>
         <Table.Thead>
@@ -96,16 +86,13 @@ export function CSATermsList() {
                 <Table.Tr key={item.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
                   <Table.Td>
                     <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
-                      <Anchor
+                      <DataListRecordLink
                         component={AdminNavigationLink}
                         href={`/csa-terms/${encodeURIComponent(item.id)}`}
                         data-record-link
-                        c="inherit"
-                        fw={600}
-                        underline="never"
                       >
                         {item.version}
-                      </Anchor>
+                      </DataListRecordLink>
                       {item.titles[locale] && (
                         <Text size="sm" c="dimmed">
                           {item.titles[locale]}
@@ -180,7 +167,12 @@ export function CSATermsList() {
             />
           ),
         }}
-        refresh={{ label: copy.refresh, onRefresh: refresh }}
+        refresh={{
+          label: copy.refresh,
+          onRefresh: refresh,
+          loading: list.isFetching && items !== undefined,
+          disabled: initialLoading,
+        }}
         primaryAction={
           <Button
             component={AdminNavigationLink}
@@ -191,7 +183,7 @@ export function CSATermsList() {
           </Button>
         }
       />
-      <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+      <DataListPaper component="section">
         {Boolean(items?.length) && table}
         <Box p={error ? "md" : undefined}>
           <ListState
@@ -211,7 +203,7 @@ export function CSATermsList() {
         {items && (
           <>
             <Divider />
-            <Box px="md" py="sm">
+            <Box component="footer" px="md" py="sm">
               <ListResultSummary
                 count={items.length}
                 label={t.common.resultCount}
@@ -220,7 +212,7 @@ export function CSATermsList() {
             </Box>
           </>
         )}
-      </Paper>
+      </DataListPaper>
     </Stack>
   );
 }

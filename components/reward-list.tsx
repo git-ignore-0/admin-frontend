@@ -9,6 +9,7 @@ import Link from "next/link";
 import { DragEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { requirePaginatedList } from "@/lib/api-response";
 import { ListState } from "@/components/list-state";
 import { ListResultSummary } from "@/components/list-toolbar";
@@ -214,13 +215,13 @@ export function RewardList() {
                             width={72}
                           />
                           <div>
-                            <Link
+                            <DataListRecordLink
+                              component={Link}
                               aria-label={`${t.rewards.edit}: ${name}`}
-                              className="admin-list-primary-link"
                               href={`/rewards/${reward.id}`}
                             >
                               {name}
-                            </Link>
+                            </DataListRecordLink>
                             <small className="table-secondary">
                               {translation?.short_description || t.rewards.noDescription}
                             </small>

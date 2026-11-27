@@ -2,7 +2,6 @@ import type { AdminLocale } from "@/lib/admin-i18n";
 
 const copy = {
   vi: {
-    search: "Tìm mã yêu cầu hoặc tên trang trại",
     refresh: "Làm mới yêu cầu nhập sản phẩm",
     cancel: "Hủy",
     farm: "Trang trại",
@@ -60,7 +59,6 @@ const copy = {
     },
   },
   en: {
-    search: "Find by request code or farm name",
     refresh: "Refresh supply requests",
     cancel: "Cancel",
     farm: "Farm",

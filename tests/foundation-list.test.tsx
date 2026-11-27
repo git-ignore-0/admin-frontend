@@ -1,14 +1,77 @@
-import { Button, Checkbox } from "@mantine/core";
+import { Button, Checkbox, Paper, Table } from "@mantine/core";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 
 afterEach(cleanup);
 
+it("scopes the Data List shell and keeps pagination outside the keyboard-accessible table", () => {
+  render(
+    <>
+      <Paper component="section" aria-label="Editor">
+        Editor
+      </Paper>
+      <DataListPaper component="section" aria-label="Results">
+        <Table.ScrollContainer
+          type="native"
+          minWidth={480}
+          role="region"
+          aria-label="Rows"
+          tabIndex={0}
+        >
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th scope="col">Sample</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+          </Table>
+        </Table.ScrollContainer>
+        <footer>1 result</footer>
+      </DataListPaper>
+    </>,
+  );
+  const list = screen.getByRole("region", { name: "Results" });
+  const scroll = within(list).getByRole("region", { name: "Rows" });
+  expect(list).toHaveAttribute("data-list-paper");
+  expect(screen.getByRole("region", { name: "Editor" })).not.toHaveAttribute("data-list-paper");
+  expect(scroll).toHaveAttribute("tabindex", "0");
+  expect(scroll.style.getPropertyValue("--table-min-width")).toBe(
+    "calc(30rem * var(--mantine-scale))",
+  );
+  expect(within(scroll).getByRole("columnheader", { name: "Sample" })).toBeVisible();
+  const footer = list.querySelector("footer");
+  expect(footer).toHaveTextContent("1 result");
+  expect(scroll).not.toContainElement(footer);
+});
+
 describe("shared list toolbar", () => {
+  it("enables responsive action wrapping only when a primary action is present", () => {
+    const props = {
+      search: {
+        label: "Search records",
+        value: "",
+        onChange: vi.fn(),
+        onSubmit: vi.fn(),
+      },
+      filterPopover: { label: "Filters", children: <Checkbox label="Active" /> },
+      refresh: { label: "Refresh records", onRefresh: vi.fn() },
+    };
+    const { rerender } = render(<ListToolbar {...props} />);
+    const row = screen.getByRole("search").parentElement;
+    const toolbar = row?.parentElement;
+    expect(toolbar).not.toHaveAttribute("data-has-primary-action");
+    expect(row).toContainElement(screen.getByRole("button", { name: "Filters" }));
+    expect(row).toContainElement(screen.getByRole("button", { name: "Refresh records" }));
+    rerender(<ListToolbar {...props} primaryAction={<Button>Create record</Button>} />);
+    expect(toolbar).toHaveAttribute("data-has-primary-action", "true");
+    expect(row).toContainElement(screen.getByRole("button", { name: "Create record" }));
+  });
+
   it("supports a primary action on its own", () => {
     const create = vi.fn();
     render(<ListToolbar primaryAction={<Button onClick={create}>Create record</Button>} />);
@@ -363,6 +426,12 @@ describe("shared list states", () => {
 
     const view = render(<ListState {...props} embedded />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading records");
+    view.rerender(<ListState {...props} tableColumns={4} embedded />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading records");
+    const skeleton = screen.getByRole("table", { hidden: true });
+    expect(skeleton).toHaveAttribute("aria-hidden", "true");
+    expect(within(skeleton).getAllByRole("columnheader", { hidden: true })).toHaveLength(4);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
     view.rerender(
       <>
         <p>Existing record</p>

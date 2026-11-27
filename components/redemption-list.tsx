@@ -8,6 +8,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
@@ -129,13 +130,13 @@ export function RedemptionList() {
               {items.map((item) => (
                 <Table.Tr role="row" key={item.id}>
                   <Table.Td role="cell" data-label={t.redemptions.member}>
-                    <Link
+                    <DataListRecordLink
+                      component={Link}
                       aria-label={`${t.redemptions.view}: ${item.user.name}`}
-                      className="admin-list-primary-link"
                       href={`/redemptions/${item.id}`}
                     >
                       {item.user.name}
-                    </Link>
+                    </DataListRecordLink>
                     <small className="table-secondary">{item.user.email}</small>
                     <small className="table-secondary">
                       {formatVietnamPhone(item.user.phone) || "—"}

@@ -278,7 +278,7 @@ function trackContainerSizes() {
   };
 }
 
-it("preserves focused draft when Form and Data List change widths independently", async () => {
+it("keeps the same table, map of columns, and focused input across the form breakpoint", async () => {
   const row = { ...product(1), available_quantity: 30 };
   const sizes = trackContainerSizes();
   function TestForm() {
@@ -309,7 +309,6 @@ it("preserves focused draft when Form and Data List change widths independently"
 
     // The sidebar can change available form width without dimension changes in the viewport.
     sizes.resize(formLayout, 912);
-    sizes.resize(dataList, 620);
     const table = await screen.findByRole("table");
     expect(
       within(table)
@@ -340,22 +339,22 @@ it("preserves focused draft when Form and Data List change widths independently"
     expect(wideInput.selectionStart).toBe(1);
     expect(wideInput.selectionEnd).toBe(2);
 
-    // The data list can become compact while the overall form still has two columns.
-    sizes.resize(dataList, 530);
-    const compactRow = await within(dataList).findByRole("listitem");
-    expect(within(dataList).queryByRole("table")).not.toBeInTheDocument();
-    expect(within(dataList).queryByRole("columnheader")).not.toBeInTheDocument();
-    expect(compactRow.children).toHaveLength(2);
-    expect(compactRow.children[0]).toHaveTextContent("Remaining: 30");
-    expect(compactRow.children[1]).toContainElement(within(compactRow).getByText("50 kg"));
-    const compactInput = within(compactRow).getByRole("textbox", { name: inputLabel });
-    expect(compactInput.nextElementSibling).toBeNull();
-    expect(compactInput).toHaveFocus();
-    expect(compactInput).toHaveValue("100");
-    expect(screen.getAllByRole("textbox", { name: inputLabel })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Remove Product 1" })).toBeVisible();
+    const scroll = within(dataList).getByRole("region", { name: "Product" });
+    expect(dataList).toHaveAttribute("data-list-paper");
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(scroll).toContainElement(table);
+    expect(scroll.style.getPropertyValue("--table-min-width")).toContain("33.75rem");
+    expect(scroll.style.getPropertyValue("--table-overflow")).toBe("auto");
 
-    sizes.resize(formLayout, 732);
+    sizes.resize(formLayout, 330);
+    expect(within(dataList).getByRole("table")).toBe(table);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
+    expect(within(table).getByRole("cell", { name: "30" })).toBeVisible();
+    expect(within(table).getByRole("cell", { name: "50 kg" })).toBeVisible();
+    expect(screen.getAllByRole("textbox", { name: inputLabel })).toEqual([input]);
+    expect(input).toHaveFocus();
+    expect(input.selectionStart).toBe(1);
+    expect(input.selectionEnd).toBe(2);
     const expand = await screen.findByRole("button", { name: "View details" });
     expect(expand.parentElement).toContainElement(within(summaryRegion).getByRole("heading"));
     expect(within(summaryRegion).getByText("1 product").parentElement).toContainElement(
@@ -363,8 +362,8 @@ it("preserves focused draft when Form and Data List change widths independently"
     );
     expect(cancel.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove Product 1" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: inputLabel })).toBe(compactInput);
-    expect(compactInput).toHaveValue("100");
+    expect(screen.getByRole("textbox", { name: inputLabel })).toBe(input);
+    expect(input).toHaveValue("100");
     fireEvent.click(screen.getByRole("button", { name: "View details" }));
     expect(screen.getByRole("button", { name: "Hide details" })).toHaveAttribute(
       "aria-expanded",
@@ -394,7 +393,8 @@ it("places the supply dates, search toolbar and Data List in separate Foundation
   const dates = screen.getByRole("region", { name: "Supply period" });
   const list = screen.getByRole("region", { name: "Farm products" });
   const search = screen.getByRole("searchbox", { name: "Search products" });
-  const products = screen.getByRole("list", { name: "Farm products" });
+  const products = within(list).getByRole("table", { name: "Farm products" });
+  const scroll = within(list).getByRole("region", { name: "Product" });
   const next = screen.getByRole("button", { name: "Next" });
   expect(dates).toContainElement(screen.getByLabelText("Start date"));
   expect(dates).not.toContainElement(search);
@@ -402,6 +402,7 @@ it("places the supply dates, search toolbar and Data List in separate Foundation
   expect(list).toContainElement(products);
   expect(list).toContainElement(next);
   expect(next.closest("footer")).not.toBeNull();
+  expect(scroll).not.toContainElement(next);
   expect(list.querySelector("[role=separator]")).not.toBeNull();
 });
 
@@ -421,6 +422,8 @@ it("loads new results in the Data List and refreshes existing results through th
   const toolbar = screen.getByRole("search").closest("[data-grow-search]");
   expect(toolbar).toContainElement(refresh);
   expect(within(list).getByRole("status")).toHaveTextContent("Loading supply…");
+  expect(list.querySelector("table[aria-hidden=true]")).toBeTruthy();
+  expect(within(list).queryByRole("table")).not.toBeInTheDocument();
   expect(refresh).toBeDisabled();
   expect(refresh).not.toHaveAttribute("data-loading");
 
@@ -428,7 +431,7 @@ it("loads new results in the Data List and refreshes existing results through th
   expect(refresh).toHaveAttribute("data-loading");
   expect(within(list).queryByRole("status")).not.toBeInTheDocument();
   expect(within(list).getByText("Product 1")).toBeVisible();
-  expect(within(list).getByRole("list")).toHaveAttribute("aria-busy", "true");
+  expect(within(list).getByRole("table")).toHaveAttribute("aria-busy", "true");
 
   rerender(<FarmSupplyForm {...props} search="missing" products={undefined} loading />);
   expect(within(list).getByRole("status")).toHaveTextContent("Loading supply…");
@@ -675,7 +678,10 @@ it("renders a Farmer projection without stock at either width and keeps the orig
     render(<TestFarmer />);
     expect(screen.queryByText(/Remaining/)).not.toBeInTheDocument();
     const dataList = screen.getByRole("region", { name: "Farm products" });
-    expect(within(dataList).getByText("GREEN-MIX · 500 g")).toBeVisible();
+    const narrowTable = within(dataList).getByRole("table");
+    expect(within(narrowTable).getByText("GREEN-MIX")).toBeVisible();
+    expect(within(narrowTable).getByText("500 g")).toBeVisible();
+    expect(within(narrowTable).getAllByRole("columnheader")).toHaveLength(4);
     const input = screen.getByRole("textbox", { name: "Supply quantity — Leafy greens" });
     fireEvent.change(input, { target: { value: "100" } });
     fireEvent.change(input, { target: { value: "1e3" } });
@@ -691,8 +697,9 @@ it("renders a Farmer projection without stock at either width and keeps the orig
       end_date: "2099-12-06",
       items: [{ product: first, quantity_units: 120 }],
     });
-    sizes.resize(dataList, 620);
+    sizes.resize(sizes.parentOf(dataList)!, 960);
     const table = await within(dataList).findByRole("table");
+    expect(table).toBe(narrowTable);
     expect(
       within(table)
         .getAllByRole("columnheader")
@@ -701,6 +708,10 @@ it("renders a Farmer projection without stock at either width and keeps the orig
     const [productCell, saleUnitCell, quantityCell, convertedCell] =
       within(table).getAllByRole("cell");
     expect(productCell).toHaveTextContent("GREEN-MIX");
+    expect(within(productCell).getByText("Leafy greens")).toHaveStyle({
+      color: "var(--primary)",
+    });
+    expect(within(productCell).queryByRole("link")).not.toBeInTheDocument();
     expect(productCell).not.toHaveTextContent("500 g");
     expect(saleUnitCell).toHaveTextContent(/^500 g$/);
     expect(within(quantityCell).getByRole("textbox")).toHaveValue("120");

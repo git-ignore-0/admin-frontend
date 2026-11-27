@@ -65,11 +65,47 @@ describe("store category administration", () => {
     render(<StoreCategoryList />);
     expect(await screen.findByRole("link", { name: "leaf" })).toBeVisible();
     expect(screen.getByText("Cấp 3")).toBeVisible();
+    const table = screen.getByRole("table", { name: "Danh mục" });
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
+    const scroller = screen.getByRole("region", { name: "Danh mục" });
+    expect(scroller).toHaveAttribute("tabindex", "0");
+    expect(scroller).toContainElement(table);
+    expect(scroller.closest("[data-list-paper]")?.querySelector("footer")).toBeVisible();
+    expect(scroller.querySelector("footer")).toBeNull();
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "root",
       "child",
       "leaf",
     ]);
+  });
+
+  it("loads the applied status without showing rows from the previous filter", async () => {
+    let resolve!: (rows: []) => void;
+    const pending = new Promise<[]>((done) => {
+      resolve = done;
+    });
+    mocks.list
+      .mockResolvedValueOnce([category("active-only", null, 1)])
+      .mockReturnValueOnce(pending);
+
+    render(<StoreCategoryList />);
+    expect(await screen.findByRole("link", { name: "active-only" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
+    selectOption(screen.getByRole("combobox", { name: "Trạng thái" }), "false");
+    expect(screen.queryByRole("link", { name: "active-only" })).not.toBeInTheDocument();
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Đang tải dữ liệu");
+    expect(status.closest("[data-list-paper]")?.querySelector("table[aria-hidden]")).toBeTruthy();
+    expect(mocks.list.mock.calls.at(-1)?.[0]).toEqual({ search: "", is_active: false });
+
+    resolve([]);
+    expect(await screen.findByText("Không có danh mục khớp bộ lọc.")).toBeVisible();
+    const refresh = screen.getByRole("button", { name: "Làm mới danh sách" });
+    mocks.list.mockResolvedValueOnce([category("refreshed", null, 1)]);
+    fireEvent.click(refresh);
+    expect(await screen.findByRole("link", { name: "refreshed" })).toBeVisible();
+    expect(mocks.list).toHaveBeenCalledTimes(3);
+    expect(mocks.list.mock.calls.at(-1)?.[0]).toEqual({ search: "", is_active: false });
   });
 
   it("excludes descendants as parents and saves an incomplete inactive draft", async () => {

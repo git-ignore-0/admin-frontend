@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Anchor,
   Badge,
   Box,
   Button,
@@ -18,6 +17,7 @@ import { useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -179,16 +179,13 @@ function CatalogList<T extends CatalogItem>({ resource, validate, renderRow }: P
                   <Table.Tr key={item.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
                     <Table.Td>
                       <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
-                        <Anchor
+                        <DataListRecordLink
                           component={AdminNavigationLink}
                           href={catalogHref(resource, context, item.id)}
-                          c="inherit"
-                          fw={600}
-                          underline="never"
                           data-record-link
                         >
                           {translation?.name || item.name}
-                        </Anchor>
+                        </DataListRecordLink>
                         {!hasCompleteCatalogTranslations(item.translations) && (
                           <Badge color="warning" w="fit-content">
                             {copy.translationNeedsReview}

@@ -277,11 +277,11 @@ describe("store product filters", () => {
     renderList();
     expect(await screen.findByText("Protected product")).toBeVisible();
     expect(within(screen.getByRole("table")).getByText("Tên danh mục")).toBeVisible();
-    fireEvent.submit(screen.getByRole("search"));
+    const refresh = screen.getByRole("button", { name: "Làm mới danh sách" });
+    fireEvent.click(refresh);
     expect(screen.getByText("Protected product")).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      adminDictionaries.vi.storeCatalog.refreshing,
-    );
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     await act(async () =>
       pending.reject(
         Object.assign(new Error(status === 403 ? "forbidden" : "session_expired"), { status }),

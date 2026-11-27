@@ -1,13 +1,11 @@
 "use client";
 
 import {
-  Anchor,
   Box,
   Button,
   Divider,
   Group,
   Image,
-  Paper,
   Select,
   Stack,
   Table,
@@ -22,6 +20,8 @@ import { useEffect, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
@@ -72,6 +72,7 @@ export function FarmList() {
   const items = !cause ? (result.data?.data ?? null) : null;
   const meta = !cause ? result.data?.meta : undefined;
   const loading = !accessError && (result.isPending || result.isFetching);
+  const initialLoading = loading && items === null;
   const error = cause ? requestErrorMessage(cause, t) : "";
   const reload = () => {
     if (accessError) retryFarmAccess(client);
@@ -107,6 +108,12 @@ export function FarmList() {
       <PageHeading title={t.common.farmList} visuallyHiddenTitle />
       <ListToolbar
         busy={loading}
+        refresh={{
+          label: t.common.refreshList,
+          onRefresh: reload,
+          loading: loading && items !== null,
+          disabled: initialLoading,
+        }}
         primaryAction={
           <Button component={AdminNavigationLink} href={farmHref(params, { mode: "new" })}>
             {c.new}
@@ -158,7 +165,7 @@ export function FarmList() {
           ),
         }}
       />
-      <Paper miw={0}>
+      <DataListPaper>
         {!!items?.length && (
           <Table.ScrollContainer
             type="native"
@@ -211,13 +218,12 @@ export function FarmList() {
                             />
                           )}
                           <Stack miw={0} gap={4} style={{ overflowWrap: "anywhere" }}>
-                            <Anchor
+                            <DataListRecordLink
                               component={AdminNavigationLink}
-                              fw={600}
                               href={farmHref(params, { id: farm.id, tab: "products" })}
                             >
                               {locale === "vi" ? farm.name_vi : farm.name_en}
-                            </Anchor>
+                            </DataListRecordLink>
                             <Text size="sm" c="dimmed">
                               {locale === "vi" ? farm.location_vi : farm.location_en}
                             </Text>
@@ -256,14 +262,15 @@ export function FarmList() {
             </Table>
           </Table.ScrollContainer>
         )}
-        <Box p={error || (loading && items !== null) ? "md" : undefined}>
+        <Box p={error && !loading ? "md" : undefined}>
           <ListState
             embedded
+            tableColumns={3}
             empty={c.empty}
-            error={error}
+            error={loading ? "" : error}
             hasData={items !== null}
             isEmpty={items?.length === 0}
-            loading={loading}
+            loading={initialLoading}
             loadingLabel={c.loading}
             noResults={search || status ? c.noMatchingFarms : undefined}
             onRetry={reload}
@@ -273,7 +280,7 @@ export function FarmList() {
         {meta && (
           <>
             <Divider />
-            <Box px="md" py="sm">
+            <Box component="footer" px="md" py="sm">
               <Pagination
                 page={meta.page}
                 total={meta.total}
@@ -289,7 +296,7 @@ export function FarmList() {
             </Box>
           </>
         )}
-      </Paper>
+      </DataListPaper>
     </Stack>
   );
 }

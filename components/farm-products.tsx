@@ -1,6 +1,6 @@
 "use client";
 
-import { Anchor, Button, Group, Paper, Select, Stack, Table, Text } from "@mantine/core";
+import { Anchor, Box, Button, Divider, Group, Select, Stack, Table, Text } from "@mantine/core";
 import {
   useIsMutating,
   useMutation,
@@ -15,6 +15,8 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { FarmBatchDialog } from "@/components/farm-batch-dialog";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
@@ -149,7 +151,8 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
         refresh={{
           label: c.refreshSupply,
           onRefresh: () => void query.refetch(),
-          loading: query.isFetching,
+          loading: query.isFetching && !query.isPending,
+          disabled: query.isPending,
         }}
         primaryAction={
           <Group gap="sm">
@@ -170,7 +173,7 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
           </Group>
         }
       />
-      <Paper miw={0}>
+      <DataListPaper>
         {Boolean(data?.data.length) && (
           <Table.ScrollContainer
             type="native"
@@ -193,13 +196,12 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
                   <Table.Tr key={row.id}>
                     <Table.Td>
                       <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
-                        <Anchor
+                        <DataListRecordLink
                           component={AdminNavigationLink}
                           href={farmHref(params, { id: farm.id, productId: row.product_id })}
-                          fw={600}
                         >
                           {locale === "vi" ? row.name_vi : row.name_en}
-                        </Anchor>
+                        </DataListRecordLink>
                         <Text c="dimmed" size="sm">
                           {row.sku}
                         </Text>
@@ -234,33 +236,41 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
             </Table>
           </Table.ScrollContainer>
         )}
-        <ListState
-          embedded
-          empty={status === "removed" ? c.noRemovedProducts : c.linkedEmpty}
-          noResults={search ? c.noLinkedMatch : undefined}
-          loading={query.isPending || Boolean(lastHref)}
-          loadingLabel={c.loadingSupply}
-          hasData={Boolean(data)}
-          isEmpty={data?.data.length === 0}
-          error={query.error ? requestErrorMessage(query.error, t) : ""}
-          onRetry={() => void query.refetch()}
-          retryLabel={t.common.retry}
-        />
-        {data && data.meta.total > data.meta.page_size && (
-          <Pagination
-            page={page}
-            pageSize={data.meta.page_size}
-            total={data.meta.total}
-            disabled={query.isFetching || Boolean(lastHref)}
-            onPage={(next) => change({ page: next })}
-            previousLabel={t.common.previous}
-            nextLabel={t.common.next}
-            summary={t.common.pagination}
-            resultCountLabel={t.common.resultCount}
-            resultCountSingularLabel={t.common.resultCountSingular}
+        <Box p={query.error ? "md" : undefined}>
+          <ListState
+            embedded
+            tableColumns={status === "supplying" ? 3 : 4}
+            empty={status === "removed" ? c.noRemovedProducts : c.linkedEmpty}
+            noResults={search ? c.noLinkedMatch : undefined}
+            loading={query.isPending || Boolean(lastHref)}
+            loadingLabel={c.loadingSupply}
+            hasData={Boolean(data)}
+            isEmpty={data?.data.length === 0}
+            error={query.error ? requestErrorMessage(query.error, t) : ""}
+            onRetry={() => void query.refetch()}
+            retryLabel={t.common.retry}
           />
+        </Box>
+        {data && (
+          <>
+            <Divider />
+            <Box component="footer" px="md" py="sm">
+              <Pagination
+                page={page}
+                pageSize={data.meta.page_size}
+                total={data.meta.total}
+                disabled={query.isFetching || Boolean(lastHref)}
+                onPage={(next) => change({ page: next })}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+                resultCountLabel={t.common.resultCount}
+                resultCountSingularLabel={t.common.resultCountSingular}
+              />
+            </Box>
+          </>
         )}
-      </Paper>
+      </DataListPaper>
       {(addOpen || savedAttempt) && (
         <AddFarmProduct
           farm={farm}

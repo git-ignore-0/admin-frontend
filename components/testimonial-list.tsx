@@ -9,6 +9,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
@@ -174,13 +175,13 @@ export function TestimonialList() {
                           {item.display_name.slice(0, 1).toUpperCase()}
                         </span>
                       )}
-                      <Link
+                      <DataListRecordLink
+                        component={Link}
                         aria-label={`${t.testimonials.view}: ${item.display_name}`}
-                        className="admin-list-primary-link"
                         href={`/testimonials/${item.id}`}
                       >
                         {item.display_name}
-                      </Link>
+                      </DataListRecordLink>
                     </div>
                   </Table.Td>
                   <Table.Td role="cell" data-label={t.testimonials.typeLabel}>

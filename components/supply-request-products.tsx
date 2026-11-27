@@ -16,8 +16,14 @@ export function SupplyRequestProducts({
   const c = farmerSupplyCopy[locale];
   const number = new Intl.NumberFormat(locale);
   return (
-    <Table.ScrollContainer minWidth={410}>
-      <Table>
+    <Table.ScrollContainer
+      type="native"
+      minWidth={480}
+      role="region"
+      aria-label={c.products}
+      tabIndex={0}
+    >
+      <Table aria-label={c.products} withRowBorders>
         <Table.Thead>
           <Table.Tr>
             <Table.Th scope="col">{c.products}</Table.Th>

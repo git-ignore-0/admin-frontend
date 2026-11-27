@@ -19,9 +19,10 @@ import {
 } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import { IconChevronDown, IconChevronUp, IconX } from "@tabler/icons-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { AdminDateInput } from "@/components/admin-date-input";
+import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { FormField } from "@/components/nfv-controls";
@@ -162,12 +163,8 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
   const formId = `${id}-supply`;
   const [searchText, setSearchText] = useState(search);
   const [summaryOpen, setSummaryOpen] = useState(false);
-  const focusedQuantity = useRef<HTMLInputElement>(null);
   const { ref: layoutRef, width: contentWidth } = useElementSize();
-  const { ref: dataListRef, width: listWidth } = useElementSize();
   const desktop = contentWidth >= 880;
-  // The table gets less room than the form when the summary sits alongside it.
-  const compact = listWidth < 544; // 34 rem at the Foundation root size.
   const showRemaining = Boolean(remaining);
   const c = labels[locale];
   const f = farmsCopy(locale);
@@ -200,19 +197,6 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
   };
 
   useEffect(() => setSearchText(search), [search]);
-
-  useLayoutEffect(() => {
-    const previous = focusedQuantity.current;
-    if (!previous || previous.isConnected || document.activeElement !== document.body) return;
-    focusedQuantity.current = null;
-    // Only restore the same field across a Table/List change. Search or pagination
-    // can independently remove that product from the screen.
-    const next = document.getElementById(previous.id);
-    if (next instanceof HTMLInputElement && !next.disabled) {
-      next.focus({ preventScroll: true });
-      next.setSelectionRange(previous.selectionStart, previous.selectionEnd);
-    }
-  }, [compact]);
 
   function clearSearch() {
     setSearchText("");
@@ -277,18 +261,13 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
         const total = entry?.total ?? "—";
         const unit = saleUnit(product);
         const productInfo = (
-          <Stack gap={4} miw={0} flex={compact ? 1 : undefined} className={styles.wrap}>
-            <Text size="md" fw={600}>
+          <Stack gap={4} miw={0} className={styles.wrap}>
+            <Text size="md" fw={600} c="var(--primary)">
               {name}
             </Text>
             <Text size="sm" c="dimmed">
-              {compact || !showSaleUnitColumn ? `${product.sku} · ${unit}` : product.sku}
+              {!showSaleUnitColumn ? `${product.sku} · ${unit}` : product.sku}
             </Text>
-            {compact && available !== undefined && (
-              <Text size="sm" c="dimmed">
-                {c.available}: {available}
-              </Text>
-            )}
           </Stack>
         );
         const quantityInput = (
@@ -311,12 +290,6 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
               } else {
                 changeQuantity(row, value);
               }
-            }}
-            onFocus={(event) => {
-              focusedQuantity.current = event.currentTarget;
-            }}
-            onBlur={(event) => {
-              if (event.currentTarget.isConnected) focusedQuantity.current = null;
             }}
             onKeyDown={(event) => {
               if (
@@ -354,32 +327,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
           />
         );
 
-        return compact ? (
-          <Group
-            component="li"
-            key={key}
-            align="flex-start"
-            justify="space-between"
-            wrap="nowrap"
-            gap="sm"
-            px="md"
-            py="sm"
-            className={styles.compactRow}
-          >
-            {productInfo}
-            <Stack
-              w={showSaleUnitColumn ? "6rem" : "clamp(7rem, 35%, 10rem)"}
-              maw="50%"
-              miw={0}
-              gap={4}
-            >
-              {quantityInput}
-              <Text size="sm" ta="right" className={styles.wrap}>
-                {total}
-              </Text>
-            </Stack>
-          </Group>
-        ) : (
+        return (
           <Table.Tr key={key}>
             <Table.Td>{productInfo}</Table.Td>
             {showSaleUnitColumn && <Table.Td>{unit}</Table.Td>}
@@ -481,71 +429,59 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                 onClear: clearSearch,
               }}
             />
-            <Paper
-              ref={dataListRef}
-              component="section"
-              aria-label={f.products}
-              miw={0}
-              className={styles.dataList}
-            >
-              {productRows &&
-                (compact ? (
-                  <Stack
-                    component="ul"
-                    gap={0}
-                    p={0}
-                    m={0}
+            <DataListPaper component="section" aria-label={f.products}>
+              {productRows && (
+                <Table.ScrollContainer
+                  type="native"
+                  minWidth={showSaleUnitColumn ? 560 : showRemaining ? 540 : 460}
+                  role="region"
+                  aria-label={f.productColumn}
+                  tabIndex={0}
+                >
+                  <Table
                     aria-label={f.products}
                     aria-busy={refreshing || undefined}
-                    className={styles.compactList}
+                    classNames={{ td: styles.wrap, th: styles.wrap }}
+                    layout="fixed"
+                    withRowBorders
                   >
-                    {productRows}
-                  </Stack>
-                ) : (
-                  <Table.ScrollContainer type="native" minWidth={0}>
-                    <Table
-                      aria-label={f.products}
-                      aria-busy={refreshing || undefined}
-                      classNames={{ td: styles.wrap, th: styles.wrap }}
-                      layout="fixed"
-                      withRowBorders
-                    >
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th scope="col">{f.productColumn}</Table.Th>
-                          {showSaleUnitColumn && (
-                            <Table.Th scope="col" w="clamp(5rem, 16%, 8rem)">
-                              {c.saleUnit}
-                            </Table.Th>
-                          )}
-                          {showRemaining && (
-                            <Table.Th scope="col" ta="right" w="5.5rem">
-                              {c.available}
-                            </Table.Th>
-                          )}
-                          <Table.Th
-                            scope="col"
-                            w={showSaleUnitColumn ? "10rem" : "9rem"}
-                            className={showSaleUnitColumn ? styles.quantityHeading : undefined}
-                          >
-                            {quantityTitle}
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th scope="col">{f.productColumn}</Table.Th>
+                        {showSaleUnitColumn && (
+                          <Table.Th scope="col" w="clamp(5rem, 16%, 8rem)">
+                            {c.saleUnit}
                           </Table.Th>
-                          <Table.Th
-                            scope="col"
-                            ta="right"
-                            w={showSaleUnitColumn ? "clamp(6.5rem, 18%, 9rem)" : "7rem"}
-                          >
-                            {c.converted}
+                        )}
+                        {showRemaining && (
+                          <Table.Th scope="col" ta="right" w="5.5rem">
+                            {c.available}
                           </Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>{productRows}</Table.Tbody>
-                    </Table>
-                  </Table.ScrollContainer>
-                ))}
+                        )}
+                        <Table.Th
+                          scope="col"
+                          w={showSaleUnitColumn ? "10rem" : "9rem"}
+                          className={showSaleUnitColumn ? styles.quantityHeading : undefined}
+                        >
+                          {quantityTitle}
+                        </Table.Th>
+                        <Table.Th
+                          scope="col"
+                          ta="right"
+                          w={showSaleUnitColumn ? "clamp(6.5rem, 18%, 9rem)" : "7rem"}
+                        >
+                          {c.converted}
+                        </Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>{productRows}</Table.Tbody>
+                  </Table>
+                </Table.ScrollContainer>
+              )}
               <Box p={error && !refreshing ? "md" : undefined}>
                 <ListState
                   embedded
+                  tableColumns={3 + Number(showSaleUnitColumn) + Number(showRemaining)}
                   empty={emptyLabel ?? c.empty}
                   noResults={search ? (noResultsLabel ?? c.noResults) : undefined}
                   loading={loading && !products}
@@ -583,7 +519,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                   </Box>
                 </>
               )}
-            </Paper>
+            </DataListPaper>
           </Stack>
         </Grid.Col>
 
@@ -676,7 +612,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                         gap="sm"
                         m={0}
                         p={0}
-                        className={styles.compactList}
+                        className={styles.summaryList}
                       >
                         {summary.items.map(({ product, quantity, quantityError: code, total }) => {
                           const name = farmSupplyProductName(product, locale);

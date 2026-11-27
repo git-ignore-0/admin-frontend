@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
-import { Anchor, Paper, Stack, Table, Text } from "@mantine/core";
+import { Paper, Stack, Table, Text } from "@mantine/core";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
@@ -115,15 +116,14 @@ export function PointsManager() {
                   <Table.Tr key={user.id}>
                     <Table.Td>
                       <Stack gap={3}>
-                        <Anchor
+                        <DataListRecordLink
                           component={Link}
                           aria-label={`${detailLabel}: ${user.name}`}
                           href={`/points/${user.id}`}
-                          fw={600}
                           size="sm"
                         >
                           {user.name}
-                        </Anchor>
+                        </DataListRecordLink>
                         {user.email && (
                           <Text size="xs" c="dimmed">
                             {user.email}

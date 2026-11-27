@@ -1,17 +1,6 @@
 "use client";
 
-import {
-  Anchor,
-  Box,
-  Button,
-  Divider,
-  Paper,
-  Select,
-  Skeleton,
-  Stack,
-  Table,
-  Text,
-} from "@mantine/core";
+import { Box, Button, Divider, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { IconPlus } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +9,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
@@ -167,7 +158,6 @@ export function CSACustomerList() {
       aria-label={copy.title}
       aria-hidden={initialLoading || undefined}
       tabIndex={initialLoading ? undefined : 0}
-      style={{ outlineOffset: -2 }}
     >
       <Table aria-label={copy.title} aria-busy={loading || undefined} withRowBorders>
         <Table.Thead>
@@ -204,13 +194,11 @@ export function CSACustomerList() {
                   >
                     <Table.Td>
                       <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
-                        <Anchor
+                        <DataListRecordLink
                           component={AdminNavigationLink}
                           aria-current={selected ? "page" : undefined}
                           aria-label={`${copy.view}: ${item.name}`}
-                          c="inherit"
                           data-record-link
-                          fw={600}
                           href={csaCustomerHref(context, item.id)}
                           onNavigate={() => {
                             const element = findCustomerLink(root.current, item.id);
@@ -219,10 +207,9 @@ export function CSACustomerList() {
                           }}
                           data-csa-customer-id={item.id}
                           scroll={false}
-                          underline="never"
                         >
                           {item.name}
-                        </Anchor>
+                        </DataListRecordLink>
                         <Text size="sm" c="dimmed">
                           {formatVietnamPhone(item.phone) || "—"}
                         </Text>
@@ -330,7 +317,12 @@ export function CSACustomerList() {
             </>
           ),
         }}
-        refresh={{ label: copy.refresh, onRefresh: refresh }}
+        refresh={{
+          label: copy.refresh,
+          onRefresh: refresh,
+          loading: loading && items !== undefined,
+          disabled: initialLoading,
+        }}
         primaryAction={
           // A document navigation lets the static creation route bypass the [id] interception.
           <Button
@@ -342,7 +334,7 @@ export function CSACustomerList() {
           </Button>
         }
       />
-      <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+      <DataListPaper component="section">
         {Boolean(items?.length) && table}
         <Box p={list.error ? "md" : undefined}>
           <ListState
@@ -362,7 +354,7 @@ export function CSACustomerList() {
         {meta && (
           <>
             <Divider />
-            <Box px="md" py="sm">
+            <Box component="footer" px="md" py="sm">
               <Pagination
                 disabled={loading}
                 nextLabel={t.common.next}
@@ -378,7 +370,7 @@ export function CSACustomerList() {
             </Box>
           </>
         )}
-      </Paper>
+      </DataListPaper>
     </Stack>
   );
 }

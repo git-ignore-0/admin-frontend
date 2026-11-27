@@ -77,6 +77,14 @@ it("shows a single directory with normal farm links for obsolete Tracker list co
 
   expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   const farmLink = await screen.findByRole("link", { name: "Green Valley" });
+  const table = screen.getByRole("table");
+  const scroller = table.closest("[role=region]");
+  const list = table.closest("[data-list-paper]");
+  const footer = list?.querySelector("footer") ?? null;
+  expect(within(table).getAllByRole("columnheader")).toHaveLength(3);
+  expect(scroller).toHaveAttribute("tabindex", "0");
+  expect(footer).toHaveTextContent("51 results");
+  expect(scroller).not.toContainElement(footer);
   expect(farmLink).toHaveAttribute("href", `/farms/${farm.id}?search=green&is_active=true&page=3`);
   expect(screen.getByRole("link", { name: "Add farm" })).toHaveAttribute(
     "href",
@@ -203,9 +211,9 @@ it("hides the cached Farm rows after a protected refresh fails", async () => {
     .mockResolvedValueOnce(results)
     .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }))
     .mockResolvedValueOnce(results);
-  renderFarmList("en", <RereadFarmCounts />);
+  renderFarmList("en");
   expect(await screen.findByRole("link", { name: farm.name_en })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Revalidate counts" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh list" }));
   const denied = await screen.findByRole("alert");
   expect(screen.queryByRole("link", { name: farm.name_en })).toBeNull();
   fireEvent.click(within(denied).getByRole("button", { name: "Try again" }));

@@ -11,7 +11,6 @@ import type {
 const copy = {
   vi: {
     title: "Đơn hàng Store",
-    description: "Theo dõi thanh toán, phân bổ nguồn Farm và xử lý giao hàng Store.",
     back: "Danh sách đơn hàng",
     search: "Tìm đơn hàng",
     searchPlaceholder: "Mã đơn, tên hoặc số điện thoại",
@@ -197,7 +196,6 @@ const copy = {
   },
   en: {
     title: "Store orders",
-    description: "Review payments, allocate Farm inventory, and manage Store delivery.",
     back: "Store orders",
     search: "Search orders",
     searchPlaceholder: "Order code, recipient, or phone",

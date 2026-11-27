@@ -165,6 +165,8 @@ it("preserves the list context in desktop Drawer, keeps snapshot details and res
   renderPage(<AdminSupplyRequestList />);
 
   const link = await screen.findByRole("link", { name: entry.code });
+  expect(link).toHaveStyle({ color: "var(--primary)" });
+  expect(link).toHaveAttribute("data-underline", "never");
   expect(link).toHaveAttribute("href", `${detailsPath}?search=far&status=pending&page=2`);
   expect(adminSupplyRequest).not.toHaveBeenCalled();
   link.focus();
@@ -212,23 +214,35 @@ it("uses the real mobile route and a filtered parent breadcrumb for the shared d
   expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 });
 
-it("keeps the current rows on refresh and submits searches at page one", async () => {
+it("keeps the current rows on refresh and lets filters clear a search from an older link", async () => {
   params = new URLSearchParams("search=far&page=2");
   window.history.replaceState(null, "", `${listPath}?search=far&page=2`);
+  vi.mocked(listFarms).mockResolvedValue({ data: [], meta: { page: 1, page_size: 20, total: 0 } });
   const refresh = deferred<ReturnType<typeof queryResponse>>();
   vi.mocked(adminSupplyRequests)
     .mockResolvedValueOnce(queryResponse([entry], 2))
     .mockReturnValueOnce(refresh.promise);
   renderPage(<AdminSupplyRequestList />);
   expect(await screen.findByRole("link", { name: entry.code })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh supply requests" }));
+  const refreshButton = screen.getByRole("button", { name: "Refresh supply requests" });
+  const table = screen.getByRole("table");
+  const list = table.closest("[data-list-paper]");
+  const navigation = screen.getByRole("navigation", { name: "Page 2/4" });
+  const scroll = table.closest("[role=region]");
+  expect(list).toContainElement(navigation);
+  expect(scroll).toHaveAttribute("tabindex", "0");
+  expect(scroll).not.toContainElement(navigation);
+  fireEvent.click(refreshButton);
+  await waitFor(() => expect(refreshButton).toHaveAttribute("aria-busy", "true"));
+  expect(within(navigation).getByRole("button", { name: "Next" })).toBeDisabled();
+  expect(list?.querySelector("[role=status]")).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: entry.code })).toBeVisible();
   await act(async () => refresh.resolve(queryResponse([entry], 2)));
-  const search = screen.getByRole("searchbox", { name: "Find by request code or farm name" });
-  fireEvent.change(search, { target: { value: "other" } });
+  expect(screen.queryByRole("search")).not.toBeInTheDocument();
   expect(adminSupplyRequests).toHaveBeenCalledTimes(2);
-  fireEvent.submit(search.closest("form")!);
-  expect(window.location.search).toBe("?search=other");
+  fireEvent.click(screen.getByRole("button", { name: "Filter (1)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(window.location.search).toBe("");
 });
 
 it("loads inactive Farms independently of the supply request page and applies a Farm filter", async () => {

@@ -95,7 +95,18 @@ describe("CSA coupon administration", () => {
         <CSACouponList />
       </AdminI18nProvider>,
     );
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Vouchers" })).toBeNull();
     expect(await screen.findByText(coupon.code)).toBeVisible();
+    const table = screen.getByRole("table", { name: "Vouchers" });
+    const scroll = screen.getByRole("region", { name: "Vouchers" });
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(scroll).toContainElement(table);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
+    const footer = scroll.closest("[data-list-paper]")?.querySelector("footer") ?? null;
+    expect(footer).toHaveTextContent("1 result");
+    expect(scroll).not.toContainElement(footer);
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
     expect(screen.getByLabelText("Filter status")).toHaveClass("mantine-Input-input");
     expect(screen.getByRole("link", { name: "Edit" })).toHaveClass("mantine-Button-root");
     expect(screen.getByText("01/09/2026 – 30/09/2026")).toBeVisible();
@@ -103,6 +114,11 @@ describe("CSA coupon administration", () => {
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("status=inactive"),
     );
+    const refresh = screen.getByRole("button", { name: "Refresh list" });
+    await waitFor(() => expect(refresh).toBeEnabled());
+    fireEvent.click(refresh);
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("status=inactive");
   });
 
   it("renders the basic create form without conditions or preview", async () => {

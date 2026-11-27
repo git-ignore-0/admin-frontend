@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -295,8 +295,17 @@ describe("Farmer entry and history", () => {
     renderFarmer();
     await quantity(1);
     fireEvent.click(screen.getByRole("tab", { name: "Request history" }));
+    const history = await screen.findByRole("region", { name: "Request history" });
+    expect(history).toHaveAttribute("tabindex", "0");
+    expect(within(history).getAllByRole("columnheader")).toHaveLength(4);
+    const footer = history.closest("[data-list-paper]")?.querySelector("footer") ?? null;
+    expect(footer).toHaveTextContent("1 result");
+    expect(history).not.toContainElement(footer);
     fireEvent.click(await screen.findByRole("button", { name: "FSR-0001" }));
     expect(await screen.findByText("Old catalog name")).toBeInTheDocument();
+    const products = screen.getByRole("region", { name: "Products" });
+    expect(products).toHaveAttribute("tabindex", "0");
+    expect(within(products).getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getByText("12 kg")).toBeInTheDocument();
     expect(screen.getByText("Rejected")).toBeInTheDocument();
     expect(screen.getByText(snapshot.rejection_reason!)).toBeInTheDocument();

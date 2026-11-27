@@ -188,20 +188,20 @@ describe("users and points", () => {
     expect(scrollArea).toHaveAttribute("tabindex", "0");
     expect(screen.getByText("20/07/2026")).toBeInTheDocument();
     expect(within(table).queryByText("20/07/2026 09:00")).toBeNull();
-    expect(screen.getByRole("link", { name: `View details: ${user.name}` })).toHaveAttribute(
-      "href",
-      `/users/${user.id}`,
-    );
+    const userLink = screen.getByRole("link", { name: `View details: ${user.name}` });
+    expect(userLink).toHaveAttribute("href", `/users/${user.id}`);
+    expect(userLink).toHaveStyle({ color: "var(--primary)" });
+    expect(userLink).toHaveAttribute("data-underline", "never");
     expect(screen.getAllByRole("link", { name: `View details: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
 
     usersView.unmount();
     window.history.replaceState(null, "", "/points");
     providers(<PointsManager />);
-    expect(await screen.findByRole("link", { name: `View points: ${user.name}` })).toHaveAttribute(
-      "href",
-      `/points/${user.id}`,
-    );
+    const pointsLink = await screen.findByRole("link", { name: `View points: ${user.name}` });
+    expect(pointsLink).toHaveAttribute("href", `/points/${user.id}`);
+    expect(pointsLink).toHaveStyle({ color: "var(--primary)" });
+    expect(pointsLink).toHaveAttribute("data-underline", "never");
     expect(screen.getAllByRole("link", { name: `View points: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View points" })).toBeNull();
     const pointsRow = screen.getByRole("row", { name: /Green Member/ });

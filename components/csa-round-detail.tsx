@@ -257,13 +257,10 @@ export function CSARoundDetail({
   );
   const matchingResult = participants?.roundId === roundId ? participants.data : null;
   const currentPage = matchingResult?.meta.page === page ? matchingResult : null;
-  const participantRecovery = Boolean(participantError) && (
-    <RecoveryAlert
-      message={requestErrorMessage(participantError, t)}
-      retryLabel={t.common.retry}
-      onRetry={() => void load(false)}
-    />
-  );
+  const participantMessage = participantError ? requestErrorMessage(participantError, t) : "";
+  function retryParticipants() {
+    void load(false);
+  }
   return (
     <Stack gap="md" miw={0} style={{ overflowWrap: "anywhere" }}>
       {breadcrumbs}
@@ -329,36 +326,42 @@ export function CSARoundDetail({
         status={round.status}
         participants={
           <Stack gap="sm" ref={membersResults} role="group" aria-label={c.membersTab} tabIndex={-1}>
-            {participantRecovery}
-            {currentPage ? (
-              <CSARoundParticipants
-                key={`${round.id}:${page}`}
-                round={round}
-                result={currentPage}
-                disabled={disabled || Boolean(participantError)}
-                refreshKey={companionRefresh}
-                onPage={(next) => {
-                  membersResults.current?.focus({ preventScroll: true });
-                  setPage(next);
-                }}
-                onRefresh={refreshRound}
-                onReopen={setReopen}
-                reopenOpen={Boolean(reopen)}
-              />
-            ) : loading ? (
-              <DataState kind="loading" title={c.loading} />
-            ) : null}
+            <CSARoundParticipants
+              key={`${round.id}:${page}`}
+              round={round}
+              result={currentPage}
+              loading={loading}
+              error={participantMessage}
+              onRetry={retryParticipants}
+              disabled={disabled || Boolean(participantError)}
+              refreshKey={companionRefresh}
+              onPage={(next) => {
+                membersResults.current?.focus({ preventScroll: true });
+                setPage(next);
+              }}
+              onRefresh={refreshRound}
+              onReopen={setReopen}
+              reopenOpen={Boolean(reopen)}
+            />
           </Stack>
         }
         demand={
-          <Stack gap="sm">
-            {refreshToolbar}
-            {participantRecovery}
-            {matchingResult ? (
-              <CSARoundDemand demand={matchingResult.demand} />
-            ) : loading ? (
-              <DataState kind="loading" title={c.loading} />
-            ) : null}
+          <Stack gap="md">
+            <ListToolbar
+              busy={loading || busy || companionBusy}
+              refresh={{
+                label: c.refresh,
+                onRefresh: refreshRound,
+                loading: loading && matchingResult !== null,
+                disabled: loading && matchingResult === null,
+              }}
+            />
+            <CSARoundDemand
+              demand={matchingResult?.demand}
+              loading={loading}
+              error={participantMessage}
+              onRetry={retryParticipants}
+            />
           </Stack>
         }
         settings={

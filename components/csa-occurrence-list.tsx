@@ -1,6 +1,6 @@
 "use client";
 
-import { Anchor, Button, Group, Stack, Table, Text } from "@mantine/core";
+import { Button, Group, Stack, Table, Text } from "@mantine/core";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +24,7 @@ import {
   useCSARoundPage,
 } from "@/components/csa-round-list-results";
 import { ListToolbar } from "@/components/list-toolbar";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { DataState, Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { openRecordFromRow } from "@/components/record-row-navigation";
@@ -228,15 +229,12 @@ function CSAOccurrenceListContent({ configurationId }: { configurationId: string
   const rows = items?.map((round) => (
     <Table.Tr key={round.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
       <Table.Td>
-        <Anchor
+        <DataListRecordLink
           component={AdminNavigationLink}
           display="block"
-          c="inherit"
           data-record-link
-          fw={600}
           href={roundDetailHref(round.id)}
           style={{ overflowWrap: "anywhere" }}
-          underline="never"
         >
           <time dateTime={round.opens_at}>{formatAdminDateTime(round.opens_at)}</time>
           {" → "}
@@ -244,7 +242,7 @@ function CSAOccurrenceListContent({ configurationId }: { configurationId: string
           <Text component="span" display="block" size="sm" fw={400} c="dimmed">
             {round.name}
           </Text>
-        </Anchor>
+        </DataListRecordLink>
       </Table.Td>
       <Table.Td>
         <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
@@ -365,7 +363,8 @@ function CSAOccurrenceListContent({ configurationId }: { configurationId: string
                 refresh={{
                   label: c.refresh,
                   onRefresh: refreshList,
-                  loading: loading || configurationLoading,
+                  loading: configurationLoading || (loading && items !== null),
+                  disabled: loading && items === null,
                 }}
                 primaryAction={
                   canCancelRecurrence && (

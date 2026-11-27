@@ -93,13 +93,17 @@ export function ListToolbar(props: ToolbarProps | LegacyToolbarProps) {
   if (!search && !filterPopover && !refresh && !primaryAction) return null;
 
   return (
-    <div className={styles.container} data-grow-search={growSearch || undefined}>
-      <Flex gap="xs" align="flex-start" wrap={growSearch ? "nowrap" : "wrap"}>
+    <div
+      className={styles.container}
+      data-grow-search={growSearch || undefined}
+      data-has-primary-action={Boolean(primaryAction) || undefined}
+    >
+      <Flex gap="xs" align="flex-start" className={styles.row}>
         {search && <ToolbarSearch search={search} busy={busy} />}
         {(filterPopover || refresh || primaryAction) && (
-          <Group gap="sm" className={styles.actions}>
+          <Group gap="sm" wrap="nowrap" className={styles.actions}>
             {(filterPopover || refresh) && (
-              <Group gap="xs" miw={0}>
+              <Group gap="xs" wrap="nowrap" miw={0}>
                 {filterPopover && <ToolbarFilter filter={filterPopover} busy={busy} />}
                 {refresh && <ToolbarRefresh refresh={refresh} busy={busy} />}
               </Group>

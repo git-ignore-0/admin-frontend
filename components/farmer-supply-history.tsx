@@ -1,11 +1,13 @@
 "use client";
 
-import { Anchor, Button, Divider, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
+import { Box, Button, Divider, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -83,11 +85,12 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
     return (
       <ListState
         embedded
+        tableColumns={empty ? 4 : undefined}
         empty={empty}
         error={query.error ? requestErrorMessage(query.error, t) : ""}
         hasData={Boolean(query.data)}
         isEmpty={Boolean(empty && history.data?.data.length === 0)}
-        loading={query.isFetching}
+        loading={query.isFetching && (empty !== "" || !query.data)}
         loadingLabel={c.loadingRequests}
         onRetry={() => void query.refetch()}
         retryLabel={t.common.retry}
@@ -138,14 +141,14 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
                 </RecordDetailFields>
               </Stack>
             </Paper>
-            <Paper withBorder p="md">
-              <Stack gap="sm">
+            <DataListPaper component="section">
+              <Box px="md" py="sm">
                 <Title order={3} size="md" fw={600}>
                   {c.products}
                 </Title>
-                <SupplyRequestProducts items={entry.items} locale={locale} />
-              </Stack>
-            </Paper>
+              </Box>
+              <SupplyRequestProducts items={entry.items} locale={locale} />
+            </DataListPaper>
           </>
         )}
       </Stack>
@@ -153,11 +156,16 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
   }
 
   return (
-    <Paper withBorder style={{ overflow: "hidden" }}>
-      {loadState(history, c.noHistory)}
+    <DataListPaper>
       {!!history.data?.data.length && (
-        <Table.ScrollContainer minWidth={520}>
-          <Table>
+        <Table.ScrollContainer
+          type="native"
+          minWidth={520}
+          role="region"
+          aria-label={c.history}
+          tabIndex={0}
+        >
+          <Table aria-label={c.history} aria-busy={history.isFetching || undefined} withRowBorders>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th scope="col">{c.code}</Table.Th>
@@ -171,14 +179,13 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
                 <Table.Tr key={entry.id}>
                   <Table.Td>
                     <Stack gap={4} align="flex-start">
-                      <Anchor
+                      <DataListRecordLink
                         component="button"
                         type="button"
                         onClick={() => onSelect(entry.id)}
-                        fw={600}
                       >
                         {entry.code}
-                      </Anchor>
+                      </DataListRecordLink>
                       <Text size="sm" c="dimmed">
                         {formatAdminDateTime(entry.submitted_at)}
                       </Text>
@@ -195,11 +202,15 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
           </Table>
         </Table.ScrollContainer>
       )}
+      <Box p={history.error || (history.data && history.isFetching) ? "md" : undefined}>
+        {loadState(history, c.noHistory)}
+      </Box>
       {meta && (
         <>
           <Divider />
-          <Stack p="md">
+          <Box component="footer" px="md" py="sm">
             <Pagination
+              disabled={history.isFetching}
               page={page}
               pageSize={meta.page_size}
               total={meta.total}
@@ -210,9 +221,9 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
               resultCountLabel={t.common.resultCount}
               resultCountSingularLabel={t.common.resultCountSingular}
             />
-          </Stack>
+          </Box>
         </>
       )}
-    </Paper>
+    </DataListPaper>
   );
 }
