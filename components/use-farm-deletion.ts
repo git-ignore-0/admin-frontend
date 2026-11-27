@@ -16,6 +16,7 @@ import {
   farmDeleteFilters,
   farmDeleteSupplyWriteFilters,
   farmDetailWritePending,
+  farmFarmerLinkBlocksDelete,
   farmNotFound,
   isFarmGone,
   retireFarmAccess,
@@ -168,6 +169,7 @@ export function useFarmDeletion(farmId: string) {
       if (
         farmDeleteCapability(verifiedFarmDetail(client, farmId)?.capabilities)?.allowed !== true ||
         cache.find(farmDeleteSupplyWriteFilters(farmId)) ||
+        farmFarmerLinkBlocksDelete(client, farmId) ||
         (oldIssue && !mayConfirmAgain(oldIssue))
       )
         return;

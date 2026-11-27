@@ -186,6 +186,9 @@ export function FarmerSupplyEntry({
       const { data } = await submitFarmerRequest(token, intent, signal);
       if (signal.aborted) return;
       setUnknown(undefined);
+      setReview([]);
+      setChecks(undefined);
+      setCheckError(null);
       setDraft(emptyFarmSupplyDraft<FarmerProduct>());
       setSubmitted(data);
       client.setQueryData(["requests", "detail", data.id], data);

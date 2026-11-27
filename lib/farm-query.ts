@@ -20,6 +20,28 @@ export const farmSupplyRequestsKey = [...farmsKey, "supply-requests"] as const;
 export const farmSupplyRequestDetailKey = (id: string) =>
   [...farmSupplyRequestsKey, "detail", id.toLowerCase()] as const;
 export const farmSupplyRequestListKey = [...farmSupplyRequestsKey, "list"] as const;
+export const farmFarmerLinkIntentKey = ["admin-mutation-intent", "farm-farmer-link"] as const;
+const farmFarmerLinkKey = (farmId: string) =>
+  [...farmFarmerLinkIntentKey, farmId.toLowerCase()] as const;
+
+function isUnsettledLinkIntent(intent: unknown) {
+  return isApiObject(intent) && (intent.phase === "pending" || intent.phase === "unknown");
+}
+
+export function farmFarmerLinkBlocksDelete(client: QueryClient, farmId: string) {
+  return isUnsettledLinkIntent(client.getQueryData(farmFarmerLinkKey(farmId)));
+}
+
+export function useFarmFarmerLinkBlocksDelete(farmId: string) {
+  return (
+    useQuery({
+      queryKey: farmFarmerLinkKey(farmId),
+      queryFn: skipToken,
+      select: isUnsettledLinkIntent,
+    }).data ?? false
+  );
+}
+
 export const farmDecisionIntentKey = ["admin-mutation-intent", "farm-supply-decision"] as const;
 export const farmListKey = [...farmsKey, "list"] as const;
 export const farmDetailKey = (farmId: string) =>
@@ -195,7 +217,7 @@ export function retireFarmAccess(client: QueryClient, error: Error) {
   if (previous.error === error) return;
   notifyManager.batch(() => {
     client.setQueryData<FarmAccess>(accessKey, { revision: previous.revision + 1, error });
-    for (const queryKey of [farmsKey, supplyKey, farmDecisionIntentKey]) {
+    for (const queryKey of [farmsKey, supplyKey, farmDecisionIntentKey, farmFarmerLinkIntentKey]) {
       const entries = client.getQueryCache().findAll({ queryKey });
       for (const query of entries) {
         if (query.getObserversCount()) query.reset();
@@ -219,6 +241,9 @@ export function retireFarmQueries(client: QueryClient, farmId: string) {
 
 function retireFarmSupply(client: QueryClient, farmId: string) {
   const scope = farmSupplyKey(farmId);
+  const link = client.getQueryCache().find({ queryKey: farmFarmerLinkKey(farmId), exact: true });
+  if (link?.getObserversCount()) link.reset();
+  else if (link) client.getQueryCache().remove(link);
   client.removeQueries({ queryKey: scope });
   removeFarmMutations(client, scope);
 }

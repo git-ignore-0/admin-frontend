@@ -6,24 +6,29 @@ import {
   Button,
   Collapse,
   Divider,
+  Flex,
   Grid,
   Group,
+  List,
   Paper,
   SimpleGrid,
   Stack,
   Table,
   Text,
   TextInput,
+  Title,
+  VisuallyHidden,
 } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
 import { IconChevronDown, IconChevronUp, IconX } from "@tabler/icons-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { AdminDateInput } from "@/components/admin-date-input";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { FormField } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
+import { RecordDetailField } from "@/components/record-detail-fields";
 import { adminDateInputToIso, adminTodayIso } from "@/lib/admin-date";
 import { adminDictionaries, type AdminLocale } from "@/lib/admin-i18n";
 import {
@@ -40,6 +45,8 @@ import { formatDecimalInput, numericInputErrorMessage } from "@/lib/numeric-inpu
 
 import styles from "./farm-bulk-supply-form.module.css";
 
+const NON_ASCII_DIGIT = /[^0-9]/u;
+
 const labels = {
   en: {
     summary: "Supply summary",
@@ -52,13 +59,14 @@ const labels = {
     quantity: "Additional quantity",
     converted: "Converted quantity",
     remove: "Remove {name}",
-    count: "{count} products entered",
-    singular: "{count} product entered",
+    count: "{count} products",
+    singular: "{count} product",
+    compactCount: "{count} products entered",
+    compactSingular: "{count} product entered",
     total: "Total",
     view: "View details",
     hide: "Hide details",
     review: "Check the products highlighted in the summary.",
-    limit: "Enter quantities for up to {max} products.",
     limitExceeded: "Remove products from the summary to keep at most {max}.",
     submit: "Submit",
     refresh: "Refresh products",
@@ -74,13 +82,14 @@ const labels = {
     quantity: "Số lượng bổ sung",
     converted: "Quy đổi",
     remove: "Bỏ {name}",
-    count: "Đã nhập {count} sản phẩm",
-    singular: "Đã nhập {count} sản phẩm",
+    count: "{count} sản phẩm",
+    singular: "{count} sản phẩm",
+    compactCount: "{count} sản phẩm đã nhập",
+    compactSingular: "{count} sản phẩm đã nhập",
     total: "Tổng",
     view: "Xem chi tiết",
     hide: "Thu gọn chi tiết",
     review: "Kiểm tra các sản phẩm có lỗi trong phần tổng hợp.",
-    limit: "Có thể nhập tối đa {max} sản phẩm.",
     limitExceeded: "Bỏ bớt sản phẩm trong phần tổng hợp để còn tối đa {max}.",
     submit: "Xác nhận",
     refresh: "Làm mới danh sách sản phẩm",
@@ -147,9 +156,13 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
   const formId = `${id}-supply`;
   const [searchText, setSearchText] = useState(search);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const focusedQuantity = useRef<HTMLInputElement>(null);
   const { ref: layoutRef, width: contentWidth } = useElementSize();
-  // At 880px, the entry table and summary have room to sit side by side.
+  const { ref: dataListRef, width: listWidth } = useElementSize();
   const desktop = contentWidth >= 880;
+  // The table gets less room than the form when the summary sits alongside it.
+  const compact = listWidth < 544; // 34 rem at the Foundation root size.
+  const showRemaining = Boolean(remaining);
   const c = labels[locale];
   const f = farmsCopy(locale);
   const t = adminDictionaries[locale];
@@ -180,13 +193,26 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
 
   useEffect(() => setSearchText(search), [search]);
 
+  useLayoutEffect(() => {
+    const previous = focusedQuantity.current;
+    if (!previous || previous.isConnected || document.activeElement !== document.body) return;
+    focusedQuantity.current = null;
+    // Only restore the same field across a Table/List change. Search or pagination
+    // can independently remove that product from the screen.
+    const next = document.getElementById(previous.id);
+    if (next instanceof HTMLInputElement && !next.disabled) {
+      next.focus({ preventScroll: true });
+      next.setSelectionRange(previous.selectionStart, previous.selectionEnd);
+    }
+  }, [compact]);
+
   function clearSearch() {
     setSearchText("");
     onSearch("");
   }
 
   function changeQuantity(product: P, quantity: string) {
-    if (fieldsLocked) return;
+    if (fieldsLocked || NON_ASCII_DIGIT.test(quantity)) return;
     const key = product.product_id;
     const items = { ...draft.items };
     if (quantity === "") delete items[key];
@@ -204,6 +230,102 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
       ? numericInputErrorMessage(code, t.common.numericInput)
       : errors?.items?.[productId];
   }
+
+  const productRows = products?.length
+    ? products.map((row) => {
+        const key = row.product_id;
+        const entry = entries.get(key);
+        const product = entry?.product ?? row;
+        const name = farmSupplyProductName(product, locale);
+        const available = remaining ? number.format(remaining(row)) : undefined;
+        const total = entry?.total ?? "—";
+        const productInfo = (
+          <Stack gap={4} miw={0} className={styles.wrap}>
+            <Text size="md" fw={600}>
+              {name}
+            </Text>
+            <Text size="sm" c="dimmed">
+              {product.sku} · {saleUnit(product)}
+            </Text>
+            {compact && available !== undefined && (
+              <Text size="sm" c="dimmed">
+                {c.available}: {available}
+              </Text>
+            )}
+          </Stack>
+        );
+        const quantityInput = (
+          <TextInput
+            id={`${id}-quantity-${key}`}
+            aria-label={`${quantityTitle} — ${name}`}
+            form={formId}
+            type="text"
+            inputMode="numeric"
+            disabled={fieldsLocked}
+            value={entry?.quantity ?? ""}
+            error={quantityError(key)}
+            onChange={(event) => {
+              const data = event.nativeEvent instanceof InputEvent ? event.nativeEvent.data : null;
+              if (!data || !NON_ASCII_DIGIT.test(data))
+                changeQuantity(row, event.currentTarget.value);
+            }}
+            onFocus={(event) => {
+              focusedQuantity.current = event.currentTarget;
+            }}
+            onBlur={(event) => {
+              if (event.currentTarget.isConnected) focusedQuantity.current = null;
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key.length === 1 &&
+                NON_ASCII_DIGIT.test(event.key) &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+              }
+            }}
+            onPaste={(event) => {
+              // TextInput can strip line breaks before onChange. Check the whole
+              // clipboard contents before any native normalization or insertion.
+              if (NON_ASCII_DIGIT.test(event.clipboardData.getData("text/plain")))
+                event.preventDefault();
+            }}
+          />
+        );
+
+        return compact ? (
+          <Group
+            component="li"
+            key={key}
+            align="flex-start"
+            justify="space-between"
+            wrap="nowrap"
+            gap="sm"
+            px="md"
+            py="sm"
+            className={styles.compactRow}
+          >
+            {productInfo}
+            <Stack w="40%" miw={0} gap={4} className={styles.compactQuantity}>
+              {quantityInput}
+              <Text size="sm" ta="right" className={styles.wrap}>
+                {total}
+              </Text>
+            </Stack>
+          </Group>
+        ) : (
+          <Table.Tr key={key}>
+            <Table.Td>{productInfo}</Table.Td>
+            {showRemaining && <Table.Td ta="right">{available}</Table.Td>}
+            <Table.Td>{quantityInput}</Table.Td>
+            <Table.Td ta="right">{total}</Table.Td>
+          </Table.Tr>
+        );
+      })
+    : undefined;
 
   return (
     <Box ref={layoutRef} miw={0}>
@@ -268,83 +390,54 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                 onClear: clearSearch,
               }}
             />
-            <Paper component="section" aria-label={f.products} miw={0} className={styles.dataList}>
-              {Boolean(products?.length) && (
-                <Table.ScrollContainer type="native" minWidth={0}>
-                  <Table
+            <Paper
+              ref={dataListRef}
+              component="section"
+              aria-label={f.products}
+              miw={0}
+              className={styles.dataList}
+            >
+              {productRows &&
+                (compact ? (
+                  <Stack
+                    component="ul"
+                    gap={0}
+                    p={0}
+                    m={0}
                     aria-label={f.products}
                     aria-busy={refreshing || undefined}
-                    layout="fixed"
-                    classNames={{ td: styles.wrap, th: styles.wrap }}
-                    withRowBorders
+                    className={styles.compactList}
                   >
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th scope="col">{f.productColumn}</Table.Th>
-                        <Table.Th scope="col" w="36%">
-                          {quantityTitle}
-                        </Table.Th>
-                        <Table.Th scope="col" ta="right" w="23%">
-                          {c.converted}
-                        </Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {products?.map((row) => {
-                        const entry = entries.get(row.product_id);
-                        const product = entry?.product ?? row;
-                        const name = farmSupplyProductName(product, locale);
-                        const available = remaining?.(row);
-                        const message = quantityError(product.product_id);
-                        return (
-                          <Table.Tr key={row.product_id}>
-                            <Table.Td>
-                              <Stack gap={4} miw={0}>
-                                <Text size="md" fw={600}>
-                                  {name}
-                                </Text>
-                                <Text size="sm" c="dimmed">
-                                  {product.sku} · {saleUnit(product)}
-                                  {available !== undefined &&
-                                    ` · ${c.available} ${number.format(available)}`}
-                                </Text>
-                              </Stack>
-                            </Table.Td>
-                            <Table.Td>
-                              <TextInput
-                                aria-label={`${quantityTitle} — ${name}`}
-                                form={formId}
-                                type="text"
-                                inputMode="numeric"
-                                disabled={fieldsLocked}
-                                value={entry?.quantity ?? ""}
-                                error={message}
-                                onChange={(event) => changeQuantity(row, event.currentTarget.value)}
-                                onPaste={(event) => {
-                                  const text = event.clipboardData.getData("text/plain");
-                                  if (!/\D/.test(text)) return;
-                                  // A text input can silently remove line breaks from a paste.
-                                  // Validate the original replacement before the browser changes it.
-                                  event.preventDefault();
-                                  const { value, selectionStart, selectionEnd } =
-                                    event.currentTarget;
-                                  changeQuantity(
-                                    row,
-                                    value.slice(0, selectionStart ?? 0) +
-                                      text +
-                                      value.slice(selectionEnd ?? value.length),
-                                  );
-                                }}
-                              />
-                            </Table.Td>
-                            <Table.Td ta="right">{entry?.total ?? "—"}</Table.Td>
-                          </Table.Tr>
-                        );
-                      })}
-                    </Table.Tbody>
-                  </Table>
-                </Table.ScrollContainer>
-              )}
+                    {productRows}
+                  </Stack>
+                ) : (
+                  <Table.ScrollContainer type="native" minWidth={0}>
+                    <Table
+                      aria-label={f.products}
+                      aria-busy={refreshing || undefined}
+                      classNames={{ td: styles.wrap, th: styles.wrap }}
+                      withRowBorders
+                    >
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th scope="col">{f.productColumn}</Table.Th>
+                          {showRemaining && (
+                            <Table.Th scope="col" ta="right" w="1%" className={styles.columnLabel}>
+                              {c.available}
+                            </Table.Th>
+                          )}
+                          <Table.Th scope="col" w="28%">
+                            {quantityTitle}
+                          </Table.Th>
+                          <Table.Th scope="col" ta="right" w="1%" className={styles.columnLabel}>
+                            {c.converted}
+                          </Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>{productRows}</Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                ))}
               <Box p={error || (refreshing && Boolean(products?.length)) ? "md" : undefined}>
                 <ListState
                   embedded
@@ -410,39 +503,47 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
               }}
             >
               <Stack gap="sm">
-                <Text component="h2" id={summaryHeadingId} size="md" fw={600} c="var(--heading)">
-                  {c.summary}
-                </Text>
-                <Group justify="space-between" gap="xs" align="flex-start">
-                  <Stack gap={4} miw={0}>
-                    <Text size="sm" fw={600} aria-live="polite" aria-atomic="true">
-                      {(summary.items.length === 1 ? c.singular : c.count).replace(
-                        "{count}",
-                        number.format(summary.items.length),
-                      )}
-                    </Text>
-                    {summary.totals.length > 0 && (
-                      <Text size="sm" fw={600} className={styles.wrap}>
-                        {c.total} · {summary.totals.join(" · ")}
+                {desktop ? (
+                  <Title order={2} id={summaryHeadingId} size="md" fw={600}>
+                    {c.summary}
+                  </Title>
+                ) : (
+                  <>
+                    <VisuallyHidden component="h2" id={summaryHeadingId}>
+                      {c.summary}
+                    </VisuallyHidden>
+                    <Stack gap={4}>
+                      <Text size="md" fw={600} aria-live="polite" aria-atomic="true">
+                        {(summary.items.length === 1 ? c.compactSingular : c.compactCount).replace(
+                          "{count}",
+                          number.format(summary.items.length),
+                        )}
                       </Text>
-                    )}
-                  </Stack>
-                  {!desktop && (
-                    <Button
-                      type="button"
-                      size="compact-sm"
-                      variant="subtle"
-                      aria-controls={summaryId}
-                      aria-expanded={summaryOpen}
-                      rightSection={
-                        summaryOpen ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />
-                      }
-                      onClick={() => setSummaryOpen((open) => !open)}
-                    >
-                      {summaryOpen ? c.hide : c.view}
-                    </Button>
-                  )}
-                </Group>
+                      <Group justify="space-between" gap="xs" align="center" wrap="nowrap">
+                        <Text size="md" fw={600} miw={0} className={styles.wrap}>
+                          {summary.totals.join(" · ") || "—"}
+                        </Text>
+                        <Button
+                          type="button"
+                          size="compact-sm"
+                          variant="subtle"
+                          aria-controls={summaryId}
+                          aria-expanded={summaryOpen}
+                          rightSection={
+                            summaryOpen ? (
+                              <IconChevronUp size={16} />
+                            ) : (
+                              <IconChevronDown size={16} />
+                            )
+                          }
+                          onClick={() => setSummaryOpen((open) => !open)}
+                        >
+                          {summaryOpen ? c.hide : c.view}
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </>
+                )}
                 {hasProductErrors && !desktop && !summaryOpen && (
                   <Text size="sm" c="danger">
                     {c.review}
@@ -450,56 +551,34 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                 )}
                 <Collapse id={summaryId} in={desktop || summaryOpen}>
                   <Stack gap="sm" className={styles.summaryDetails}>
-                    <Stack gap={0}>
-                      <Text size="sm" c="dimmed">
-                        {c.period}
-                      </Text>
-                      <Text size="sm" fw={600}>
-                        {summary.dates ? `${draft.start_date} – ${draft.end_date}` : "—"}
-                      </Text>
-                    </Stack>
+                    <Box component="dl" m={0}>
+                      <RecordDetailField label={c.period}>
+                        {summary.dates ? `${draft.start_date} – ${draft.end_date}` : null}
+                      </RecordDetailField>
+                    </Box>
                     {summary.items.length > 0 && (
-                      <Stack
-                        component="ul"
-                        gap="xs"
-                        aria-label={c.summary}
-                        m={0}
-                        p={0}
-                        className={styles.summaryItems}
-                      >
+                      <List aria-label={c.summary} listStyleType="none" m={0} p={0}>
                         {summary.items.map(({ product, quantity, quantityError: code, total }) => {
                           const name = farmSupplyProductName(product, locale);
                           return (
-                            <Stack
-                              component="li"
+                            <List.Item
                               key={product.product_id}
-                              gap={0}
-                              py="xs"
-                              className={styles.summaryItem}
+                              styles={{
+                                itemWrapper: { width: "100%" },
+                                itemLabel: { flex: 1, minWidth: 0 },
+                              }}
                             >
-                              <Group
-                                justify="space-between"
-                                wrap="nowrap"
-                                gap="xs"
-                                align="flex-start"
-                              >
-                                <Stack gap={4} miw={0}>
-                                  <Text size="md" fw={600} className={styles.wrap}>
+                              <Divider />
+                              <Stack gap={4} py="xs">
+                                <Group justify="space-between" wrap="nowrap" gap="xs">
+                                  <Text size="md" fw={600} miw={0} className={styles.wrap}>
                                     {name}
-                                  </Text>
-                                  <Text size="sm" c="dimmed" className={styles.wrap}>
-                                    {code ? quantity : number.format(Number(quantity))} ×{" "}
-                                    {saleUnit(product)}
-                                  </Text>
-                                </Stack>
-                                <Group gap={4} justify="flex-end" wrap="nowrap">
-                                  <Text size="sm" fw={600} className={styles.wrap}>
-                                    {total}
                                   </Text>
                                   <ActionIcon
                                     type="button"
                                     variant="subtle"
                                     color="gray"
+                                    size="xs"
                                     disabled={fieldsLocked}
                                     aria-label={c.remove.replace("{name}", name)}
                                     onClick={() => changeQuantity(product, "")}
@@ -507,35 +586,55 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                                     <IconX size={16} aria-hidden />
                                   </ActionIcon>
                                 </Group>
-                              </Group>
-                              {quantityError(product.product_id) && (
-                                <Text size="sm" c="danger" className={styles.wrap}>
-                                  {quantityError(product.product_id)}
-                                </Text>
-                              )}
-                            </Stack>
+                                <Group gap="xs" justify="space-between" align="baseline">
+                                  <Text size="sm" c="dimmed" className={styles.wrap}>
+                                    {code ? quantity : number.format(Number(quantity))} ×{" "}
+                                    {saleUnit(product)}
+                                  </Text>
+                                  <Text size="sm" fw={600} ta="right" className={styles.wrap}>
+                                    {total}
+                                  </Text>
+                                </Group>
+                                {quantityError(product.product_id) && (
+                                  <Text size="sm" c="danger" className={styles.wrap}>
+                                    {quantityError(product.product_id)}
+                                  </Text>
+                                )}
+                              </Stack>
+                            </List.Item>
                           );
                         })}
-                      </Stack>
+                      </List>
                     )}
                   </Stack>
                 </Collapse>
+                {desktop && (
+                  <Stack gap={4}>
+                    <Text size="md" aria-live="polite" aria-atomic="true">
+                      {(summary.items.length === 1 ? c.singular : c.count).replace(
+                        "{count}",
+                        number.format(summary.items.length),
+                      )}
+                    </Text>
+                    {summary.totals.length > 0 && (
+                      <Text size="md" fw={600} className={styles.wrap}>
+                        {c.total}: {summary.totals.join(" · ")}
+                      </Text>
+                    )}
+                  </Stack>
+                )}
                 {review}
                 <Divider />
-                <Text
-                  size="sm"
-                  c={overLimit ? "danger" : "dimmed"}
-                  role={overLimit ? "alert" : undefined}
-                >
-                  {(overLimit ? c.limitExceeded : c.limit).replace(
-                    "{max}",
-                    String(FARM_SUPPLY_LIMIT),
-                  )}
-                </Text>
-                <Group className={styles.actions} gap="xs" wrap="nowrap">
+                {overLimit && (
+                  <Text size="sm" c="danger" role="alert">
+                    {c.limitExceeded.replace("{max}", String(FARM_SUPPLY_LIMIT))}
+                  </Text>
+                )}
+                <Flex direction={desktop ? "column-reverse" : "row"} gap="xs">
                   {onCancel && (
                     <Button
                       type="button"
+                      flex={desktop ? undefined : 1}
                       variant="default"
                       onClick={onCancel}
                       disabled={cancelDisabled || submitting}
@@ -543,10 +642,15 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
                       {f.cancel}
                     </Button>
                   )}
-                  <Button type="submit" disabled={!canSubmit} loading={submitting}>
+                  <Button
+                    type="submit"
+                    flex={desktop ? undefined : 1}
+                    disabled={!canSubmit}
+                    loading={submitting}
+                  >
                     {submitLabel ?? c.submit}
                   </Button>
-                </Group>
+                </Flex>
               </Stack>
             </form>
           </Paper>

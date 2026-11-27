@@ -364,4 +364,59 @@ describe("Farmer entry and history", () => {
       ]),
     );
   });
+
+  it.each([false, true])(
+    "retires the removed-product review only after verified submit (replayed: %s)",
+    async (replay) => {
+      const retained = product(2);
+      let removed = false;
+      vi.mocked(farmerProducts).mockImplementation(async () =>
+        productPage(removed ? [retained] : [first, retained]),
+      );
+      const accepted = {
+        data: { ...pending, items: [{ ...retained, quantity_units: 9 }] },
+        meta: { idempotent_replay: replay },
+      };
+      const submit = vi.mocked(submitFarmerRequest);
+      submit.mockImplementationOnce(async () => {
+        removed = true;
+        throw apiError("farm_product_removed", 409, {
+          item_index: 0,
+          product_id: first.product_id,
+        });
+      });
+      if (replay) submit.mockRejectedValueOnce(new Error("request_timeout"));
+      submit.mockResolvedValueOnce(accepted);
+
+      renderFarmer();
+      fireEvent.change(await quantity(1), { target: { value: "4" } });
+      fireEvent.change(await quantity(2), { target: { value: "9" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      const notice = "This product is no longer eligible for supply.";
+      expect(await screen.findByText(notice)).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Send request" })).toBeEnabled(),
+      );
+      expect(await quantity(2)).toHaveValue("9");
+      fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+      if (replay) {
+        const retry = await screen.findByRole("button", { name: "Resend saved request" });
+        expect(screen.getByText(notice)).toBeInTheDocument();
+        expect(await quantity(2)).toHaveValue("9");
+        fireEvent.click(retry);
+      }
+
+      expect(await screen.findByText("Request FSR-0001 was sent.")).toBeInTheDocument();
+      expect(screen.queryByText(notice)).not.toBeInTheDocument();
+      expect(screen.queryByText("Product information has changed")).not.toBeInTheDocument();
+      expect(await quantity(2)).toHaveValue("");
+      const retryPayload = submit.mock.calls[1][1];
+      expect(
+        retryPayload.items.map(({ product_id, quantity_units }) => [product_id, quantity_units]),
+      ).toEqual([[retained.product_id, 9]]);
+      expect(retryPayload.start_date).toBe(submit.mock.calls[0][1].start_date);
+      expect(retryPayload.end_date).toBe(submit.mock.calls[0][1].end_date);
+      if (replay) expect(submit.mock.calls[2][1]).toBe(retryPayload);
+    },
+  );
 });

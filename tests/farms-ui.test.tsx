@@ -53,13 +53,11 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   push: vi.fn(),
   refresh: vi.fn(),
+  farmerLink: vi.fn(),
 }));
 // The independent link section has its own tests; provide its confirmed read here.
 vi.mock("@/lib/farm-supply-request-api", () => ({
-  farmerLink: vi.fn(async (farmId: string) => ({
-    farm_id: farmId,
-    url: `/farmer#token=${"A".repeat(43)}`,
-  })),
+  farmerLink: mocks.farmerLink,
 }));
 
 vi.mock("@/lib/commerce-api", () => ({ getStoreProduct: mocks.productDetail }));
@@ -251,6 +249,10 @@ async function saveFarmInformation() {
 }
 beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
+  mocks.farmerLink.mockImplementation(async (farmId: string) => ({
+    farm_id: farmId,
+    url: `/farmer#token=${"A".repeat(43)}`,
+  }));
   search = new URLSearchParams();
   mocks.push.mockImplementation(setRoute);
   mocks.replace.mockImplementation(setRoute);
@@ -2416,4 +2418,40 @@ it("retains uncertain batch intent across routes and treats older snapshots as i
   fireEvent.click(screen.getByRole("button", { name: "Đóng và xem lại" }));
   expect(screen.getByRole("button", { name: "Thêm đợt cung cấp" })).toBeEnabled();
   expect(mocks.cancelBatch).toHaveBeenCalledTimes(1);
+});
+
+it("puts link controls first in Information and retains recovery across tabs", async () => {
+  mocks.farmerLink
+    .mockReset()
+    .mockResolvedValueOnce({ farm_id: "farm-1", url: `/farmer#token=${"A".repeat(43)}` })
+    .mockRejectedValueOnce(new Error("request_timeout"))
+    .mockResolvedValue({ farm_id: "farm-1", url: `/farmer#token=${"A".repeat(43)}` });
+  view(<FarmDetail farmId="farm-1" />);
+  const products = await screen.findByRole("tab", { name: "Sản phẩm cung cấp" });
+  const information = screen.getByRole("tab", { name: "Thông tin" });
+  expect(screen.queryByRole("heading", { name: "URL nhập sản phẩm" })).not.toBeInTheDocument();
+  fireEvent.click(information);
+  const infoPanel = screen.getByRole("tabpanel", { name: "Thông tin" });
+  const heading = within(infoPanel).getByRole("heading", { name: "URL nhập sản phẩm" });
+  const url = await within(infoPanel).findByRole("textbox", { name: "URL nhập sản phẩm" });
+  const save = within(infoPanel).getByRole("button", { name: "Lưu thay đổi" });
+  expect(heading.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const linkGroup = within(infoPanel).getByRole("region", { name: "URL nhập sản phẩm" });
+  expect(linkGroup.parentElement?.firstElementChild).toBe(linkGroup);
+  expect(url.closest("form")).toBeNull();
+  fireEvent.click(within(infoPanel).getByRole("button", { name: "Đổi link" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Đổi link" }));
+  expect(
+    await within(infoPanel).findByRole("button", { name: "Kiểm tra link hiện tại" }),
+  ).toBeVisible();
+  fireEvent.click(products);
+  expect(screen.queryByRole("heading", { name: "URL nhập sản phẩm" })).not.toBeInTheDocument();
+  const deleteDialog = within(await openFarmAction());
+  expect(deleteDialog.getByText(/kiểm tra URL nhập sản phẩm trong tab Thông tin/u)).toBeVisible();
+  expect(deleteDialog.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  fireEvent.click(deleteDialog.getByRole("button", { name: "Đóng" }));
+  fireEvent.click(information);
+  expect(await screen.findByRole("button", { name: "Kiểm tra link hiện tại" })).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "URL nhập sản phẩm" })).not.toBeInTheDocument();
+  expect(mocks.farmerLink.mock.calls.filter(([, action]) => action === "rotate")).toHaveLength(1);
 });

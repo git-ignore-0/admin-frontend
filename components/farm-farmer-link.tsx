@@ -2,7 +2,6 @@
 
 import {
   ActionIcon,
-  Alert,
   Button,
   Group,
   Paper,
@@ -10,12 +9,11 @@ import {
   Stack,
   Text,
   TextInput,
-  Title,
   Tooltip,
 } from "@mantine/core";
 import { IconCopy } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import {
@@ -25,14 +23,17 @@ import {
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
+import { useAdminMutationIntent } from "@/lib/admin-mutation-intent";
 import { isUncertainMutationError, requestErrorMessage } from "@/lib/client-error";
 import {
   farmAccess,
   farmAccessDenied,
   farmDeleteBlocksWrite,
+  farmFarmerLinkIntentKey,
   farmNotFound,
   isFarmGone,
   retireFarmAccess,
+  useFarmAccess,
 } from "@/lib/farm-query";
 import { farmerLink } from "@/lib/farm-supply-request-api";
 import { getFarm } from "@/lib/farms-api";
@@ -71,7 +72,12 @@ const labels = {
   },
 };
 
-type LinkState = { url?: string | null; error?: unknown; unknown?: boolean; unchanged?: boolean };
+type LinkState = {
+  revision?: number;
+  url?: string | null;
+  error?: unknown;
+  check?: "unchanged" | "create";
+};
 
 export function FarmFarmerLink({
   farmId,
@@ -90,41 +96,53 @@ export function FarmFarmerLink({
   const client = useQueryClient();
   const scope = useAdminRecordScope(farmId);
   const sessionCurrent = useIsAdminQueryScopeCurrent();
-  const [state, setState] = useState<LinkState>({});
+  const { intent, controls } = useAdminMutationIntent<{ previousUrl: string }>(
+    farmFarmerLinkIntentKey[1],
+    farmId.toLowerCase(),
+  );
+  const { revision, error: accessError } = useFarmAccess();
+  const [cached, setState] = useState<LinkState>({});
   const [active, setActive] = useState<"read" | "create" | "rotate">("read");
   const [busy, setBusy] = useState(true);
   const [confirm, setConfirm] = useState(false);
-  const write = useRef(false);
-  const previousUrl = useRef<string | null>(null);
-  const accessRevision = farmAccess(client).revision;
+  const pendingWrite = useRef(false);
+  const loaded = useRef<number | null>(null);
+  const clipboardRevision = useRef(0);
+  const headingId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const state = cached.revision === revision ? cached : {};
   const farmCurrent = useCallback(
     () =>
       sessionCurrent() &&
       !isFarmGone(client, farmId) &&
-      farmAccess(client).revision === accessRevision &&
+      farmAccess(client).revision === revision &&
       !farmAccess(client).error,
-    [accessRevision, client, farmId, sessionCurrent],
+    [revision, client, farmId, sessionCurrent],
   );
 
   const retire = useCallback(
     (cause: unknown) => {
       if (!farmCurrent()) return;
-      if (scope.capture()()) {
-        previousUrl.current = null;
+      const visible = scope.capture()();
+      if (visible) {
+        loaded.current = null;
         setState({});
         setConfirm(false);
       }
       scope.retire();
       if (farmAccessDenied(cause)) retireFarmAccess(client, cause);
-      onAccessLost(cause);
+      if (visible) onAccessLost(cause);
     },
     [client, farmCurrent, onAccessLost, scope],
   );
 
   const read = useCallback(
-    async (recovering = false) => {
+    async (recoveringCreation = false) => {
+      if (!farmCurrent()) return;
+      const attempt = controls.read();
+      if (attempt?.phase === "pending") return;
       const operation = scope.beginRead();
-      const current = () => operation.current() && farmCurrent();
+      const current = () => operation.current() && farmCurrent() && controls.read() === attempt;
       setActive("read");
       setBusy(true);
       try {
@@ -146,42 +164,68 @@ export function FarmFarmerLink({
           url = null;
         }
         if (!current()) return;
-        setState({ url, unchanged: recovering && url === previousUrl.current });
-        previousUrl.current = null;
+        loaded.current = revision;
+        if (attempt?.phase === "unknown" && (url === null || url === attempt.payload.previousUrl)) {
+          setState({ revision, check: url === null ? undefined : "unchanged" });
+          return;
+        }
+        setState({ revision, url });
+        if (attempt?.phase === "unknown") controls.settle(attempt, null);
       } catch (cause) {
-        if (farmAccessDenied(cause)) retire(cause);
-        if (current()) setState({ error: cause, unknown: recovering });
+        if (current() && farmAccessDenied(cause)) retire(cause);
+        if (current()) {
+          loaded.current = revision;
+          setState({ revision, error: cause, check: recoveringCreation ? "create" : undefined });
+        }
       } finally {
-        if (current()) setBusy(false);
+        if (operation.current() && farmCurrent()) setBusy(false);
       }
     },
-    [farmCurrent, farmId, retire, scope],
+    [controls, farmCurrent, farmId, retire, revision, scope],
   );
 
   useEffect(() => {
-    void read();
-  }, [read]);
+    if (accessError) {
+      scope.retire();
+      loaded.current = null;
+      setState({});
+      setConfirm(false);
+      return;
+    }
+    if (intent?.phase !== "pending" && (intent?.phase === "unknown" || loaded.current !== revision))
+      void read();
+  }, [accessError, intent, read, revision, scope]);
 
   async function update(action: "create" | "rotate") {
     const current = scope.capture();
+    const before = state.url;
     if (
-      write.current ||
+      pendingWrite.current ||
       busy ||
       writeBlocked ||
       !current() ||
       !farmCurrent() ||
+      controls.read() ||
+      (action === "rotate" && !before) ||
       farmDeleteBlocksWrite(client, farmId)
     )
       return;
     const release = claimWrite();
     if (!release) return;
-    write.current = true;
+    const attempt = action === "rotate" && before ? controls.begin({ previousUrl: before }) : null;
+    if (action === "rotate" && !attempt) {
+      release();
+      return;
+    }
+    pendingWrite.current = true;
+    clipboardRevision.current += 1;
     setActive(action);
     setBusy(true);
     try {
       const result = await farmerLink(farmId, action);
-      if (!current() || !farmCurrent()) return;
-      setState({ url: result.url });
+      if (!farmCurrent() || (attempt && !controls.settle(attempt, null))) return;
+      if (!current()) return;
+      setState({ revision, url: result.url });
       setConfirm(false);
       toast(action === "rotate" ? c.rotated : c.created);
     } catch (cause) {
@@ -189,75 +233,89 @@ export function FarmFarmerLink({
         retire(cause);
         return;
       }
-      if (!current() || !farmCurrent()) return;
-      if (
+      if (!farmCurrent()) return;
+      const uncertain =
         isUncertainMutationError(cause) ||
         farmNotFound(cause) ||
-        (cause instanceof Error && cause.message === "farm_farmer_link_unreadable")
-      ) {
-        previousUrl.current = state.url ?? null;
+        (cause instanceof Error && cause.message === "farm_farmer_link_unreadable");
+      if (attempt && !controls.settle(attempt, uncertain ? { ...attempt, phase: "unknown" } : null))
+        return;
+      if (!current()) return;
+      if (uncertain) {
         setConfirm(false);
-        setState({ unknown: true });
-        await read(true);
+        setState({ revision });
+        if (action === "create") await read(true);
       } else {
-        setState({ url: state.url, error: cause });
+        setState({ revision, url: before, error: cause });
       }
     } finally {
-      write.current = false;
+      pendingWrite.current = false;
       release();
       if (current() && farmCurrent()) setBusy(false);
     }
   }
 
+  const unknown = intent?.phase === "unknown";
   const absoluteUrl =
-    state.url && typeof window !== "undefined"
+    farmCurrent() && !intent && state.url && typeof window !== "undefined"
       ? new URL(state.url, window.location.origin).href
       : "";
   async function copy() {
     const current = scope.capture();
-    if (!absoluteUrl || !current() || !farmCurrent()) return;
+    const clipboard = clipboardRevision.current;
+    const allowed = () =>
+      current() && farmCurrent() && !controls.read() && clipboardRevision.current === clipboard;
+    if (!absoluteUrl || !allowed()) return;
     try {
       await navigator.clipboard.writeText(absoluteUrl);
-      if (current() && farmCurrent()) toast(c.copied);
+      if (allowed()) toast(c.copied);
     } catch {
-      if (current() && farmCurrent()) toast(c.copyFailed, "error");
+      if (allowed()) toast(c.copyFailed, "error");
     }
   }
 
-  const blocked = busy || writeBlocked || !farmCurrent();
-  const problem = state.unknown
-    ? c.unknown
-    : state.error
-      ? requestErrorMessage(state.error, t)
-      : "";
+  if (accessError) return null;
+
+  const blocked = busy || writeBlocked || Boolean(intent) || !farmCurrent();
+  const problem =
+    unknown || state.check === "create"
+      ? state.check === "unchanged"
+        ? c.unchanged
+        : c.unknown
+      : state.error
+        ? requestErrorMessage(state.error, t)
+        : "";
   return (
-    <Paper component="section" aria-label={c.heading} p="md" withBorder miw={0}>
+    <Paper component="section" aria-labelledby={headingId} p="md" withBorder miw={0}>
       <Stack gap="sm">
         <Stack gap="xs">
-          <Title order={2} size="sm" fw={600}>
+          <Text
+            component="h2"
+            id={headingId}
+            ref={heading}
+            tabIndex={-1}
+            size="md"
+            fw={600}
+            c="var(--heading)"
+          >
             {c.heading}
-          </Title>
+          </Text>
           <Text size="sm" c="dimmed">
             {c.description}
           </Text>
         </Stack>
-        {busy && state.url === undefined && <Skeleton h={36} />}
-        {state.unchanged && (
-          <Alert color="blue" role="status">
-            {c.unchanged}
-          </Alert>
-        )}
+        {!unknown && !absoluteUrl && (busy || intent?.phase === "pending") && <Skeleton h={36} />}
         {problem && !confirm && (
           <RecoveryAlert
             message={problem}
             retryLabel={c.read}
             loading={active === "read" && busy}
             onRetry={() => {
-              if (!busy) void read(Boolean(state.unknown));
+              if (!busy) void read(state.check === "create");
             }}
           />
         )}
-        {state.url === null && (
+        {!intent && state.url === null && (
           <Group>
             <Button
               type="button"
@@ -276,30 +334,32 @@ export function FarmFarmerLink({
               type="url"
               readOnly
               value={absoluteUrl}
-              flex={1}
-              miw={140}
+              flex="1 1 22rem"
+              miw={0}
             />
-            <Tooltip label={c.copy}>
-              <ActionIcon
-                aria-label={c.copy}
+            <Group gap="xs" wrap="nowrap">
+              <Tooltip label={c.copy}>
+                <ActionIcon
+                  aria-label={c.copy}
+                  type="button"
+                  disabled={busy || Boolean(intent)}
+                  onClick={() => void copy()}
+                >
+                  <IconCopy size={18} aria-hidden />
+                </ActionIcon>
+              </Tooltip>
+              <Button
+                variant="default"
                 type="button"
-                disabled={busy}
-                onClick={() => void copy()}
+                disabled={blocked}
+                onClick={() => {
+                  setState({ revision, url: state.url });
+                  setConfirm(true);
+                }}
               >
-                <IconCopy size={18} aria-hidden />
-              </ActionIcon>
-            </Tooltip>
-            <Button
-              variant="default"
-              type="button"
-              disabled={blocked}
-              onClick={() => {
-                setState({ url: state.url });
-                setConfirm(true);
-              }}
-            >
-              {c.rotate}
-            </Button>
+                {c.rotate}
+              </Button>
+            </Group>
           </Group>
         )}
       </Stack>
@@ -313,6 +373,7 @@ export function FarmFarmerLink({
           confirmLabel={c.rotate}
           busyLabel={c.rotate}
           confirmDisabled={writeBlocked}
+          fallbackFocusRef={heading}
           onCancel={() => setConfirm(false)}
           onConfirm={() => void update("rotate")}
           error={problem}

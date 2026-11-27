@@ -6,16 +6,20 @@
   overflow-wrap: anywhere;
 }
 
-.summaryItems {
+.columnLabel {
+  white-space: nowrap;
+}
+
+.compactList {
   list-style: none;
 }
 
-.summaryItem {
+.compactRow + .compactRow {
   border-top: 1px solid var(--border);
 }
 
-.actions > * {
-  flex: 1;
+.compactQuantity {
+  flex-shrink: 0;
 }
 
 .summary[data-wide] {
@@ -26,11 +30,6 @@
 .summary[data-wide] .summaryDetails {
   max-height: min(45dvh, 26rem);
   overflow-y: auto;
-}
-
-.summary[data-wide] .actions {
-  flex-direction: column-reverse;
-  align-items: stretch;
 }
 
 /* Below Mantine sm, the dock keeps its space at the end of the list. */

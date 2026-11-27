@@ -211,6 +211,8 @@ const copy = {
     deletePreviousReasons: "Lý do của lần xóa vừa bị từ chối",
     deleteRepresentativeReasons: "Mỗi nhóm hiển thị một bản ghi đại diện.",
     deleteOutcomeUnknown: "Kết quả lần xóa trước chưa được xác nhận.",
+    deleteLinkUnconfirmed:
+      "Hãy kiểm tra URL nhập sản phẩm trong tab Thông tin trước khi xóa trang trại.",
     deleteReviewChanged:
       "Thông tin trang trại đã thay đổi. Hãy xem lại và xác nhận nếu vẫn muốn xóa.",
     reviewDelete: "Xem lại thao tác xóa",
@@ -433,6 +435,8 @@ const copy = {
     deletePreviousReasons: "Reasons the previous delete was rejected",
     deleteRepresentativeReasons: "Each group shows one representative record.",
     deleteOutcomeUnknown: "The result of the previous delete has not been confirmed.",
+    deleteLinkUnconfirmed:
+      "Check the product entry URL in the Information tab before deleting the farm.",
     deleteReviewChanged:
       "The farm details have changed. Review them and confirm if you still want to delete the farm.",
     reviewDelete: "Review deletion",

@@ -64,6 +64,7 @@ import {
   retireFarmQueries,
   retryFarmAccess,
   useFarmAccess,
+  useFarmFarmerLinkBlocksDelete,
 } from "@/lib/farm-query";
 import { farmDeleteCapability, getFarm, saveFarm } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
@@ -111,6 +112,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
   const detailKey = farmDetailKey(farmId);
   const deletionFlow = useFarmDeletion(farmId);
   const detailWriting = useIsMutating(farmDetailWriteFilters(farmId)) > 0;
+  const linkBlocksDelete = useFarmFarmerLinkBlocksDelete(farmId);
   const supplyWrites = farmDeleteSupplyWriteFilters(farmId);
   const supplyWriting = useMutationState({ filters: supplyWrites, select: () => true }).length > 0;
   const farmQuery = useQuery({
@@ -495,10 +497,14 @@ function FarmDetailContent({ farmId, productId }: Props) {
     detailWriting || deleting || Boolean(headerRecovery || error || uncertainDelete);
   const actionsDisabled = busyOwner !== null || headerLocked || informationLocked;
   const deleteDialog = dialog?.action === "delete";
-  const deletion = deleteDialog && !supplyWriting ? currentDeleteCapability() : undefined;
+  const deletion =
+    deleteDialog && !supplyWriting && !linkBlocksDelete ? currentDeleteCapability() : undefined;
   const canReviewDelete = !deleting && deletionFlow.mayConfirmAgain;
   const canReopenDelete =
-    canReviewDelete && currentDeleteCapability()?.allowed === true && !supplyWriting;
+    canReviewDelete &&
+    currentDeleteCapability()?.allowed === true &&
+    !supplyWriting &&
+    !linkBlocksDelete;
   const canConfirmDelete =
     deletion?.allowed === true && !deleting && (!deleteIssue || canReviewDelete);
   const canConfirmDialog = !deleteDialog || canConfirmDelete;
@@ -620,6 +626,15 @@ function FarmDetailContent({ farmId, productId }: Props) {
           </Tabs.Panel>
           <Tabs.Panel value="information">
             <Stack gap="md">
+              {tab === "information" && (
+                <FarmFarmerLink
+                  key={farm.id}
+                  farmId={farm.id}
+                  writeBlocked={headerLocked || Boolean(dialog)}
+                  claimWrite={() => claimWrite("information")}
+                  onAccessLost={retireRecord}
+                />
+              )}
               {(visited.information || tab === "information") && (
                 <FarmInformation
                   ref={information}
@@ -629,15 +644,6 @@ function FarmDetailContent({ farmId, productId }: Props) {
                   ownToggle={ownToggle}
                   claimWrite={() => claimWrite("information")}
                   setInformationLocked={setInformationLocked}
-                  onAccessLost={retireRecord}
-                />
-              )}
-              {tab === "information" && (
-                <FarmFarmerLink
-                  key={farm.id}
-                  farmId={farm.id}
-                  writeBlocked={headerLocked || Boolean(dialog)}
-                  claimWrite={() => claimWrite("information")}
                   onAccessLost={retireRecord}
                 />
               )}
@@ -684,7 +690,9 @@ function FarmDetailContent({ farmId, productId }: Props) {
             </>
           ) : (
             <>
-              {deleting || (farmQuery.isFetching && !deleteIssue) ? (
+              {linkBlocksDelete ? (
+                <Text>{c.deleteLinkUnconfirmed}</Text>
+              ) : deleting || (farmQuery.isFetching && !deleteIssue) ? (
                 <DataState kind="loading" title={c.loading} />
               ) : deleteIssue || !deletion ? (
                 <RecoveryAlert
