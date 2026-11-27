@@ -172,10 +172,12 @@ const click = async (element: HTMLElement) => act(async () => fireEvent.click(el
 
 function deferredFarm() {
   let resolve!: (farm: Farm) => void;
-  const promise = new Promise<Farm>((done) => {
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<Farm>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 async function informationReady() {
@@ -648,21 +650,23 @@ it("keeps the persisted Farm name in the breadcrumb until inline save succeeds",
 });
 
 it.each([
-  { pending: false, readVersion: 3, leave: false },
-  { pending: true, readVersion: 3, leave: false },
-  { pending: true, readVersion: 2, leave: false },
-  { pending: true, readVersion: 3, leave: true },
+  { pending: false, readVersion: 3, leave: false, verificationVersion: 3 },
+  { pending: false, readVersion: 2, leave: false, verificationVersion: 3 },
+  { pending: true, readVersion: 3, leave: false, verificationVersion: 3 },
+  { pending: true, readVersion: 2, leave: false, verificationVersion: 3 },
+  { pending: true, readVersion: 3, leave: true, verificationVersion: 3 },
+  { pending: true, readVersion: 2, leave: true, verificationVersion: 3 },
+  { pending: true, readVersion: 2, leave: false, verificationVersion: 2 },
 ])(
-  "preserves confirmed information and canonical capability (pending $pending, revision $readVersion, navigation $leave)",
-  async ({ pending, readVersion, leave }) => {
+  "rechecks a conflicting Delete capability (GET pending $pending, revision $readVersion, navigation $leave, verification $verificationVersion)",
+  async ({ pending, readVersion, leave, verificationVersion }) => {
     const initial = { ...farm, capabilities: deleteAllowed };
-    const saved = { ...initial, name_vi: "Tên đã lưu", version: 3 };
-    const refreshed = {
-      ...(readVersion === saved.version ? saved : initial),
-      capabilities: deleteBlocked,
-    };
+    const saved = { ...initial, name_vi: "Tên đã lưu", version: 3, capabilities: deleteBlocked };
+    const stale =
+      readVersion === saved.version ? { ...saved, capabilities: deleteAllowed } : initial;
     const patch = deferredFarm();
     const read = deferredFarm();
+    const verification = deferredFarm();
     mocks.get.mockResolvedValue(initial);
     mocks.getTracker
       .mockResolvedValueOnce(tracker)
@@ -679,12 +683,12 @@ it.each([
     change(screen.getByDisplayValue(farm.name_vi), saved.name_vi);
     await click(save);
     expect(mocks.save).toHaveBeenCalledTimes(1);
-    mocks.get.mockReturnValueOnce(read.promise);
+    mocks.get.mockReturnValueOnce(read.promise).mockReturnValueOnce(verification.promise);
     await act(async () => {
       void client.invalidateQueries({ queryKey });
     });
     const signal = mocks.get.mock.calls.at(-1)?.[1] as AbortSignal;
-    if (!pending) await act(async () => read.resolve(refreshed));
+    if (!pending) await act(async () => read.resolve(stale));
 
     await act(async () => patch.resolve(saved));
     expect(screen.getByDisplayValue(saved.name_vi)).toBeVisible();
@@ -694,23 +698,39 @@ it.each([
       await act(async () => editor.close());
       expect(signal.aborted).toBe(true);
       expect(client.getQueryData<Farm>(queryKey)?.name_vi).toBe(saved.name_vi);
-      mocks.get.mockResolvedValueOnce(refreshed);
       await act(async () => editor.show(farm.id));
-      await act(async () => read.resolve(initial));
+      await act(async () => read.resolve(stale));
     } else if (pending) {
       expect(client.getQueryState(queryKey)).toMatchObject({
         fetchStatus: "fetching",
         isInvalidated: true,
       });
       expect(client.getQueryData<Farm>(queryKey)?.capabilities?.delete.allowed).not.toBe(true);
-      await act(async () => read.resolve(refreshed));
+      expect(mocks.get).toHaveBeenCalledTimes(readCount + 1);
+      await act(async () => read.resolve(stale));
     }
-    await waitFor(() =>
-      expect(client.getQueryData<Farm>(queryKey)?.capabilities).toEqual(deleteBlocked),
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(readCount + 2));
+    expect(client.getQueryData<Farm>(queryKey)?.capabilities).toBeUndefined();
+    expect(client.getQueryData<Farm>(queryKey)?.name_vi).toBe(saved.name_vi);
+    await act(async () =>
+      verification.resolve(verificationVersion === saved.version ? saved : initial),
+    );
+    await waitFor(() => expect(client.getQueryState(queryKey)?.fetchStatus).toBe("idle"));
+    expect(client.getQueryData<Farm>(queryKey)?.capabilities).toEqual(
+      verificationVersion === saved.version ? deleteBlocked : undefined,
     );
     expect(client.getQueryData<Farm>(queryKey)?.name_vi).toBe(saved.name_vi);
     expect(client.getQueryData<Farm>(queryKey)?.version).toBe(saved.version);
-    expect(mocks.get).toHaveBeenCalledTimes(readCount + (leave ? 2 : 1));
+    expect(mocks.get).toHaveBeenCalledTimes(readCount + 2);
+    if (verificationVersion !== saved.version) {
+      mocks.get.mockResolvedValueOnce(saved);
+      await act(async () => editor.close());
+      await act(async () => editor.show(farm.id));
+      await waitFor(() =>
+        expect(client.getQueryData<Farm>(queryKey)?.capabilities).toEqual(deleteBlocked),
+      );
+      expect(mocks.get).toHaveBeenCalledTimes(readCount + 3);
+    }
   },
 );
 
@@ -740,6 +760,33 @@ it("keeps newer deletion blockers when the editor adopts a previously reviewed F
   expect(screen.getByDisplayValue("Mô tả chưa lưu")).toBeVisible();
   expect(client.getQueryData<Farm>(queryKey)?.capabilities).toEqual(deleteBlocked);
   expect(mocks.save).toHaveBeenCalledTimes(1);
+});
+
+it("retires a Farm after an overlapping GET returns 404 without scheduling a later GET", async () => {
+  const initial = { ...farm, capabilities: deleteAllowed };
+  const saved = { ...initial, name_vi: "Tên đã lưu", version: 3, capabilities: deleteBlocked };
+  const patch = deferredFarm();
+  const read = deferredFarm();
+  mocks.get.mockResolvedValue(initial);
+  mocks.getTracker
+    .mockResolvedValueOnce(tracker)
+    .mockResolvedValue({ ...tracker, version: tracker.version + 1 });
+  mocks.save.mockReturnValueOnce(patch.promise);
+  const cache = createRef<QueryClient>();
+  renderEditor(farm.id, undefined, cache);
+  const save = await informationReady();
+  const key = farmDetailKey(farm.id);
+  change(screen.getByDisplayValue(initial.name_vi), saved.name_vi);
+  await click(save);
+  mocks.get.mockReturnValueOnce(read.promise);
+  act(() => {
+    void cache.current!.invalidateQueries({ queryKey: key });
+  });
+  await act(async () => patch.resolve(saved));
+  await act(async () => read.reject(problem("not_found", 404)));
+  expect(await screen.findByText("Không tìm thấy trang trại.")).toBeVisible();
+  expect(cache.current!.getQueryData(key)).toBeUndefined();
+  expect(mocks.get).toHaveBeenCalledTimes(2);
 });
 
 it.each([401, 403, 404])(

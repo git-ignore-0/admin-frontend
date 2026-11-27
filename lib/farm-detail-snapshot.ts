@@ -4,17 +4,30 @@ import {
   type QueryClient,
   type QueryState,
 } from "@tanstack/react-query";
-import { farmDetailKey } from "@/lib/farm-query";
+import { farmDetailKey, farmNotFound } from "@/lib/farm-query";
 import type { Farm } from "@/lib/types";
 
-type DetailState = QueryState<Farm | null>;
+type FarmDetail = Farm & { deleteCapabilityUnverified?: true };
+type DetailState = QueryState<FarmDetail | null>;
+// The read carries its starting snapshot until structural sharing consumes it.
+const detailReadBaseline = Symbol("detailReadBaseline");
+type DetailRead = FarmDetail & { [detailReadBaseline]?: DetailState["data"] };
 
 export function captureFarmDetail(client: QueryClient, farmId: string) {
-  return client.getQueryState<Farm | null>(farmDetailKey(farmId));
+  return client.getQueryState<FarmDetail | null>(farmDetailKey(farmId));
+}
+
+export function farmDetailRead(snapshot: Farm, before: DetailState | undefined): DetailRead {
+  return { ...snapshot, [detailReadBaseline]: before?.data };
 }
 
 export function farmDetailNeedsRead(state: DetailState) {
-  return state.isInvalidated || state.status === "error" || state.dataUpdatedAt === 0;
+  return (
+    state.isInvalidated ||
+    state.status === "error" ||
+    state.dataUpdatedAt === 0 ||
+    state.data?.deleteCapabilityUnverified === true
+  );
 }
 
 function verified(state: DetailState | undefined) {
@@ -34,6 +47,10 @@ export function invalidateFarmDetail(client: QueryClient, farmId: string) {
   // A second supply change still supersedes reads made after the first invalidation.
   if (query.state.isInvalidated) query.setState({ isInvalidated: true });
   void client.invalidateQueries(filters);
+}
+
+function sameCapabilities(previous: Farm, snapshot: Farm) {
+  return replaceEqualDeep(previous.capabilities, snapshot.capabilities) === previous.capabilities;
 }
 
 export function publishFarmDetail(
@@ -60,6 +77,7 @@ export function publishFarmDetail(
   if (
     latest &&
     latest.version >= Math.max(cachedVersion, snapshot.version) &&
+    (source === "read" || sameCapabilities(latest, snapshot)) &&
     (after.dataUpdateCount > before.dataUpdateCount ||
       (source === "write" && latest.version > snapshot.version))
   ) {
@@ -69,26 +87,45 @@ export function publishFarmDetail(
   // The recovery caller can keep its request unresolved without re-reading an older revision.
   if (source === "read" && snapshot.version < cachedVersion) return;
 
+  const filters = { queryKey, exact: true };
+  const cache = client.getQueryCache();
+  const query = cache.find<Farm | null>(filters);
+  if (!query) return;
+  const competingRead = after.fetchStatus === "idle" ? undefined : query.promise;
+  const confirmed = snapshot.version > cachedVersion ? snapshot : after.data;
   notifyManager.batch(() => {
-    if (snapshot.version > cachedVersion) {
-      // Preserve the confirmed fields across a refetch or its cancellation on route exit.
-      // The timestamp remains unverified even if cancellation restores this manual write.
-      client.setQueryData(queryKey, { ...snapshot, capabilities: undefined }, { updatedAt: 0 });
-    }
-    void client.invalidateQueries({ queryKey, exact: true }, { cancelRefetch: false });
+    // Keep versioned fields even if navigation cancels the competing GET.
+    client.setQueryData(queryKey, { ...confirmed, capabilities: undefined }, { updatedAt: 0 });
+    query.invalidate();
   });
+  const refresh = () => {
+    const { data, error } = query.state;
+    if (cache.find(filters) === query && data && !data.capabilities && !farmNotFound(error)) {
+      void client.invalidateQueries(filters, { cancelRefetch: false });
+    }
+  };
+  // Queue one canonical read after the overlap. Its result never schedules another read.
+  if (competingRead) void competingRead.then(refresh, refresh);
+  else refresh();
 }
 
 export function shareFarmDetail(previous: unknown, incoming: unknown) {
   const cached = previous as Farm | null | undefined;
-  const snapshot = incoming as Farm | null;
-  if (cached === null) return null;
-  // A GET already in flight may see an older revision than a confirmed PATCH.
-  // The canonical GET still supplies capability, which is independent of Farm.version.
+  const read = incoming as DetailRead | null;
+  if (cached === null || read === null) return null;
+  const { [detailReadBaseline]: baseline, ...snapshot } = read;
+  const olderInformation = cached && cached.version > snapshot.version;
+  const ambiguousCapability =
+    cached &&
+    detailReadBaseline in read &&
+    cached !== baseline &&
+    !sameCapabilities(cached, snapshot);
+  const current = olderInformation ? cached : snapshot;
+  // Compare the read's starting snapshot at cache settlement, including same-version changes.
   return replaceEqualDeep(
     cached,
-    cached && snapshot && cached.version > snapshot.version
-      ? { ...cached, capabilities: snapshot.capabilities }
-      : snapshot,
+    olderInformation || ambiguousCapability
+      ? { ...current, capabilities: undefined, deleteCapabilityUnverified: true }
+      : current,
   );
 }

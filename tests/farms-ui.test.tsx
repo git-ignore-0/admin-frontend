@@ -1419,8 +1419,9 @@ it("accepts current allowed capability after a definite source-change rejection"
   expect(mocks.removeFarm).toHaveBeenCalledTimes(1);
 });
 
-it("preserves the latest supply blocker when a late Farm toggle returns the same version", async () => {
+it("rechecks a same-version supply blocker after a late Farm toggle before enabling Delete", async () => {
   const pending = deferred<Farm>();
+  const verification = deferred<Farm>();
   let client!: QueryClient;
   const toggled = { ...farm, version: farm.version + 1, is_active: false };
   const blocked = {
@@ -1428,7 +1429,10 @@ it("preserves the latest supply blocker when a late Farm toggle returns the same
     capabilities: { delete: { allowed: false, reasons: [orderDeleteReason] } },
   };
   mocks.save.mockReturnValueOnce(pending.promise);
-  mocks.get.mockResolvedValueOnce(farm).mockResolvedValueOnce(blocked);
+  mocks.get
+    .mockResolvedValueOnce(farm)
+    .mockResolvedValueOnce(blocked)
+    .mockReturnValueOnce(verification.promise);
   view(
     <>
       <CaptureQueryClient
@@ -1445,9 +1449,12 @@ it("preserves the latest supply blocker when a late Farm toggle returns the same
   await act(async () => client.invalidateQueries({ queryKey: farmDetailKey(farm.id) }));
   await act(async () => pending.resolve(toggled));
   const deletion = within(await openFarmAction());
-  expect(deletion.getByRole("link", { name: orderDeleteReason.label })).toBeVisible();
   expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
-  expect(mocks.get).toHaveBeenCalledTimes(2);
+  expect(mocks.get).toHaveBeenCalledTimes(3);
+  await act(async () => verification.resolve(blocked));
+  expect(await deletion.findByRole("link", { name: orderDeleteReason.label })).toBeVisible();
+  expect(deletion.queryByRole("button", { name: "Xóa" })).not.toBeInTheDocument();
+  expect(mocks.removeFarm).not.toHaveBeenCalled();
 });
 
 it("shows validated previous rejection reasons when current Farm verification fails", async () => {

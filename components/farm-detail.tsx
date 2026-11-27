@@ -39,6 +39,7 @@ import {
 import {
   captureFarmDetail,
   farmDetailNeedsRead,
+  farmDetailRead,
   publishFarmDetail,
   shareFarmDetail,
   verifiedFarmDetail,
@@ -115,10 +116,11 @@ function FarmDetailContent({ farmId, productId }: Props) {
     queryKey: detailKey,
     queryFn: async ({ signal }) => {
       try {
+        const before = captureFarmDetail(queryClient, farmId);
         const row = await getFarm(farmId, signal);
         if (signal.aborted || !isCurrent() || isFarmGone(queryClient, farmId))
           throw new CancelledError();
-        return row;
+        return farmDetailRead(row, before);
       } catch (cause) {
         if (isCurrent() && farmAccessDenied(cause)) retireFarmAccess(queryClient, cause);
         throw cause;
