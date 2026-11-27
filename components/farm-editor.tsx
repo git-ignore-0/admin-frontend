@@ -40,12 +40,15 @@ import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
 import { type ClientApiError, invalidApiResponse, requestErrorMessage } from "@/lib/client-error";
+import { captureFarmDetail, publishFarmDetail } from "@/lib/farm-detail-snapshot";
 import { farmHref } from "@/lib/farm-navigation";
 import {
   farmAccess,
   farmAccessDenied,
   farmDetailKey,
   farmListKey,
+  farmNotFound,
+  isFarmGone,
   retireFarmAccess,
   retryFarmAccess,
   useFarmAccess,
@@ -97,10 +100,6 @@ function fromFarm(farm: Farm): Form {
     description_vi: farm.description_vi,
     photos: farm.photos.length ? farm.photos : farm.image ? [farm.image] : [],
   };
-}
-
-function farmUnavailable(caught: unknown) {
-  return farmAccessDenied(caught) || (caught as ClientApiError | null)?.status === 404;
 }
 
 function farmSaveRejected(problem: ClientApiError | null) {
@@ -284,8 +283,9 @@ function FarmEditorForm({
       mounted.current &&
       isCurrent() &&
       !accessRevoked.current &&
+      (!farmId || !isFarmGone(queryClient, farmId)) &&
       farmAccess(queryClient).revision === accessRevision,
-    [accessRevision, isCurrent, queryClient],
+    [accessRevision, farmId, isCurrent, queryClient],
   );
 
   const hideFarm = useCallback(
@@ -508,16 +508,6 @@ function FarmEditorForm({
     }
   }
 
-  async function publishFarm(snapshot: Farm) {
-    const detailKey = farmDetailKey(snapshot.id);
-    await queryClient.cancelQueries({ queryKey: detailKey });
-    if (!isCurrent() || farmAccess(queryClient).revision !== accessRevision) return;
-    const cached = queryClient.getQueryData<Farm>(detailKey);
-    if (!cached || cached.version <= snapshot.version)
-      queryClient.setQueryData(detailKey, snapshot);
-    void queryClient.invalidateQueries({ queryKey: farmListKey });
-  }
-
   async function checkLatestFarm() {
     if (
       !farmId ||
@@ -531,8 +521,10 @@ function FarmEditorForm({
     recoveryRequest.current = controller;
     setCheckingLatest(true);
     try {
-      const latest = await getFarm(farmId, controller.signal);
+      const before = captureFarmDetail(queryClient, farmId);
+      const snapshot = await getFarm(farmId, controller.signal);
       if (!canAct() || controller.signal.aborted) return;
+      const latest = publishFarmDetail(queryClient, snapshot, before, "read") ?? snapshot;
       // A read of the original revision does not settle an uncertain write.
       if (latest.version <= recovery.version) {
         setRecovery({ ...recovery, latest: undefined, stale: true });
@@ -546,7 +538,7 @@ function FarmEditorForm({
         return;
       }
       if (!canAct() || controller.signal.aborted) return;
-      if (farmUnavailable(caught)) hideFarm(caught);
+      if (farmNotFound(caught)) hideFarm(caught);
       else setRecovery({ ...recovery, problem: caught });
     } finally {
       recoveryRequest.current = null;
@@ -582,8 +574,7 @@ function FarmEditorForm({
       if (choice === "server") discardTemporaryPhotos(uploadsRef.current, next.photos);
       setForm(next);
       setBaseline(latest);
-      await publishFarm(latest);
-      if (!canAct()) return;
+      void queryClient.invalidateQueries({ queryKey: farmListKey });
       await tracker.syncAfterFarmWrite(confirmedOwnWrite);
       if (canAct()) {
         setRecovery(null);
@@ -665,6 +656,7 @@ function FarmEditorForm({
       }
       for (const id of submitted) uploads.set(id, "submitted");
       sendingFarm = true;
+      const before = farmId ? captureFarmDetail(queryClient, farmId) : undefined;
       const result = await saveFarm(farmId, patch);
       if (
         baseline &&
@@ -676,23 +668,17 @@ function FarmEditorForm({
       }
       sendingFarm = false;
       forgetReferencedPhotos(uploads, result);
-      if (!canAct()) {
-        if (isCurrent() && farmAccess(queryClient).revision === accessRevision) {
-          void queryClient.invalidateQueries({ queryKey: farmDetailKey(result.id) });
-          void queryClient.invalidateQueries({ queryKey: farmListKey });
-        }
-        return;
-      }
+      if (!isCurrent() || farmAccess(queryClient).revision !== accessRevision) return;
+      if (information) publishFarmDetail(queryClient, result, before, "write");
+      void queryClient.invalidateQueries({ queryKey: farmListKey });
+      if (!canAct()) return;
       setForm(fromFarm(result));
       setBaseline(result);
       if (information) {
-        await publishFarm(result);
-        if (!canAct()) return;
         const synced = await tracker.syncAfterFarmWrite();
         if (canAct()) toast(synced ? c.savedChanges : c.farmSaved);
       } else {
         // The create response has no delete capability. Let the detail query read its own snapshot.
-        void queryClient.invalidateQueries({ queryKey: farmListKey });
         toast(c.farmSaved);
         leavingAfterCreate = true;
         router.replace(farmHref(search, { id: result.id }));
@@ -704,7 +690,7 @@ function FarmEditorForm({
         return;
       }
       const problem = caught instanceof Error ? (caught as ClientApiError) : null;
-      const unavailable = farmUnavailable(caught);
+      const unavailable = farmNotFound(caught);
       const rejected = !unavailable && farmSaveRejected(problem);
       if (rejected) for (const id of submitted) uploads.set(id, "temporary");
       if (!canAct()) {

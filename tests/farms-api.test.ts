@@ -1,9 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
+import { apiErrorContext, isApiObject } from "@/lib/client-error";
 import {
   addFarmProduct,
   cancelFarmStockBatch,
   createFarmStockBatch,
+  deleteFarm,
   deleteFarmImage,
   getFarm,
   getFarmProduct,
@@ -13,6 +15,7 @@ import {
   listAvailableFarmProducts,
   listFarmStockBatches,
   saveFarm,
+  parseFarmDeleteReasons,
   parseFarmSourceBlocker,
   readdFarmProduct,
   removeFarmProduct,
@@ -132,47 +135,44 @@ const sourceHistoryEvent = {
   },
 };
 
-it("preserves a validated delete capability consistently for GET and PATCH", async () => {
-  const capabilities = {
-    delete: {
-      allowed: false,
-      reasons: [
-        {
-          code: "supplying_product",
-          id: productId,
-          label: "R01",
-          name_vi: "Rau",
-          name_en: "Greens",
-        },
-        { code: "store_order", id: batchId, label: "NFV-000123" },
-        {
-          code: "legacy_supply",
-          id: linkId,
-          label: "R02",
-          name_vi: "Cải",
-          name_en: "Mustard greens",
-        },
-      ],
-    },
-  };
-  const detail = { ...farm, capabilities };
-  const patched = { ...detail, is_active: false, version: farm.version + 1 };
-  fetchMock
-    .mockResolvedValueOnce(Response.json({ data: detail }))
-    .mockResolvedValueOnce(Response.json({ data: patched }));
-  await expect(getFarm(farmId)).resolves.toEqual(detail);
-  await expect(saveFarm(farmId, { version: farm.version, is_active: false })).resolves.toEqual(
-    patched,
-  );
-});
+const storeOrderReason = { code: "store_order", id: batchId, label: "NFV-000123" };
+const supplyingProductReason = {
+  code: "supplying_product",
+  id: productId,
+  label: "R01",
+  name_vi: "Rau",
+  name_en: "Greens",
+};
+const deleteReasons = [
+  supplyingProductReason,
+  storeOrderReason,
+  { ...supplyingProductReason, code: "legacy_supply" },
+];
+
+it.each([
+  { allowed: true, reasons: [] },
+  { allowed: false, reasons: deleteReasons },
+])(
+  "preserves a validated delete capability consistently for GET and PATCH ($allowed)",
+  async (deletion) => {
+    const detail = { ...farm, capabilities: { delete: deletion } };
+    const patched = { ...detail, is_active: false, version: farm.version + 1 };
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ data: detail }))
+      .mockResolvedValueOnce(Response.json({ data: patched }));
+    await expect(getFarm(farmId)).resolves.toEqual(detail);
+    await expect(saveFarm(farmId, { version: farm.version, is_active: false })).resolves.toEqual(
+      patched,
+    );
+  },
+);
 
 it.each([
   null,
   { delete: { allowed: "true", reasons: [] } },
   { delete: { allowed: true } },
-  {
-    delete: { allowed: true, reasons: [{ code: "store_order", id: batchId, label: "NFV-000123" }] },
-  },
+  { delete: { allowed: false, reasons: [] } },
+  { delete: { allowed: true, reasons: [storeOrderReason] } },
   {
     delete: {
       allowed: false,
@@ -182,14 +182,14 @@ it.each([
   {
     delete: {
       allowed: false,
-      reasons: [{ code: "store_order", id: "wrong-id", label: "NFV-000123" }],
+      reasons: [{ ...storeOrderReason, id: "wrong-id" }],
     },
   },
   { delete: { allowed: false, reasons: [{ code: "growth_tracker", id: linkId, label: "Test" }] } },
   {
     delete: {
       allowed: false,
-      reasons: Array(2).fill({ code: "store_order", id: batchId, label: "NFV-000123" }),
+      reasons: [storeOrderReason, { ...storeOrderReason, id: linkId }],
     },
   },
 ])(
@@ -197,8 +197,33 @@ it.each([
   async (capabilities) => {
     fetchMock.mockResolvedValueOnce(Response.json({ data: { ...farm, capabilities } }));
     await expect(getFarm(farmId)).resolves.toEqual(farm);
+
+    const patched = { ...farm, version: farm.version + 1 };
+    fetchMock.mockResolvedValueOnce(Response.json({ data: { ...patched, capabilities } }));
+    await expect(saveFarm(farmId, { version: farm.version })).resolves.toEqual(patched);
   },
 );
+
+it("reads the same representative reason groups from a DELETE rejection", async () => {
+  const error = { code: "farm_in_use", context: { reasons: deleteReasons } };
+  fetchMock.mockResolvedValueOnce(Response.json({ errors: [error] }, { status: 409 }));
+
+  const caught = await deleteFarm(farmId).catch((cause: unknown) => cause);
+  const context = apiErrorContext<unknown>(caught);
+  expect(isApiObject(context) && parseFarmDeleteReasons(context.reasons)).toEqual(deleteReasons);
+});
+
+it.each([
+  ["missing list", undefined],
+  ["non-array list", storeOrderReason],
+  ["unknown code", [{ ...storeOrderReason, code: "growth_tracker" }]],
+  ["malformed ID", [{ ...storeOrderReason, id: "wrong-id" }]],
+  ["blank label", [{ ...storeOrderReason, label: " " }]],
+  ["missing localized name", [{ ...supplyingProductReason, name_en: undefined }]],
+  ["duplicate reason group", [storeOrderReason, { ...storeOrderReason, id: linkId }]],
+])("rejects %s in the DELETE reasons list", (_case, reasons) => {
+  expect(parseFarmDeleteReasons(reasons)).toBeUndefined();
+});
 
 it("validates source detail and passes the request signal to the BFF", async () => {
   const controller = new AbortController();

@@ -2,11 +2,13 @@ import {
   notifyManager,
   skipToken,
   useQuery,
+  useMutationState,
   type MutationFilters,
   type QueryClient,
 } from "@tanstack/react-query";
-import { isApiObject, isProtectedDataError } from "@/lib/client-error";
+import { isApiObject, isProtectedDataError, type ClientApiError } from "@/lib/client-error";
 import { isUncertainFarmSupplyWrite } from "@/lib/farm-stock";
+import type { Farm } from "@/lib/types";
 
 const farmsKey = ["farms"] as const;
 const supplyKey = ["farm-supply"] as const;
@@ -19,6 +21,92 @@ export const farmDetailKey = (farmId: string) =>
   [...farmsKey, "detail", farmId.toLowerCase()] as const;
 export const farmSupplyKey = (farmId: string) => [...supplyKey, farmId.toLowerCase()] as const;
 export const farmSupplyWriteKey = (farmId: string) => [...farmSupplyKey(farmId), "write"] as const;
+const farmDeleteMutationKey = (farmId: string) =>
+  [...farmsKey, "delete", farmId.toLowerCase()] as const;
+const farmDetailWriteKey = (farmId: string) =>
+  [...farmsKey, "write", farmId.toLowerCase()] as const;
+export const farmDetailWriteFilters = (farmId: string) => ({
+  mutationKey: farmDetailWriteKey(farmId),
+  exact: true,
+});
+
+export const farmDeleteFilters = (farmId: string) => ({
+  mutationKey: farmDeleteMutationKey(farmId),
+  exact: true,
+});
+
+export function farmDeleteBlocksWrite(client: QueryClient, farmId: string) {
+  return (
+    isFarmGone(client, farmId) ||
+    client.getMutationCache().findAll(farmDeleteFilters(farmId)).some(deleteBlocksWrite)
+  );
+}
+
+function deleteBlocksWrite({ state }: { state: { status: string; data: unknown } }) {
+  if (state.status === "pending") return true;
+  return (
+    isApiObject(state.data) &&
+    isApiObject(state.data.issue) &&
+    state.data.issue.kind === "uncertain"
+  );
+}
+
+export function useFarmDeleteBlocksWrite(farmId: string) {
+  return useMutationState({
+    filters: farmDeleteFilters(farmId),
+    select: deleteBlocksWrite,
+  }).some(Boolean);
+}
+
+export function farmDetailWritePending(client: QueryClient, farmId: string) {
+  return client.isMutating(farmDetailWriteFilters(farmId)) > 0;
+}
+
+export function farmNotFound(cause: unknown) {
+  if (!(cause instanceof Error)) return false;
+  const { status, message, payload } = cause as ClientApiError;
+  const body: unknown = payload;
+  return (
+    status === 404 &&
+    (message === "not_found" ||
+      (message === "request_failed" &&
+        isApiObject(body) &&
+        typeof body.detail === "string" &&
+        Boolean(body.detail.trim())))
+  );
+}
+
+export function holdFarmDetailWrite(client: QueryClient, farmId: string) {
+  // The existing Farm editor and header share a lease across route instances.
+  let release!: () => void;
+  const operation = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cache = client.getMutationCache();
+  const entry = cache.build(client, {
+    mutationKey: farmDetailWriteKey(farmId),
+    mutationFn: () => operation,
+  });
+  void entry.execute(undefined);
+  return () => {
+    release();
+    cache.remove(entry);
+  };
+}
+
+export function isFarmGone(client: QueryClient, farmId: string) {
+  return client.getQueryData<Farm | null>(farmDetailKey(farmId)) === null;
+}
+
+export function confirmFarmGone(client: QueryClient, farmId: string) {
+  const key = farmDetailKey(farmId);
+  if (isFarmGone(client, farmId)) return;
+  void client.cancelQueries({ queryKey: key, exact: true });
+  client.setQueryData(key, null);
+  retireFarmSupply(client, farmId);
+  removeFarmMutations(client, farmDeleteMutationKey(farmId));
+  void client.invalidateQueries({ queryKey: farmListKey });
+}
 
 export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
   const mutationKey = farmSupplyWriteKey(farmId);
@@ -31,9 +119,11 @@ export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
       const action =
         isApiObject(variables) && isApiObject(variables.action) ? variables.action.kind : undefined;
       return (
-        (add || action === "remove" || action === "readd") &&
-        (status === "pending" ||
-          (status === "error" && !farmAccessDenied(error) && isUncertainFarmSupplyWrite(error)))
+        status === "pending" ||
+        ((add || action === "remove" || action === "readd") &&
+          status === "error" &&
+          !farmAccessDenied(error) &&
+          isUncertainFarmSupplyWrite(error))
       );
     },
   };
@@ -78,6 +168,7 @@ export function retireFarmAccess(client: QueryClient, error: Error) {
       }
     }
     removeFarmMutations(client, supplyKey);
+    removeFarmMutations(client, farmsKey);
   });
 }
 
@@ -87,7 +178,11 @@ function removeFarmMutations(client: QueryClient, mutationKey: readonly string[]
 }
 
 export function retireFarmQueries(client: QueryClient, farmId: string) {
-  client.removeQueries({ queryKey: farmDetailKey(farmId) });
+  if (!isFarmGone(client, farmId)) client.removeQueries({ queryKey: farmDetailKey(farmId) });
+  retireFarmSupply(client, farmId);
+}
+
+function retireFarmSupply(client: QueryClient, farmId: string) {
   const scope = farmSupplyKey(farmId);
   client.removeQueries({ queryKey: scope });
   removeFarmMutations(client, scope);

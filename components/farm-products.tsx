@@ -23,15 +23,17 @@ import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { apiErrorContext, isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
+import { invalidateFarmDetail } from "@/lib/farm-detail-snapshot";
 import { farmHref, normalizeFarmSupplySearch, readFarmSupplyContext } from "@/lib/farm-navigation";
 import {
   farmAccess,
   farmAccessDenied,
-  farmDetailKey,
+  farmDeleteBlocksWrite,
   farmListKey,
   farmSupplyKey,
   farmSupplyWriteKey,
   retireFarmAccess,
+  useFarmDeleteBlocksWrite,
 } from "@/lib/farm-query";
 import {
   addFarmProduct,
@@ -73,6 +75,7 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
   const data = query.error ? undefined : query.data;
   const lastPage = data ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size)) : page;
   const pendingWrite = useIsMutating({ mutationKey: farmSupplyWriteKey(farm.id) }) > 0;
+  const deletionLocked = useFarmDeleteBlocksWrite(farm.id);
   const retained = useMutationState({
     filters: { mutationKey: addMutationKey(farm.id), exact: true, status: "error" },
     select: (entry) => entry,
@@ -149,7 +152,7 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
           <Button
             ref={addButton}
             onClick={() => setAddOpen(true)}
-            disabled={pendingWrite || Boolean(retained) || !data}
+            disabled={deletionLocked || pendingWrite || Boolean(retained) || !data}
           >
             {c.addProduct}
           </Button>
@@ -307,6 +310,7 @@ function AddFarmProduct({
   const recovery = useRef<AbortController | null>(null);
   const mutationKey = addMutationKey(farm.id);
   const cache = queryClient.getMutationCache();
+  const deletionLocked = useFarmDeleteBlocksWrite(farm.id);
   // Pending writes stay observable across routes. Only unresolved writes survive settlement.
   const mutation = useMutation({
     mutationKey,
@@ -333,7 +337,14 @@ function AddFarmProduct({
   }, [onAccessLost, permissionLost, picker.error]);
 
   async function add(batch: StockBatchInput) {
-    if (!selected || unconfirmed || pending.current || !currentSession()) return;
+    if (
+      !selected ||
+      unconfirmed ||
+      pending.current ||
+      !currentSession() ||
+      farmDeleteBlocksWrite(queryClient, farm.id)
+    )
+      return;
     pending.current = true;
     const attempt = { product: selected, batch };
     const accessRevision = farmAccess(queryClient).revision;
@@ -343,7 +354,7 @@ function AddFarmProduct({
     try {
       await mutation.mutateAsync(attempt);
       if (!permitted()) return;
-      void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
+      invalidateFarmDetail(queryClient, farm.id);
       void queryClient.invalidateQueries({
         queryKey: [...farmSupplyKey(farm.id), "picker"],
         refetchType: "none",
@@ -371,7 +382,7 @@ function AddFarmProduct({
         context: apiErrorContext(cause) ?? undefined,
       });
       if (blocker?.code === "farm_product_removed" || blocker?.code === "product_already_linked") {
-        void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
+        invalidateFarmDetail(queryClient, farm.id);
         setError(
           blocker.code === "farm_product_removed" ? c.addPreviouslyRemoved : c.alreadyLinked,
         );
@@ -422,7 +433,7 @@ function AddFarmProduct({
       if (canUpdate()) {
         setFound(true);
         setCheckMessage(c.sourceFoundReview);
-        void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
+        invalidateFarmDetail(queryClient, farm.id);
         void queryClient.invalidateQueries({ queryKey: [...farmSupplyKey(farm.id), "list"] });
         void queryClient.invalidateQueries({ queryKey: farmListKey });
         void queryClient.invalidateQueries({
@@ -469,7 +480,7 @@ function AddFarmProduct({
         confirmLabel={c.addProduct}
         product={selected}
         busy={busy}
-        blocked={unconfirmed || picker.isFetching || Boolean(picker.error)}
+        blocked={deletionLocked || unconfirmed || picker.isFetching || Boolean(picker.error)}
         error={error}
         fallbackFocusRef={focus}
         onCancel={() => {

@@ -11,14 +11,16 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { apiErrorContext, type ClientApiError } from "@/lib/client-error";
+import { invalidateFarmDetail } from "@/lib/farm-detail-snapshot";
 import {
   farmAccess,
   farmAccessDenied,
-  farmDetailKey,
+  farmDeleteBlocksWrite,
   farmListKey,
   farmSupplyKey,
   farmSupplyWriteKey,
   retireFarmAccess,
+  useFarmDeleteBlocksWrite,
 } from "@/lib/farm-query";
 import {
   cancelFarmStockBatch,
@@ -104,7 +106,9 @@ export function useFarmSourceWrite(
   const scope = farmSupplyKey(farmId);
   const writeScope = farmSupplyWriteKey(farmId);
   const mutationKey = [...writeScope, "source", productId];
-  const isWriting = useIsMutating({ mutationKey: writeScope }) > 0;
+  const supplyWriting = useIsMutating({ mutationKey: writeScope }) > 0;
+  const deletionLocked = useFarmDeleteBlocksWrite(farmId);
+  const isWriting = supplyWriting || deletionLocked;
   // Only uncertain outcomes survive the finally block until review or session retirement.
   const mutation = useMutation({ mutationKey, mutationFn: writeSupply, gcTime: Infinity });
   const cache = client.getMutationCache();
@@ -177,7 +181,7 @@ export function useFarmSourceWrite(
     void client.invalidateQueries({ queryKey: [...scope, "list"] });
     void client.invalidateQueries({ queryKey: farmListKey });
     if (lifecycle) {
-      void client.invalidateQueries({ queryKey: farmDetailKey(farmId) });
+      invalidateFarmDetail(client, farmId);
       void client.invalidateQueries({ queryKey: [...scope, "history", productId] });
     }
   }
@@ -303,7 +307,14 @@ export function useFarmSourceWrite(
     input?: StockBatchInput,
   ) {
     const { revision } = farmAccess(client);
-    if (!active() || !sameAccess(revision) || operation.current || isWriting) return;
+    if (
+      !active() ||
+      !sameAccess(revision) ||
+      operation.current ||
+      isWriting ||
+      farmDeleteBlocksWrite(client, farmId)
+    )
+      return;
     operation.current = true;
     const attempt = { action, input, startedAt: Date.now() };
     submitted.current = attempt;

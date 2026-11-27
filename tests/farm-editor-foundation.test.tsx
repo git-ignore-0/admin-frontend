@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { focusManager } from "@tanstack/react-query";
-import { createRef, type Ref } from "react";
+import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { createRef, useImperativeHandle, type Ref } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import {
@@ -12,6 +12,7 @@ import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { FarmDetail } from "@/components/farm-detail";
 import { FarmEditor } from "@/components/farm-editor";
 import { ToastProvider } from "@/components/toast-provider";
+import { farmDetailKey } from "@/lib/farm-query";
 import type { Farm, MediaAsset, TrackerFarm } from "@/lib/types";
 
 const mocks = vi.hoisted(() => ({
@@ -98,7 +99,19 @@ function Breadcrumbs() {
   );
 }
 
-function page(farmId?: string, session = "session-a", scope?: Ref<() => void>, editorOpen = true) {
+function FarmCacheProbe({ target }: { target: Ref<QueryClient> }) {
+  const client = useQueryClient();
+  useImperativeHandle(target, () => client, [client]);
+  return null;
+}
+
+function page(
+  farmId?: string,
+  session = "session-a",
+  scope?: Ref<() => void>,
+  editorOpen = true,
+  cache?: Ref<QueryClient>,
+) {
   return (
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
@@ -109,6 +122,7 @@ function page(farmId?: string, session = "session-a", scope?: Ref<() => void>, e
         >
           <Breadcrumbs />
           <AdminQueryProvider ref={scope}>
+            {cache && <FarmCacheProbe target={cache} />}
             {editorOpen && (farmId ? <FarmDetail farmId={farmId} /> : <FarmEditor />)}
           </AdminQueryProvider>
         </AdminBreadcrumbProvider>
@@ -117,12 +131,13 @@ function page(farmId?: string, session = "session-a", scope?: Ref<() => void>, e
   );
 }
 
-function renderEditor(farmId?: string, scope?: Ref<() => void>) {
+function renderEditor(farmId?: string, scope?: Ref<() => void>, cache?: Ref<QueryClient>) {
   if (farmId) mocks.search.set("tab", "information");
-  const rendered = render(page(farmId, "session-a", scope));
+  const rendered = render(page(farmId, "session-a", scope, true, cache));
   return {
-    show: (id: string, session = "session-a") => rendered.rerender(page(id, session, scope)),
-    close: () => rendered.rerender(page(farmId, "session-a", scope, false)),
+    show: (id: string, session = "session-a") =>
+      rendered.rerender(page(id, session, scope, true, cache)),
+    close: () => rendered.rerender(page(farmId, "session-a", scope, false, cache)),
   };
 }
 
@@ -137,6 +152,15 @@ const cover: MediaAsset = {
 };
 const album: MediaAsset = { ...cover, id: "album", url: "/album.webp" };
 const otherUpload: MediaAsset = { ...cover, id: "unconfirmed", url: "/unconfirmed.webp" };
+const deleteAllowed = { delete: { allowed: true, reasons: [] } };
+const supplyReason = {
+  code: "supplying_product" as const,
+  id: "b06ab045-88cd-4679-b6e9-b33e923e2226",
+  label: "RAU",
+  name_vi: "Rau",
+  name_en: "Greens",
+};
+const deleteBlocked = { delete: { allowed: false, reasons: [supplyReason] } };
 const problem = (message: string, status?: number) => Object.assign(new Error(message), { status });
 const month = () => screen.getByLabelText<HTMLInputElement>("Số người đăng ký 1 tháng");
 const sixMonths = () => screen.getByLabelText<HTMLInputElement>("Số người đăng ký 6 tháng");
@@ -145,6 +169,14 @@ const saveInformation = () => screen.getByRole("button", { name: "Lưu thay đ�
 const change = (input: HTMLElement, value: string) =>
   fireEvent.change(input, { target: { value } });
 const click = async (element: HTMLElement) => act(async () => fireEvent.click(element));
+
+function deferredFarm() {
+  let resolve!: (farm: Farm) => void;
+  const promise = new Promise<Farm>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 async function informationReady() {
   await waitFor(() => expect(month()).toBeEnabled());
@@ -615,10 +647,108 @@ it("keeps the persisted Farm name in the breadcrumb until inline save succeeds",
   expect(mocks.get).toHaveBeenCalledTimes(3);
 });
 
+it.each([
+  { pending: false, readVersion: 3, leave: false },
+  { pending: true, readVersion: 3, leave: false },
+  { pending: true, readVersion: 2, leave: false },
+  { pending: true, readVersion: 3, leave: true },
+])(
+  "preserves confirmed information and canonical capability (pending $pending, revision $readVersion, navigation $leave)",
+  async ({ pending, readVersion, leave }) => {
+    const initial = { ...farm, capabilities: deleteAllowed };
+    const saved = { ...initial, name_vi: "Tên đã lưu", version: 3 };
+    const refreshed = {
+      ...(readVersion === saved.version ? saved : initial),
+      capabilities: deleteBlocked,
+    };
+    const patch = deferredFarm();
+    const read = deferredFarm();
+    mocks.get.mockResolvedValue(initial);
+    mocks.getTracker
+      .mockResolvedValueOnce(tracker)
+      .mockResolvedValue({ ...tracker, version: tracker.version + 1 });
+    mocks.save.mockReturnValueOnce(patch.promise);
+    const cache = createRef<QueryClient>();
+    const editor = renderEditor(farm.id, undefined, cache);
+    const save = await informationReady();
+    const client = cache.current!;
+    const queryKey = farmDetailKey(farm.id);
+    await waitFor(() => expect(client.getQueryState(queryKey)?.fetchStatus).toBe("idle"));
+    const readCount = mocks.get.mock.calls.length;
+
+    change(screen.getByDisplayValue(farm.name_vi), saved.name_vi);
+    await click(save);
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    mocks.get.mockReturnValueOnce(read.promise);
+    await act(async () => {
+      void client.invalidateQueries({ queryKey });
+    });
+    const signal = mocks.get.mock.calls.at(-1)?.[1] as AbortSignal;
+    if (!pending) await act(async () => read.resolve(refreshed));
+
+    await act(async () => patch.resolve(saved));
+    expect(screen.getByDisplayValue(saved.name_vi)).toBeVisible();
+    expect(client.getQueryData<Farm>(queryKey)?.name_vi).toBe(saved.name_vi);
+    expect(signal.aborted).toBe(false);
+    if (leave) {
+      await act(async () => editor.close());
+      expect(signal.aborted).toBe(true);
+      expect(client.getQueryData<Farm>(queryKey)?.name_vi).toBe(saved.name_vi);
+      mocks.get.mockResolvedValueOnce(refreshed);
+      await act(async () => editor.show(farm.id));
+      await act(async () => read.resolve(initial));
+    } else if (pending) {
+      expect(client.getQueryState(queryKey)).toMatchObject({
+        fetchStatus: "fetching",
+        isInvalidated: true,
+      });
+      expect(client.getQueryData<Farm>(queryKey)?.capabilities?.delete.allowed).not.toBe(true);
+      await act(async () => read.resolve(refreshed));
+    }
+    await waitFor(() =>
+      expect(client.getQueryData<Farm>(queryKey)?.capabilities).toEqual(deleteBlocked),
+    );
+    expect(client.getQueryData<Farm>(queryKey)?.name_vi).toBe(saved.name_vi);
+    expect(client.getQueryData<Farm>(queryKey)?.version).toBe(saved.version);
+    expect(mocks.get).toHaveBeenCalledTimes(readCount + (leave ? 2 : 1));
+  },
+);
+
+it("keeps newer deletion blockers when the editor adopts a previously reviewed Farm revision", async () => {
+  const initial = { ...farm, capabilities: deleteAllowed };
+  const reviewed = { ...initial, version: 3, name_vi: "Tên mới trên máy chủ" };
+  const refreshed = { ...reviewed, capabilities: deleteBlocked };
+  mocks.get.mockResolvedValue(initial);
+  mocks.save.mockRejectedValueOnce(problem("version_conflict", 409));
+  const cache = createRef<QueryClient>();
+  renderEditor(farm.id, undefined, cache);
+  const save = await informationReady();
+  const client = cache.current!;
+  const queryKey = farmDetailKey(farm.id);
+  await waitFor(() => expect(client.getQueryState(queryKey)?.fetchStatus).toBe("idle"));
+  change(screen.getByDisplayValue(farm.description_vi), "Mô tả chưa lưu");
+  await click(save);
+  mocks.get.mockResolvedValueOnce(reviewed);
+  await click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+  const adopt = await screen.findByRole("button", { name: "Dùng phiên bản mới nhất" });
+
+  mocks.get.mockResolvedValue(refreshed);
+  await act(async () => client.invalidateQueries({ queryKey }));
+  await click(adopt);
+
+  expect(screen.getByDisplayValue(reviewed.name_vi)).toBeVisible();
+  expect(screen.getByDisplayValue("Mô tả chưa lưu")).toBeVisible();
+  expect(client.getQueryData<Farm>(queryKey)?.capabilities).toEqual(deleteBlocked);
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+});
+
 it.each([401, 403, 404])(
   "clears the Farm name and form after a %s save response",
   async (status) => {
-    mocks.save.mockRejectedValue(problem("request_failed", status));
+    const rejection = problem("request_failed", status);
+    mocks.save.mockRejectedValue(
+      status === 404 ? Object.assign(rejection, { payload: { detail: "Not found." } }) : rejection,
+    );
     renderEditor(farm.id);
     const save = await informationReady();
 
@@ -632,6 +762,26 @@ it.each([401, 403, 404])(
     expect(await screen.findByRole("alert")).toBeVisible();
   },
 );
+
+it("keeps the information draft when PATCH and verification time out while reading a 404 body", async () => {
+  const timeout = problem("request_timeout", 404);
+  mocks.save.mockRejectedValueOnce(timeout);
+  const cache = createRef<QueryClient>();
+  renderEditor(farm.id, undefined, cache);
+  const save = await informationReady();
+  const queryKey = farmDetailKey(farm.id);
+  await waitFor(() => expect(cache.current?.getQueryState(queryKey)?.fetchStatus).toBe("idle"));
+  change(screen.getByDisplayValue(farm.name_vi), "Giữ bản nháp khi hết thời gian");
+
+  await click(save);
+  mocks.get.mockRejectedValueOnce(timeout);
+  await click(screen.getByRole("button", { name: "Kiểm tra dữ liệu mới nhất" }));
+
+  expect(screen.getByDisplayValue("Giữ bản nháp khi hết thời gian")).toBeVisible();
+  expect(save).toBeDisabled();
+  expect(cache.current?.getQueryData<Farm>(queryKey)?.id).toBe(farm.id);
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+});
 
 it("preserves the draft and access to Farm data when the write fails CSRF validation", async () => {
   mocks.save.mockRejectedValueOnce(problem("csrf_rejected", 403));

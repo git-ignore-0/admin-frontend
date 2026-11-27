@@ -2,7 +2,13 @@
 
 import { ActionIcon, Group, Image, Menu, Stack, Tabs, Text, Title } from "@mantine/core";
 import { IconDots } from "@tabler/icons-react";
-import { CancelledError, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  CancelledError,
+  useIsMutating,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import NextImage from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -22,12 +28,8 @@ import { FarmSourceDetail } from "@/components/farm-source-detail";
 import { DataState, Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { RecoveryAlert } from "@/components/recovery-alert";
-import {
-  invalidApiResponse,
-  isApiObject,
-  requestErrorMessage,
-  type ClientApiError,
-} from "@/lib/client-error";
+import { useFarmDeletion } from "@/components/use-farm-deletion";
+import { invalidApiResponse, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   farmDetailTabs,
   farmHref,
@@ -35,18 +37,33 @@ import {
   type FarmDetailTab,
 } from "@/lib/farm-navigation";
 import {
+  captureFarmDetail,
+  farmDetailNeedsRead,
+  publishFarmDetail,
+  shareFarmDetail,
+  verifiedFarmDetail,
+} from "@/lib/farm-detail-snapshot";
+import {
+  confirmFarmGone,
   farmAccess,
   farmAccessDenied,
+  farmDeleteBlocksWrite,
+  farmDeleteFilters,
   farmDeleteSupplyWriteFilters,
   farmDetailKey,
+  farmDetailWriteFilters,
+  farmDetailWritePending,
   farmListKey,
+  farmNotFound,
   farmSupplyKey,
+  holdFarmDetailWrite,
+  isFarmGone,
   retireFarmAccess,
   retireFarmQueries,
   retryFarmAccess,
   useFarmAccess,
 } from "@/lib/farm-query";
-import { deleteFarm, farmDeleteCapability, getFarm, saveFarm } from "@/lib/farms-api";
+import { farmDeleteCapability, getFarm, saveFarm } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { mediaUrlForWidth } from "@/lib/media";
 import type { Farm } from "@/lib/types";
@@ -55,7 +72,6 @@ type Props = { farmId: string; productId?: string };
 type FarmAction = "delete" | "activate" | "deactivate";
 type HeaderIntent = { action: FarmAction; before: Farm };
 type HeaderRecovery = { intent: HeaderIntent; conflict: boolean };
-type DeleteRecovery = { before: Farm; conflict: boolean; message: string };
 
 export function FarmDetail({ farmId, productId }: Props) {
   return (
@@ -80,17 +96,19 @@ function FarmDetailContent({ farmId, productId }: Props) {
   const [actionError, setActionError] = useState("");
   const [dialog, setDialog] = useState<HeaderIntent | null>(null);
   const [headerRecovery, setHeaderRecovery] = useState<HeaderRecovery | null>(null);
-  const [deleteRecovery, setDeleteRecovery] = useState<DeleteRecovery | null>(null);
   const [busyOwner, setBusyOwner] = useState<"header" | "information" | null>(null);
   const [informationLocked, setInformationLocked] = useState(false);
   const [ownToggle, setOwnToggle] = useState<{ from: number; to: number }>();
   const mounted = useRef(false);
   const mutation = useRef<"header" | "information" | null>(null);
   const recordEpoch = useRef(0);
+  const deleteNavigation = useRef(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const information = useRef<FarmInformationHandle>(null);
   const detailKey = farmDetailKey(farmId);
+  const deletionFlow = useFarmDeletion(farmId);
+  const detailWriting = useIsMutating(farmDetailWriteFilters(farmId)) > 0;
   const supplyWrites = farmDeleteSupplyWriteFilters(farmId);
   const supplyWriting = useMutationState({ filters: supplyWrites, select: () => true }).length > 0;
   const farmQuery = useQuery({
@@ -98,20 +116,23 @@ function FarmDetailContent({ farmId, productId }: Props) {
     queryFn: async ({ signal }) => {
       try {
         const row = await getFarm(farmId, signal);
-        if (signal.aborted || !isCurrent()) throw new CancelledError();
+        if (signal.aborted || !isCurrent() || isFarmGone(queryClient, farmId))
+          throw new CancelledError();
         return row;
       } catch (cause) {
         if (isCurrent() && farmAccessDenied(cause)) retireFarmAccess(queryClient, cause);
         throw cause;
       }
     },
-    enabled: !access.error && !unavailable && isCurrent(),
+    enabled: !access.error && !unavailable && isCurrent() && !isFarmGone(queryClient, farmId),
     // Leaf navigation shares this parent snapshot. Focus and reconnect still revalidate it.
-    refetchOnMount: (query) => query.state.isInvalidated || query.state.status === "error",
+    structuralSharing: shareFarmDetail,
+    refetchOnMount: (query) => farmDetailNeedsRead(query.state),
   });
+  const gone = farmQuery.data === null || isFarmGone(queryClient, farmId);
   const error = access.error ?? unavailable?.cause ?? farmQuery.error;
   const farm =
-    isCurrent() && !access.error && !unavailable && !recordUnavailable(farmQuery.error)
+    isCurrent() && !access.error && !unavailable && !gone && !recordUnavailable(farmQuery.error)
       ? farmQuery.data
       : null;
   const name = farm ? (locale === "vi" ? farm.name_vi : farm.name_en) : t.breadcrumb.farmDetails;
@@ -142,10 +163,18 @@ function FarmDetailContent({ farmId, productId }: Props) {
       recordEpoch.current += 1;
       setDialog(null);
       setHeaderRecovery(null);
-      setDeleteRecovery(null);
       if (!farmAccessDenied(cause)) {
-        setUnavailable({ cause });
-        retireFarmQueries(queryClient, farmId);
+        if (
+          farmNotFound(cause) &&
+          (deleteNavigation.current ||
+            queryClient.getMutationCache().find(farmDeleteFilters(farmId)))
+        ) {
+          deleteNavigation.current = true;
+          confirmFarmGone(queryClient, farmId);
+        } else {
+          setUnavailable({ cause });
+          retireFarmQueries(queryClient, farmId);
+        }
       }
     },
     [farmId, isCurrent, queryClient],
@@ -170,9 +199,27 @@ function FarmDetailContent({ farmId, productId }: Props) {
     if (!access.error) return;
     setDialog(null);
     setHeaderRecovery(null);
-    setDeleteRecovery(null);
     setActionError("");
   }, [access.error]);
+
+  useEffect(() => {
+    if (productId) return;
+    if (gone) {
+      if (deleteNavigation.current && isCurrent() && !access.error) router.replace(listHref);
+      deleteNavigation.current = false;
+    } else if (deletionFlow.pending || deletionFlow.issue?.kind === "uncertain") {
+      deleteNavigation.current = true;
+    }
+  }, [
+    access.error,
+    deletionFlow.issue,
+    deletionFlow.pending,
+    gone,
+    isCurrent,
+    listHref,
+    productId,
+    router,
+  ]);
 
   const reload = () => {
     if (access.error) retryFarmAccess(queryClient);
@@ -186,12 +233,16 @@ function FarmDetailContent({ farmId, productId }: Props) {
       !isCurrent() ||
       farmAccess(queryClient).error ||
       mutation.current ||
+      farmDetailWritePending(queryClient, farmId) ||
+      (!checking && farmDeleteBlocksWrite(queryClient, farmId)) ||
       (owner === "header" && informationLocked && !checking)
     )
       return;
+    const releaseLease = holdFarmDetailWrite(queryClient, farmId);
     mutation.current = owner;
     setBusyOwner(owner);
     return () => {
+      releaseLease();
       mutation.current = null;
       if (mounted.current) setBusyOwner(null);
     };
@@ -199,26 +250,31 @@ function FarmDetailContent({ farmId, productId }: Props) {
 
   function writeScope() {
     const epoch = recordEpoch.current;
-    const permitted = () => isCurrent() && farmAccess(queryClient).revision === access.revision;
+    const permitted = () =>
+      isCurrent() &&
+      farmAccess(queryClient).revision === access.revision &&
+      !farmAccess(queryClient).error &&
+      !isFarmGone(queryClient, farmId);
     return {
       permitted,
       current: () => mounted.current && permitted() && recordEpoch.current === epoch,
     };
   }
 
-  async function adoptHeaderSnapshot(snapshot: Farm, intent: HeaderIntent, current: () => boolean) {
-    const id = snapshot.id;
-    const detailKey = farmDetailKey(id);
-    await queryClient.cancelQueries({ queryKey: detailKey });
+  async function adoptHeaderSnapshot(
+    snapshot: Farm,
+    intent: HeaderIntent,
+    current: () => boolean,
+    started: ReturnType<typeof captureFarmDetail>,
+    type: "read" | "write",
+  ) {
     if (!current()) return;
     const cached = queryClient.getQueryData<Farm>(detailKey);
-    const latest = cached && cached.version > snapshot.version ? cached : snapshot;
-    const own =
-      latest === snapshot && intent.action !== "delete" && confirmsToggle(snapshot, intent);
-    if (own) setOwnToggle({ from: intent.before.version, to: latest.version });
-    queryClient.setQueryData(detailKey, latest);
+    const own = (!cached || cached.version <= snapshot.version) && confirmsToggle(snapshot, intent);
+    if (own) setOwnToggle({ from: intent.before.version, to: snapshot.version });
+    publishFarmDetail(queryClient, snapshot, started, type);
     void queryClient.invalidateQueries({ queryKey: farmListKey });
-    void queryClient.invalidateQueries({ queryKey: farmSupplyKey(id) });
+    void queryClient.invalidateQueries({ queryKey: farmSupplyKey(farmId) });
     if (own) await information.current?.syncTracker();
     if (!current()) return;
     setHeaderRecovery(null);
@@ -226,119 +282,62 @@ function FarmDetailContent({ farmId, productId }: Props) {
   }
 
   function currentDeleteCapability() {
-    const latest = queryClient.getQueryState<Farm>(detailKey);
-    if (latest?.status === "success" && latest.fetchStatus === "idle" && !latest.isInvalidated) {
-      return farmDeleteCapability(latest.data?.capabilities);
-    }
-  }
-
-  function canDeleteNow() {
-    return (
-      !deleteRecovery &&
-      !queryClient.getMutationCache().find(supplyWrites) &&
-      currentDeleteCapability()?.allowed === true
-    );
-  }
-
-  function finishDeletion(current: boolean) {
-    if (current) {
-      setDialog(null);
-      setDeleteRecovery(null);
-      // The router may commit the list later. Keep the deleted route from reloading its record.
-      setUnavailable({ cause: null });
-      retireFarmQueries(queryClient, farmId);
-      router.replace(listHref);
-    } else {
-      void queryClient.resetQueries({ queryKey: detailKey });
-      void queryClient.resetQueries({ queryKey: farmSupplyKey(farmId) });
-    }
-    void queryClient.invalidateQueries({ queryKey: farmListKey });
-  }
-
-  async function readDeleteOutcome(check: DeleteRecovery, current: () => boolean) {
-    try {
-      const beforeRead = queryClient.getQueryState<Farm>(detailKey);
-      const snapshot = await getFarm(farmId);
-      if (!current()) return;
-      const afterRead = queryClient.getQueryState<Farm>(detailKey);
-      // A supply-triggered refresh can be newer even when Farm.version has not changed.
-      if (
-        afterRead === beforeRead &&
-        afterRead?.fetchStatus === "idle" &&
-        snapshot.version >= Math.max(check.before.version, afterRead.data?.version ?? 0)
-      ) {
-        queryClient.setQueryData(detailKey, snapshot);
-      }
-      const cached = queryClient.getQueryState<Farm>(detailKey);
-      const verified =
-        cached?.status === "success" &&
-        cached.fetchStatus === "idle" &&
-        !cached.isInvalidated &&
-        cached.dataUpdateCount > (beforeRead?.dataUpdateCount ?? 0)
-          ? cached.data
-          : undefined;
-      const capability = farmDeleteCapability(verified?.capabilities);
-      // Supply can change independently of the Farm's version. A 409 followed by
-      // the same allowed capability provides no evidence that Delete can proceed.
-      if (
-        verified &&
-        verified.version >= check.before.version &&
-        (capability?.allowed === false ||
-          (!check.conflict &&
-            capability?.allowed === true &&
-            verified.version > check.before.version))
-      ) {
-        setDeleteRecovery(null);
-      } else {
-        setDeleteRecovery({
-          ...check,
-          message: check.conflict ? c.deleteConflict : c.saveStillUncertain,
-        });
-      }
-    } catch (cause) {
-      if (farmAccessDenied(cause)) {
-        retireRecord(cause);
-        return;
-      }
-      if (!current()) return;
-      if (farmNotFound(cause)) finishDeletion(true);
-      else setDeleteRecovery({ ...check, message: requestErrorMessage(cause, t) });
-    }
+    return farmDeleteCapability(verifiedFarmDetail(queryClient, farmId)?.capabilities);
   }
 
   async function changeFarm(intent: HeaderIntent) {
-    if (!farm || headerRecovery || (intent.action === "delete" && !canDeleteNow())) return;
+    if (!farm || headerRecovery) return;
+    const started = captureFarmDetail(queryClient, farmId);
+    const latest = started?.data;
+    if (intent.action === "delete") {
+      if (
+        mutation.current ||
+        informationLocked ||
+        !latest ||
+        currentDeleteCapability()?.allowed !== true
+      )
+        return;
+      if (latest.version !== intent.before.version) {
+        setDialog({ ...intent, before: latest });
+        setActionError(c.deleteReviewChanged);
+        return;
+      }
+      const operation = deletionFlow.run("delete");
+      if (!operation) return;
+      deleteNavigation.current = true;
+      setActionError("");
+      const { current } = writeScope();
+      const result = await operation;
+      if (current()) {
+        if (result.issue?.kind !== "uncertain") deleteNavigation.current = false;
+        if (result.rejection) setActionError(requestErrorMessage(result.rejection, t));
+      }
+      return;
+    }
     const release = claimWrite("header");
     if (!release) return;
     const { permitted, current } = writeScope();
     setActionError("");
     try {
-      const latest = queryClient.getQueryData<Farm>(detailKey);
       if (latest?.version !== intent.before.version) {
         setDialog(null);
-        if (intent.action !== "delete") setHeaderRecovery({ intent, conflict: true });
+        setHeaderRecovery({ intent, conflict: true });
         setActionError(c.conflict);
         return;
       }
-      if (intent.action === "delete") {
-        await deleteFarm(farm.id);
-        if (!permitted()) return;
-        finishDeletion(current());
-      } else {
-        const updated = await saveFarm(farm.id, {
-          version: intent.before.version,
-          is_active: intent.action === "activate",
-        });
-        if (!permitted()) return;
-        if (!current()) {
-          void queryClient.invalidateQueries({ queryKey: farmDetailKey(farm.id) });
-          void queryClient.invalidateQueries({ queryKey: farmListKey });
-          void queryClient.invalidateQueries({ queryKey: farmSupplyKey(farm.id) });
-          return;
-        }
-        if (!confirmsToggle(updated, intent)) throw invalidApiResponse();
-        await adoptHeaderSnapshot(updated, intent, current);
+      const updated = await saveFarm(farm.id, {
+        version: intent.before.version,
+        is_active: intent.action === "activate",
+      });
+      if (!permitted()) return;
+      if (!confirmsToggle(updated, intent)) throw invalidApiResponse();
+      if (!current()) {
+        publishFarmDetail(queryClient, updated, started, "write");
+        void queryClient.invalidateQueries({ queryKey: farmListKey });
+        void queryClient.invalidateQueries({ queryKey: farmSupplyKey(farm.id) });
+        return;
       }
+      await adoptHeaderSnapshot(updated, intent, current, started, "write");
       if (current()) setDialog(null);
     } catch (cause) {
       if (farmAccessDenied(cause)) {
@@ -359,15 +358,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
         problem.status >= 500 ||
         problem.message === "request_timeout" ||
         problem.message === "invalid_response";
-      if (intent.action === "delete" && (conflict || unknown)) {
-        const check = {
-          before: intent.before,
-          conflict,
-          message: conflict ? c.deleteConflict : c.saveUncertain,
-        };
-        setDeleteRecovery(check);
-        if (conflict) await readDeleteOutcome(check, current);
-      } else if (conflict && problem?.message === "stock_reserved") {
+      if (conflict && problem?.message === "stock_reserved") {
         setActionError(c.deactivateBlocked);
       } else if (conflict || unknown) {
         setDialog(null);
@@ -387,6 +378,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
     if (!release) return;
     const { current } = writeScope();
     const { intent, conflict } = headerRecovery;
+    const started = captureFarmDetail(queryClient, farmId);
     try {
       const snapshot = await getFarm(farmId);
       if (!current()) return;
@@ -397,7 +389,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
         setActionError(c.saveStillUncertain);
         return;
       }
-      await adoptHeaderSnapshot(snapshot, intent, current);
+      await adoptHeaderSnapshot(snapshot, intent, current, started, "read");
     } catch (cause) {
       if (farmAccessDenied(cause)) {
         retireRecord(cause);
@@ -414,23 +406,16 @@ function FarmDetailContent({ farmId, productId }: Props) {
     }
   }
 
-  async function checkDelete() {
-    if (!deleteRecovery) return;
-    const release = claimWrite("header", true);
-    if (!release) return;
-    try {
-      await readDeleteOutcome(deleteRecovery, writeScope().current);
-    } finally {
-      release();
-    }
-  }
-
-  const recovery = error && (
-    <RecoveryAlert
-      message={farmNotFound(error) ? c.farmMissing : requestErrorMessage(error, t)}
-      retryLabel={t.common.retry}
-      onRetry={reload}
-    />
+  const recovery = gone ? (
+    <Text role="status">{c.farmMissing}</Text>
+  ) : (
+    error && (
+      <RecoveryAlert
+        message={farmNotFound(error) ? c.farmMissing : requestErrorMessage(error, t)}
+        retryLabel={t.common.retry}
+        onRetry={reload}
+      />
+    )
   );
   if (!farm)
     return (
@@ -451,8 +436,46 @@ function FarmDetailContent({ farmId, productId }: Props) {
         )}
       </>
     );
+  const { pending: deleting, issue: deleteIssue } = deletionFlow;
+  const uncertainDelete = deleteIssue?.kind === "uncertain";
+  const rejectedDelete = deleteIssue?.rejection;
+  const deleteMessage =
+    [
+      uncertainDelete ? c.deleteOutcomeUnknown : "",
+      rejectedDelete?.code === "farm_delete_protected"
+        ? c.deleteProtectedDependency
+        : rejectedDelete && !uncertainDelete
+          ? c.deleteConflict
+          : "",
+    ]
+      .filter(Boolean)
+      .join(" ") || c.deleteUnverified;
+  function checkDelete() {
+    const operation = deletionFlow.run("verify");
+    if (!operation) return;
+    if (!productId) deleteNavigation.current = true;
+    void operation.then(({ issue }) => {
+      if (issue?.kind !== "uncertain" && !isFarmGone(queryClient, farmId)) {
+        deleteNavigation.current = false;
+      }
+    });
+  }
   if (productId) {
-    return <FarmSourceDetail farm={farm} productId={productId} onAccessLost={retireRecord} />;
+    return (
+      <>
+        {(deleting || deleteIssue) &&
+          (deleting ? (
+            <DataState kind="loading" title={c.loading} />
+          ) : (
+            <RecoveryAlert
+              message={deleteMessage}
+              retryLabel={c.checkLatestFarm}
+              onRetry={checkDelete}
+            />
+          ))}
+        <FarmSourceDetail farm={farm} productId={productId} onAccessLost={retireRecord} />
+      </>
+    );
   }
 
   const labels: Record<FarmDetailTab, string> = {
@@ -471,17 +494,26 @@ function FarmDetailContent({ farmId, productId }: Props) {
         : c.deactivatePrompt
     ).replace("{name}", name);
   const headerLocked =
-    busyOwner === "header" ||
-    Boolean(headerRecovery || error || (deleteRecovery && !deleteRecovery.conflict));
+    detailWriting || deleting || Boolean(headerRecovery || error || uncertainDelete);
   const actionsDisabled = busyOwner !== null || headerLocked || informationLocked;
   const deleteDialog = dialog?.action === "delete";
-  const deletion =
-    deleteDialog && !deleteRecovery && !supplyWriting ? currentDeleteCapability() : undefined;
-  const canConfirmDialog = !deleteDialog || deletion?.allowed === true;
+  const deletion = deleteDialog && !supplyWriting ? currentDeleteCapability() : undefined;
+  const canReviewDelete = !deleting && deletionFlow.mayConfirmAgain;
+  const canReopenDelete =
+    canReviewDelete && currentDeleteCapability()?.allowed === true && !supplyWriting;
+  const canConfirmDelete =
+    deletion?.allowed === true && !deleting && (!deleteIssue || canReviewDelete);
+  const canConfirmDialog = !deleteDialog || canConfirmDelete;
+  const rejectedReasons =
+    deleteIssue?.verification === "failed" ? rejectedDelete?.reasons : undefined;
   const open = (action: FarmAction) => {
     if (actionsDisabled || mutation.current) return;
     setActionError("");
     setDialog({ action, before: farm });
+  };
+  const reviewDelete = () => {
+    setActionError("");
+    setDialog({ action: "delete", before: farm });
   };
   return (
     <>
@@ -541,14 +573,17 @@ function FarmDetailContent({ farmId, productId }: Props) {
           </Menu>
         </Group>
         {!deleteDialog && recovery}
-        {deleteRecovery && !deleteDialog && (
-          <RecoveryAlert
-            message={deleteRecovery.message}
-            retryLabel={c.checkLatestFarm}
-            onRetry={() => void checkDelete()}
-            loading={busyOwner === "header"}
-          />
-        )}
+        {!deleteDialog &&
+          (deleting || deleteIssue) &&
+          (deleting ? (
+            <DataState kind="loading" title={c.loading} />
+          ) : (
+            <RecoveryAlert
+              message={deleteMessage}
+              retryLabel={canReopenDelete ? c.reviewDelete : c.checkLatestFarm}
+              onRetry={canReopenDelete ? reviewDelete : checkDelete}
+            />
+          ))}
         {headerRecovery ? (
           <RecoveryAlert
             message={actionError}
@@ -604,7 +639,7 @@ function FarmDetailContent({ farmId, productId }: Props) {
       {dialog && (
         <ConfirmationDialog
           title={actionLabel(dialog.action)}
-          busy={busyOwner === "header"}
+          busy={busyOwner === "header" || (deleteDialog && deleting)}
           cancelLabel={canConfirmDialog ? c.cancel : t.common.close}
           {...(canConfirmDialog
             ? {
@@ -613,7 +648,11 @@ function FarmDetailContent({ farmId, productId }: Props) {
                 onConfirm: () => void changeFarm(dialog),
               }
             : { busyLabel: undefined, confirmLabel: undefined, onConfirm: undefined })}
-          confirmDisabled={actionsDisabled}
+          confirmDisabled={
+            deleteDialog
+              ? informationLocked || busyOwner !== null || detailWriting
+              : actionsDisabled
+          }
           danger={deleteDialog}
           error={actionError}
           returnFocusRef={menuTrigger}
@@ -624,24 +663,57 @@ function FarmDetailContent({ farmId, productId }: Props) {
           }}
         >
           {canConfirmDialog ? (
-            <Text>{actionPrompt(dialog.action)}</Text>
-          ) : deletion ? (
             <>
-              <Text>{c.protectedFarm}</Text>
-              <FarmDeleteReasons farmId={farm.id} search={search} reasons={deletion.reasons} />
+              {deleteDialog && canReviewDelete && (
+                <RecoveryAlert
+                  message={c.deleteOutcomeUnknown}
+                  retryLabel={c.checkLatestFarm}
+                  onRetry={checkDelete}
+                />
+              )}
+              <Text>{actionPrompt(dialog.action)}</Text>
             </>
-          ) : farmQuery.isFetching && !deleteRecovery ? (
-            <DataState kind="loading" title={c.loading} />
           ) : (
-            <RecoveryAlert
-              message={
-                deleteRecovery?.message ??
-                (error ? requestErrorMessage(error, t) : c.deleteUnverified)
-              }
-              retryLabel={c.checkLatestFarm}
-              onRetry={deleteRecovery ? () => void checkDelete() : reload}
-              loading={busyOwner === "header"}
-            />
+            <>
+              {deleting || (farmQuery.isFetching && !deleteIssue) ? (
+                <DataState kind="loading" title={c.loading} />
+              ) : deleteIssue || !deletion ? (
+                <RecoveryAlert
+                  message={
+                    deleteIssue
+                      ? [
+                          deleteMessage,
+                          deleteIssue.verification === "failed" ? c.deleteUnverified : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")
+                      : error
+                        ? requestErrorMessage(error, t)
+                        : c.deleteUnverified
+                  }
+                  retryLabel={c.checkLatestFarm}
+                  onRetry={deleteIssue ? checkDelete : reload}
+                />
+              ) : null}
+              {deletion?.allowed === false && deleteIssue?.verification !== "failed" && (
+                <>
+                  <Text>{c.protectedFarm}</Text>
+                  <FarmDeleteReasons farmId={farm.id} search={search} reasons={deletion.reasons} />
+                  <Text size="sm" c="dimmed">
+                    {c.deleteRepresentativeReasons}
+                  </Text>
+                </>
+              )}
+              {rejectedReasons && (
+                <>
+                  <Text>{c.deletePreviousReasons}</Text>
+                  <FarmDeleteReasons farmId={farm.id} search={search} reasons={rejectedReasons} />
+                  <Text size="sm" c="dimmed">
+                    {c.deleteRepresentativeReasons}
+                  </Text>
+                </>
+              )}
+            </>
           )}
         </ConfirmationDialog>
       )}
@@ -660,18 +732,4 @@ function confirmsToggle(farm: Farm, intent: HeaderIntent) {
 
 function recordUnavailable(cause: unknown) {
   return farmAccessDenied(cause) || farmNotFound(cause);
-}
-
-function farmNotFound(cause: unknown) {
-  const error = cause as ClientApiError | undefined;
-  const payload: unknown = error?.payload;
-  // Django REST Framework's Http404 uses a detail body without an error code.
-  return (
-    error?.status === 404 &&
-    (error.message === "not_found" ||
-      (error.message === "request_failed" &&
-        isApiObject(payload) &&
-        typeof payload.detail === "string" &&
-        Boolean(payload.detail.trim())))
-  );
 }

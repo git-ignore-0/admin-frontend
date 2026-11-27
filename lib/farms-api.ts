@@ -118,18 +118,21 @@ function isFarmDeleteReason(value: unknown): value is FarmDeleteReason {
   );
 }
 
+export function parseFarmDeleteReasons(value: unknown): FarmDeleteReason[] | undefined {
+  if (!Array.isArray(value) || value.length > 3) return;
+  const reasons: FarmDeleteReason[] = [];
+  for (const reason of value) {
+    if (!isFarmDeleteReason(reason) || reasons.some(({ code }) => code === reason.code)) return;
+    reasons.push(reason);
+  }
+  return reasons;
+}
+
 export function farmDeleteCapability(capabilities: unknown): FarmDeleteCapability | undefined {
   if (!isApiObject(capabilities) || !isApiObject(capabilities.delete)) return;
-  const { allowed, reasons } = capabilities.delete;
-  if (
-    typeof allowed !== "boolean" ||
-    !Array.isArray(reasons) ||
-    reasons.length > 3 ||
-    (allowed && reasons.length > 0) ||
-    !reasons.every(isFarmDeleteReason) ||
-    new Set(reasons.map(({ code }) => code)).size !== reasons.length
-  )
-    return;
+  const { allowed } = capabilities.delete;
+  const reasons = parseFarmDeleteReasons(capabilities.delete.reasons);
+  if (typeof allowed !== "boolean" || !reasons || allowed !== (reasons.length === 0)) return;
   return { allowed, reasons };
 }
 

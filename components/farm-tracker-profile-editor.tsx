@@ -12,6 +12,7 @@ import { type ClientApiError, invalidApiResponse, requestErrorMessage } from "@/
 import {
   farmAccess,
   farmAccessDenied,
+  farmNotFound,
   retireFarmAccess,
   retireFarmQueries,
   useFarmAccess,
@@ -85,16 +86,6 @@ function sameValues(a: Values, b: Values) {
     a.one_month_signup_count === b.one_month_signup_count &&
     a.signup_count === b.signup_count &&
     a.is_visible === b.is_visible
-  );
-}
-
-function isNotFound(cause: unknown) {
-  const error = cause as ClientApiError | null;
-  return (
-    error?.status === 404 &&
-    error.message !== "request_timeout" &&
-    error.message !== "invalid_response" &&
-    !farmAccessDenied(cause)
   );
 }
 
@@ -202,13 +193,13 @@ export function useFarmTracker({
         try {
           latest = requireProfile(await getFarmTracker(farmId, controller.signal), farmId);
         } catch (cause) {
-          if (!isNotFound(cause)) throw cause;
+          if (!farmNotFound(cause)) throw cause;
           if (!canUse(revision)) return false;
           // Tracker GET returns 404 for either a missing profile or a missing Farm.
           try {
             await getFarm(farmId, controller.signal);
           } catch (farmError) {
-            if (isNotFound(farmError) && canUse(revision)) {
+            if (farmNotFound(farmError) && canUse(revision)) {
               retire(farmError, true);
               return false;
             }
@@ -322,7 +313,7 @@ export function useFarmTracker({
       return true;
     } catch (cause) {
       if (retire(cause) || !canUse(revision)) return false;
-      if (!baseline && isNotFound(cause)) {
+      if (!baseline && farmNotFound(cause)) {
         retire(cause, true);
         return false;
       }

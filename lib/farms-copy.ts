@@ -204,6 +204,14 @@ const copy = {
       "Trang trại còn nguồn hàng cần để đáp ứng đơn đang giữ. Chưa thể ngừng hoạt động.",
     protectedFarm: "Không thể xóa trang trại vì còn dữ liệu liên quan.",
     deleteConflict: "Trang trại chưa được xóa. Cần kiểm tra lại điều kiện xóa.",
+    deleteProtectedDependency:
+      "Một dữ liệu liên quan đang được bảo vệ. Cần kiểm tra quan hệ này trước khi xóa trang trại.",
+    deletePreviousReasons: "Lý do của lần xóa vừa bị từ chối",
+    deleteRepresentativeReasons: "Mỗi nhóm hiển thị một bản ghi đại diện.",
+    deleteOutcomeUnknown: "Kết quả lần xóa trước chưa được xác nhận.",
+    deleteReviewChanged:
+      "Thông tin trang trại đã thay đổi. Hãy xem lại và xác nhận nếu vẫn muốn xóa.",
+    reviewDelete: "Xem lại thao tác xóa",
     deleteUnverified: "Chưa xác minh được điều kiện xóa trang trại.",
     deleteReasons: {
       supplying_product: "Sản phẩm đang cung cấp",
@@ -415,6 +423,14 @@ const copy = {
       "This farm still supplies stock needed for held orders. It cannot be deactivated yet.",
     protectedFarm: "This farm can’t be deleted because it has related records.",
     deleteConflict: "The farm was not deleted. Check whether it can be deleted.",
+    deleteProtectedDependency:
+      "A related record is protected. Check this dependency before deleting the farm.",
+    deletePreviousReasons: "Reasons the previous delete was rejected",
+    deleteRepresentativeReasons: "Each group shows one representative record.",
+    deleteOutcomeUnknown: "The result of the previous delete has not been confirmed.",
+    deleteReviewChanged:
+      "The farm details have changed. Review them and confirm if you still want to delete the farm.",
+    reviewDelete: "Review deletion",
     deleteUnverified: "We couldn’t verify whether this farm can be deleted.",
     deleteReasons: {
       supplying_product: "Product currently supplied",
