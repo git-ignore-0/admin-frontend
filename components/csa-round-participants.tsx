@@ -11,6 +11,7 @@ import {
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Section, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -45,6 +46,7 @@ export function CSARoundParticipants({
 }) {
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
+  const initialLoading = loading && result === null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -64,6 +66,82 @@ export function CSARoundParticipants({
     return () => window.cancelAnimationFrame(frame);
   }, [selected]);
 
+  const table = (
+    <Table.ScrollContainer
+      aria-label={c.participants}
+      minWidth="30rem"
+      role="region"
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+      type="native"
+    >
+      <Table aria-label={c.participants} highlightOnHover withRowBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.customer}</Table.Th>
+            <Table.Th scope="col">{c.state}</Table.Th>
+            <Table.Th scope="col" ta="end">
+              {c.productLines}
+            </Table.Th>
+            <Table.Th scope="col">{c.participantOrder}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows
+              columns={4}
+              height={32}
+              alignments={[undefined, undefined, "right"]}
+            />
+          ) : (
+            result?.data.map((person) => (
+              <Table.Tr
+                key={person.id}
+                data-selected={person.id === selectedId || undefined}
+                onClick={openRecordFromRow}
+                style={{ cursor: "pointer" }}
+              >
+                <Table.Td>
+                  <DataListRecordLink
+                    component="button"
+                    type="button"
+                    ta="start"
+                    aria-haspopup="dialog"
+                    data-record-link
+                    py="xs"
+                    style={{ overflowWrap: "anywhere" }}
+                    onClick={(event) => {
+                      trigger.current = event.currentTarget;
+                      setSelectedId(person.id);
+                    }}
+                  >
+                    {person.customer_name || c.customer}
+                  </DataListRecordLink>
+                </Table.Td>
+                <Table.Td>
+                  <Stack gap={4} align="flex-start">
+                    <Status
+                      domain="csa-selection"
+                      status={person.state}
+                      label={c.states[person.state]}
+                    />
+                    <CSAParticipantDeadline person={person} />
+                  </Stack>
+                </Table.Td>
+                <Table.Td ta="end">{person.lines.length}</Table.Td>
+                <Table.Td>
+                  <Text size="sm" c={person.order_id ? undefined : "dimmed"}>
+                    {person.order_id ? c.hasOrder : c.noOrder}
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
     <Box ref={list} tabIndex={-1}>
       <Section
@@ -75,72 +153,7 @@ export function CSARoundParticipants({
         }
       >
         <DataListPaper>
-          {result && result.data.length > 0 && (
-            <Table.ScrollContainer
-              aria-label={c.participants}
-              minWidth="30rem"
-              role="region"
-              tabIndex={0}
-              type="native"
-            >
-              <Table aria-label={c.participants} highlightOnHover withRowBorders>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th scope="col">{c.customer}</Table.Th>
-                    <Table.Th scope="col">{c.state}</Table.Th>
-                    <Table.Th scope="col" ta="end">
-                      {c.productLines}
-                    </Table.Th>
-                    <Table.Th scope="col">{c.participantOrder}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {result.data.map((person) => (
-                    <Table.Tr
-                      key={person.id}
-                      data-selected={person.id === selectedId || undefined}
-                      onClick={openRecordFromRow}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <Table.Td>
-                        <DataListRecordLink
-                          component="button"
-                          type="button"
-                          ta="start"
-                          aria-haspopup="dialog"
-                          data-record-link
-                          py="xs"
-                          style={{ overflowWrap: "anywhere" }}
-                          onClick={(event) => {
-                            trigger.current = event.currentTarget;
-                            setSelectedId(person.id);
-                          }}
-                        >
-                          {person.customer_name || c.customer}
-                        </DataListRecordLink>
-                      </Table.Td>
-                      <Table.Td>
-                        <Stack gap={4} align="flex-start">
-                          <Status
-                            domain="csa-selection"
-                            status={person.state}
-                            label={c.states[person.state]}
-                          />
-                          <CSAParticipantDeadline person={person} />
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td ta="end">{person.lines.length}</Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c={person.order_id ? undefined : "dimmed"}>
-                          {person.order_id ? c.hasOrder : c.noOrder}
-                        </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          )}
+          {Boolean(result?.data.length) && table}
           <Box p={error ? "md" : undefined}>
             <ListState
               embedded
@@ -148,9 +161,9 @@ export function CSARoundParticipants({
               error={error}
               hasData={result !== null}
               isEmpty={result?.data.length === 0}
-              loading={loading && result === null}
+              loading={initialLoading}
               loadingLabel={c.loading}
-              tableColumns={4}
+              loadingPlaceholder={table}
               onRetry={onRetry}
               retryLabel={t.common.retry}
             />

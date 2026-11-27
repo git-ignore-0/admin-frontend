@@ -422,7 +422,13 @@ it("loads new results in the Data List and refreshes existing results through th
   const toolbar = screen.getByRole("search").closest("[data-grow-search]");
   expect(toolbar).toContainElement(refresh);
   expect(within(list).getByRole("status")).toHaveTextContent("Loading supply…");
-  expect(list.querySelector("table[aria-hidden=true]")).toBeTruthy();
+  const loadingViewport = list.querySelector<HTMLElement>('[role="region"][aria-hidden="true"]');
+  expect(loadingViewport).toBeInTheDocument();
+  expect(loadingViewport).not.toHaveAttribute("tabindex");
+  expect(loadingViewport?.querySelectorAll("thead th")).toHaveLength(3);
+  expect(loadingViewport?.querySelectorAll("input, button, a")).toHaveLength(0);
+  const minWidth = loadingViewport?.style.getPropertyValue("--table-min-width");
+  expect(minWidth).toBeTruthy();
   expect(within(list).queryByRole("table")).not.toBeInTheDocument();
   expect(refresh).toBeDisabled();
   expect(refresh).not.toHaveAttribute("data-loading");
@@ -432,6 +438,13 @@ it("loads new results in the Data List and refreshes existing results through th
   expect(within(list).queryByRole("status")).not.toBeInTheDocument();
   expect(within(list).getByText("Product 1")).toBeVisible();
   expect(within(list).getByRole("table")).toHaveAttribute("aria-busy", "true");
+  expect(
+    within(list)
+      .getByRole("region", { name: "Product" })
+      .style.getPropertyValue("--table-min-width"),
+  ).toBe(minWidth);
+  expect(list.querySelectorAll("table")).toHaveLength(1);
+  expect(list.querySelector(".mantine-Skeleton-root")).not.toBeInTheDocument();
 
   rerender(<FarmSupplyForm {...props} search="missing" products={undefined} loading />);
   expect(within(list).getByRole("status")).toHaveTextContent("Loading supply…");

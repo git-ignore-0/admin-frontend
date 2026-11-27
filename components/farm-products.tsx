@@ -18,6 +18,7 @@ import { FarmBatchDialog } from "@/components/farm-batch-dialog";
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -32,6 +33,7 @@ import {
   farmAccessDenied,
   farmBulkBlocksWrite,
   farmDeleteBlocksWrite,
+  farmListCanShowData,
   farmListKey,
   farmSupplyKey,
   farmSupplyWriteKey,
@@ -76,7 +78,9 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
       listFarmProducts(farm.id, { search, supplyStatus: status, page }, signal),
   });
   const accessLost = isProtectedDataError(query.error);
-  const data = query.error ? undefined : query.data;
+  const data = farmListCanShowData(query.error) ? query.data : undefined;
+  const initialLoading = !data && (query.isPending || query.isFetching);
+  const showingError = Boolean(query.error && !query.isFetching);
   const lastPage = data ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size)) : page;
   const pendingWrite = useIsMutating({ mutationKey: farmSupplyWriteKey(farm.id) }) > 0;
   const deletionLocked = useFarmDeleteBlocksWrite(farm.id);
@@ -106,10 +110,74 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
   }
 
   if (!currentSession() || accessLost) return null;
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={520}
+      role="region"
+      aria-label={c.products}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={c.products} aria-busy={query.isFetching || undefined}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.productColumn}</Table.Th>
+            <Table.Th scope="col">{c.saleUnit}</Table.Th>
+            <Table.Th scope="col">{c.currentStock}</Table.Th>
+            {status !== "supplying" && <Table.Th scope="col">{c.supplyStatus}</Table.Th>}
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={status === "supplying" ? 3 : 4} height={36} />
+          ) : (
+            data?.data.map((row) => (
+              <Table.Tr key={row.id}>
+                <Table.Td>
+                  <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
+                    <DataListRecordLink
+                      component={AdminNavigationLink}
+                      href={farmHref(params, { id: farm.id, productId: row.product_id })}
+                    >
+                      {locale === "vi" ? row.name_vi : row.name_en}
+                    </DataListRecordLink>
+                    <Text c="dimmed" size="sm">
+                      {row.sku}
+                    </Text>
+                    {row.product_status !== "active" && (
+                      <ProductLifecycleStatus status={row.product_status} />
+                    )}
+                  </Stack>
+                </Table.Td>
+                <Table.Td>
+                  {formatDecimalInput(row.unit_size)}{" "}
+                  {locale === "vi" ? row.unit_label_vi : row.unit_label_en}
+                </Table.Td>
+                <Table.Td>
+                  {row.supply_status === "removed" ? "—" : quantity.format(row.available_quantity)}
+                </Table.Td>
+                {status !== "supplying" && (
+                  <Table.Td>
+                    <Status
+                      domain="farm-stock"
+                      status={row.supply_status === "supplying" ? "active" : "inactive"}
+                      label={row.supply_status === "supplying" ? c.productActive : c.productRemoved}
+                    />
+                  </Table.Td>
+                )}
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
     <Stack gap="md" miw={0}>
       <ListToolbar
-        busy={query.isPending}
+        busy={initialLoading}
         search={{
           label: c.searchLinked,
           submitLabel: c.searchButton,
@@ -120,7 +188,7 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
           onChange: setDraft,
           onSubmit: (value) => {
             const trimmed = normalizeFarmSupplySearch(value);
-            if (page === 1 && trimmed === search) void query.refetch();
+            if (page === 1 && trimmed === search) void query.refetch({ cancelRefetch: false });
             else change({ search: trimmed });
           },
           clearLabel: t.common.clearFilters,
@@ -150,9 +218,9 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
         }}
         refresh={{
           label: c.refreshSupply,
-          onRefresh: () => void query.refetch(),
-          loading: query.isFetching && !query.isPending,
-          disabled: query.isPending,
+          onRefresh: () => query.refetch({ cancelRefetch: false }).then(() => undefined),
+          loading: query.isFetching && Boolean(data),
+          disabled: initialLoading,
         }}
         primaryAction={
           <Group gap="sm">
@@ -160,7 +228,14 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
               ref={addButton}
               variant="default"
               onClick={() => setAddOpen(true)}
-              disabled={deletionLocked || pendingWrite || bulkLocked || Boolean(retained) || !data}
+              disabled={
+                deletionLocked ||
+                pendingWrite ||
+                bulkLocked ||
+                Boolean(retained) ||
+                !query.isSuccess ||
+                query.isFetching
+              }
             >
               {c.addProduct}
             </Button>
@@ -174,80 +249,19 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
         }
       />
       <DataListPaper>
-        {Boolean(data?.data.length) && (
-          <Table.ScrollContainer
-            type="native"
-            minWidth={520}
-            role="region"
-            aria-label={c.products}
-            tabIndex={0}
-          >
-            <Table aria-label={c.products} aria-busy={query.isFetching || undefined}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th scope="col">{c.productColumn}</Table.Th>
-                  <Table.Th scope="col">{c.saleUnit}</Table.Th>
-                  <Table.Th scope="col">{c.currentStock}</Table.Th>
-                  {status !== "supplying" && <Table.Th scope="col">{c.supplyStatus}</Table.Th>}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {data?.data.map((row) => (
-                  <Table.Tr key={row.id}>
-                    <Table.Td>
-                      <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
-                        <DataListRecordLink
-                          component={AdminNavigationLink}
-                          href={farmHref(params, { id: farm.id, productId: row.product_id })}
-                        >
-                          {locale === "vi" ? row.name_vi : row.name_en}
-                        </DataListRecordLink>
-                        <Text c="dimmed" size="sm">
-                          {row.sku}
-                        </Text>
-                        {row.product_status !== "active" && (
-                          <ProductLifecycleStatus status={row.product_status} />
-                        )}
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td>
-                      {formatDecimalInput(row.unit_size)}{" "}
-                      {locale === "vi" ? row.unit_label_vi : row.unit_label_en}
-                    </Table.Td>
-                    <Table.Td>
-                      {row.supply_status === "removed"
-                        ? "—"
-                        : quantity.format(row.available_quantity)}
-                    </Table.Td>
-                    {status !== "supplying" && (
-                      <Table.Td>
-                        <Status
-                          domain="farm-stock"
-                          status={row.supply_status === "supplying" ? "active" : "inactive"}
-                          label={
-                            row.supply_status === "supplying" ? c.productActive : c.productRemoved
-                          }
-                        />
-                      </Table.Td>
-                    )}
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        )}
-        <Box p={query.error ? "md" : undefined}>
+        {Boolean(data?.data.length) && table}
+        <Box p={showingError ? "md" : undefined}>
           <ListState
             embedded
-            tableColumns={status === "supplying" ? 3 : 4}
+            loadingPlaceholder={table}
             empty={status === "removed" ? c.noRemovedProducts : c.linkedEmpty}
             noResults={search ? c.noLinkedMatch : undefined}
-            loading={query.isPending || Boolean(lastHref)}
+            loading={initialLoading}
             loadingLabel={c.loadingSupply}
             hasData={Boolean(data)}
             isEmpty={data?.data.length === 0}
-            error={query.error ? requestErrorMessage(query.error, t) : ""}
-            onRetry={() => void query.refetch()}
+            error={showingError ? requestErrorMessage(query.error, t) : ""}
+            onRetry={() => void query.refetch({ cancelRefetch: false })}
             retryLabel={t.common.retry}
           />
         </Box>

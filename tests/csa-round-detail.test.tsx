@@ -50,6 +50,52 @@ const round = {
 };
 const rootId = "3894c718-0ed1-414f-9dfe-c6d880fd871b";
 
+it("uses the native member and demand table layouts while waiting for a round's selections", async () => {
+  const pending = Promise.withResolvers<Awaited<ReturnType<typeof apiEnvelope>>>();
+  vi.mocked(api).mockResolvedValue({ ...round, status: "open" });
+  vi.mocked(apiEnvelope).mockReturnValue(pending.promise);
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundDetail roundId={id} />
+    </AdminI18nProvider>,
+  );
+  await screen.findByRole("tab", { name: "Members", selected: true });
+  const members = screen.getByRole("tabpanel", { name: "Members" });
+  const memberScroll = members.querySelector<HTMLElement>('[role="region"][aria-hidden="true"]');
+  expect(memberScroll?.style.getPropertyValue("--table-min-width")).toBe("30rem");
+  expect(memberScroll?.querySelectorAll("th")).toHaveLength(4);
+  expect(memberScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
+  expect(within(members).getByRole("status")).toHaveTextContent("Loading CSA round…");
+  expect(within(members).queryByRole("table")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("tab", { name: "Product demand" }));
+  const demand = screen.getByRole("tabpanel", { name: "Product demand" });
+  const demandScroll = demand.querySelector<HTMLElement>('[role="region"][aria-hidden="true"]');
+  expect(demandScroll?.style.getPropertyValue("--table-min-width")).toBe(
+    "calc(22.5rem * var(--mantine-scale))",
+  );
+  expect(demandScroll?.querySelectorAll("th")).toHaveLength(2);
+  expect(demandScroll?.querySelector("tbody td:nth-child(2)")).toHaveStyle({ textAlign: "right" });
+  expect(within(demand).getByRole("status")).toHaveTextContent("Loading CSA round…");
+  expect(within(demand).queryByRole("table")).not.toBeInTheDocument();
+
+  await act(async () =>
+    pending.resolve({
+      data: [],
+      meta: { page: 1, page_size: 20, total: 0 },
+      demand: [{ product_id: id, name: "Tomato", quantity: 2, unit_size: "500", unit_label: "g" }],
+    } as never),
+  );
+  expect(within(demand).getByRole("table")).toHaveTextContent("Tomato");
+  expect(demand.querySelectorAll("table")).toHaveLength(1);
+  const loadedDemand = within(demand).getByRole("region");
+  expect(loadedDemand.style.getPropertyValue("--table-min-width")).toBe(
+    demandScroll?.style.getPropertyValue("--table-min-width"),
+  );
+  expect(loadedDemand).toHaveAttribute("tabindex", "0");
+  expect(within(demand).queryByRole("status")).not.toBeInTheDocument();
+});
+
 it.each([
   [rootId, "active"],
   [rootId, "stopped"],

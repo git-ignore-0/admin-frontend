@@ -11,6 +11,7 @@ import { FormSelect } from "@/components/nfv-controls";
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
 import { StoreOrderStatusBadge } from "@/components/store-order-status";
@@ -79,6 +80,91 @@ export function StoreOrderList() {
     setStatus((value ?? "") as StoreOrderDisplayStatus | "");
     setPage(1);
   }
+
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={720}
+      role="region"
+      aria-label={c.title}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={c.title} aria-busy={loading || undefined} withRowBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.reference}</Table.Th>
+            <Table.Th scope="col">{c.recipient}</Table.Th>
+            <Table.Th scope="col" ta="right">
+              {c.total}
+            </Table.Th>
+            <Table.Th scope="col">{c.orderStatus}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows
+              columns={4}
+              height={36}
+              alignments={[undefined, undefined, "right"]}
+            />
+          ) : (
+            items?.map((item) => (
+              <Table.Tr
+                style={{ cursor: "pointer" }}
+                key={item.id}
+                onClick={() => router.push(`/store-orders/${item.id}`)}
+              >
+                <Table.Td>
+                  <Stack gap={4}>
+                    <DataListRecordLink
+                      component={Link}
+                      aria-label={`${item.reference_code}: ${item.shipping_address.recipient_name}`}
+                      href={`/store-orders/${item.id}`}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {item.reference_code}
+                    </DataListRecordLink>
+                    <Text size="sm" c="dimmed">
+                      {c.createdAt}:{" "}
+                      <time dateTime={item.created_at}>{formatAdminDateTime(item.created_at)}</time>
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      {c.deliveryDate}: {formatStoreDeliveryDate(item)}
+                    </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td>
+                  <Stack gap={4}>
+                    <Text fw={600}>{item.shipping_address.recipient_name}</Text>
+                    <Text size="sm" c="dimmed">
+                      {formatVietnamPhone(item.shipping_address.phone_number) || "—"}
+                    </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td ta="right" fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {formatStoreMoney(item.total_vnd, locale)}
+                </Table.Td>
+                <Table.Td>
+                  <Stack gap={4} align="flex-start">
+                    <StoreOrderStatusBadge order={item} />
+                    {storeOrderHasDeadline(item) ? (
+                      <Text size="sm" c="dimmed">
+                        {c.deadline}:{" "}
+                        <time dateTime={item.expires_at ?? undefined}>
+                          {formatAdminDateTime(item.expires_at)}
+                        </time>
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Table.Td>
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
 
   return (
     <Stack ref={contentRef} component="section" aria-busy={loading} gap="md" miw={0}>
@@ -167,87 +253,11 @@ export function StoreOrderList() {
         }}
       />
       <DataListPaper>
-        {items?.length ? (
-          <Table.ScrollContainer
-            type="native"
-            minWidth={720}
-            role="region"
-            aria-label={c.title}
-            tabIndex={0}
-          >
-            <Table aria-label={c.title} aria-busy={loading || undefined} withRowBorders>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th scope="col">{c.reference}</Table.Th>
-                  <Table.Th scope="col">{c.recipient}</Table.Th>
-                  <Table.Th scope="col" ta="right">
-                    {c.total}
-                  </Table.Th>
-                  <Table.Th scope="col">{c.orderStatus}</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {items.map((item) => (
-                  <Table.Tr
-                    style={{ cursor: "pointer" }}
-                    key={item.id}
-                    onClick={() => router.push(`/store-orders/${item.id}`)}
-                  >
-                    <Table.Td>
-                      <Stack gap={4}>
-                        <DataListRecordLink
-                          component={Link}
-                          aria-label={`${item.reference_code}: ${item.shipping_address.recipient_name}`}
-                          href={`/store-orders/${item.id}`}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          {item.reference_code}
-                        </DataListRecordLink>
-                        <Text size="sm" c="dimmed">
-                          {c.createdAt}:{" "}
-                          <time dateTime={item.created_at}>
-                            {formatAdminDateTime(item.created_at)}
-                          </time>
-                        </Text>
-                        <Text size="sm" c="dimmed">
-                          {c.deliveryDate}: {formatStoreDeliveryDate(item)}
-                        </Text>
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td>
-                      <Stack gap={4}>
-                        <Text fw={600}>{item.shipping_address.recipient_name}</Text>
-                        <Text size="sm" c="dimmed">
-                          {formatVietnamPhone(item.shipping_address.phone_number) || "—"}
-                        </Text>
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td ta="right" fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {formatStoreMoney(item.total_vnd, locale)}
-                    </Table.Td>
-                    <Table.Td>
-                      <Stack gap={4} align="flex-start">
-                        <StoreOrderStatusBadge order={item} />
-                        {storeOrderHasDeadline(item) ? (
-                          <Text size="sm" c="dimmed">
-                            {c.deadline}:{" "}
-                            <time dateTime={item.expires_at ?? undefined}>
-                              {formatAdminDateTime(item.expires_at)}
-                            </time>
-                          </Text>
-                        ) : null}
-                      </Stack>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        ) : null}
+        {items?.length ? table : null}
         <Box p={error && !loading ? "md" : undefined}>
           <ListState
             embedded
-            tableColumns={4}
+            loadingPlaceholder={table}
             empty={c.empty}
             noResults={filtersApplied ? c.empty : undefined}
             action={

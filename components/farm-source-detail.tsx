@@ -27,6 +27,7 @@ import { FarmBatchDialog } from "@/components/farm-batch-dialog";
 import { FarmStockBatches } from "@/components/farm-stock-batches";
 import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { DataState, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
@@ -35,7 +36,7 @@ import { useToast } from "@/components/toast-provider";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { farmHref } from "@/lib/farm-navigation";
-import { farmSupplyKey } from "@/lib/farm-query";
+import { farmListCanShowData, farmSupplyKey } from "@/lib/farm-query";
 import { listFarmProductHistory } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { farmSourceQuery, type FarmBatchFilter } from "@/lib/farm-supply-query";
@@ -526,7 +527,9 @@ function FarmSourceHistory({
   }, [denied, onAccessLost, history.error]);
 
   if (denied) return null;
-  const data = history.error ? undefined : history.data;
+  const data = farmListCanShowData(history.error) ? history.data : undefined;
+  const initialLoading = history.isFetching && !data;
+  const showingError = Boolean(history.error && !history.isFetching);
   const labels: Record<FarmProductHistoryEntry["action"], string> = {
     "farm.product.add": c.historyAdd,
     "farm.product.remove": c.historyRemove,
@@ -535,49 +538,56 @@ function FarmSourceHistory({
     "farm.product.update": c.historyUpdate,
     "farm.product.delete": c.historyDelete,
   };
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={460}
+      role="region"
+      aria-label={c.history}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={c.history} aria-busy={history.isFetching || undefined}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.historyAction}</Table.Th>
+            <Table.Th scope="col">{c.historyTime}</Table.Th>
+            <Table.Th scope="col">{c.historyActor}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={3} height={18} />
+          ) : (
+            data?.data.map((event) => (
+              <Table.Tr key={event.id}>
+                <Table.Td>{labels[event.action]}</Table.Td>
+                <Table.Td>
+                  {formatAdminDateTime(event.context.classified_at ?? event.created_at)}
+                </Table.Td>
+                <Table.Td>{event.actor?.name || "—"}</Table.Td>
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
     <DataListPaper>
-      {Boolean(data?.data.length) && (
-        <Table.ScrollContainer
-          type="native"
-          minWidth={460}
-          role="region"
-          aria-label={c.history}
-          tabIndex={0}
-        >
-          <Table aria-label={c.history} aria-busy={history.isFetching || undefined}>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th scope="col">{c.historyAction}</Table.Th>
-                <Table.Th scope="col">{c.historyTime}</Table.Th>
-                <Table.Th scope="col">{c.historyActor}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {data?.data.map((event) => (
-                <Table.Tr key={event.id}>
-                  <Table.Td>{labels[event.action]}</Table.Td>
-                  <Table.Td>
-                    {formatAdminDateTime(event.context.classified_at ?? event.created_at)}
-                  </Table.Td>
-                  <Table.Td>{event.actor?.name || "—"}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-      <Box p={history.error || (data && history.isFetching) ? "md" : undefined}>
+      {Boolean(data?.data.length) && table}
+      <Box p={showingError || (data && history.isFetching) ? "md" : undefined}>
         <ListState
           embedded
-          tableColumns={3}
+          loadingPlaceholder={table}
           loading={history.isFetching}
           loadingLabel={c.loadingSupply}
           hasData={Boolean(data)}
           isEmpty={data?.data.length === 0}
           empty={c.historyEmpty}
-          error={history.error ? requestErrorMessage(history.error, t) : ""}
-          onRetry={() => void history.refetch()}
+          error={showingError ? requestErrorMessage(history.error, t) : ""}
+          onRetry={() => void history.refetch({ cancelRefetch: false })}
           retryLabel={t.common.retry}
         />
       </Box>

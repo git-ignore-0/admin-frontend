@@ -9,6 +9,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
@@ -81,11 +82,17 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
     }
   }, [meta, page]);
 
-  function loadState(query: typeof history | typeof detail, empty = "") {
+  const initialLoading = history.isFetching && !history.data;
+
+  function loadState(
+    query: typeof history | typeof detail,
+    empty = "",
+    loadingPlaceholder?: React.ReactNode,
+  ) {
     return (
       <ListState
         embedded
-        tableColumns={empty ? 4 : undefined}
+        loadingPlaceholder={loadingPlaceholder}
         empty={empty}
         error={query.error ? requestErrorMessage(query.error, t) : ""}
         hasData={Boolean(query.data)}
@@ -155,55 +162,62 @@ export function FarmerSupplyHistory({ active, token, selected, onSelect, onScope
     );
   }
 
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={520}
+      role="region"
+      aria-label={c.history}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={c.history} aria-busy={history.isFetching || undefined} withRowBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.code}</Table.Th>
+            <Table.Th scope="col">{c.period}</Table.Th>
+            <Table.Th scope="col">{c.count}</Table.Th>
+            <Table.Th scope="col">{c.status}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={4} height={36} />
+          ) : (
+            history.data?.data.map((entry) => (
+              <Table.Tr key={entry.id}>
+                <Table.Td>
+                  <Stack gap={4} align="flex-start">
+                    <DataListRecordLink
+                      component="button"
+                      type="button"
+                      onClick={() => onSelect(entry.id)}
+                    >
+                      {entry.code}
+                    </DataListRecordLink>
+                    <Text size="sm" c="dimmed">
+                      {formatAdminDateTime(entry.submitted_at)}
+                    </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td>{supplyPeriod(entry)}</Table.Td>
+                <Table.Td>{entry.items.length}</Table.Td>
+                <Table.Td>
+                  <RequestStatus status={entry.status} locale={locale} />
+                </Table.Td>
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
     <DataListPaper>
-      {!!history.data?.data.length && (
-        <Table.ScrollContainer
-          type="native"
-          minWidth={520}
-          role="region"
-          aria-label={c.history}
-          tabIndex={0}
-        >
-          <Table aria-label={c.history} aria-busy={history.isFetching || undefined} withRowBorders>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th scope="col">{c.code}</Table.Th>
-                <Table.Th scope="col">{c.period}</Table.Th>
-                <Table.Th scope="col">{c.count}</Table.Th>
-                <Table.Th scope="col">{c.status}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {history.data.data.map((entry) => (
-                <Table.Tr key={entry.id}>
-                  <Table.Td>
-                    <Stack gap={4} align="flex-start">
-                      <DataListRecordLink
-                        component="button"
-                        type="button"
-                        onClick={() => onSelect(entry.id)}
-                      >
-                        {entry.code}
-                      </DataListRecordLink>
-                      <Text size="sm" c="dimmed">
-                        {formatAdminDateTime(entry.submitted_at)}
-                      </Text>
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td>{supplyPeriod(entry)}</Table.Td>
-                  <Table.Td>{entry.items.length}</Table.Td>
-                  <Table.Td>
-                    <RequestStatus status={entry.status} locale={locale} />
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
+      {!!history.data?.data.length && table}
       <Box p={history.error || (history.data && history.isFetching) ? "md" : undefined}>
-        {loadState(history, c.noHistory)}
+        {loadState(history, c.noHistory, table)}
       </Box>
       {meta && (
         <>

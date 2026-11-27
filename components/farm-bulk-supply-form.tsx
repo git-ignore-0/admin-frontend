@@ -24,6 +24,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { AdminDateInput } from "@/components/admin-date-input";
 import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { FormField } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -251,6 +252,7 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
       : errors?.items?.[productId];
   }
 
+  const initialLoading = loading && !products;
   const productRows = products?.length
     ? products.map((row) => {
         const key = row.product_id;
@@ -365,6 +367,72 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
     </Button>
   );
 
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={showSaleUnitColumn ? 560 : showRemaining ? 540 : 460}
+      role="region"
+      aria-label={f.productColumn}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table
+        aria-label={f.products}
+        aria-busy={refreshing || undefined}
+        classNames={{ td: styles.wrap, th: styles.wrap }}
+        layout="fixed"
+        withRowBorders
+      >
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{f.productColumn}</Table.Th>
+            {showSaleUnitColumn && (
+              <Table.Th scope="col" w="clamp(5rem, 16%, 8rem)">
+                {c.saleUnit}
+              </Table.Th>
+            )}
+            {showRemaining && (
+              <Table.Th scope="col" ta="right" w="5.5rem">
+                {c.available}
+              </Table.Th>
+            )}
+            <Table.Th
+              scope="col"
+              w={showSaleUnitColumn ? "10rem" : "9rem"}
+              className={showSaleUnitColumn ? styles.quantityHeading : undefined}
+            >
+              {quantityTitle}
+            </Table.Th>
+            <Table.Th
+              scope="col"
+              ta="right"
+              w={showSaleUnitColumn ? "clamp(6.5rem, 18%, 9rem)" : "7rem"}
+            >
+              {c.converted}
+            </Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows
+              columns={3 + Number(showSaleUnitColumn) + Number(showRemaining)}
+              height={36}
+              alignments={[
+                undefined,
+                ...(showSaleUnitColumn ? [undefined] : []),
+                ...(showRemaining ? ["right" as const] : []),
+                undefined,
+                "right",
+              ]}
+            />
+          ) : (
+            productRows
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
     <Box ref={layoutRef} miw={0}>
       <Grid columns={10} gutter="md" className={styles.layout}>
@@ -430,61 +498,14 @@ export function FarmSupplyForm<P extends FarmSupplyProduct>({
               }}
             />
             <DataListPaper component="section" aria-label={f.products}>
-              {productRows && (
-                <Table.ScrollContainer
-                  type="native"
-                  minWidth={showSaleUnitColumn ? 560 : showRemaining ? 540 : 460}
-                  role="region"
-                  aria-label={f.productColumn}
-                  tabIndex={0}
-                >
-                  <Table
-                    aria-label={f.products}
-                    aria-busy={refreshing || undefined}
-                    classNames={{ td: styles.wrap, th: styles.wrap }}
-                    layout="fixed"
-                    withRowBorders
-                  >
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th scope="col">{f.productColumn}</Table.Th>
-                        {showSaleUnitColumn && (
-                          <Table.Th scope="col" w="clamp(5rem, 16%, 8rem)">
-                            {c.saleUnit}
-                          </Table.Th>
-                        )}
-                        {showRemaining && (
-                          <Table.Th scope="col" ta="right" w="5.5rem">
-                            {c.available}
-                          </Table.Th>
-                        )}
-                        <Table.Th
-                          scope="col"
-                          w={showSaleUnitColumn ? "10rem" : "9rem"}
-                          className={showSaleUnitColumn ? styles.quantityHeading : undefined}
-                        >
-                          {quantityTitle}
-                        </Table.Th>
-                        <Table.Th
-                          scope="col"
-                          ta="right"
-                          w={showSaleUnitColumn ? "clamp(6.5rem, 18%, 9rem)" : "7rem"}
-                        >
-                          {c.converted}
-                        </Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>{productRows}</Table.Tbody>
-                  </Table>
-                </Table.ScrollContainer>
-              )}
+              {productRows && table}
               <Box p={error && !refreshing ? "md" : undefined}>
                 <ListState
                   embedded
-                  tableColumns={3 + Number(showSaleUnitColumn) + Number(showRemaining)}
+                  loadingPlaceholder={table}
                   empty={emptyLabel ?? c.empty}
                   noResults={search ? (noResultsLabel ?? c.noResults) : undefined}
-                  loading={loading && !products}
+                  loading={initialLoading}
                   loadingLabel={f.loadingSupply}
                   hasData={Boolean(products)}
                   isEmpty={products?.length === 0}

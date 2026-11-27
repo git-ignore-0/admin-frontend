@@ -9,6 +9,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListResultSummary } from "@/components/pagination";
 import { listStoreCategories } from "@/lib/commerce-api";
@@ -65,6 +66,60 @@ export function StoreCategoryList() {
   const initialLoading = loading && items === null;
   const rows = categoryTreeRows(items ?? []);
   const filtered = Boolean(search || active);
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={480}
+      role="region"
+      aria-label={copy.categories}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={copy.categories} styles={{ td: { overflowWrap: "anywhere" } }}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{copy.categoryName}</Table.Th>
+            <Table.Th scope="col">{copy.levelHeading}</Table.Th>
+            <Table.Th scope="col">{copy.order}</Table.Th>
+            <Table.Th scope="col">{copy.status}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={4} height={30} />
+          ) : (
+            rows.map(({ category, depth }) => (
+              <Table.Tr key={category.id}>
+                <Table.Td>
+                  <Stack gap={4} ms={`${Math.min(depth - 1, 2) * 1.25}rem`}>
+                    <DataListRecordLink
+                      component={Link}
+                      href={`/store-catalog/categories/${category.id}`}
+                    >
+                      {categoryName(category, locale)}
+                    </DataListRecordLink>
+                    <Text size="sm" c="dimmed">
+                      /{category.slug}
+                    </Text>
+                  </Stack>
+                </Table.Td>
+                <Table.Td>{copy.level.replace("{level}", String(depth))}</Table.Td>
+                <Table.Td>{category.sort_order}</Table.Td>
+                <Table.Td>
+                  <Status
+                    domain="availability"
+                    status={category.is_active ? "active" : "inactive"}
+                    label={category.is_active ? copy.active : copy.inactive}
+                  />
+                </Table.Td>
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
+
   return (
     <Stack component="section" aria-busy={loading} gap="md" miw={0}>
       <ListToolbar
@@ -109,58 +164,11 @@ export function StoreCategoryList() {
         }}
       />
       <DataListPaper>
-        {rows.length > 0 && (
-          <Table.ScrollContainer
-            type="native"
-            minWidth={480}
-            role="region"
-            aria-label={copy.categories}
-            tabIndex={0}
-          >
-            <Table aria-label={copy.categories} styles={{ td: { overflowWrap: "anywhere" } }}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th scope="col">{copy.categoryName}</Table.Th>
-                  <Table.Th scope="col">{copy.levelHeading}</Table.Th>
-                  <Table.Th scope="col">{copy.order}</Table.Th>
-                  <Table.Th scope="col">{copy.status}</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {rows.map(({ category, depth }) => (
-                  <Table.Tr key={category.id}>
-                    <Table.Td>
-                      <Stack gap={4} ms={`${Math.min(depth - 1, 2) * 1.25}rem`}>
-                        <DataListRecordLink
-                          component={Link}
-                          href={`/store-catalog/categories/${category.id}`}
-                        >
-                          {categoryName(category, locale)}
-                        </DataListRecordLink>
-                        <Text size="sm" c="dimmed">
-                          /{category.slug}
-                        </Text>
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td>{copy.level.replace("{level}", String(depth))}</Table.Td>
-                    <Table.Td>{category.sort_order}</Table.Td>
-                    <Table.Td>
-                      <Status
-                        domain="availability"
-                        status={category.is_active ? "active" : "inactive"}
-                        label={category.is_active ? copy.active : copy.inactive}
-                      />
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        )}
+        {rows.length > 0 && table}
         <Box p={error && !loading ? "md" : undefined}>
           <ListState
             embedded
-            tableColumns={4}
+            loadingPlaceholder={table}
             empty={copy.noCategories}
             noResults={filtered ? copy.noMatchingCategories : undefined}
             action={

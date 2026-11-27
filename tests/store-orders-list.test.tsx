@@ -231,10 +231,29 @@ describe("Store order list", () => {
       })
       .mockReturnValue(reply);
     view();
+    const announcement = screen.getByRole("status");
+    const loadingList = announcement.closest("[data-list-paper]")!;
+    const loadingScroll = loadingList.querySelector<HTMLElement>(
+      '[role="region"][aria-hidden="true"]',
+    );
+    expect(loadingScroll).not.toHaveAttribute("tabindex");
+    const loadingWidth = loadingScroll?.style.getPropertyValue("--table-min-width");
+    expect(loadingWidth).toBe("calc(45rem * var(--mantine-scale))");
+    expect(loadingScroll?.querySelectorAll("th")).toHaveLength(4);
+    expect(loadingScroll?.querySelector("tbody tr")?.children).toHaveLength(4);
+    expect(loadingScroll?.querySelector("tbody tr > :nth-child(3)")).toHaveStyle({
+      textAlign: "right",
+    });
+    expect(loadingScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
+    expect(loadingList.querySelectorAll("table")).toHaveLength(1);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
     await screen.findByText("NFV-STORE-001");
 
     const scroll = screen.getByRole("region", { name: "Đơn hàng Store" });
     const paper = scroll.closest("[data-list-paper]")!;
+    expect(paper).toBe(loadingList);
+    expect(scroll.style.getPropertyValue("--table-min-width")).toBe(loadingWidth);
+    expect(paper.querySelectorAll("table")).toHaveLength(1);
     expect(scroll).toHaveAttribute("tabindex", "0");
     expect(within(scroll).getAllByRole("columnheader")).toHaveLength(4);
     const next = within(paper as HTMLElement).getByRole("button", { name: "Sau" });
@@ -247,6 +266,7 @@ describe("Store order list", () => {
     expect(next).toBeDisabled();
     expect(within(scroll).getByText("NFV-STORE-001")).toBeVisible();
     expect(within(paper as HTMLElement).queryByRole("status")).not.toBeInTheDocument();
+    expect(paper.querySelectorAll("table")).toHaveLength(1);
     await act(async () =>
       resolve({
         data: [storeOrderFixture({ reference_code: "REFRESHED" })],

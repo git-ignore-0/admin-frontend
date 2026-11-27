@@ -6,7 +6,12 @@ import {
   type MutationFilters,
   type QueryClient,
 } from "@tanstack/react-query";
-import { isApiObject, isProtectedDataError, type ClientApiError } from "@/lib/client-error";
+import {
+  isApiObject,
+  isNativeRequestTimeout,
+  isProtectedDataError,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { isUncertainFarmSupplyWrite } from "@/lib/farm-stock";
 import type { Farm } from "@/lib/types";
 
@@ -189,6 +194,22 @@ export function useFarmBulkBlocksWrite(farmId: string) {
 export function farmAccessDenied(cause: unknown): cause is Error {
   // The BFF can reject a write's CSRF marker without revoking website-admin reads.
   return cause instanceof Error && isProtectedDataError(cause);
+}
+
+/** Only a transient read failure may keep an already verified page visible. */
+export function farmListCanShowData(cause: unknown) {
+  if (cause == null) return true;
+  if (!(cause instanceof Error) || isProtectedDataError(cause)) return false;
+  const { status, message } = cause as ClientApiError;
+  return (
+    status !== 404 &&
+    status !== 410 &&
+    (isNativeRequestTimeout(cause) ||
+      status === 408 ||
+      message === "network_error" ||
+      message === "request_timeout" ||
+      message === "upstream_timeout")
+  );
 }
 
 export function farmAccess(client: QueryClient) {

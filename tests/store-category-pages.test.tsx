@@ -63,6 +63,14 @@ afterEach(cleanup);
 describe("store category administration", () => {
   it("renders an unordered response as a labelled three-level list", async () => {
     render(<StoreCategoryList />);
+    const loadingList = screen.getByRole("status").closest("[data-list-paper]")!;
+    const loadingScroll = loadingList.querySelector<HTMLElement>(
+      '[role="region"][aria-hidden="true"]',
+    );
+    const loadingWidth = loadingScroll?.style.getPropertyValue("--table-min-width");
+    expect(loadingWidth).toBe("calc(30rem * var(--mantine-scale))");
+    expect(loadingScroll?.querySelectorAll("th")).toHaveLength(4);
+    expect(loadingScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
     expect(await screen.findByRole("link", { name: "leaf" })).toBeVisible();
     expect(screen.getByText("Cấp 3")).toBeVisible();
     const table = screen.getByRole("table", { name: "Danh mục" });
@@ -70,6 +78,8 @@ describe("store category administration", () => {
     const scroller = screen.getByRole("region", { name: "Danh mục" });
     expect(scroller).toHaveAttribute("tabindex", "0");
     expect(scroller).toContainElement(table);
+    expect(scroller.style.getPropertyValue("--table-min-width")).toBe(loadingWidth);
+    expect(scroller.closest("[data-list-paper]")).toBe(loadingList);
     expect(scroller.closest("[data-list-paper]")?.querySelector("footer")).toBeVisible();
     expect(scroller.querySelector("footer")).toBeNull();
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
@@ -95,7 +105,7 @@ describe("store category administration", () => {
     expect(screen.queryByRole("link", { name: "active-only" })).not.toBeInTheDocument();
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Đang tải dữ liệu");
-    expect(status.closest("[data-list-paper]")?.querySelector("table[aria-hidden]")).toBeTruthy();
+    expect(status.closest("[data-list-paper]")?.querySelector("[aria-hidden] table")).toBeTruthy();
     expect(mocks.list.mock.calls.at(-1)?.[0]).toEqual({ search: "", is_active: false });
 
     resolve([]);

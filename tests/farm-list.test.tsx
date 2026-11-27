@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import type { NextRouter } from "next/router";
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
@@ -219,4 +219,45 @@ it("hides the cached Farm rows after a protected refresh fails", async () => {
   fireEvent.click(within(denied).getByRole("button", { name: "Try again" }));
   expect(await screen.findByRole("link", { name: farm.name_en })).toBeVisible();
   expect(apiEnvelope).toHaveBeenCalledTimes(3);
+});
+
+it("keeps the current Farm page during a transient refresh error and updates it on retry", async () => {
+  searchParams = new URLSearchParams("search=green&page=2");
+  const first = { data: [farm], meta: { page: 2, page_size: 20, total: 22 } };
+  const failed = Promise.withResolvers<typeof first>();
+  const retry = Promise.withResolvers<typeof first>();
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce(first)
+    .mockReturnValueOnce(failed.promise)
+    .mockReturnValueOnce(retry.promise);
+  renderFarmList("en");
+
+  const link = await screen.findByRole("link", { name: farm.name_en });
+  const footer = screen.getByRole("navigation", { name: "Page 2/2" });
+  const refresh = screen.getByRole("button", { name: "Refresh list" });
+  fireEvent.click(refresh);
+  expect(link).toBeVisible();
+  expect(footer).toBeVisible();
+  expect(refresh).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await act(async () => failed.reject(new Error("network_error")));
+  const alert = await screen.findByRole("alert");
+  expect(link).toBeVisible();
+  expect(footer).toBeVisible();
+  expect(screen.getByText("22 results")).toBeVisible();
+
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect(link).toBeVisible();
+  await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "true"));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await act(async () =>
+    retry.resolve({ ...first, data: [{ ...farm, name_en: "Verified again" }] }),
+  );
+  expect(await screen.findByRole("link", { name: "Verified again" })).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(apiEnvelope).toHaveBeenLastCalledWith("admin/farms?page=2&search=green", {
+      signal: expect.any(AbortSignal),
+    }),
+  );
 });

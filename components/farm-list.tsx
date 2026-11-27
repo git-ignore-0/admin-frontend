@@ -23,6 +23,7 @@ import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
@@ -31,6 +32,7 @@ import { requestErrorMessage } from "@/lib/client-error";
 import { farmHref, readFarmListContext } from "@/lib/farm-navigation";
 import {
   farmAccessDenied,
+  farmListCanShowData,
   farmListKey,
   retireFarmAccess,
   retryFarmAccess,
@@ -69,14 +71,15 @@ export function FarmList() {
       retireFarmAccess(client, result.error);
   }, [accessError, client, isCurrent, result.error]);
   const cause = accessError ?? result.error;
-  const items = !cause ? (result.data?.data ?? null) : null;
-  const meta = !cause ? result.data?.meta : undefined;
+  const data = !accessError && farmListCanShowData(result.error) ? result.data : undefined;
+  const items = data?.data ?? null;
+  const meta = data?.meta;
   const loading = !accessError && (result.isPending || result.isFetching);
   const initialLoading = loading && items === null;
   const error = cause ? requestErrorMessage(cause, t) : "";
   const reload = () => {
     if (accessError) retryFarmAccess(client);
-    else void result.refetch();
+    else return result.refetch({ cancelRefetch: false }).then(() => undefined);
   };
   const lastPage = meta ? Math.max(1, Math.ceil(meta.total / meta.page_size)) : page;
 
@@ -102,6 +105,111 @@ export function FarmList() {
   }
 
   if (!isCurrent()) return null;
+
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={420}
+      role="region"
+      aria-label={c.list}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+      style={{ outlineOffset: -2 }}
+    >
+      <Table aria-label={c.list} aria-busy={loading || undefined}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.listFarmColumn}</Table.Th>
+            <Table.Th scope="col">
+              {initialLoading ? (
+                c.listProductsColumn
+              ) : (
+                <Tooltip
+                  label={c.listProductCountHint}
+                  events={{ hover: true, focus: true, touch: true }}
+                  multiline
+                  w={220}
+                >
+                  <span tabIndex={0}>{c.listProductsColumn}</span>
+                </Tooltip>
+              )}
+            </Table.Th>
+            <Table.Th scope="col">{c.status}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={3} height={44} />
+          ) : (
+            items?.map((farm) => {
+              const inStock = farm.in_stock_product_count;
+              const total = inStock + farm.out_of_stock_product_count;
+              const productCount = total === 1 ? c.listProductCountSingular : c.listProductCount;
+
+              return (
+                <Table.Tr key={farm.id}>
+                  <Table.Td>
+                    <Group wrap="nowrap" gap="sm" miw={0}>
+                      {farm.image && (
+                        <Image
+                          component={NextImage}
+                          alt=""
+                          src={mediaUrlForWidth(farm.image, 112)}
+                          width={56}
+                          height={48}
+                          w={56}
+                          h={48}
+                          flex="0 0 auto"
+                          radius="md"
+                          unoptimized
+                        />
+                      )}
+                      <Stack miw={0} gap={4} style={{ overflowWrap: "anywhere" }}>
+                        <DataListRecordLink
+                          component={AdminNavigationLink}
+                          href={farmHref(params, { id: farm.id, tab: "products" })}
+                        >
+                          {locale === "vi" ? farm.name_vi : farm.name_en}
+                        </DataListRecordLink>
+                        <Text size="sm" c="dimmed">
+                          {locale === "vi" ? farm.location_vi : farm.location_en}
+                        </Text>
+                      </Stack>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    {total > 0 ? (
+                      <Stack gap={4}>
+                        <Text inherit fw={600}>
+                          {productCount.replace("{count}", String(total))}
+                        </Text>
+                        <Text size="sm" c="dimmed">
+                          {inStock > 0
+                            ? c.listProductsInStock.replace("{count}", String(inStock))
+                            : c.listNoProductsInStock}
+                        </Text>
+                      </Stack>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        {c.listNoProducts}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Status
+                      domain="availability"
+                      status={farm.is_active ? "active" : "inactive"}
+                      label={farm.is_active ? c.active : c.inactive}
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
 
   return (
     <Stack gap="md" miw={0}>
@@ -166,106 +274,11 @@ export function FarmList() {
         }}
       />
       <DataListPaper>
-        {!!items?.length && (
-          <Table.ScrollContainer
-            type="native"
-            minWidth={420}
-            role="region"
-            aria-label={c.list}
-            tabIndex={0}
-            style={{ outlineOffset: -2 }}
-          >
-            <Table aria-label={c.list} aria-busy={loading || undefined}>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th scope="col">{c.listFarmColumn}</Table.Th>
-                  <Table.Th scope="col">
-                    <Tooltip
-                      label={c.listProductCountHint}
-                      events={{ hover: true, focus: true, touch: true }}
-                      multiline
-                      w={220}
-                    >
-                      <span tabIndex={0}>{c.listProductsColumn}</span>
-                    </Tooltip>
-                  </Table.Th>
-                  <Table.Th scope="col">{c.status}</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {items.map((farm) => {
-                  const inStock = farm.in_stock_product_count;
-                  const total = inStock + farm.out_of_stock_product_count;
-                  const productCount =
-                    total === 1 ? c.listProductCountSingular : c.listProductCount;
-
-                  return (
-                    <Table.Tr key={farm.id}>
-                      <Table.Td>
-                        <Group wrap="nowrap" gap="sm" miw={0}>
-                          {farm.image && (
-                            <Image
-                              component={NextImage}
-                              alt=""
-                              src={mediaUrlForWidth(farm.image, 112)}
-                              width={56}
-                              height={48}
-                              w={56}
-                              h={48}
-                              flex="0 0 auto"
-                              radius="md"
-                              unoptimized
-                            />
-                          )}
-                          <Stack miw={0} gap={4} style={{ overflowWrap: "anywhere" }}>
-                            <DataListRecordLink
-                              component={AdminNavigationLink}
-                              href={farmHref(params, { id: farm.id, tab: "products" })}
-                            >
-                              {locale === "vi" ? farm.name_vi : farm.name_en}
-                            </DataListRecordLink>
-                            <Text size="sm" c="dimmed">
-                              {locale === "vi" ? farm.location_vi : farm.location_en}
-                            </Text>
-                          </Stack>
-                        </Group>
-                      </Table.Td>
-                      <Table.Td>
-                        {total > 0 ? (
-                          <Stack gap={4}>
-                            <Text inherit fw={600}>
-                              {productCount.replace("{count}", String(total))}
-                            </Text>
-                            <Text size="sm" c="dimmed">
-                              {inStock > 0
-                                ? c.listProductsInStock.replace("{count}", String(inStock))
-                                : c.listNoProductsInStock}
-                            </Text>
-                          </Stack>
-                        ) : (
-                          <Text size="sm" c="dimmed">
-                            {c.listNoProducts}
-                          </Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        <Status
-                          domain="availability"
-                          status={farm.is_active ? "active" : "inactive"}
-                          label={farm.is_active ? c.active : c.inactive}
-                        />
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        )}
+        {!!items?.length && table}
         <Box p={error && !loading ? "md" : undefined}>
           <ListState
             embedded
-            tableColumns={3}
+            loadingPlaceholder={table}
             empty={c.empty}
             error={loading ? "" : error}
             hasData={items !== null}

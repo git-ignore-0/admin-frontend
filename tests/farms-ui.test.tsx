@@ -7,6 +7,7 @@ import { FarmList } from "@/components/farm-list";
 import { FarmEditor } from "@/components/farm-editor";
 import { FarmProducts } from "@/components/farm-products";
 import { FarmSourceDetail } from "@/components/farm-source-detail";
+import { FarmStockBatches } from "@/components/farm-stock-batches";
 import { FarmDetail } from "@/components/farm-detail";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
@@ -17,6 +18,7 @@ import {
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ToastProvider } from "@/components/toast-provider";
 import { farmDetailKey, farmListKey, farmSupplyKey } from "@/lib/farm-query";
+import { farmBatchQuery } from "@/lib/farm-supply-query";
 import type {
   AvailableFarmProduct,
   Farm,
@@ -281,6 +283,9 @@ afterEach(() => {
 });
 
 it("lists canonical Farms with search and status without fetching tracker data", async () => {
+  const filtered = deferred<ReturnType<typeof linkedResult<Farm>>>();
+  mocks.list.mockResolvedValueOnce(linkedResult([farm], 1, 21));
+  mocks.list.mockReturnValueOnce(filtered.promise);
   view(<FarmList />);
   expect(await screen.findByText("Nông trại Xanh")).toBeVisible();
   expect(screen.getByText("8 có hàng")).toBeVisible();
@@ -291,6 +296,12 @@ it("lists canonical Farms with search and status without fetching tracker data",
   );
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Đà Lạt" } });
   fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
+  expect(screen.queryByRole("link", { name: "Nông trại Xanh" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toBeInTheDocument();
+  await act(async () =>
+    filtered.resolve(linkedResult([{ ...farm, name_vi: "Trang trại Đà Lạt" }])),
+  );
+  expect(await screen.findByRole("link", { name: "Trang trại Đà Lạt" })).toBeVisible();
   await waitFor(() =>
     expect(mocks.list).toHaveBeenCalledWith(
       expect.objectContaining({ search: "Đà Lạt" }),
@@ -1026,18 +1037,182 @@ it("searches linked Farm products on the server without fetching each Product de
 
 it("pages linked Farm products without loading every Product detail", async () => {
   const second = { ...linkedProduct, id: "link-2", product_id: "product-2", sku: "RAU-02" };
-  mocks.linked.mockImplementation((_farmId, query: { page: number }) =>
-    Promise.resolve(linkedResult(query.page === 1 ? [linkedProduct] : [second], query.page, 21)),
-  );
+  const next = deferred<ReturnType<typeof linkedResult<FarmProduct>>>();
+  mocks.linked.mockResolvedValueOnce(linkedResult([linkedProduct], 1, 21));
+  mocks.linked.mockReturnValueOnce(next.promise);
   view(<FarmProducts farm={farm} />);
   expect(await screen.findByText("RAU-01")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Sau" }));
+  expect(screen.queryByText("RAU-01")).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toBeInTheDocument();
+  await act(async () => next.resolve(linkedResult([second], 2, 21)));
   expect(await screen.findByText("RAU-02")).toBeVisible();
   expect(mocks.linked).toHaveBeenCalledWith(
     "farm-1",
     { page: 2, search: "", supplyStatus: "supplying" },
     expect.any(AbortSignal),
   );
+});
+
+it("keeps a verified Farm product page on refresh timeout and locks Add until retry succeeds", async () => {
+  const first = linkedResult([linkedProduct], 1, 21);
+  const failed = Promise.withResolvers<typeof first>();
+  const retry = Promise.withResolvers<typeof first>();
+  mocks.linked
+    .mockResolvedValueOnce(first)
+    .mockReturnValueOnce(failed.promise)
+    .mockReturnValueOnce(retry.promise);
+  view(<FarmProducts farm={farm} />, "en");
+  const link = await screen.findByRole("link", { name: "Water spinach" });
+  expect(screen.getByText("21 results")).toBeVisible();
+  const add = screen.getByRole("button", { name: "Add product" });
+  const next = screen.getByRole("button", { name: "Next" });
+  const refresh = screen.getByRole("button", { name: "Refresh supply list" });
+  expect(add).toBeEnabled();
+  fireEvent.click(refresh);
+  await waitFor(() => expect(next).toBeDisabled());
+  expect(link).toBeVisible();
+  expect(refresh).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  await act(async () => failed.reject(fail("request_timeout", 408)));
+  const alert = await screen.findByRole("alert");
+  expect(link).toBeVisible();
+  expect(screen.getByText("21 results")).toBeVisible();
+  expect(add).toBeDisabled();
+  fireEvent.click(add);
+  expect(mocks.available).not.toHaveBeenCalled();
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect(link).toBeVisible();
+  expect(add).toBeDisabled();
+  await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "true"));
+  await act(async () =>
+    retry.resolve(linkedResult([{ ...linkedProduct, name_en: "Verified product" }], 1, 22)),
+  );
+  expect(await screen.findByRole("link", { name: "Verified product" })).toBeVisible();
+  expect(screen.getByText("22 results")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(add).toBeEnabled();
+});
+
+it.each(["directory", "products"] as const)(
+  "shows a scoped initial error and ignores a retired Farm %s response",
+  async (kind) => {
+    const products = kind === "products";
+    const read = products ? mocks.linked : mocks.list;
+    const row = products ? linkedProduct : farm;
+    const initial = deferred<ReturnType<typeof linkedResult<FarmProduct | Farm>>>();
+    const stale = deferred<ReturnType<typeof linkedResult<FarmProduct | Farm>>>();
+    read
+      .mockReturnValueOnce(initial.promise)
+      .mockResolvedValueOnce(linkedResult([row], 1, 21))
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(linkedResult([{ ...row, name_en: "Current session" }]));
+    const shell = (session: string) => (
+      <AdminQueryProvider key={session}>
+        {products ? <FarmProducts farm={farm} /> : <FarmList />}
+      </AdminQueryProvider>
+    );
+    const page = view(shell("retiring"), "en");
+    const loadingTable = screen.getByRole("table", { hidden: true });
+    const viewport = loadingTable.closest<HTMLElement>("[aria-hidden=true]");
+    expect(viewport).not.toHaveAttribute("tabindex");
+    expect(loadingTable.querySelectorAll("thead th")).toHaveLength(3);
+    expect(loadingTable.querySelectorAll("tbody tr")).toHaveLength(3);
+    expect(loadingTable.querySelector("button, a, input, select, [tabindex]")).toBeNull();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    await act(async () => initial.reject(new Error("network_error")));
+    const error = await screen.findByRole("alert");
+    expect(screen.queryByRole("table", { hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByText("21 results")).not.toBeInTheDocument();
+    fireEvent.click(within(error).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: row.name_en })).toBeVisible();
+    const loadedViewport = screen.getByRole("table").closest<HTMLElement>("[role=region]");
+    expect(loadedViewport?.style.getPropertyValue("--table-min-width")).toBe(
+      viewport?.style.getPropertyValue("--table-min-width"),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: products ? "Refresh supply list" : "Refresh list" }),
+    );
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    const signal = read.mock.calls[2]?.at(-1) as AbortSignal;
+    page.change(shell("current"));
+    expect(await screen.findByRole("link", { name: "Current session" })).toBeVisible();
+    expect(signal.aborted).toBe(true);
+    await act(async () =>
+      stale.resolve(linkedResult([{ ...row, name_en: "Retired session response" }])),
+    );
+    expect(screen.queryByRole("link", { name: row.name_en })).not.toBeInTheDocument();
+    expect(screen.queryByText("Retired session response")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Current session" })).toBeVisible();
+  },
+);
+
+it("withdraws Farm product data and actions after access is denied", async () => {
+  const onAccessLost = vi.fn();
+  const denial = fail("forbidden", 403);
+  mocks.linked
+    .mockResolvedValueOnce(linkedResult([linkedProduct], 1, 21))
+    .mockRejectedValueOnce(denial);
+  view(<FarmProducts farm={farm} onAccessLost={onAccessLost} />, "en");
+  expect(await screen.findByRole("link", { name: linkedProduct.name_en })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh supply list" }));
+  await waitFor(() => expect(onAccessLost).toHaveBeenCalledWith(denial));
+  expect(screen.queryByRole("link", { name: linkedProduct.name_en })).not.toBeInTheDocument();
+  expect(screen.queryByText("21 results")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add product" })).not.toBeInTheDocument();
+});
+
+it("keeps stock batches read-only after a transient refresh error until revalidation succeeds", async () => {
+  const filter = { scope: "current", page: 1 } as const;
+  const query = farmBatchQuery(linkedProduct, filter);
+  const onEdit = vi.fn();
+  const onCancel = vi.fn();
+  const first = linkedResult([liveBatch], 1, 21);
+  const retry = deferred<typeof first>();
+  mocks.batches
+    .mockResolvedValueOnce(first)
+    .mockRejectedValueOnce(new Error("network_error"))
+    .mockReturnValueOnce(retry.promise);
+  let client!: QueryClient;
+  view(
+    <>
+      <CaptureQueryClient
+        capture={(value) => {
+          client = value;
+        }}
+      />
+      <FarmStockBatches
+        source={linkedProduct}
+        filter={filter}
+        locked={false}
+        onEdit={onEdit}
+        onCancel={onCancel}
+        onFilterChange={vi.fn()}
+      />
+    </>,
+    "en",
+  );
+  const edit = await screen.findByRole("button", { name: "Edit supply batch" });
+  const cancel = screen.getByRole("button", { name: "Cancel supply batch" });
+  expect(edit).toBeEnabled();
+  expect(cancel).toBeEnabled();
+  await act(async () => client.invalidateQueries({ queryKey: query.queryKey }));
+
+  const alert = await screen.findByRole("alert");
+  expect(screen.getByRole("table", { name: "Supply batches" })).toBeVisible();
+  expect(screen.getByText("21 results")).toBeVisible();
+  expect(edit).toBeDisabled();
+  expect(cancel).toBeDisabled();
+  fireEvent.click(edit);
+  fireEvent.click(cancel);
+  expect(onEdit).not.toHaveBeenCalled();
+  expect(onCancel).not.toHaveBeenCalled();
+  fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+  expect(edit).toBeDisabled();
+  await act(async () => retry.resolve(first));
+  await waitFor(() => expect(edit).toBeEnabled());
+  expect(cancel).toBeEnabled();
 });
 
 it("reviews a newer Farm version after conflict and cleans the photo when the draft is undone", async () => {

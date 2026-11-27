@@ -95,13 +95,23 @@ describe("CSA coupon administration", () => {
         <CSACouponList />
       </AdminI18nProvider>,
     );
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    const announcement = screen.getByRole("status");
+    const loadingList = announcement.closest("[data-list-paper]")!;
+    const loadingScroll = loadingList.querySelector<HTMLElement>(
+      '[role="region"][aria-hidden="true"]',
+    );
+    const loadingWidth = loadingScroll?.style.getPropertyValue("--table-min-width");
+    expect(loadingWidth).toBe("calc(52.5rem * var(--mantine-scale))");
+    expect(loadingScroll?.querySelectorAll("th")).toHaveLength(7);
+    expect(loadingScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
     expect(screen.queryByRole("table", { name: "Vouchers" })).toBeNull();
     expect(await screen.findByText(coupon.code)).toBeVisible();
     const table = screen.getByRole("table", { name: "Vouchers" });
     const scroll = screen.getByRole("region", { name: "Vouchers" });
     expect(scroll).toHaveAttribute("tabindex", "0");
     expect(scroll).toContainElement(table);
+    expect(scroll.style.getPropertyValue("--table-min-width")).toBe(loadingWidth);
+    expect(scroll.closest("[data-list-paper]")).toBe(loadingList);
     expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
     const footer = scroll.closest("[data-list-paper]")?.querySelector("footer") ?? null;
     expect(footer).toHaveTextContent("1 result");

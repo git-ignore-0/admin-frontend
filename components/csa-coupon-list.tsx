@@ -8,6 +8,7 @@ import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { ListToolbar } from "@/components/list-toolbar";
 import { FormField, FormSelect, Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
@@ -70,6 +71,86 @@ export function CSACouponList() {
     setApplicationScope("");
     setPage(1);
   }
+
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      role="region"
+      aria-label={copy.title}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+      minWidth={840}
+    >
+      <Table
+        aria-label={copy.title}
+        aria-busy={loading || undefined}
+        withRowBorders
+        classNames={{ td: styles.cell, th: styles.cell }}
+      >
+        <Table.Thead>
+          <Table.Tr>
+            {columns.map((label) => (
+              <Table.Th key={label} scope="col">
+                {label}
+              </Table.Th>
+            ))}
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={columns.length} height={30} />
+          ) : (
+            items?.map((item) => (
+              <Table.Tr key={item.id}>
+                <Table.Td>
+                  <Text span fw={600}>
+                    {item.code}
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <span>{couponOffer(item, locale)}</span>
+                </Table.Td>
+                <Table.Td>
+                  <span>{couponScopeSummary(item, t)}</span>
+                </Table.Td>
+                <Table.Td>
+                  <span>
+                    {formatAdminDate(item.starts_at)} –{" "}
+                    {formatAdminDate(
+                      new Date(new Date(item.expires_at).getTime() - 1).toISOString(),
+                    )}
+                  </span>
+                </Table.Td>
+                <Table.Td>
+                  <span>
+                    {item.used_count} / {item.usage_limit}
+                  </span>
+                </Table.Td>
+                <Table.Td>
+                  <Status
+                    domain="voucher"
+                    status={item.status}
+                    label={copy.statuses[item.status]}
+                  />
+                </Table.Td>
+                <Table.Td>
+                  <Button
+                    component={AdminNavigationLink}
+                    variant="default"
+                    size="xs"
+                    href={`/csa-coupons/${item.id}`}
+                    leftSection={<IconEdit size={16} aria-hidden />}
+                  >
+                    {copy.edit}
+                  </Button>
+                </Table.Td>
+              </Table.Tr>
+            ))
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
 
   return (
     <Stack component="section" aria-busy={loading} gap="md" miw={0}>
@@ -143,80 +224,7 @@ export function CSACouponList() {
         }}
       />
       <DataListPaper>
-        {Boolean(items?.length) && (
-          <Table.ScrollContainer
-            type="native"
-            role="region"
-            aria-label={copy.title}
-            tabIndex={0}
-            minWidth={840}
-          >
-            <Table
-              aria-label={copy.title}
-              aria-busy={loading || undefined}
-              withRowBorders
-              classNames={{ td: styles.cell, th: styles.cell }}
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  {columns.map((label) => (
-                    <Table.Th key={label} scope="col">
-                      {label}
-                    </Table.Th>
-                  ))}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {items?.map((item) => (
-                  <Table.Tr key={item.id}>
-                    <Table.Td>
-                      <Text span fw={600}>
-                        {item.code}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <span>{couponOffer(item, locale)}</span>
-                    </Table.Td>
-                    <Table.Td>
-                      <span>{couponScopeSummary(item, t)}</span>
-                    </Table.Td>
-                    <Table.Td>
-                      <span>
-                        {formatAdminDate(item.starts_at)} –{" "}
-                        {formatAdminDate(
-                          new Date(new Date(item.expires_at).getTime() - 1).toISOString(),
-                        )}
-                      </span>
-                    </Table.Td>
-                    <Table.Td>
-                      <span>
-                        {item.used_count} / {item.usage_limit}
-                      </span>
-                    </Table.Td>
-                    <Table.Td>
-                      <Status
-                        domain="voucher"
-                        status={item.status}
-                        label={copy.statuses[item.status]}
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      <Button
-                        component={AdminNavigationLink}
-                        variant="default"
-                        size="xs"
-                        href={`/csa-coupons/${item.id}`}
-                        leftSection={<IconEdit size={16} aria-hidden />}
-                      >
-                        {copy.edit}
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-        )}
+        {Boolean(items?.length) && table}
         <Box p={error && !loading ? "md" : undefined}>
           <ListState
             embedded
@@ -234,7 +242,7 @@ export function CSACouponList() {
             isEmpty={items?.length === 0}
             loading={initialLoading}
             loadingLabel={copy.loading}
-            tableColumns={columns.length}
+            loadingPlaceholder={table}
             onRetry={reload}
             retryLabel={t.common.retry}
           />
