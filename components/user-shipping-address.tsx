@@ -1,38 +1,26 @@
 "use client";
 
-import {
-  Alert,
-  Button,
-  Fieldset,
-  Group,
-  Paper,
-  SimpleGrid,
-  Stack,
-  Text,
-  Textarea,
-  Title,
-} from "@mantine/core";
-import { useQuery } from "@tanstack/react-query";
+import { Alert, Button, Group, Paper, Stack, Text, Title } from "@mantine/core";
 import { type FormEvent, useId, useLayoutEffect, useRef, useState } from "react";
 
+import {
+  AddressFields,
+  useAddressFields,
+  type AddressFieldsValue,
+} from "@/components/address-fields";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { FormSelect } from "@/components/nfv-controls";
-import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { requireUserShippingAddress } from "@/lib/admin-users";
 import { useAdminUsersMutationAccess } from "@/lib/admin-users-query";
 import { api } from "@/lib/client-api";
 import { type ClientApiError, requestErrorMessage } from "@/lib/client-error";
-import { getSupportedShippingAreas } from "@/lib/shipping-areas";
 import type { UserShippingAddress } from "@/lib/types";
 import { useAdministrativeUnitNames } from "@/lib/use-administrative-unit-names";
-
-type AddressLocation = Pick<UserShippingAddress, "address" | "province_code" | "ward_code">;
 
 type AddressProps = {
   userId: string;
   address: UserShippingAddress | null | undefined;
-  historicalLocation: AddressLocation;
+  historicalLocation: AddressFieldsValue;
   canEdit: boolean;
   disabled: boolean;
   refresh: () => void;
@@ -41,7 +29,7 @@ type AddressProps = {
   onAddressSaved: (address: UserShippingAddress, expectedVersion: string | null) => void;
 };
 
-function addressDraft(address: AddressLocation) {
+function addressDraft(address: AddressFieldsValue): AddressFieldsValue {
   return {
     province_code: address.province_code,
     ward_code: address.ward_code,
@@ -63,8 +51,8 @@ export function UserShippingAddressSection(props: AddressProps) {
   const returnFocus = useRef(false);
   const [editing, setEditing] = useState(false);
   const { provinceName, wardName } = useAdministrativeUnitNames(
-    location?.province_code || null,
-    location?.ward_code || null,
+    editing ? null : location?.province_code || null,
+    editing ? null : location?.ward_code || null,
     locale,
   );
   const areaName = [wardName ?? location?.ward_code, provinceName ?? location?.province_code]
@@ -140,11 +128,11 @@ function ShippingAddressEditor({
   headingId,
   onClose,
 }: AddressProps & { headingId: string; onClose: () => void }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const { captureMutationAccess } = useAdminUsersMutationAccess();
   const toast = useToast();
   const copy = t.users.shippingAddress;
-  const areasCopy = t.csaCustomers;
+  const addressCopy = t.addressFields;
   const [originalAddress, setOriginalAddress] = useState(address);
   const [draft, setDraft] = useState(() => addressDraft(address ?? historicalLocation));
   const [saving, setSaving] = useState(false);
@@ -152,14 +140,8 @@ function ShippingAddressEditor({
   const [error, setError] = useState("");
   const form = useRef<HTMLFormElement>(null);
   const request = useRef<AbortController | null>(null);
-  const areas = useQuery({
-    queryKey: ["supported-shipping-areas", locale],
-    queryFn: ({ signal }) => getSupportedShippingAreas(locale, signal),
-  });
-  const province = areas.data?.find((item) => item.code === draft.province_code);
-  const ward = province?.wards.find((item) => item.code === draft.ward_code);
+  const addressState = useAddressFields(draft);
   const blocked = disabled || saving;
-  const areasUnavailable = areas.isFetching || areas.isPending || areas.isError;
   const expectedVersion = originalAddress?.updated_at ?? null;
   const addressChanged = expectedVersion !== (address?.updated_at ?? null);
   const needsLatestAddress = versionConflict || addressChanged;
@@ -168,14 +150,7 @@ function ShippingAddressEditor({
     draft.province_code !== originalAddress.province_code ||
     draft.ward_code !== originalAddress.ward_code ||
     draft.address.trim() !== originalAddress.address;
-  const canSave =
-    !blocked &&
-    !areasUnavailable &&
-    !needsLatestAddress &&
-    hasChanges &&
-    province &&
-    ward &&
-    draft.address.trim();
+  const canSave = !blocked && !needsLatestAddress && hasChanges && addressState.valid;
 
   useLayoutEffect(() => {
     form.current?.focus();
@@ -229,8 +204,8 @@ function ShippingAddressEditor({
       if (!isCurrent()) return;
       const failure = caught instanceof Error ? (caught as ClientApiError) : undefined;
       if (failure?.message === "shipping_area_unsupported") {
-        setError(areasCopy.shippingAreaUnsupported);
-        void areas.refetch();
+        setError(t.csaCustomers.shippingAreaUnsupported);
+        void addressState.query.refetch();
       } else if (failure?.message === "account_target_protected") {
         onProtectedTarget();
       } else if (failure?.message === "shipping_address_changed") {
@@ -239,9 +214,9 @@ function ShippingAddressEditor({
       } else {
         setError(
           requestErrorMessage(caught, t, {
-            province_code: areasCopy.province,
-            ward_code: areasCopy.ward,
-            address: copy.address,
+            province_code: addressCopy.province,
+            ward_code: addressCopy.ward,
+            address: addressCopy.address,
           }),
         );
         if (failure?.status === 403 && failure.message !== "csrf_rejected") refresh();
@@ -264,59 +239,7 @@ function ShippingAddressEditor({
       onSubmit={(event) => void submit(event)}
     >
       <Stack gap="sm">
-        <Fieldset variant="unstyled" miw={0} disabled={blocked}>
-          <Stack gap="sm">
-            <SimpleGrid type="container" cols={{ base: 1, "26rem": 2 }} spacing="sm">
-              <FormSelect
-                label={areasCopy.province}
-                placeholder={
-                  areas.isPending ? areasCopy.loadingProvinces : areasCopy.chooseProvince
-                }
-                required
-                comboboxProps={{ withinPortal: false }}
-                disabled={blocked || areasUnavailable || !areas.data?.length}
-                value={province?.code ?? null}
-                data={areas.data?.map(({ code, name }) => ({ value: code, label: name })) ?? []}
-                onChange={(value) =>
-                  setDraft({ ...draft, province_code: value ?? "", ward_code: "" })
-                }
-              />
-              <FormSelect
-                label={areasCopy.ward}
-                placeholder={areasCopy.chooseWard}
-                required
-                comboboxProps={{ withinPortal: false }}
-                disabled={blocked || areasUnavailable || !province}
-                value={ward?.code ?? null}
-                data={province?.wards.map(({ code, name }) => ({ value: code, label: name })) ?? []}
-                onChange={(value) => setDraft({ ...draft, ward_code: value ?? "" })}
-              />
-            </SimpleGrid>
-            <Textarea
-              label={copy.address}
-              required
-              autoComplete="shipping address-line1"
-              autosize
-              minRows={2}
-              maxLength={500}
-              value={draft.address}
-              onChange={(event) => setDraft({ ...draft, address: event.currentTarget.value })}
-            />
-          </Stack>
-        </Fieldset>
-        {areas.isError && (
-          <RecoveryAlert
-            message={requestErrorMessage(areas.error, t)}
-            retryLabel={t.common.retry}
-            loading={areas.isFetching}
-            onRetry={() => void areas.refetch()}
-          />
-        )}
-        {!areasUnavailable && areas.data?.length === 0 && (
-          <Text c="dimmed" size="sm">
-            {copy.noAreas}
-          </Text>
-        )}
+        <AddressFields value={draft} onChange={setDraft} state={addressState} disabled={blocked} />
         {error && (
           <Alert color="danger" role="alert">
             {error}

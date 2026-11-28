@@ -815,9 +815,9 @@ describe("CMS account administration", () => {
     expect(within(section).getByText("No address saved.")).toBeVisible();
     expect(within(section).queryByText(historical)).toBeNull();
     fireEvent.click(within(section).getByRole("button", { name: "Add address" }));
-    expect(within(section).getByLabelText(/^Street address/)).toHaveValue(historical);
+    expect(within(section).getByLabelText(/^Detailed address/)).toHaveValue(historical);
     await waitFor(() =>
-      expect(within(section).getByRole("combobox", { name: "Ward/commune" })).toHaveValue(
+      expect(within(section).getByRole("combobox", { name: "Ward/Commune" })).toHaveValue(
         "Sample Ward",
       ),
     );
@@ -861,14 +861,22 @@ describe("CMS account administration", () => {
     fireEvent.click(add);
     expect(screen.queryByLabelText(/^Recipient name/)).toBeNull();
     expect(screen.queryByLabelText(/^Recipient phone/)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/^Street address/), {
+    fireEvent.change(screen.getByLabelText(/^Detailed address/), {
       target: { value: "12 Orchid Street" },
     });
-    const province = screen.getByRole("combobox", { name: "Province/city" });
+    const province = screen.getByRole("combobox", { name: "Province/City" });
     await waitFor(() => expect(province).toBeEnabled());
     selectOption(province, "66");
-    selectOption(screen.getByRole("combobox", { name: "Ward/commune" }), "22015");
+    selectOption(screen.getByRole("combobox", { name: "Ward/Commune" }), "22015");
     const save = screen.getByRole("button", { name: "Save address" });
+    const detailedAddress = screen.getByLabelText(/^Detailed address/);
+    for (const invalidAddress of ["   ", "a".repeat(501)]) {
+      fireEvent.change(detailedAddress, { target: { value: invalidAddress } });
+      expect(save).toBeDisabled();
+      fireEvent.submit(save.closest("form")!);
+      expect(writes).toBe(0);
+    }
+    fireEvent.change(detailedAddress, { target: { value: "  12 Orchid Street  " } });
     fireEvent.click(save);
     expect(save).toBeDisabled();
     expect(fetcher).toHaveBeenCalledWith(
@@ -882,9 +890,9 @@ describe("CMS account administration", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       adminDictionaries.en.common.serverError,
     );
-    expect(screen.getByLabelText(/^Street address/)).toHaveValue("12 Orchid Street");
+    expect(detailedAddress).toHaveValue("  12 Orchid Street  ");
     expect(province).toHaveValue("Sample Province");
-    expect(screen.getByRole("combobox", { name: "Ward/commune" })).toHaveValue("Sample Ward");
+    expect(screen.getByRole("combobox", { name: "Ward/Commune" })).toHaveValue("Sample Ward");
 
     fireEvent.click(save);
     expect(await screen.findByRole("button", { name: "Edit address" })).toBeEnabled();
@@ -920,16 +928,70 @@ describe("CMS account administration", () => {
     ).toBeVisible();
     await waitFor(() => expect(edit).toBeEnabled());
     fireEvent.click(edit);
-    expect(screen.getByLabelText(/^Street address/)).toHaveValue("12 Orchid Street");
-    const ward = screen.getByRole("combobox", { name: "Ward/commune" });
+    expect(screen.getByLabelText(/^Detailed address/)).toHaveValue("12 Orchid Street");
+    const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
     await waitFor(() => expect(ward).toBeEnabled());
     expect(ward).toHaveValue("");
     const save = screen.getByRole("button", { name: "Save address" });
     expect(save).toBeDisabled();
+    fireEvent.submit(save.closest("form")!);
+    expect(fetcher.mock.calls.some(([path]) => path.endsWith("/shipping-address"))).toBe(false);
     selectOption(ward, "22015");
     expect(save).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("button", { name: "Edit address" })).toHaveFocus();
+    expect(screen.getByText("12 Orchid Street")).toBeVisible();
+  });
+
+  it("refreshes supported wards after an address update is rejected and keeps the edit draft", async () => {
+    const refreshedAreas = deferredResponse();
+    let areaReads = 0;
+    const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.includes("public/shipping-areas")) {
+        if (++areaReads === 1) return Response.json({ data: shippingAreas });
+        return refreshedAreas.promise;
+      }
+      if (path.includes("administrative-units")) return Response.json({ data: [] });
+      if (init?.method === "PUT") {
+        return Response.json({ errors: [{ code: "shipping_area_unsupported" }] }, { status: 400 });
+      }
+      return Response.json({
+        data: { ...user, can_edit_shipping_address: true, shipping_address: shippingAddress },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDetail userId={userId} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
+    const address = screen.getByRole("textbox", { name: "Detailed address" });
+    const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
+    const save = screen.getByRole("button", { name: "Save address" });
+    fireEvent.change(address, { target: { value: "14 Orchid Street" } });
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(ward).toHaveValue("Sample Ward");
+    fireEvent.click(save);
+
+    await waitFor(() => expect(areaReads).toBe(2));
+    expect(save).toBeDisabled();
+    expect(ward).toHaveValue("Sample Ward");
+    await act(async () =>
+      refreshedAreas.resolve(
+        Response.json({
+          data: [
+            {
+              ...shippingAreas[0],
+              wards: [{ ward_code: "22045", ward_name: "Other Ward", shipping_fee_vnd: "30000" }],
+            },
+          ],
+        }),
+      ),
+    );
+    await waitFor(() => expect(ward).toHaveValue(""));
+    expect(address).toHaveValue("14 Orchid Street");
+    expect(save).toBeDisabled();
+    fireEvent.submit(save.closest("form")!);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
+    selectOption(ward, "22045");
+    expect(save).toBeEnabled();
   });
 
   it("starts focus before the address controls while shipping options are loading", async () => {
@@ -947,9 +1009,9 @@ describe("CMS account administration", () => {
 
     const address = within(screen.getByRole("region", { name: "Address" }));
     const form = address.getByRole("form", { name: "Address" });
-    const province = address.getByRole("combobox", { name: "Province/city" });
-    const ward = address.getByRole("combobox", { name: "Ward/commune" });
-    const street = address.getByRole("textbox", { name: /^Street address/ });
+    const province = address.getByRole("combobox", { name: "Province/City" });
+    const ward = address.getByRole("combobox", { name: "Ward/Commune" });
+    const street = address.getByRole("textbox", { name: /^Detailed address/ });
     expect(form).toHaveFocus();
     expect(province).toBeDisabled();
     expect(ward).toBeDisabled();
@@ -987,7 +1049,7 @@ describe("CMS account administration", () => {
     vi.stubGlobal("fetch", fetcher);
     show(<UserDetail userId={userId} />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
-    fireEvent.change(screen.getByLabelText(/^Street address/), {
+    fireEvent.change(screen.getByLabelText(/^Detailed address/), {
       target: { value: "18 Orchid Street" },
     });
     const save = screen.getByRole("button", { name: "Save address" });
@@ -1015,7 +1077,7 @@ describe("CMS account administration", () => {
       vi.stubGlobal("fetch", fetcher);
       show(<UserDetail userId={userId} intercepted={view === "drawer"} />);
       fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
-      fireEvent.change(screen.getByLabelText(/^Street address/), {
+      fireEvent.change(screen.getByLabelText(/^Detailed address/), {
         target: { value: "14 Orchid Street" },
       });
       const save = screen.getByRole("button", { name: "Save address" });
@@ -1078,7 +1140,7 @@ describe("CMS account administration", () => {
       vi.stubGlobal("fetch", fetcher);
       show(<UserDetail userId={userId} />);
       fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
-      const street = screen.getByLabelText(/^Street address/);
+      const street = screen.getByLabelText(/^Detailed address/);
       const save = screen.getByRole("button", { name: "Save address" });
       fireEvent.change(street, { target: { value: "First draft" } });
       await waitFor(() => expect(save).toBeEnabled());
@@ -1096,7 +1158,7 @@ describe("CMS account administration", () => {
       expect(save).toBeDisabled();
       expect(bodies).toHaveLength(source === "background refresh" ? 0 : 1);
       fireEvent.click(load);
-      expect(screen.getByLabelText(/^Street address/)).toHaveValue(latest.address);
+      expect(screen.getByLabelText(/^Detailed address/)).toHaveValue(latest.address);
       expect(save).toBeDisabled();
       fireEvent.change(street, { target: { value: "Updated street" } });
       fireEvent.click(save);
@@ -1132,7 +1194,7 @@ describe("CMS account administration", () => {
     vi.stubGlobal("fetch", fetcher);
     show(<UserDetail userId={userId} />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit address" }));
-    const street = screen.getByLabelText(/^Street address/);
+    const street = screen.getByLabelText(/^Detailed address/);
     expect(street).toHaveValue(first.address);
     fireEvent.change(street, { target: { value: changed } });
     const save = screen.getByRole("button", { name: "Save address" });

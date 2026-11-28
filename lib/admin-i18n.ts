@@ -465,11 +465,9 @@ const vi = {
       empty: "Chưa có địa chỉ.",
       add: "Thêm địa chỉ",
       edit: "Sửa địa chỉ",
-      address: "Địa chỉ cụ thể",
       save: "Lưu địa chỉ",
       cancel: "Hủy",
       saved: "Đã lưu địa chỉ giao hàng.",
-      noAreas: "Hiện chưa có khu vực giao hàng được hỗ trợ.",
       versionConflict: "Địa chỉ đã thay đổi. Dùng địa chỉ mới để thay thế bản nháp trước khi lưu.",
       useLatest: "Dùng địa chỉ mới",
     },
@@ -1030,6 +1028,17 @@ const vi = {
     confirmDelete: "Xóa",
     deleting: "Đang xóa…",
   },
+  addressFields: {
+    province: "Tỉnh/Thành phố",
+    chooseProvince: "Chọn tỉnh/thành phố",
+    ward: "Phường/Xã",
+    chooseWard: "Chọn phường/xã",
+    address: "Địa chỉ chi tiết",
+    addressPlaceholder: "Số nhà, đường, thôn/xóm...",
+    loading: "Đang tải khu vực giao hàng…",
+    loadError: "Không tải được khu vực giao hàng.",
+    noAreas: "Hiện chưa có khu vực giao hàng được hỗ trợ.",
+  },
   csaCustomers: {
     add: "+ Thêm khách hàng",
     title: "Khách hàng CSA",
@@ -1104,9 +1113,6 @@ const vi = {
     addressRequired: "Địa chỉ chi tiết là bắt buộc.",
     invalidAddress: "Tỉnh/thành phố hoặc phường/xã không hợp lệ.",
     shippingAreaUnsupported: "Địa chỉ này hiện không thuộc khu vực giao hàng được hỗ trợ.",
-    chooseProvince: "Chọn tỉnh/thành phố",
-    chooseWard: "Chọn phường/xã",
-    loadingProvinces: "Đang tải tỉnh/thành phố…",
     duplicatePhone: "Số điện thoại này đã thuộc về khách hàng CSA khác.",
     userExists: "Tài khoản này đã liên kết với khách hàng CSA khác.",
     shippingAddressUnavailable:
@@ -1140,7 +1146,6 @@ const vi = {
     manualSchedule: "Ngày bắt đầu do nhân viên chọn.",
     overlapConflict:
       "Ngày đã chọn trùng với một gói hiện có. Hãy chọn một ngày bắt đầu hợp lệ khác.",
-    addressPlaceholder: "Số nhà, tên đường, thôn/xóm…",
     existingPackages: "Các gói khách hàng đã có",
   },
   csaPurchases: {
@@ -1987,11 +1992,9 @@ const en: AdminDictionary = {
       empty: "No address saved.",
       add: "Add address",
       edit: "Edit address",
-      address: "Street address",
       save: "Save address",
       cancel: "Cancel",
       saved: "Shipping address saved.",
-      noAreas: "There are no supported shipping areas.",
       versionConflict:
         "The address has changed. Use the latest address to replace this draft before saving.",
       useLatest: "Use latest address",
@@ -2554,6 +2557,17 @@ const en: AdminDictionary = {
     confirmDelete: "Delete",
     deleting: "Deleting…",
   },
+  addressFields: {
+    province: "Province/City",
+    chooseProvince: "Select province/city",
+    ward: "Ward/Commune",
+    chooseWard: "Select ward/commune",
+    address: "Detailed address",
+    addressPlaceholder: "House number, street, village/hamlet...",
+    loading: "Loading delivery areas…",
+    loadError: "Could not load delivery areas.",
+    noAreas: "There are no supported shipping areas.",
+  },
   csaCustomers: {
     add: "+ Add customer",
     title: "CSA customers",
@@ -2628,9 +2642,6 @@ const en: AdminDictionary = {
     addressRequired: "Detailed address is required.",
     invalidAddress: "The province/city or ward/commune is invalid.",
     shippingAreaUnsupported: "This address is not currently in a supported delivery area.",
-    chooseProvince: "Choose a province or city",
-    chooseWard: "Choose a ward or commune",
-    loadingProvinces: "Loading provinces and cities…",
     duplicatePhone: "This phone number belongs to another CSA customer.",
     userExists: "This account is linked to another CSA customer.",
     shippingAddressUnavailable:
@@ -2663,7 +2674,6 @@ const en: AdminDictionary = {
     manualSchedule: "The start date was selected manually.",
     overlapConflict:
       "The selected dates overlap an existing package. Choose another valid start date.",
-    addressPlaceholder: "House number, street, hamlet…",
     existingPackages: "Customer's existing packages",
   },
   csaPurchases: {

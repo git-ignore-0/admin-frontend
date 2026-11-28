@@ -6,27 +6,26 @@ import {
   Fieldset,
   Group,
   Paper,
-  SimpleGrid,
   Stack,
   Tabs,
   Text,
   Textarea,
   TextInput,
 } from "@mantine/core";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import { AddressFields, useAddressFields } from "@/components/address-fields";
 import { CSACustomerAccountForm } from "@/components/csa-customer-account-form";
-import { DataState, FormSelect } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { api } from "@/lib/client-api";
-import { invalidApiResponse, requestErrorMessage } from "@/lib/client-error";
+import { invalidApiResponse } from "@/lib/client-error";
 import {
   csaCustomerCreateError,
   isCSACustomerCreateConflict,
@@ -35,10 +34,13 @@ import {
 } from "@/lib/csa-customer-creation";
 import { csaCustomerListKey } from "@/lib/csa-customers-query";
 import { formatVietnamPhone, handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
-import { getSupportedShippingAreas } from "@/lib/shipping-areas";
 import type { CSACustomer, CSACustomerPhoneLookup } from "@/lib/types";
 
-const emptyFields = { name: "", province: "", ward: "", address: "", note: "" };
+const emptyFields = {
+  name: "",
+  delivery: { province_code: "", ward_code: "", address: "" },
+  note: "",
+};
 type PhoneCheck =
   { status: "idle" | "checking" } | { status: "error"; message: string } | CSACustomerPhoneLookup;
 
@@ -144,7 +146,7 @@ function ManagedCustomerForm({
   onCreate: CreateCSACustomer;
   onUseAccount: (id: string) => void;
 }) {
-  const { locale, t } = useAdminI18n();
+  const { t } = useAdminI18n();
   const copy = t.csaCustomers;
   const [phone, setPhone] = useState("");
   const [phoneTouched, setPhoneTouched] = useState(false);
@@ -155,23 +157,8 @@ function ManagedCustomerForm({
   const normalizedPhone = normalizeLocalPhone(phone, "contact");
   const checking = lookup.status === "checking";
   const available = lookup.status === "available" && lookup.phone === normalizedPhone;
-  const areas = useQuery({
-    queryKey: ["csa-customer-create", "shipping-areas", locale],
-    enabled: available,
-    queryFn: ({ signal }) => getSupportedShippingAreas(locale, signal),
-  });
-  const province = areas.data?.find((area) => area.code === fields.province);
-  const wards = province?.wards ?? [];
-  const canCreate =
-    available &&
-    !saving &&
-    !areas.isFetching &&
-    !areas.error &&
-    Boolean(
-      fields.name.trim() &&
-      fields.address.trim() &&
-      wards.some((ward) => ward.code === fields.ward),
-    );
+  const addressState = useAddressFields(fields.delivery, available);
+  const canCreate = available && !saving && addressState.valid && !!fields.name.trim();
 
   useEffect(() => () => lookupRequest.current?.abort(), []);
 
@@ -210,9 +197,8 @@ function ManagedCustomerForm({
       await onCreate("admin/csa-customers", {
         name: fields.name.trim(),
         phone: normalizedPhone,
-        province_code: fields.province,
-        ward_code: fields.ward,
-        address: fields.address.trim(),
+        ...fields.delivery,
+        address: fields.delivery.address.trim(),
         note: fields.note.trim(),
       });
     } catch (caught) {
@@ -221,19 +207,9 @@ function ManagedCustomerForm({
         return;
       }
       setError(csaCustomerCreateError(caught, t));
-      if (!(caught instanceof Error) || caught.message !== "csa_customer_shipping_area_unsupported")
-        return;
-
-      const updated = await areas.refetch();
-      if (!updated.isSuccess) return;
-      setFields((current) => {
-        const province = updated.data.find((area) => area.code === current.province);
-        if (!province) return { ...current, province: "", ward: "" };
-        if (!province.wards.some((ward) => ward.code === current.ward)) {
-          return { ...current, ward: "" };
-        }
-        return current;
-      });
+      if (caught instanceof Error && caught.message === "csa_customer_shipping_area_unsupported") {
+        void addressState.query.refetch();
+      }
     }
   }
 
@@ -323,57 +299,12 @@ function ManagedCustomerForm({
           disabled={!available || saving}
           miw={0}
         >
-          <Stack gap="md">
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-              <FormSelect
-                label={copy.province}
-                required
-                autoComplete="address-level1"
-                disabled={!available || saving || areas.isFetching || Boolean(areas.error)}
-                value={fields.province}
-                onChange={(value) => setFields({ ...fields, province: value ?? "", ward: "" })}
-                data={[
-                  {
-                    value: "",
-                    label: areas.isFetching ? copy.loadingProvinces : copy.chooseProvince,
-                  },
-                  ...(areas.data ?? []).map((area) => ({ value: area.code, label: area.name })),
-                ]}
-              />
-              <FormSelect
-                label={copy.ward}
-                required
-                autoComplete="address-level2"
-                disabled={
-                  !available || saving || !province || areas.isFetching || Boolean(areas.error)
-                }
-                value={fields.ward}
-                onChange={(value) => setFields({ ...fields, ward: value ?? "" })}
-                data={[
-                  { value: "", label: copy.chooseWard },
-                  ...wards.map((ward) => ({ value: ward.code, label: ward.name })),
-                ]}
-              />
-            </SimpleGrid>
-            <TextInput
-              label={copy.deliveryAddress}
-              required
-              disabled={!available || saving}
-              autoComplete="address-line1"
-              maxLength={500}
-              placeholder={copy.addressPlaceholder}
-              value={fields.address}
-              onChange={(event) => setFields({ ...fields, address: event.currentTarget.value })}
-            />
-            {available && areas.error && (
-              <DataState
-                kind="error"
-                title={requestErrorMessage(areas.error, t)}
-                compact
-                action={{ label: t.common.retry, onClick: () => void areas.refetch() }}
-              />
-            )}
-          </Stack>
+          <AddressFields
+            value={fields.delivery}
+            onChange={(delivery) => setFields((current) => ({ ...current, delivery }))}
+            state={addressState}
+            disabled={!available || saving}
+          />
         </Fieldset>
         {available && (
           <Stack gap="xs" align="flex-start">

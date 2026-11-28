@@ -134,14 +134,14 @@ function checkPhone(phone = "0912345678", label = "Check") {
 
 async function fillManagedCustomer() {
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Province/city" })).toBeEnabled(),
+    expect(screen.getByRole("combobox", { name: "Province/City" })).toBeEnabled(),
   );
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: customer.name },
   });
-  selectOption(screen.getByRole("combobox", { name: "Province/city" }), "79");
-  selectOption(screen.getByRole("combobox", { name: "Ward/commune" }), "001");
-  fireEvent.change(screen.getByRole("textbox", { name: "Delivery address" }), {
+  selectOption(screen.getByRole("combobox", { name: "Province/City" }), "79");
+  selectOption(screen.getByRole("combobox", { name: "Ward/Commune" }), "001");
+  fireEvent.change(screen.getByRole("textbox", { name: "Detailed address" }), {
     target: { value: "12 Main Street" },
   });
 }
@@ -222,8 +222,16 @@ describe("CSA customer administration", () => {
     const check = screen.getByRole("button", { name: "Check" });
     const name = screen.getByRole("textbox", { name: "Name" });
     const create = screen.getByRole("button", { name: "Create CSA customer" });
+    const province = screen.getByRole("combobox", { name: "Province/City" });
+    const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
+    const address = screen.getByRole("textbox", { name: "Detailed address" });
     expect(check).toBeDisabled();
     expect(name).toBeDisabled();
+    expect(province).toBeDisabled();
+    expect(ward).toBeDisabled();
+    expect(address).toBeDisabled();
+    expect(screen.queryByText(adminDictionaries.en.addressFields.loading)).toBeNull();
+    expect(api).not.toHaveBeenCalledWith("public/shipping-areas?locale=en", expect.anything());
     expect(screen.queryByRole("searchbox")).toBeNull();
     expect(create).toBeDisabled();
     expect(fireEvent.paste(phone, { clipboardData: { getData: () => "0912345678" } })).toBe(true);
@@ -232,6 +240,8 @@ describe("CSA customer administration", () => {
     expect(phone).toHaveValue("0912345678");
     fireEvent.click(check);
     await waitFor(() => expect(name).toBeEnabled());
+    expect(address).toBeEnabled();
+    expect(ward).toBeDisabled();
     expect(create).toBeDisabled();
     expect(api).toHaveBeenCalledWith(
       lookupPath,
@@ -242,6 +252,9 @@ describe("CSA customer administration", () => {
     );
     await fillManagedCustomer();
     expect(create).toBeEnabled();
+    expect(
+      vi.mocked(api).mock.calls.filter(([path]) => path === "public/shipping-areas?locale=en"),
+    ).toHaveLength(1);
 
     phone.select();
     fireEvent.paste(phone, { clipboardData: { getData: () => "+84912345678" } });
@@ -286,6 +299,7 @@ describe("CSA customer administration", () => {
     );
     expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveAttribute("readonly");
     expect(apiEnvelope).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalledWith("public/shipping-areas?locale=en", expect.anything());
     expect(vi.mocked(api).mock.calls.some(([path]) => path === fromUserPath)).toBe(false);
   });
 
@@ -957,9 +971,14 @@ describe("CSA customer administration", () => {
       const contact = screen.getByRole("group", { name: "Contact details" });
       expect(within(contact).getByLabelText("Phone number *")).toBeRequired();
       const delivery = screen.getByRole("group", { name: "Delivery address" });
-      expect(within(delivery).getByRole("combobox", { name: "Province/city" })).toBeRequired();
-      expect(within(delivery).getByRole("combobox", { name: "Ward/commune" })).toBeRequired();
-      expect(within(delivery).getByLabelText("Delivery address *")).toBeRequired();
+      const province = within(delivery).getByRole("combobox", { name: "Province/City" });
+      const ward = within(delivery).getByRole("combobox", { name: "Ward/Commune" });
+      const address = within(delivery).getByRole("textbox", { name: "Detailed address" });
+      expect(province).toBeRequired();
+      expect(ward).toBeRequired();
+      expect(address).toBeRequired();
+      expect(province).toHaveAttribute("placeholder", "Select province/city");
+      expect(ward).toHaveAttribute("placeholder", "Select ward/commune");
       const create = screen.getByRole("button", { name: "Create CSA customer" });
       const card = create.closest(".mantine-Paper-root");
       expect(card).toContainElement(contact);
@@ -978,13 +997,8 @@ describe("CSA customer administration", () => {
       checkPhone();
       expect(phone).toHaveValue("0912345678");
       await fillManagedCustomer();
-      const province = await screen.findByRole("combobox", { name: /Province\/city/ });
-      const ward = screen.getByRole("combobox", { name: /Ward\/commune/ });
-      selectOption(province, "");
-      expect(create).toBeDisabled();
-      expect(ward).toHaveValue("Choose a ward or commune");
-      selectOption(province, "79");
-      selectOption(ward, "001");
+      fireEvent.change(address, { target: { value: "  Block A\n12 Main Street  " } });
+      expect(address).toHaveValue("  Block A\n12 Main Street  ");
       if (note) {
         fireEvent.click(screen.getByRole("button", { name: "Add note" }));
         const noteInput = screen.getByRole("textbox", { name: "Note" });
@@ -1008,7 +1022,7 @@ describe("CSA customer administration", () => {
         phone: "+84912345678",
         province_code: "79",
         ward_code: "001",
-        address: "12 Main Street",
+        address: "Block A\n12 Main Street",
         note,
       });
       expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith("admin/memberships"))).toBe(
@@ -1024,7 +1038,11 @@ describe("CSA customer administration", () => {
 
   it("uses the Admin header style for creation and sorts shipping options by locality name", async () => {
     const areas = [
-      { province_code: "79", province_name: "Hồ Chí Minh", wards: [] },
+      {
+        province_code: "79",
+        province_name: "Hồ Chí Minh",
+        wards: [{ ward_code: "004", ward_name: "Phường Bến Nghé", shipping_fee_vnd: "30000" }],
+      },
       {
         province_code: "66",
         province_name: "Đắk Lắk",
@@ -1035,7 +1053,12 @@ describe("CSA customer administration", () => {
           { ward_code: "001", ward_name: "Xã An Bình", shipping_fee_vnd: "30000" },
         ],
       },
-      { province_code: "01", province_name: "Hà Nội", wards: [] },
+      {
+        province_code: "01",
+        province_name: "Hà Nội",
+        wards: [{ ward_code: "005", ward_name: "Phường Hoàn Kiếm", shipping_fee_vnd: "30000" }],
+      },
+      { province_code: "48", province_name: "Đà Nẵng", wards: [] },
     ];
     vi.mocked(api).mockImplementation(
       async (path) => (path === lookupPath ? availablePhone : areas) as never,
@@ -1073,19 +1096,19 @@ describe("CSA customer administration", () => {
     await waitFor(() => expect(province).toBeEnabled());
     fireEvent.click(province);
     const provinces = screen.getAllByRole("option");
-    expect(provinces.slice(1).map((option) => option.textContent)).toEqual([
+    expect(provinces.map((option) => option.textContent)).toEqual([
       "Đắk Lắk",
       "Hà Nội",
       "Hồ Chí Minh",
     ]);
-    fireEvent.click(provinces[1]);
+    fireEvent.click(provinces[0]);
     fireEvent.click(screen.getByRole("combobox", { name: /Phường/ }));
-    expect(
-      screen
-        .getAllByRole("option")
-        .slice(1)
-        .map((option) => option.textContent),
-    ).toEqual(["Phường 2", "Phường 20", "Xã An Bình", "Xã Hòa Thắng"]);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Phường 2",
+      "Phường 20",
+      "Xã An Bình",
+      "Xã Hòa Thắng",
+    ]);
   });
 
   it.each([
@@ -1179,7 +1202,7 @@ describe("CSA customer administration", () => {
     expect(navigation.replace).not.toHaveBeenCalled();
     fireEvent.change(phoneInput, { target: { value: "0909000000" } });
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
-    expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue("");
   });
 
   it("reloads shipping areas after a ward becomes unsupported without losing the draft", async () => {
@@ -1209,12 +1232,12 @@ describe("CSA customer administration", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       adminDictionaries.en.csaCustomers.shippingAreaUnsupported,
     );
-    const ward = screen.getByRole("combobox", { name: "Ward/commune" });
-    await waitFor(() => expect(ward).toHaveValue("Choose a ward or commune"));
-    expect(screen.getByRole("textbox", { name: "Delivery address" })).toHaveValue("12 Main Street");
+    const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
+    await waitFor(() => expect(ward).toHaveValue(""));
+    expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue("12 Main Street");
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(customer.name);
     expect(submit).toBeDisabled();
-    fireEvent.click(submit);
+    fireEvent.submit(submit.closest("form")!);
     expect(vi.mocked(api).mock.calls.filter(([path]) => path === createPath)).toHaveLength(1);
     selectOption(ward, "002");
     expect(submit).toBeEnabled();

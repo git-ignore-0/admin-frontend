@@ -1,7 +1,7 @@
 import { requireResponseList } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
-import type { AdministrativeUnit } from "@/lib/types";
+import type { AdministrativeUnit, Locale } from "@/lib/types";
 
 export function administrativeWardSortName(name: string) {
   return name
@@ -25,6 +25,31 @@ export function administrativeWardTypeRank(name: string) {
   )
     return 3;
   return 4;
+}
+
+function compareUnitCodes(left: AdministrativeUnit, right: AdministrativeUnit) {
+  if (left.code === right.code) return 0;
+  return left.code < right.code ? -1 : 1;
+}
+
+export function administrativeUnitComparators(locale: Locale) {
+  const collator = new Intl.Collator(locale, { sensitivity: "base", numeric: true });
+
+  return {
+    compareProvinces(left: AdministrativeUnit, right: AdministrativeUnit) {
+      return collator.compare(left.name, right.name) || compareUnitCodes(left, right);
+    },
+    compareWards(left: AdministrativeUnit, right: AdministrativeUnit) {
+      return (
+        administrativeWardTypeRank(left.name) - administrativeWardTypeRank(right.name) ||
+        collator.compare(
+          administrativeWardSortName(left.name),
+          administrativeWardSortName(right.name),
+        ) ||
+        compareUnitCodes(left, right)
+      );
+    },
+  };
 }
 
 function validateAdministrativeUnit(unit: AdministrativeUnit) {

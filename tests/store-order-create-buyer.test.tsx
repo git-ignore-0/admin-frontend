@@ -13,6 +13,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
+import { useAddressFields } from "@/components/address-fields";
 import { StoreOrderBuyerFields, useStoreOrderBuyer } from "@/components/store-order-create-buyer";
 import { selectOption } from "./select-option";
 
@@ -92,6 +93,7 @@ function BuyerHarness({
     address: "",
   });
   const lookup = useStoreOrderBuyer(userId);
+  const guestAddress = useAddressFields(guest, buyerType === "guest");
   return (
     <StoreOrderBuyerFields
       kind={kind}
@@ -100,6 +102,7 @@ function BuyerHarness({
       userId={userId}
       onUserChange={onUserChange}
       guest={guest}
+      guestAddress={guestAddress}
       onGuestChange={(next) => {
         if (next.phone_number !== guest.phone_number) onGuestPhoneRejectionChange(false);
         onGuestChange(next);
@@ -150,8 +153,10 @@ it("searches on the server, fetches only the chosen user and renders their read-
   expect(within(address).getByText("Taylor One Street")).toBeVisible();
   expect(within(address).getByText("Recipient name").tagName).toBe("DT");
   expect(within(address).queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Province/City" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: "Search users" })).not.toBeInTheDocument();
   expect(fetcher.mock.calls.some(([path]) => path.includes(secondary))).toBe(false);
+  expect(fetcher.mock.calls.some(([path]) => path.includes("shipping-areas"))).toBe(false);
 
   fireEvent.click(change);
   const replacement = screen.getByRole("combobox", { name: "Search users" });
@@ -283,10 +288,10 @@ it("hides a previous choice immediately and ignores a late user detail response"
   expect(result.current.address?.recipient_name).toBe("Current");
 });
 
-it("restricts new guest orders to supported areas and resets the ward when the province changes", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
+it.each(["new", "historical"] as const)(
+  "uses supported areas for %s guest orders and preserves other fields when the province changes",
+  async (kind) => {
+    const fetcher = vi.fn<(path: string, init: RequestInit) => Promise<Response>>(async () =>
       Response.json({
         data: [
           {
@@ -299,20 +304,42 @@ it("restricts new guest orders to supported areas and resets the ward when the p
             province_name: "Second City",
             wards: [{ ward_code: "00005", ward_name: "Second Ward", shipping_fee_vnd: "0" }],
           },
+          { province_code: "03", province_name: "City without supported wards", wards: [] },
         ],
       }),
-    ),
-  );
-  render(<BuyerHarness type="guest" />, { wrapper });
-  const province = screen.getByRole("combobox", { name: "Province/city" });
-  const ward = screen.getByRole("combobox", { name: "Ward/commune" });
-  await waitFor(() => expect(province).toBeEnabled());
-  selectOption(province, "01");
-  selectOption(ward, "00004");
-  expect(ward).toHaveValue("First Ward");
-  selectOption(province, "02");
-  expect(ward).toHaveValue("");
-});
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<BuyerHarness type="guest" kind={kind} />, { wrapper });
+    expect(fetcher.mock.calls).toEqual([
+      ["/api/backend/public/shipping-areas?locale=en", expect.anything()],
+    ]);
+    const province = screen.getByRole("combobox", { name: "Province/City" });
+    const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
+    const recipient = screen.getByRole("textbox", { name: "Recipient name" });
+    const phoneInput = screen.getByRole("textbox", { name: "Phone number" });
+    const address = screen.getByRole("textbox", { name: "Detailed address" });
+    fireEvent.change(recipient, { target: { value: "Taylor" } });
+    fireEvent.change(phoneInput, { target: { value: "0912345678" } });
+    fireEvent.change(address, { target: { value: "12 Main Street" } });
+    await waitFor(() => expect(province).toBeEnabled());
+    expect(province).toHaveAttribute("readonly");
+    expect(ward).toHaveAttribute("readonly");
+    expect(ward).toBeDisabled();
+    selectOption(province, "01");
+    selectOption(ward, "00004");
+    expect(ward).toHaveValue("First Ward");
+    fireEvent.click(province);
+    expect(screen.queryByRole("option", { name: "City without supported wards" })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: "Second City" }));
+    expect(ward).toHaveValue("");
+    expect(recipient).toHaveValue("Taylor");
+    expect(phoneInput).toHaveValue("0912345678");
+    expect(address).toHaveValue("12 Main Street");
+    view.rerender(<BuyerHarness type="guest" kind={kind === "new" ? "historical" : "new"} />);
+    expect(province).toHaveValue("Second City");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("labels guest address controls and validates the shipping phone with the Store phone rules", async () => {
   vi.stubGlobal(
@@ -325,7 +352,7 @@ it("labels guest address controls and validates the shipping phone with the Stor
   expect(input).toHaveAttribute("inputmode", "tel");
   expect(input).toHaveAttribute("autocomplete", "shipping tel-national");
   expect(input).toHaveAccessibleDescription(/start with 0/);
-  expect(screen.getByRole("textbox", { name: "Street address" })).toHaveAttribute(
+  expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveAttribute(
     "autocomplete",
     "shipping address-line1",
   );
@@ -402,66 +429,4 @@ it("blocks a retained guest phone after an invalid typed or autofilled replaceme
   expect(screen.getByRole("alert")).toHaveTextContent(/phone entry rejected/i);
   fireEvent.input(input, { target: { value: "0902345678" } });
   expect(input).not.toHaveAttribute("aria-invalid", "true");
-});
-
-it("clears an unsupported historical guest location while retaining shared recipient fields", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (path: string) => {
-      if (path.includes("administrative-units/provinces"))
-        return Response.json({ data: [{ code: "02", name: "Historical city" }] });
-      if (path.includes("administrative-units/wards"))
-        return Response.json({ data: [{ code: "00005", name: "Historical ward" }] });
-      return Response.json({
-        data: [
-          {
-            province_code: "01",
-            province_name: "Current city",
-            wards: [{ ward_code: "00004", ward_name: "Current ward", shipping_fee_vnd: "0" }],
-          },
-        ],
-      });
-    }),
-  );
-  const view = render(<BuyerHarness type="guest" kind="historical" />, { wrapper });
-  const province = screen.getByRole("combobox", { name: "Province/city" });
-  const ward = screen.getByRole("combobox", { name: "Ward/commune" });
-  fireEvent.change(screen.getByRole("textbox", { name: "Recipient name" }), {
-    target: { value: "Taylor" },
-  });
-  await waitFor(() => expect(province).toBeEnabled());
-  selectOption(province, "02");
-  await waitFor(() => expect(ward).toBeEnabled());
-  selectOption(ward, "00005");
-  expect(province).toHaveValue("Historical city");
-  expect(ward).toHaveValue("Historical ward");
-  view.rerender(<BuyerHarness type="guest" kind="new" />);
-  await waitFor(() => expect(province).toHaveValue(""));
-  expect(ward).toHaveValue("");
-  expect(screen.getByRole("textbox", { name: "Recipient name" })).toHaveValue("Taylor");
-  view.rerender(<BuyerHarness type="guest" kind="historical" />);
-  expect(province).toHaveValue("");
-  expect(ward).toHaveValue("");
-});
-
-it("explains why the historical ward control is disabled when the province has no results", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (path: string) =>
-      Response.json({
-        data: path.includes("administrative-units/provinces")
-          ? [{ code: "02", name: "Historical city" }]
-          : [],
-      }),
-    ),
-  );
-  render(<BuyerHarness type="guest" kind="historical" />, { wrapper });
-  const province = screen.getByRole("combobox", { name: "Province/city" });
-  const ward = screen.getByRole("combobox", { name: "Ward/commune" });
-  await waitFor(() => expect(province).toBeEnabled());
-  selectOption(province, "02");
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "No wards or communes are available for this province.",
-  );
-  expect(ward).toBeDisabled();
 });

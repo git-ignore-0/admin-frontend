@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -28,8 +29,8 @@ const provinces = [
 ];
 const wards = [
   { code: "22065", name: "Xã An Phú" },
-  { code: "22045", name: "Phường Bình Minh" },
   { code: "22015", name: "Phường Tuy Hoà" },
+  { code: "22045", name: "Phường Bình Minh" },
 ];
 const settings = {
   province_code: "66",
@@ -54,13 +55,15 @@ const settings = {
   ],
 };
 
-function show(locale: "vi" | "en" = "vi") {
+function show(locale: "vi" | "en" = "vi", client = new QueryClient()) {
   render(
-    <AdminI18nProvider initialLocale={locale}>
-      <ToastProvider>
-        <ShippingAreaManager />
-      </ToastProvider>
-    </AdminI18nProvider>,
+    <QueryClientProvider client={client}>
+      <AdminI18nProvider initialLocale={locale}>
+        <ToastProvider>
+          <ShippingAreaManager />
+        </ToastProvider>
+      </AdminI18nProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -151,6 +154,8 @@ describe("shipping area settings", () => {
         .getAllByRole("checkbox")
         .map((input) => input.getAttribute("aria-label")),
     ).toEqual(["Hỗ trợ Phường Bình Minh", "Hỗ trợ Phường Tuy Hoà", "Hỗ trợ Xã An Phú"]);
+    expect(provinces.map((province) => province.code)).toEqual(["79", "66"]);
+    expect(wards.map((ward) => ward.code)).toEqual(["22065", "22015", "22045"]);
   });
 
   it("searches provinces locally and refreshes only the province list", async () => {
@@ -174,9 +179,16 @@ describe("shipping area settings", () => {
     expect(getAdministrativeWards).not.toHaveBeenCalled();
   });
 
-  it("saves inherited, excluded, and custom ward fees", async () => {
+  it("saves inherited, excluded, and custom ward fees and invalidates supported addresses in both locales", async () => {
     mockLoadedSettings();
-    show();
+    const client = new QueryClient();
+    const viKey = ["supported-shipping-areas", "vi"];
+    const enKey = ["supported-shipping-areas", "en"];
+    const unrelatedKey = ["administrative-units", "vi", "provinces"];
+    client.setQueryData(viKey, []);
+    client.setQueryData(enKey, []);
+    client.setQueryData(unrelatedKey, provinces);
+    show("vi", client);
     fireEvent.click(await screen.findByRole("button", { name: "Mở Đắk Lắk" }));
 
     const inherited = await screen.findByRole("row", { name: /Phường Bình Minh/ });
@@ -202,6 +214,10 @@ describe("shipping area settings", () => {
         }),
       }),
     );
+    expect(await screen.findByText("Đã lưu khu vực giao hàng.")).toBeVisible();
+    expect(client.getQueryState(viKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(enKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
   });
 
   it("disables fee inputs until their support checkbox is enabled", async () => {

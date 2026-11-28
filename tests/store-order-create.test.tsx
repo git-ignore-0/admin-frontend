@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { type RefObject } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -12,42 +13,36 @@ import { storeOrderDateRange } from "@/lib/store-order-draft";
 import { formatStoreMoney } from "@/lib/store-orders";
 import type { StoreProduct } from "@/lib/types";
 import { useAcknowledgeStoreOrderCreation } from "@/lib/use-store-order-creation";
+import { selectOption } from "./select-option";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: "Đắk Lắk", wardName: "Ward" }),
 }));
-vi.mock("@/components/store-order-create-buyer", () => ({
-  useStoreOrderBuyer: (userId: string | null) => ({
-    eligible: Boolean(userId),
-    address: userId ? { ...address, is_supported: true } : null,
-  }),
-  StoreOrderBuyerFields: ({
-    onUserChange,
-    onBuyerTypeChange,
-    onGuestChange,
-  }: {
-    onUserChange: (id: string) => void;
-    onBuyerTypeChange: (type: "guest") => void;
-    onGuestChange: (guest: typeof address) => void;
-  }) => (
-    <>
-      <button type="button" onClick={() => onUserChange(userId)}>
-        Choose Taylor
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          onBuyerTypeChange("guest");
-          onGuestChange({ ...address, phone_number: "0901234567" });
-        }}
-      >
-        Choose guest
-      </button>
-    </>
-  ),
-}));
+vi.mock("@/components/store-order-create-buyer", async (importOriginal) => {
+  const { StoreOrderBuyerFields } =
+    await importOriginal<typeof import("@/components/store-order-create-buyer")>();
+  return {
+    useStoreOrderBuyer: (userId: string | null) => ({
+      eligible: Boolean(userId),
+      address: userId ? { ...address, is_supported: true } : null,
+    }),
+    StoreOrderBuyerFields: (props: Parameters<typeof StoreOrderBuyerFields>[0]) =>
+      props.buyerType === "guest" ? (
+        <StoreOrderBuyerFields {...props} />
+      ) : (
+        <>
+          <button type="button" onClick={() => props.onUserChange(userId)}>
+            Choose Taylor
+          </button>
+          <button type="button" onClick={() => props.onBuyerTypeChange("guest")}>
+            Choose guest
+          </button>
+        </>
+      ),
+  };
+});
 vi.mock("@/components/store-order-product-picker", () => ({
   StoreOrderProductPicker: ({
     opened,
@@ -109,7 +104,29 @@ const discontinuedProduct: StoreProduct = {
 const confirmation = "c".repeat(64);
 const collection = "/api/backend/admin/store-orders";
 const quotePath = `${collection}/quote`;
+const shippingAreasPath = "/api/backend/public/shipping-areas?locale=";
 const recoverySlot = "nfv-admin-store-order-recovery:v1:test-one";
+const supportedShippingAreas = [
+  {
+    province_code: "66",
+    province_name: "Đắk Lắk",
+    wards: [{ ward_code: "22015", ward_name: "Ward", shipping_fee_vnd: "30000" }],
+  },
+  {
+    province_code: "01",
+    province_name: "Hà Nội",
+    wards: [{ ward_code: "00004", ward_name: "Replacement ward", shipping_fee_vnd: "15000" }],
+  },
+];
+
+function stubOrderFetch(
+  orderFetch: (path: string, init: RequestInit) => Promise<Response>,
+  getAreas = async () => Response.json({ data: supportedShippingAreas }),
+) {
+  vi.stubGlobal("fetch", (path: string, init: RequestInit) =>
+    path.startsWith(shippingAreasPath) ? getAreas() : orderFetch(path, init),
+  );
+}
 
 function readBody(init: RequestInit | undefined): unknown {
   return JSON.parse(String(init?.body));
@@ -181,6 +198,18 @@ function AcknowledgeDetail({ id }: { id?: string }) {
   return null;
 }
 
+function RefreshShippingAreas() {
+  const client = useQueryClient();
+  return (
+    <button
+      type="button"
+      onClick={() => void client.invalidateQueries({ queryKey: ["supported-shipping-areas"] })}
+    >
+      Refresh shipping areas
+    </button>
+  );
+}
+
 function tree(
   show = true,
   session = "one",
@@ -193,6 +222,7 @@ function tree(
         <ToastProvider>
           <AdminQueryProvider key={session} ref={scope}>
             <SwitchLocale />
+            <RefreshShippingAreas />
             <AcknowledgeDetail id={loadedOrderId} />
             {show && <StoreOrderCreate />}
           </AdminQueryProvider>
@@ -234,6 +264,22 @@ function setupDraft(kind: "new" | "historical" = "new", buyer: "user" | "guest" 
   }
 }
 
+async function fillGuestAddress() {
+  fireEvent.change(screen.getByRole("textbox", { name: "Recipient name" }), {
+    target: { value: address.recipient_name },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Phone number" }), {
+    target: { value: "0901234567" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Detailed address" }), {
+    target: { value: address.address },
+  });
+  const province = screen.getByRole("combobox", { name: "Province/City" });
+  await waitFor(() => expect(province).toBeEnabled());
+  selectOption(province, address.province_code);
+  selectOption(screen.getByRole("combobox", { name: "Ward/Commune" }), address.ward_code);
+}
+
 function submitDraft() {
   fireEvent.click(screen.getByRole("button", { name: "Create order" }));
 }
@@ -243,6 +289,53 @@ async function approveQuote() {
   fireEvent.click(confirm);
   fireEvent.click(confirm);
 }
+
+it.each(["new", "historical"] as const)(
+  "blocks quote and creation for an unsupported %s guest address",
+  async (kind) => {
+    const orderFetch = vi.fn(async (path: string, init: RequestInit) => {
+      if (path === quotePath) return makeQuote(readBody(init) as StoreOrderQuoteInput);
+      return created(readBody(init) as StoreOrderCreateInput, { id: orderId });
+    });
+    let areas = supportedShippingAreas;
+    const getAreas = vi.fn(async () => Response.json({ data: areas }));
+    stubOrderFetch(orderFetch, getAreas);
+    render(tree());
+    expect(getAreas).not.toHaveBeenCalled();
+    setupDraft(kind, "guest");
+    await fillGuestAddress();
+    expect(getAreas).toHaveBeenCalledTimes(1);
+    const province = screen.getByRole("combobox", { name: "Province/City" });
+    const refresh = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Refresh shipping areas" }));
+    const unsupported = () =>
+      screen.getByText("This address is not currently in a supported delivery area.");
+
+    areas = supportedShippingAreas.slice(1);
+    refresh();
+    await waitFor(() => expect(unsupported()).toBeVisible());
+    submitDraft();
+    expect(orderFetch).not.toHaveBeenCalled();
+    expect(province).toHaveFocus();
+
+    areas = supportedShippingAreas;
+    refresh();
+    await waitFor(() => expect(province).toHaveValue("Đắk Lắk"));
+    submitDraft();
+    const dialog = await screen.findByRole("dialog", { name: "Review order details" });
+
+    areas = supportedShippingAreas.slice(1);
+    refresh();
+    await waitFor(() => expect(unsupported()).toBeVisible());
+    await act(async () =>
+      fireEvent.click(within(dialog).getByRole("button", { name: "Confirm order" })),
+    );
+    expect(orderFetch.mock.calls.map(([path]) => path)).toEqual([quotePath]);
+    expect(screen.queryByRole("dialog", { name: "Review order details" })).toBeNull();
+    expect(province).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue(address.address);
+  },
+);
 
 beforeEach(() => {
   let pending = Promise.resolve<unknown>(undefined);
@@ -281,9 +374,10 @@ it("recovers a committed order after full reload with only scoped transaction me
     expect(path).toBe(`${collection}?creation_key=${sent.idempotency_key}`);
     return created(sent);
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubOrderFetch(fetcher);
   const first = render(tree());
   setupDraft("historical", "guest");
+  await fillGuestAddress();
   submitDraft();
   await approveQuote();
   await screen.findByRole("button", { name: "Check result" });
@@ -438,8 +532,7 @@ it.each([
   "quotes and creates a %s order for a %s using the same normalized intent",
   async (kind, buyer) => {
     const requests: Array<{ path: string; body: unknown }> = [];
-    vi.stubGlobal(
-      "fetch",
+    stubOrderFetch(
       vi.fn(async (path: string, init: RequestInit) => {
         const body = readBody(init);
         requests.push({ path, body });
@@ -453,6 +546,7 @@ it.each([
     submitDraft();
     expect(requests).toEqual([]);
     setupDraft(kind, buyer);
+    if (buyer === "guest") await fillGuestAddress();
     submitDraft();
     const dialog = await screen.findByRole("dialog", { name: "Review order details" });
     expect(within(dialog).getByText("12 Nguyen Hue, Ward, Đắk Lắk")).toBeVisible();
@@ -501,9 +595,10 @@ it.each([
     if (path === quotePath) return makeQuote(readBody(init) as StoreOrderQuoteInput);
     return created(readBody(init) as StoreOrderCreateInput, { id: orderId });
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubOrderFetch(fetcher);
   render(tree());
   selectOrder("historical", "guest");
+  await fillGuestAddress();
   const feeInput = () => screen.getByRole("textbox", { name: /Delivery fee \(VND\)/ });
   const priceInput = (name: string) =>
     screen.getByRole("textbox", { name: `Unit price (VND) · ${name}` });
@@ -722,8 +817,7 @@ it.each([false, true])(
   "restores the rejected draft and error across remount when the page is already open: %s",
   async (openBeforeResponse) => {
     let finish!: (response: Response) => void;
-    vi.stubGlobal(
-      "fetch",
+    stubOrderFetch(
       vi.fn((path: string, init: RequestInit) => {
         if (path === quotePath)
           return Promise.resolve(makeQuote(readBody(init) as StoreOrderQuoteInput));
@@ -732,6 +826,7 @@ it.each([false, true])(
     );
     const view = render(tree());
     setupDraft("historical", "guest");
+    await fillGuestAddress();
     submitDraft();
     await approveQuote();
     await waitFor(() => expect(finish).toBeTypeOf("function"));
@@ -846,9 +941,10 @@ it.each([
     const fetcher = vi.fn(async (_path: string, init: RequestInit) =>
       makeQuote(readBody(init) as StoreOrderQuoteInput),
     );
-    vi.stubGlobal("fetch", fetcher);
+    stubOrderFetch(fetcher);
     render(tree());
     setupDraft("historical", "guest");
+    await fillGuestAddress();
     const input = screen.getByRole<HTMLInputElement>("textbox", { name });
     input.select();
     fireEvent.paste(input, { clipboardData: { getData: () => "34\n000" } });
@@ -920,9 +1016,10 @@ it("reconciles products in one request on kind change and preserves unrelated li
       { status: 400 },
     );
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubOrderFetch(fetcher);
   render(tree());
   setupDraft("historical", "guest");
+  await fillGuestAddress();
   fireEvent.click(screen.getByRole("radio", { name: "New order" }));
   expect(await screen.findByText(/unavailable for the selected order type/i)).toBeVisible();
   expect(screen.getByRole("textbox", { name: /Quantity/ })).toHaveValue("2");

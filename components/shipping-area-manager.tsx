@@ -11,6 +11,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { IconCornerDownRight } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
@@ -19,8 +20,7 @@ import { ListResultSummary, ListToolbar } from "@/components/list-toolbar";
 import { PageHeading } from "@/components/page-heading";
 import { useToast } from "@/components/toast-provider";
 import {
-  administrativeWardSortName,
-  administrativeWardTypeRank,
+  administrativeUnitComparators,
   getAdministrativeProvinces,
   getAdministrativeWards,
 } from "@/lib/administrative-units";
@@ -29,6 +29,7 @@ import { parseNonNegativeBigInteger, sanitizeIntegerInput } from "@/lib/numeric-
 import {
   getShippingSettings,
   saveShippingSettings,
+  supportedShippingAreasKey,
   type ShippingOverrideInput,
 } from "@/lib/shipping-areas";
 import type { AdministrativeUnit, ShippingSettings } from "@/lib/types";
@@ -67,6 +68,7 @@ export function ShippingAreaManager() {
   const { locale, t } = useAdminI18n();
   const copy = t.shippingSettings;
   const toast = useToast();
+  const queryClient = useQueryClient();
   const defaultFeeId = useId();
   const [provinces, setProvinces] = useState<AdministrativeUnit[] | null>(null);
   const [provinceError, setProvinceError] = useState("");
@@ -83,8 +85,8 @@ export function ShippingAreaManager() {
   const [validationError, setValidationError] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const collator = useMemo(
-    () => new Intl.Collator(locale, { sensitivity: "base", numeric: true }),
+  const { compareProvinces, compareWards } = useMemo(
+    () => administrativeUnitComparators(locale),
     [locale],
   );
 
@@ -137,22 +139,10 @@ export function ShippingAreaManager() {
   }, [expandedCode, locale, settingsAttempt, t]);
 
   const sortedProvinces = useMemo(
-    () => [...(provinces ?? [])].sort((left, right) => collator.compare(left.name, right.name)),
-    [collator, provinces],
+    () => [...(provinces ?? [])].sort(compareProvinces),
+    [compareProvinces, provinces],
   );
-  const sortedWards = useMemo(
-    () =>
-      [...wards].sort(
-        (left, right) =>
-          administrativeWardTypeRank(left.name) - administrativeWardTypeRank(right.name) ||
-          collator.compare(
-            administrativeWardSortName(left.name),
-            administrativeWardSortName(right.name),
-          ) ||
-          collator.compare(left.name, right.name),
-      ),
-    [collator, wards],
-  );
+  const sortedWards = useMemo(() => [...wards].sort(compareWards), [compareWards, wards]);
   const overrides = useMemo(
     () => new Map(settings?.overrides.map((item) => [item.ward_code, item]) ?? []),
     [settings],
@@ -251,6 +241,7 @@ export function ShippingAreaManager() {
         overrides: nextOverrides,
       });
       if (expandedCodeRef.current === provinceCode) setSettings(saved);
+      void queryClient.invalidateQueries({ queryKey: supportedShippingAreasKey });
       toast(copy.saved);
     } catch (error) {
       toast(requestErrorMessage(error, t), "error");

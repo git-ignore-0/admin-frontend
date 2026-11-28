@@ -1,6 +1,8 @@
-import { administrativeWardSortName } from "@/lib/administrative-units";
+import { queryOptions } from "@tanstack/react-query";
+
+import { administrativeUnitComparators } from "@/lib/administrative-units";
 import { api } from "@/lib/client-api";
-import type { ShippingSettings, SupportedShippingProvince } from "@/lib/types";
+import type { Locale, ShippingSettings, SupportedShippingProvince } from "@/lib/types";
 
 type SupportedShippingAreaPayload = {
   province_code: string;
@@ -24,16 +26,27 @@ export type ShippingSettingsInput = {
   overrides: ShippingOverrideInput[];
 };
 
+export const supportedShippingAreasKey = ["supported-shipping-areas"] as const;
+
+export function supportedShippingAreasOptions(locale: Locale) {
+  return queryOptions({
+    queryKey: [...supportedShippingAreasKey, locale] as const,
+    queryFn: ({ signal }) => getSupportedShippingAreas(locale, signal),
+    staleTime: 30_000,
+  });
+}
+
 export async function getSupportedShippingAreas(
-  locale: "vi" | "en",
+  locale: Locale,
   signal?: AbortSignal,
 ): Promise<SupportedShippingProvince[]> {
   const items = await api<SupportedShippingAreaPayload[]>(
     `public/shipping-areas?locale=${locale}`,
     { signal },
   );
-  const collator = new Intl.Collator(locale, { sensitivity: "base", numeric: true });
+  const { compareProvinces, compareWards } = administrativeUnitComparators(locale);
   return items
+    .filter((province) => province.wards.length > 0)
     .map((province) => ({
       code: province.province_code,
       name: province.province_name,
@@ -43,15 +56,9 @@ export async function getSupportedShippingAreas(
           name: ward.ward_name,
           shipping_fee_vnd: ward.shipping_fee_vnd,
         }))
-        .sort(
-          (left, right) =>
-            collator.compare(
-              administrativeWardSortName(left.name),
-              administrativeWardSortName(right.name),
-            ) || collator.compare(left.name, right.name),
-        ),
+        .sort(compareWards),
     }))
-    .sort((left, right) => collator.compare(left.name, right.name));
+    .sort(compareProvinces);
 }
 
 export function getShippingSettings(provinceCode: string, signal?: AbortSignal) {

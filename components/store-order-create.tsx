@@ -9,6 +9,7 @@ import { AdminDateInput } from "@/components/admin-date-input";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useAdminRecordScope } from "@/components/admin-query-provider";
+import { useAddressFields } from "@/components/address-fields";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { PageHeading } from "@/components/page-heading";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -158,6 +159,8 @@ export function StoreOrderCreate() {
   const busy = intent?.phase === "pending";
   const protectedError = quoteError && isProtectedDataError(quoteError);
   const locked = Boolean(intent || recovery || protectedError);
+  const guestAddress = useAddressFields(draft.guest, draft.buyerType === "guest" && !locked);
+  const guestAddressValid = draft.buyerType !== "guest" || guestAddress.valid;
   const storageError = creation.storage.status === "blocked" ? creation.storage.issue : undefined;
 
   function update(change: (previous: OrderDraft) => OrderDraft) {
@@ -215,6 +218,7 @@ export function StoreOrderCreate() {
     const { input } = validateStoreOrderDraft(draft, locale);
     if (
       !input ||
+      !guestAddressValid ||
       (draft.buyerType === "user" &&
         (!buyer.eligible || (draft.kind === "new" && buyer.address?.is_supported === false)))
     ) {
@@ -253,7 +257,7 @@ export function StoreOrderCreate() {
   function create() {
     if (!activeReview || !creation.canSubmit()) return;
     const now = validateStoreOrderDraft(draft, locale);
-    if (JSON.stringify(now.input) !== JSON.stringify(activeReview.input)) {
+    if (!guestAddressValid || JSON.stringify(now.input) !== JSON.stringify(activeReview.input)) {
       setReview(null);
       setShowErrors(true);
       setValidationAttempt((version) => version + 1);
@@ -478,9 +482,9 @@ export function StoreOrderCreate() {
                         buyer_user_id: c.recipient,
                         recipient_name: c.recipientName,
                         phone_number: c.phone,
-                        province_code: c.province,
-                        ward_code: c.ward,
-                        address: c.address,
+                        province_code: t.addressFields.province,
+                        ward_code: t.addressFields.ward,
+                        address: t.addressFields.address,
                         lines: c.productsTitle,
                         quantity: c.quantity,
                         unit_price_vnd: copy.unitPrice,
@@ -550,6 +554,7 @@ export function StoreOrderCreate() {
                     userId={draft.userId}
                     onUserChange={(userId) => update((previous) => ({ ...previous, userId }))}
                     guest={draft.guest}
+                    guestAddress={guestAddress}
                     onGuestChange={(guest) =>
                       update((previous) => ({
                         ...previous,

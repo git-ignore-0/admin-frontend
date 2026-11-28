@@ -13,25 +13,22 @@ import {
   Skeleton,
   Stack,
   Text,
-  Textarea,
   TextInput,
   Title,
   useCombobox,
   VisuallyHidden,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { FormSelect } from "@/components/nfv-controls";
+import { AddressFields, type useAddressFields } from "@/components/address-fields";
 import { Pagination } from "@/components/pagination";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import type { StoreOrderGuest, StoreOrderKind } from "@/lib/admin-store-order-api";
 import { userAccountPhone } from "@/lib/admin-users";
 import { useAdminUserDetail, useAdminUsersList } from "@/lib/admin-users-query";
-import { getAdministrativeProvinces, getAdministrativeWards } from "@/lib/administrative-units";
 import { requestErrorMessage } from "@/lib/client-error";
 import {
   formatVietnamPhone,
@@ -39,7 +36,6 @@ import {
   normalizeLocalPhone,
   normalizeVietnamPhone,
 } from "@/lib/phone-number";
-import { getSupportedShippingAreas } from "@/lib/shipping-areas";
 import type { OrderBuyerType } from "@/lib/store-order-draft";
 import { storeOrdersCopy } from "@/lib/store-orders-copy";
 import type { UserShippingAddress } from "@/lib/types";
@@ -53,13 +49,11 @@ const buyerCopy = {
     searchUsers: "Tìm User",
     selectedUser: "User đã chọn",
     changeUser: "Đổi User",
-    loadingWards: "Đang tải phường/xã…",
     ineligible: "Tài khoản này không đủ điều kiện đặt hàng.",
     addressMissing: "Tài khoản chưa có địa chỉ và tên người nhận hợp lệ.",
     phoneFormat: "Nhập 10 hoặc 11 chữ số, bắt đầu bằng 0.",
     phoneEntryRejected: "Thay đổi số điện thoại bị từ chối. Chỉ nhập chữ số từ 0 đến 9.",
     useCurrentPhone: "Dùng số đang hiển thị",
-    noWards: "Không có phường/xã cho tỉnh/thành phố này.",
   },
   en: {
     buyerType: "Recipient type",
@@ -68,13 +62,11 @@ const buyerCopy = {
     searchUsers: "Search users",
     selectedUser: "Selected user",
     changeUser: "Change user",
-    loadingWards: "Loading wards and communes…",
     ineligible: "This account is ineligible to place orders.",
     addressMissing: "This account needs a valid recipient name and shipping address.",
     phoneFormat: "Enter 10 or 11 digits and start with 0.",
     phoneEntryRejected: "Phone entry rejected. Enter digits 0 to 9 only.",
     useCurrentPhone: "Use the current number",
-    noWards: "No wards or communes are available for this province.",
   },
 } as const;
 
@@ -119,6 +111,7 @@ export function StoreOrderBuyerFields({
   userId,
   onUserChange,
   guest,
+  guestAddress,
   onGuestChange,
   guestPhoneRejected,
   onGuestPhoneRejectionChange,
@@ -132,6 +125,7 @@ export function StoreOrderBuyerFields({
   userId: string | null;
   onUserChange: (userId: string | null) => void;
   guest: StoreOrderGuest;
+  guestAddress: ReturnType<typeof useAddressFields>;
   onGuestChange: (guest: StoreOrderGuest) => void;
   guestPhoneRejected: boolean;
   onGuestPhoneRejectionChange: (rejected: boolean) => void;
@@ -175,8 +169,8 @@ export function StoreOrderBuyerFields({
       </Radio.Group>
       {buyerType === "guest" ? (
         <GuestFields
-          kind={kind}
           guest={guest}
+          addressState={guestAddress}
           onChange={onGuestChange}
           phoneRejected={guestPhoneRejected}
           onPhoneRejectionChange={onGuestPhoneRejectionChange}
@@ -459,16 +453,16 @@ function BuyerAddress({ address }: { address: UserShippingAddress }) {
 }
 
 function GuestFields({
-  kind,
   guest,
+  addressState,
   onChange,
   phoneRejected,
   onPhoneRejectionChange,
   disabled,
   errors,
 }: {
-  kind: StoreOrderKind;
   guest: StoreOrderGuest;
+  addressState: ReturnType<typeof useAddressFields>;
   onChange: (guest: StoreOrderGuest) => void;
   phoneRejected: boolean;
   onPhoneRejectionChange: (rejected: boolean) => void;
@@ -486,52 +480,6 @@ function GuestFields({
       (phoneTouched && guest.phone_number && !normalizedPhone
         ? t.csaCustomers.invalidPhone
         : undefined));
-  const supported = useQuery({
-    queryKey: ["supported-shipping-areas", locale],
-    queryFn: ({ signal }) => getSupportedShippingAreas(locale, signal),
-    enabled: kind === "new",
-  });
-  const provinces = useQuery({
-    queryKey: ["administrative-units", locale, "provinces"],
-    queryFn: ({ signal }) => getAdministrativeProvinces(locale, signal),
-    enabled: kind === "historical",
-    staleTime: 5 * 60 * 1000,
-  });
-  const wards = useQuery({
-    queryKey: ["administrative-units", locale, guest.province_code, "wards"],
-    queryFn: ({ signal }) => getAdministrativeWards(guest.province_code, locale, signal),
-    enabled: kind === "historical" && Boolean(guest.province_code),
-    staleTime: 5 * 60 * 1000,
-  });
-  const provinceQuery = kind === "new" ? supported : provinces;
-  const wardQuery = kind === "new" ? supported : wards;
-  const provinceOptions = provinceQuery.data ?? [];
-  const wardOptions =
-    kind === "new"
-      ? (supported.data?.find(({ code }) => code === guest.province_code)?.wards ?? [])
-      : (wards.data ?? []);
-  const fault = [provinceQuery, ...(guest.province_code ? [wardQuery] : [])].find(
-    (query) => query.error || query.isPaused,
-  );
-  const noProvinces =
-    provinceQuery.isSuccess && !provinceQuery.isFetching && !provinceOptions.length;
-  const noWards =
-    guest.province_code && wardQuery.isSuccess && !wardQuery.isFetching && !wardOptions.length;
-  useEffect(() => {
-    if (
-      kind !== "new" ||
-      disabled ||
-      !supported.isSuccess ||
-      supported.isFetching ||
-      !guest.province_code
-    )
-      return;
-    const province = supported.data.find(({ code }) => code === guest.province_code);
-    if (!province) onChange({ ...guest, province_code: "", ward_code: "" });
-    else if (guest.ward_code && !province.wards.some(({ code }) => code === guest.ward_code)) {
-      onChange({ ...guest, ward_code: "" });
-    }
-  }, [disabled, guest, kind, onChange, supported.data, supported.isFetching, supported.isSuccess]);
 
   return (
     <Stack gap="sm">
@@ -590,74 +538,14 @@ function GuestFields({
             </Button>
           )}
         </Stack>
-        <FormSelect
-          searchable
-          required
-          name="province_code"
-          label={copy.province}
-          autoComplete="shipping address-level1"
-          comboboxProps={{ withinPortal: false }}
-          placeholder={
-            provinceQuery.isFetching
-              ? t.csaCustomers.loadingProvinces
-              : t.csaCustomers.chooseProvince
-          }
-          disabled={disabled || !provinceOptions.length || provinceQuery.isError}
-          error={errors.province_code}
-          value={guest.province_code || null}
-          data={provinceOptions.map(({ code, name }) => ({ value: code, label: name }))}
-          onChange={(value) => onChange({ ...guest, province_code: value ?? "", ward_code: "" })}
-        />
-        <FormSelect
-          searchable
-          required
-          name="ward_code"
-          label={copy.ward}
-          autoComplete="shipping address-level2"
-          comboboxProps={{ withinPortal: false }}
-          placeholder={
-            guest.province_code && wardQuery.isFetching
-              ? buyerCopy[locale].loadingWards
-              : t.csaCustomers.chooseWard
-          }
-          disabled={disabled || !wardOptions.length || wardQuery.isError}
-          error={errors.ward_code}
-          value={guest.ward_code || null}
-          data={wardOptions.map(({ code, name }) => ({ value: code, label: name }))}
-          onChange={(value) => onChange({ ...guest, ward_code: value ?? "" })}
-        />
       </SimpleGrid>
-      <Textarea
-        required
-        label={t.users.shippingAddress.address}
-        name="address"
-        autoComplete="shipping address-line1"
-        maxLength={500}
-        autosize
-        minRows={2}
+      <AddressFields
+        value={guest}
+        state={addressState}
         disabled={disabled}
-        error={errors.address}
-        value={guest.address}
-        onChange={(event) => onChange({ ...guest, address: event.currentTarget.value })}
+        errors={errors}
+        onChange={(address) => onChange({ ...guest, ...address })}
       />
-      {fault && (
-        <RecoveryAlert
-          message={fault.error ? requestErrorMessage(fault.error, t) : t.users.offline}
-          retryLabel={t.common.retry}
-          loading={fault.isFetching}
-          onRetry={() => void fault.refetch()}
-        />
-      )}
-      {!fault && noProvinces && (
-        <Text c="dimmed" size="sm" role="status">
-          {kind === "new" ? t.users.shippingAddress.noAreas : t.shippingSettings.noProvinces}
-        </Text>
-      )}
-      {!fault && !noProvinces && noWards && (
-        <Text c="dimmed" size="sm" role="status">
-          {buyerCopy[locale].noWards}
-        </Text>
-      )}
     </Stack>
   );
 }
