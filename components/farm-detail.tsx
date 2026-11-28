@@ -41,6 +41,7 @@ import {
   captureFarmDetail,
   farmDetailNeedsRead,
   farmDetailRead,
+  invalidateFarmDetail,
   publishFarmDetail,
   shareFarmDetail,
   verifiedFarmDetail,
@@ -130,9 +131,11 @@ function FarmDetailContent({ farmId, productId }: Props) {
       }
     },
     enabled: !access.error && !unavailable && isCurrent() && !isFarmGone(queryClient, farmId),
-    // Leaf navigation shares this parent snapshot. Focus and reconnect still revalidate it.
+    // Recheck any previously verified supply eligibility on Farm entry. Leaf routes share the snapshot.
     structuralSharing: shareFarmDetail,
-    refetchOnMount: (query) => farmDetailNeedsRead(query.state),
+    refetchOnMount: (query) =>
+      (!productId && typeof query.state.data?.capabilities?.can_add_supply === "boolean") ||
+      farmDetailNeedsRead(query.state),
   });
   const gone = farmQuery.data === null || isFarmGone(queryClient, farmId);
   const error = access.error ?? unavailable?.cause ?? farmQuery.error;
@@ -496,6 +499,11 @@ function FarmDetailContent({ farmId, productId }: Props) {
   const headerLocked =
     detailWriting || deleting || Boolean(headerRecovery || error || uncertainDelete);
   const actionsDisabled = busyOwner !== null || headerLocked || informationLocked;
+  const canAddSupply =
+    !actionsDisabled &&
+    !supplyWriting &&
+    farmQuery.fetchStatus === "idle" &&
+    verifiedFarmDetail(queryClient, farmId)?.capabilities?.can_add_supply === true;
   const deleteDialog = dialog?.action === "delete";
   const deletion =
     deleteDialog && !supplyWriting && !linkBlocksDelete ? currentDeleteCapability() : undefined;
@@ -619,6 +627,8 @@ function FarmDetailContent({ farmId, productId }: Props) {
             {(visited.products || tab === "products") && (
               <FarmProducts
                 farm={farm}
+                canAddSupply={canAddSupply}
+                onRefreshFarm={() => invalidateFarmDetail(queryClient, farmId)}
                 isTabActive={tab === "products"}
                 onAccessLost={retireRecord}
               />

@@ -21,6 +21,7 @@ import { StoreProductDetail } from "@/components/store-product-detail";
 import { StoreProductEditor } from "@/components/store-product-editor";
 import ProductRouteLoading from "@/app/(admin)/store-catalog/products/loading";
 import { adminDictionaries } from "@/lib/admin-i18n";
+import { farmDetailKey, farmListKey } from "@/lib/farm-query";
 
 function render(ui: ReactElement) {
   const client = new QueryClient();
@@ -1465,6 +1466,27 @@ describe("store product detail", () => {
     expect(mocks.transition).toHaveBeenCalledTimes(1);
     await act(async () => finish({ ...storedProduct, status: "active" }));
     expect(await screen.findByRole("button", { name: "Ngừng bán" })).toBeVisible();
+  });
+
+  it("invalidates cached Farm capability when a Product changes status", async () => {
+    const client = new QueryClient();
+    const farmKey = farmDetailKey("farm-1");
+    client.setQueryData(farmKey, { capabilities: { can_add_supply: false } });
+    client.setQueryData(farmListKey, []);
+    mocks.product.mockResolvedValue(storedProduct);
+    mocks.transition.mockResolvedValue({ ...storedProduct, status: "active" });
+    renderView(
+      <QueryClientProvider client={client}>
+        <StoreProductDetail productId="product-1" />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Đưa lên bán" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Đưa lên bán" }),
+    );
+    expect(await screen.findByRole("button", { name: "Ngừng bán" })).toBeVisible();
+    expect(client.getQueryState(farmKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(farmListKey)?.isInvalidated).toBe(false);
   });
 
   it("returns a discontinued product to active through its own transition", async () => {

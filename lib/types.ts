@@ -699,7 +699,7 @@ export type Farm = {
   is_active: boolean;
   in_stock_product_count: number;
   out_of_stock_product_count: number;
-  capabilities?: { delete: FarmDeleteCapability };
+  capabilities?: { delete?: FarmDeleteCapability; can_add_supply?: boolean };
   version: number;
   created_at: string;
   updated_at: string;
@@ -739,6 +739,15 @@ export type AvailableFarmProduct = Pick<
   FarmProduct,
   "id" | "sku" | "name_vi" | "name_en" | "unit_size" | "unit_label_vi" | "unit_label_en"
 >;
+
+export type LinkableFarmProduct = AvailableFarmProduct &
+  (
+    | { link_state: "unlinked"; removed_source: null }
+    | {
+        link_state: "removed";
+        removed_source: Pick<FarmProduct, "id" | "version" | "supply_generation">;
+      }
+  );
 
 export type FarmSourceBlocker = {
   code: string;

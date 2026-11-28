@@ -89,6 +89,8 @@ const pickerProduct = {
   unit_size: source.unit_size,
   unit_label_vi: source.unit_label_vi,
   unit_label_en: source.unit_label_en,
+  link_state: "unlinked",
+  removed_source: null,
 };
 let client: QueryClient;
 let search: URLSearchParams | null;
@@ -247,7 +249,8 @@ it("keeps the catalog idle after an uncertain link and checks only the original 
   const picker = within(await screen.findByRole("dialog"));
   fireEvent.click(await picker.findByRole("button", { name: "Kiểm tra biên nhận" }));
   expect(await picker.findByText(/Chưa xác định kết quả/)).toBeVisible();
-  expect(picker.getByText("Cải · CAB")).toBeVisible();
+  expect(picker.getByText("Đã chọn 1 sản phẩm")).toBeVisible();
+  expect(picker.queryByRole("checkbox")).not.toBeInTheDocument();
   expect(picker.queryByText("Đang tải nguồn cung…")).not.toBeInTheDocument();
   expect(picker.queryByRole("search")).not.toBeInTheDocument();
   expect(api.listAvailableFarmProducts).toHaveBeenCalledTimes(1);

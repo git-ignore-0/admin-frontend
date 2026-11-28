@@ -19,6 +19,7 @@ import type {
   FarmStockBatch,
   FarmSupplyFilter,
   FarmSupplyStatus,
+  LinkableFarmProduct,
   MediaAsset,
   PaginationMeta,
   ProductStatus,
@@ -180,7 +181,16 @@ function requireFarm(data: Farm, id?: string): Farm {
   }
   const { capabilities, ...farm } = data;
   const deletion = farmDeleteCapability(capabilities);
-  return deletion ? { ...farm, capabilities: { delete: deletion } } : farm;
+  const supply = isApiObject(capabilities) ? capabilities.can_add_supply : undefined;
+  return deletion || typeof supply === "boolean"
+    ? {
+        ...farm,
+        capabilities: {
+          ...(deletion && { delete: deletion }),
+          ...(typeof supply === "boolean" && { can_add_supply: supply }),
+        },
+      }
+    : farm;
 }
 
 function day(value: unknown): boolean {
@@ -205,6 +215,21 @@ function requireAvailableFarmProduct(data: AvailableFarmProduct) {
     ) ||
     typeof data.unit_size !== "string" ||
     parsePositiveDecimal(data.unit_size).error
+  ) {
+    throw invalidApiResponse();
+  }
+}
+
+function requireLinkableFarmProduct(data: LinkableFarmProduct) {
+  requireAvailableFarmProduct(data);
+  const source = data.removed_source;
+  if (data.link_state === "unlinked" && source === null) return;
+  if (
+    data.link_state !== "removed" ||
+    !isApiObject(source) ||
+    !uuid(source.id) ||
+    !integer(source.version, 1) ||
+    !integer(source.supply_generation, 1)
   ) {
     throw invalidApiResponse();
   }
@@ -432,10 +457,10 @@ export function listAvailableFarmProducts(
 ) {
   const params = new URLSearchParams({ page: String(page) });
   if (search) params.set("search", search);
-  return apiEnvelope<AvailableFarmProduct[], PaginationMeta>(
+  return apiEnvelope<LinkableFarmProduct[], PaginationMeta>(
     `admin/farms/${farmId}/available-products?${params}`,
     { signal },
-  ).then((payload) => requireFarmPage(payload, page, 30, requireAvailableFarmProduct));
+  ).then((payload) => requireFarmPage(payload, page, 30, requireLinkableFarmProduct));
 }
 
 export function getFarmProduct(farmId: string, productId: string, signal?: AbortSignal) {
@@ -495,10 +520,20 @@ export function removeFarmProduct(farmId: string, productId: string, source: Sou
   });
 }
 
-export type FarmProductLinkIntent = Readonly<{
-  idempotency_key: string;
-  product_ids: readonly string[];
+type FarmProductLinkItem = Readonly<{
+  product_id: string;
+  expected_source: Readonly<Pick<FarmProduct, "id" | "version">> | null;
 }>;
+
+export type FarmProductLinkIntent = Readonly<{ idempotency_key: string }> &
+  (
+    | { readonly product_ids: readonly string[]; readonly items?: never }
+    | { readonly items: readonly FarmProductLinkItem[]; readonly product_ids?: never }
+  );
+
+export function farmProductLinkIds(intent: FarmProductLinkIntent) {
+  return intent.product_ids ?? intent.items.map(({ product_id }) => product_id);
+}
 
 export type FarmProductReaddIntent = Readonly<{
   idempotency_key: string;
@@ -548,7 +583,7 @@ function requireLinkReceipt(
     !isApiObject(data) ||
     !uuid(data.farm_id, farmId) ||
     !integer(data.created_count, 1) ||
-    data.created_count !== intent.product_ids.length
+    data.created_count !== (intent.product_ids ?? intent.items).length
   )
     throw invalidApiResponse();
   return { farm_id: data.farm_id, created_count: data.created_count, idempotent_replay: replay };

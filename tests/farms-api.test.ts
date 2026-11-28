@@ -58,6 +58,25 @@ const farm = {
   created_at: "2026-10-26T00:00:00Z",
   updated_at: "2026-10-26T00:00:00Z",
 };
+it.each([true, false, undefined, "true"])(
+  "parses the supply capability independently of farm deletion (%s)",
+  async (can_add_supply) => {
+    const deletion = { allowed: true, reasons: [] };
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        data: { ...farm, capabilities: { delete: deletion, can_add_supply } },
+      }),
+    );
+    const result = await getFarm(farmId);
+    expect(result.capabilities?.delete).toEqual(deletion);
+    expect(result.capabilities).toEqual(
+      typeof can_add_supply === "boolean"
+        ? { delete: deletion, can_add_supply }
+        : { delete: deletion },
+    );
+  },
+);
+
 const farmProduct: FarmProduct = {
   id: linkId,
   farm_id: farmId,
@@ -396,6 +415,31 @@ it("rejects absent picker units and wrong pagination", async () => {
 
   fetchMock.mockResolvedValueOnce(Response.json({ data: [], meta: { ...page, page_size: 20 } }));
   await expect(listAvailableFarmProducts(farmId)).rejects.toThrow("invalid_response");
+});
+
+it("validates available products and their removed-source revision together", async () => {
+  const unlinked = { ...farmProduct, id: productId, link_state: "unlinked", removed_source: null };
+  const source = { id: linkId, version: 4, supply_generation: 2 };
+  const removed = { ...unlinked, id: batchId, link_state: "removed", removed_source: source };
+  const meta = { page: 1, page_size: 30, total: 2 };
+  fetchMock.mockResolvedValueOnce(Response.json({ data: [unlinked, removed], meta }));
+  await expect(listAvailableFarmProducts(farmId)).resolves.toEqual({
+    data: [unlinked, removed],
+    meta,
+  });
+  for (const row of [
+    { ...removed, link_state: "supplying" },
+    { ...unlinked, removed_source: source },
+    { ...unlinked, removed_source: undefined },
+    { ...removed, removed_source: null },
+    { ...removed, removed_source: { ...source, id: "bad-id" } },
+    { ...removed, removed_source: { ...source, version: "4" } },
+    { ...removed, removed_source: { ...source, supply_generation: 0 } },
+    { ...removed, id: productId },
+  ]) {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [unlinked, row], meta }));
+    await expect(listAvailableFarmProducts(farmId)).rejects.toThrow("invalid_response");
+  }
 });
 
 it("keeps backend permission errors distinct from response validation", async () => {
@@ -779,45 +823,72 @@ it.each(["farm", "action", "resource", "key", "replay"] as const)(
   },
 );
 
-it("links a product set with a verified scoped receipt and no batch fields", async () => {
-  const intent = { idempotency_key: linkId, product_ids: [productId, batchId] };
-  const data = { farm_id: farmId, created_count: 2 };
-  const action_receipt = {
-    action: "link_farm_products",
-    resource_id: farmId,
-    idempotency_key: linkId,
-  };
-  const meta = { action_receipt, idempotent_replay: true };
-  fetchMock
-    .mockResolvedValueOnce(
-      Response.json({ data, meta: { ...meta, idempotent_replay: false } }, { status: 201 }),
-    )
-    .mockResolvedValueOnce(Response.json({ data, meta }));
-  await expect(linkFarmProducts(farmId, intent)).resolves.toEqual({
-    ...data,
-    idempotent_replay: false,
-  });
-  await expect(recoverFarmProductLinking(farmId, intent)).resolves.toEqual({
-    ...data,
-    idempotent_replay: true,
-  });
-  const path = `/api/backend/admin/farms/${farmId}/products/bulk`;
-  expect(fetchMock.mock.calls[0][0]).toBe(path);
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(intent);
-  expect(fetchMock.mock.calls[1][0]).toBe(`${path}?creation_key=${linkId}`);
-  for (const invalid of [
-    { data: { ...data, farm_id: productId }, meta },
-    { data: { ...data, created_count: 1 }, meta },
-    { data: { ...data, created_count: "2" }, meta },
-    { data, meta: { ...meta, idempotent_replay: false } },
+it.each([
+  ["legacy", { idempotency_key: linkId, product_ids: [productId, batchId] }],
+  [
+    "mixed",
     {
-      data,
-      meta: { ...meta, action_receipt: { ...action_receipt, action: "create_farm_stock_batches" } },
+      idempotency_key: linkId,
+      items: [
+        { product_id: productId, expected_source: null },
+        { product_id: batchId, expected_source: { id: linkId, version: 4 } },
+      ],
     },
-    { data, meta: { ...meta, action_receipt: { ...action_receipt, idempotency_key: productId } } },
-    { data, meta: { ...meta, action_receipt: { ...action_receipt, resource_id: productId } } },
-  ]) {
-    fetchMock.mockResolvedValueOnce(Response.json(invalid));
-    await expect(recoverFarmProductLinking(farmId, intent)).rejects.toThrow("invalid_response");
-  }
-});
+  ],
+] as const)(
+  "links and replays a %s product set with a verified scoped receipt",
+  async (_, intent) => {
+    const data = { farm_id: farmId, created_count: 2 };
+    const action_receipt = {
+      action: "link_farm_products",
+      resource_id: farmId,
+      idempotency_key: linkId,
+    };
+    const meta = { action_receipt, idempotent_replay: true };
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({ data, meta: { ...meta, idempotent_replay: false } }, { status: 201 }),
+      )
+      .mockResolvedValueOnce(Response.json({ data, meta }))
+      .mockResolvedValueOnce(Response.json({ data, meta }));
+    await expect(linkFarmProducts(farmId, intent)).resolves.toEqual({
+      ...data,
+      idempotent_replay: false,
+    });
+    await expect(recoverFarmProductLinking(farmId, intent)).resolves.toEqual({
+      ...data,
+      idempotent_replay: true,
+    });
+    await expect(linkFarmProducts(farmId, intent)).resolves.toEqual({
+      ...data,
+      idempotent_replay: true,
+    });
+    const path = `/api/backend/admin/farms/${farmId}/products/bulk`;
+    expect(fetchMock.mock.calls[0][0]).toBe(path);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(intent);
+    expect(fetchMock.mock.calls[1][0]).toBe(`${path}?creation_key=${linkId}`);
+    expect(fetchMock.mock.calls[2][0]).toBe(path);
+    expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[0][1].body);
+    for (const invalid of [
+      { data: { ...data, farm_id: productId }, meta },
+      { data: { ...data, created_count: 1 }, meta },
+      { data: { ...data, created_count: "2" }, meta },
+      { data, meta: { ...meta, idempotent_replay: false } },
+      {
+        data,
+        meta: {
+          ...meta,
+          action_receipt: { ...action_receipt, action: "create_farm_stock_batches" },
+        },
+      },
+      {
+        data,
+        meta: { ...meta, action_receipt: { ...action_receipt, idempotency_key: productId } },
+      },
+      { data, meta: { ...meta, action_receipt: { ...action_receipt, resource_id: productId } } },
+    ]) {
+      fetchMock.mockResolvedValueOnce(Response.json(invalid));
+      await expect(recoverFarmProductLinking(farmId, intent)).rejects.toThrow("invalid_response");
+    }
+  },
+);

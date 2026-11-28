@@ -30,6 +30,7 @@ import {
   useFarmDeleteBlocksWrite,
 } from "@/lib/farm-query";
 import {
+  farmProductLinkIds,
   linkFarmProducts,
   MAX_FARM_PRODUCT_LINKS,
   readdFarmProduct,
@@ -39,13 +40,17 @@ import {
   type FarmProductReaddIntent,
 } from "@/lib/farms-api";
 import { isUncertainFarmSupplyWrite } from "@/lib/farm-stock";
-import type { AvailableFarmProduct, FarmProduct } from "@/lib/types";
+import type { AvailableFarmProduct, FarmProduct, LinkableFarmProduct } from "@/lib/types";
 
 type Input =
-  | { kind: "link"; products: readonly AvailableFarmProduct[] }
+  | { kind: "link"; products: readonly LinkableFarmProduct[] }
   | { kind: "readd"; source: FarmProduct };
 type Intent =
-  | { kind: "link"; payload: FarmProductLinkIntent; products: readonly AvailableFarmProduct[] }
+  | {
+      kind: "link";
+      payload: FarmProductLinkIntent;
+      products: readonly (AvailableFarmProduct | LinkableFarmProduct)[];
+    }
   | { kind: "readd"; productId: string; payload: FarmProductReaddIntent };
 type Attempt = {
   kind: "submit" | "recover" | "retry";
@@ -67,6 +72,10 @@ const linkingConflicts = new Set([
   "product_inactive",
   "product_not_selling",
   "product_not_found",
+  "farm_product_not_removed",
+  "farm_product_version_conflict",
+  "farm_product_identity_changed",
+  "farm_product_changed",
 ]);
 const readdConflicts = new Set([
   "farm_product_not_removed",
@@ -103,7 +112,7 @@ function settleFailure(attempt: Attempt, cause: unknown): Failure {
   const revisionConflict = status === 409 && intent.kind === "readd" && readdConflicts.has(message);
 
   if (itemConflict && intent.kind === "link") {
-    const ids = intent.payload.product_ids;
+    const ids = farmProductLinkIds(intent.payload);
     for (const error of Array.isArray(payload?.errors) ? payload.errors : []) {
       if (
         !isApiObject(error) ||
@@ -115,11 +124,9 @@ function settleFailure(attempt: Attempt, cause: unknown): Failure {
       if (!isApiObject(context)) continue;
       const index = context.item_index;
       const indexed = typeof index === "number" && Number.isInteger(index) ? ids[index] : undefined;
+      if (index !== undefined && !indexed) continue;
       const id = typeof context.product_id === "string" ? context.product_id : indexed;
       if (id && (!indexed || indexed === id) && ids.includes(id)) itemCodes[id] = error.code;
-    }
-    if (!missingProduct && !Object.keys(itemCodes).length) {
-      for (const id of ids) itemCodes[id] = message;
     }
   }
   const scopedItemConflict = itemConflict && Object.keys(itemCodes).length > 0;
@@ -140,7 +147,9 @@ function invalidateLinkWrite(
   success: boolean,
 ) {
   const scope = farmSupplyKey(farmId);
-  const ids = new Set(intent.kind === "link" ? intent.payload.product_ids : [intent.productId]);
+  const ids = new Set(
+    intent.kind === "link" ? farmProductLinkIds(intent.payload) : [intent.productId],
+  );
   notifyManager.batch(() => {
     if (success) {
       invalidateFarmDetail(client, farmId);
@@ -285,18 +294,38 @@ export function useFarmProductLinkWrite(
         return;
       const idempotency_key = crypto.randomUUID();
       if (input.kind === "link") {
-        const product_ids = input.products.map(({ id }) => id);
+        const ids = input.products.map(({ id }) => id);
         if (
           productId ||
-          !product_ids.length ||
-          product_ids.length > MAX_FARM_PRODUCT_LINKS ||
-          new Set(product_ids).size !== product_ids.length
+          !ids.length ||
+          ids.length > MAX_FARM_PRODUCT_LINKS ||
+          new Set(ids).size !== ids.length
         )
           return;
+        const products = Object.freeze(
+          input.products.map((product) =>
+            product.link_state === "removed"
+              ? Object.freeze({
+                  ...product,
+                  removed_source: Object.freeze({ ...product.removed_source }),
+                })
+              : Object.freeze({ ...product }),
+          ),
+        );
+        const items = Object.freeze(
+          products.map(({ id: product_id, removed_source }) =>
+            Object.freeze({
+              product_id,
+              expected_source: removed_source
+                ? Object.freeze({ id: removed_source.id, version: removed_source.version })
+                : null,
+            }),
+          ),
+        );
         intent = {
           kind: "link",
-          payload: Object.freeze({ idempotency_key, product_ids: Object.freeze(product_ids) }),
-          products: Object.freeze(input.products.map((product) => Object.freeze({ ...product }))),
+          payload: Object.freeze({ idempotency_key, items }),
+          products,
         };
       } else {
         const { source } = input;

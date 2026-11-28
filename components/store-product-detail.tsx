@@ -17,6 +17,7 @@ import {
   VisuallyHidden,
 } from "@mantine/core";
 import { IconDots } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import NextImage from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -42,6 +43,7 @@ import {
   requestErrorMessage,
   type ClientApiError,
 } from "@/lib/client-error";
+import { invalidateFarmDetailsAfterProductTransition } from "@/lib/farm-detail-snapshot";
 import { mediaUrlForWidth } from "@/lib/media";
 import { localizedCatalogTranslation } from "@/lib/membership-translations";
 import { formatDecimalInput } from "@/lib/numeric-input";
@@ -145,6 +147,7 @@ function ProductContent({ item, name }: { item: ProductDetail; name: string }) {
 function ProductDetailContent({ productId }: { productId: string }) {
   const { locale, t } = useAdminI18n();
   const isCurrent = useIsAdminQueryScopeCurrent();
+  const queryClient = useQueryClient();
   const copy = t.storeCatalog;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -284,6 +287,9 @@ function ProductDetailContent({ productId }: { productId: string }) {
         reload();
       }
     } finally {
+      if (dialog === "transition" && isCurrent()) {
+        invalidateFarmDetailsAfterProductTransition(queryClient);
+      }
       inFlight.current = false;
       if (mounted.current && isCurrent()) setBusy(false);
     }

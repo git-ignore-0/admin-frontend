@@ -26,10 +26,22 @@ import { formatDecimalInput } from "@/lib/numeric-input";
 import type { Farm } from "@/lib/types";
 import { useFarmProductLinkWrite } from "@/lib/use-farm-product-link-write";
 
-type Props = { farm: Farm; isTabActive?: boolean; onAccessLost?: (cause: unknown) => void };
+type Props = {
+  farm: Farm;
+  canAddSupply?: boolean;
+  onRefreshFarm?: () => void | Promise<void>;
+  isTabActive?: boolean;
+  onAccessLost?: (cause: unknown) => void;
+};
 type SupplyContext = ReturnType<typeof readFarmSupplyContext>;
 
-export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) {
+export function FarmProducts({
+  farm,
+  canAddSupply,
+  onRefreshFarm,
+  isTabActive = true,
+  onAccessLost,
+}: Props) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const quantity = new Intl.NumberFormat(locale);
@@ -179,7 +191,9 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
         }}
         refresh={{
           label: c.refreshSupply,
-          onRefresh: () => query.refetch({ cancelRefetch: false }).then(() => undefined),
+          onRefresh: async () => {
+            await Promise.all([query.refetch({ cancelRefetch: false }), onRefreshFarm?.()]);
+          },
           loading: query.isFetching && Boolean(data),
           disabled: initialLoading,
         }}
@@ -197,12 +211,16 @@ export function FarmProducts({ farm, isTabActive = true, onAccessLost }: Props) 
             >
               {c.addProduct}
             </Button>
-            <Button
-              component={AdminNavigationLink}
-              href={farmHref(params, { id: farm.id, bulk: true })}
-            >
-              {c.addSupply}
-            </Button>
+            {canAddSupply && !linkWrite.blocked && !linkWrite.unresolved ? (
+              <Button
+                component={AdminNavigationLink}
+                href={farmHref(params, { id: farm.id, bulk: true })}
+              >
+                {c.addSupply}
+              </Button>
+            ) : (
+              <Button disabled>{c.addSupply}</Button>
+            )}
           </Group>
         }
       />

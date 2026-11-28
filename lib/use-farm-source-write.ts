@@ -178,6 +178,11 @@ export function useFarmSourceWrite(
     void client.invalidateQueries({ queryKey: farmListKey });
     if (lifecycle) {
       invalidateFarmDetail(client, farmId);
+      void client.invalidateQueries({
+        queryKey: scope,
+        predicate: ({ queryKey }) =>
+          ["available", "eligible"].includes(String(queryKey[scope.length])),
+      });
       void client.invalidateQueries({ queryKey: [...scope, "history", productId] });
     }
   }

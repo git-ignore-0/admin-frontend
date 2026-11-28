@@ -862,7 +862,7 @@ it.each([
         fetchStatus: "fetching",
         isInvalidated: true,
       });
-      expect(client.getQueryData<Farm>(queryKey)?.capabilities?.delete.allowed).not.toBe(true);
+      expect(client.getQueryData<Farm>(queryKey)?.capabilities?.delete?.allowed).not.toBe(true);
       expect(mocks.get).toHaveBeenCalledTimes(readCount + 1);
       await act(async () => read.resolve(stale));
     }

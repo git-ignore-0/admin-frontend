@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   AdminBreadcrumbProvider,
@@ -105,10 +106,12 @@ function Header() {
 
 function page() {
   return (
-    <AdminBreadcrumbProvider pathname={pathname} search={mocks.search.toString()}>
-      <Header />
-      <StoreProductDetail productId={productId} />
-    </AdminBreadcrumbProvider>
+    <QueryClientProvider client={new QueryClient()}>
+      <AdminBreadcrumbProvider pathname={pathname} search={mocks.search.toString()}>
+        <Header />
+        <StoreProductDetail productId={productId} />
+      </AdminBreadcrumbProvider>
+    </QueryClientProvider>
   );
 }
 

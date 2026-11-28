@@ -4,10 +4,10 @@ import {
   type QueryClient,
   type QueryState,
 } from "@tanstack/react-query";
-import { farmDetailKey, farmNotFound } from "@/lib/farm-query";
+import { farmDetailKey, farmDetailPrefix, farmNotFound } from "@/lib/farm-query";
 import type { Farm } from "@/lib/types";
 
-type FarmDetail = Farm & { deleteCapabilityUnverified?: true };
+type FarmDetail = Farm & { capabilitiesUnverified?: true };
 type DetailState = QueryState<FarmDetail | null>;
 // The read carries its starting snapshot until structural sharing consumes it.
 const detailReadBaseline = Symbol("detailReadBaseline");
@@ -26,7 +26,7 @@ export function farmDetailNeedsRead(state: DetailState) {
     state.isInvalidated ||
     state.status === "error" ||
     state.dataUpdatedAt === 0 ||
-    state.data?.deleteCapabilityUnverified === true
+    state.data?.capabilitiesUnverified === true
   );
 }
 
@@ -44,9 +44,21 @@ export function invalidateFarmDetail(client: QueryClient, farmId: string) {
   const filters = { queryKey: farmDetailKey(farmId), exact: true };
   const query = client.getQueryCache().find<Farm | null>(filters);
   if (!query || query.state.data === null) return;
+  // Invalidation alone reuses a pending fetch if TanStack has no cached data yet.
+  if (query.state.data === undefined && query.state.fetchStatus !== "idle") {
+    void client.cancelQueries(filters);
+  }
   // A second supply change still supersedes reads made after the first invalidation.
   if (query.state.isInvalidated) query.setState({ isInvalidated: true });
-  void client.invalidateQueries(filters);
+  return client.invalidateQueries(filters);
+}
+
+export function invalidateFarmDetailsAfterProductTransition(client: QueryClient) {
+  // The transition does not return Farm IDs. Mark only known Farm details stale.
+  for (const { queryKey } of client.getQueryCache().findAll({ queryKey: farmDetailPrefix })) {
+    const farmId = queryKey[farmDetailPrefix.length];
+    if (typeof farmId === "string") invalidateFarmDetail(client, farmId);
+  }
 }
 
 function sameCapabilities(previous: Farm, snapshot: Farm) {
@@ -125,7 +137,7 @@ export function shareFarmDetail(previous: unknown, incoming: unknown) {
   return replaceEqualDeep(
     cached,
     olderInformation || ambiguousCapability
-      ? { ...current, capabilities: undefined, deleteCapabilityUnverified: true }
+      ? { ...current, capabilities: undefined, capabilitiesUnverified: true }
       : current,
   );
 }

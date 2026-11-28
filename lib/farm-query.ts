@@ -49,8 +49,9 @@ export function useFarmFarmerLinkBlocksDelete(farmId: string) {
 
 export const farmDecisionIntentKey = ["admin-mutation-intent", "farm-supply-decision"] as const;
 export const farmListKey = [...farmsKey, "list"] as const;
+export const farmDetailPrefix = [...farmsKey, "detail"] as const;
 export const farmDetailKey = (farmId: string) =>
-  [...farmsKey, "detail", farmId.toLowerCase()] as const;
+  [...farmDetailPrefix, farmId.toLowerCase()] as const;
 export const farmSupplyKey = (farmId: string) => [...supplyKey, farmId.toLowerCase()] as const;
 export const farmSupplyWriteKey = (farmId: string) => [...farmSupplyKey(farmId), "write"] as const;
 export const farmBulkWriteKey = (farmId: string) =>

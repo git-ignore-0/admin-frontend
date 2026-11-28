@@ -1,12 +1,10 @@
 "use client";
 
-import { Alert, Box, Button, Checkbox, Divider, Group, Stack, Table, Text } from "@mantine/core";
+import { Alert, Box, Button, Checkbox, Divider, Stack, Table, Text } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useId, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DataListPaper } from "@/components/data-list-paper";
@@ -17,7 +15,7 @@ import { Pagination } from "@/components/pagination";
 import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { useToast } from "@/components/toast-provider";
 import { requestErrorMessage } from "@/lib/client-error";
-import { farmHref, normalizeFarmSupplySearch } from "@/lib/farm-navigation";
+import { normalizeFarmSupplySearch } from "@/lib/farm-navigation";
 import {
   farmAccessDenied,
   farmListCanShowData,
@@ -27,8 +25,37 @@ import {
 import { listAvailableFarmProducts, MAX_FARM_PRODUCT_LINKS } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
 import { formatDecimalInput } from "@/lib/numeric-input";
-import type { AvailableFarmProduct } from "@/lib/types";
+import type { AvailableFarmProduct, LinkableFarmProduct } from "@/lib/types";
 import type { FarmProductLinkWrite } from "@/lib/use-farm-product-link-write";
+import styles from "./farm-product-picker.module.css";
+
+type Selection = {
+  row: LinkableFarmProduct;
+  reviewedFailure?: FarmProductLinkWrite["failure"];
+};
+
+function isLinkableProduct(
+  row: AvailableFarmProduct | LinkableFarmProduct,
+): row is LinkableFarmProduct {
+  return "link_state" in row;
+}
+
+function catalogConflict(
+  chosen: LinkableFarmProduct,
+  rows: readonly LinkableFarmProduct[],
+  complete: boolean,
+) {
+  const latest = rows.find(({ id }) => id === chosen.id);
+  if (!latest) return complete ? "not_found" : undefined;
+  const expected = chosen.removed_source;
+  const source = latest.removed_source;
+  if (expected?.id !== source?.id) return "farm_product_identity_changed";
+  if (
+    expected?.version !== source?.version ||
+    expected?.supply_generation !== source?.supply_generation
+  )
+    return "farm_product_version_conflict";
+}
 
 export function FarmProductPicker({
   farmId,
@@ -46,20 +73,22 @@ export function FarmProductPicker({
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
   const toast = useToast();
-  const params = useSearchParams();
   const client = useQueryClient();
   const pickerId = useId();
+  const reviewButton = useRef<HTMLButtonElement>(null);
   const currentSession = useIsAdminQueryScopeCurrent();
+  const submittedRows = write.intent?.kind === "link" ? write.intent.products : [];
   const [selection, setSelection] = useState(
     () =>
-      new Map(
-        write.intent?.kind === "link" ? write.intent.products.map((row) => [row.id, row]) : [],
+      new Map<string, Selection>(
+        submittedRows.filter(isLinkableProduct).map((row) => [row.id, { row }]),
       ),
   );
+  const [reviewing, setReviewing] = useState(false);
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [unavailable, setUnavailable] = useState(() => new Set<string>());
+  const [catalogIssues, setCatalogIssues] = useState(() => new Map<string, string>());
   const key = [...farmSupplyKey(farmId), "available", search, page];
   const query = useQuery({
     queryKey: key,
@@ -73,20 +102,17 @@ export function FarmProductPicker({
   const catalogComplete =
     !search && page === 1 && Boolean(data && data.meta.total === data.data.length);
   useEffect(() => {
-    if (!querySafe || !data) return;
-    const present = new Set(data.data.map(({ id }) => id));
-    setUnavailable((previous) => {
-      // A search result can confirm presence. Only the full catalog can prove absence.
-      const next = new Set(
-        [...selection.keys()].filter(
-          (id) => !present.has(id) && (catalogComplete || previous.has(id)),
-        ),
-      );
-      return next.size === previous.size && [...next].every((id) => previous.has(id))
-        ? previous
-        : next;
+    if (!querySafe || !data || write.unresolved) return;
+    setCatalogIssues((previous) => {
+      const next = new Map(previous);
+      for (const { row } of selection.values()) {
+        // Absence is only evidence when this page represents the entire catalog.
+        const issue = catalogConflict(row, data.data, catalogComplete);
+        if (issue) next.set(row.id, issue);
+      }
+      return [...next].every(([id, issue]) => previous.get(id) === issue) ? previous : next;
     });
-  }, [catalogComplete, data, querySafe, selection]);
+  }, [catalogComplete, data, querySafe, selection, write.unresolved]);
   useEffect(() => {
     if (!query.error && page > lastPage) setPage(lastPage);
   }, [lastPage, page, query.error]);
@@ -100,14 +126,17 @@ export function FarmProductPicker({
   if (!currentSession() || denial) return null;
 
   const failure = write.failure;
-  const recovering = failure?.kind === "unknown";
   const locked = write.unresolved || write.blocked;
   const rows = data?.data ?? [];
-  const issueFor = (id: string) =>
-    failure?.itemCodes[id] ??
-    (unavailable.has(id) || (querySafe && catalogComplete && !rows.some((row) => row.id === id))
-      ? "not_found"
-      : undefined);
+  const issueFor = (id: string) => {
+    const item = selection.get(id);
+    if (!item) return undefined;
+    return (
+      (item.reviewedFailure !== failure ? failure?.itemCodes[id] : undefined) ??
+      catalogIssues.get(id) ??
+      (querySafe ? catalogConflict(item.row, rows, catalogComplete) : undefined)
+    );
+  };
   const selectable = rows.filter(({ id }) => !issueFor(id));
   const selectedOnPage = selectable.filter(({ id }) => selection.has(id)).length;
   const allChecked = selectable.length > 0 && selectedOnPage === selectable.length;
@@ -122,7 +151,7 @@ export function FarmProductPicker({
     !invalidSelection &&
     failure?.kind !== "idempotency_conflict" &&
     selection.size <= MAX_FARM_PRODUCT_LINKS;
-  const loading = !data && (query.isPending || query.isFetching);
+  const loading = !reviewing && !data && (query.isPending || query.isFetching);
   const refetch = () => query.refetch({ cancelRefetch: false }).then(() => undefined);
 
   function applySearch(value: string) {
@@ -135,45 +164,70 @@ export function FarmProductPicker({
     }
   }
 
-  function select(products: AvailableFarmProduct[], checked: boolean) {
-    if (locked) return;
+  function select(products: LinkableFarmProduct[], checked: boolean) {
+    if (locked || (checked && !querySafe)) return;
     setSelection((previous) => {
       const next = new Map(previous);
       for (const row of products) {
-        if (checked) next.set(row.id, row);
-        else next.delete(row.id);
+        if (!checked) next.delete(row.id);
+        else if (!next.has(row.id)) next.set(row.id, { row, reviewedFailure: failure });
       }
       return next.size <= MAX_FARM_PRODUCT_LINKS ? next : previous;
     });
+    if (!checked) {
+      setCatalogIssues((previous) => {
+        const next = new Map(previous);
+        for (const { id } of products) next.delete(id);
+        return next.size === previous.size ? previous : next;
+      });
+    }
   }
 
-  function saved(intent?: FarmProductLinkWrite["intent"]) {
-    const count = intent?.kind === "link" ? intent.products.length : selection.size;
+  function saved(intent: NonNullable<FarmProductLinkWrite["intent"]>) {
+    if (intent.kind !== "link") return;
+    const count = intent.products.length;
     toast(count === 1 ? c.addedOneProduct : c.addedProducts.replace("{count}", String(count)));
     onClose();
   }
 
-  const nameOf = (row: AvailableFarmProduct) => (locale === "vi" ? row.name_vi : row.name_en);
+  const displayedRows = reviewing ? [...selection.values()].map(({ row }) => row) : rows;
   const reviewMessage = (code: string) => {
-    if (code === "farm_product_removed") return c.addPreviouslyRemoved;
-    if (code === "product_already_linked") return c.alreadyLinked;
+    if (code === "farm_product_removed" || code === "farm_product_identity_changed")
+      return c.productSourceChanged;
+    if (code === "farm_product_version_conflict") return c.productSourceRevisionChanged;
+    if (code === "product_already_linked" || code === "farm_product_not_removed")
+      return c.alreadyLinked;
     if (code === "product_inactive" || code === "product_not_selling") return c.productDeactivated;
     return c.productUnavailable;
   };
 
   const table = (
-    <Table.ScrollContainer type="native" minWidth={300} aria-hidden={loading || undefined}>
-      <Table aria-label={c.productColumn} aria-busy={query.isFetching || undefined}>
+    <Table.ScrollContainer
+      type="native"
+      minWidth={300}
+      role="region"
+      aria-label={reviewing ? c.selectedProductReview : c.productColumn}
+      aria-hidden={loading || undefined}
+      tabIndex={loading ? undefined : 0}
+    >
+      <Table
+        aria-label={reviewing ? c.selectedProductReview : c.productColumn}
+        aria-busy={loading || undefined}
+      >
         <Table.Thead>
           <Table.Tr>
             <Table.Th scope="col" w={44}>
-              <Checkbox
-                aria-label={c.selectPageProducts}
-                checked={allChecked}
-                indeterminate={partial}
-                disabled={locked || !querySafe || !selectable.length || (!allChecked && !fitsPage)}
-                onChange={(event) => select(selectable, event.currentTarget.checked)}
-              />
+              {!reviewing && (
+                <Checkbox
+                  aria-label={c.selectPageProducts}
+                  checked={allChecked}
+                  indeterminate={partial}
+                  disabled={
+                    locked || !querySafe || !selectable.length || (!allChecked && !fitsPage)
+                  }
+                  onChange={(event) => select(selectable, event.currentTarget.checked)}
+                />
+              )}
             </Table.Th>
             <Table.Th scope="col">{c.productColumn}</Table.Th>
             <Table.Th scope="col">{c.saleUnit}</Table.Th>
@@ -183,23 +237,21 @@ export function FarmProductPicker({
           {loading ? (
             <TableSkeletonRows columns={3} height={36} />
           ) : (
-            rows.map((row) => {
-              const name = nameOf(row);
+            displayedRows.map((row) => {
+              const name = locale === "vi" ? row.name_vi : row.name_en;
               const selected = selection.has(row.id);
-              const invalid = selected && Boolean(issueFor(row.id));
+              const issue = issueFor(row.id);
+              const describedBy = issue ? `${pickerId}-${row.id}` : undefined;
+              const label = reviewing ? c.unselectProduct : c.selectProduct;
               return (
-                <Table.Tr key={row.id}>
+                <Table.Tr key={row.id} data-selected={selected || undefined}>
                   <Table.Td>
                     <Checkbox
-                      aria-label={c.selectProduct.replace("{name}", name).replace("{sku}", row.sku)}
-                      aria-invalid={invalid || undefined}
-                      aria-describedby={invalid ? `${pickerId}-${row.id}` : undefined}
+                      aria-label={label.replace("{name}", name).replace("{sku}", row.sku)}
+                      aria-invalid={Boolean(issue) || undefined}
+                      aria-describedby={describedBy}
                       checked={selected}
-                      disabled={
-                        locked ||
-                        !querySafe ||
-                        (!selected && (atLimit || Boolean(issueFor(row.id))))
-                      }
+                      disabled={locked || (!reviewing && !querySafe) || (!selected && atLimit)}
                       onChange={(event) => select([row], event.currentTarget.checked)}
                     />
                   </Table.Td>
@@ -208,7 +260,13 @@ export function FarmProductPicker({
                       <Text fw={600}>{name}</Text>
                       <Text c="dimmed" size="sm">
                         {row.sku}
+                        {row.link_state === "removed" && ` · ${c.previouslySupplied}`}
                       </Text>
+                      {issue && (
+                        <Text id={describedBy} c="danger" size="sm">
+                          {reviewMessage(issue)}
+                        </Text>
+                      )}
                     </Stack>
                   </Table.Td>
                   <Table.Td style={{ overflowWrap: "anywhere" }}>
@@ -225,10 +283,15 @@ export function FarmProductPicker({
   );
   const error =
     failure?.kind === "rejected"
-      ? requestErrorMessage(failure.cause, t, { product_ids: c.productColumn })
-      : failure?.kind === "conflict"
+      ? requestErrorMessage(failure.cause, t, {
+          items: c.productColumn,
+          product_ids: c.productColumn,
+        })
+      : failure?.kind === "conflict" || invalidSelection
         ? c.reviewProductSelection
         : undefined;
+  const count = write.unresolved ? submittedRows.length : selection.size;
+  const summary = c.selectedProducts.replace("{count}", String(count));
 
   return (
     <ConfirmationDialog
@@ -241,9 +304,23 @@ export function FarmProductPicker({
       confirmDisabled={!canSubmit}
       returnFocusRef={returnFocusRef}
       footerSummary={
-        <Text size="sm" me="auto" role="status">
-          {c.selectedProducts.replace("{count}", String(selection.size))}
-        </Text>
+        <Box className={styles.summary} me="auto" role="status">
+          {write.unresolved || (!count && !reviewing) ? (
+            <Text size="sm">{summary}</Text>
+          ) : (
+            <Button
+              ref={reviewButton}
+              variant="subtle"
+              size="compact-sm"
+              type="button"
+              aria-pressed={reviewing}
+              aria-controls={pickerId}
+              onClick={() => setReviewing(!reviewing)}
+            >
+              {summary}
+            </Button>
+          )}
+        </Box>
       }
       onCancel={() => {
         if (!write.unresolved) write.clearFailure();
@@ -257,53 +334,70 @@ export function FarmProductPicker({
           cached.fetchStatus === "idle" &&
           !cached.isInvalidated
         ) {
-          void write.submit({ kind: "link", products: [...selection.values()] }, saved);
+          void write.submit(
+            { kind: "link", products: [...selection.values()].map(({ row }) => row) },
+            saved,
+          );
         }
       }}
     >
       <FarmProductLinkRecovery write={write} onSuccess={saved} />
-      {error && (
+      {error && !write.unresolved && (
         <Alert color="danger" role="alert">
           {error}
         </Alert>
       )}
-      {!recovering && (
+      {!write.unresolved && (
         <>
-          <ListToolbar
-            busy={write.unresolved}
-            growSearch
-            search={{
-              label: c.productSearch,
-              placeholder: c.productPlaceholder,
-              value: draft,
-              onChange: setDraft,
-              onSubmit: applySearch,
-              submitLabel: c.searchButton,
-            }}
-            refresh={{
-              label: c.refreshAvailable,
-              onRefresh: refetch,
-              loading: query.isFetching && Boolean(data),
-            }}
-          />
-          <DataListPaper>
-            {rows.length > 0 && table}
-            <Box p={query.error ? "md" : undefined}>
+          {reviewing ? (
+            <Box>
+              <Button
+                variant="default"
+                type="button"
+                onClick={() => {
+                  setReviewing(false);
+                  reviewButton.current?.focus();
+                }}
+              >
+                {c.backToAvailableProducts}
+              </Button>
+            </Box>
+          ) : (
+            <ListToolbar
+              growSearch
+              search={{
+                label: c.productSearch,
+                placeholder: c.productPlaceholder,
+                value: draft,
+                onChange: setDraft,
+                onSubmit: applySearch,
+                submitLabel: c.searchButton,
+              }}
+              refresh={{
+                label: c.refreshAvailable,
+                onRefresh: refetch,
+                loading: query.isFetching && Boolean(data),
+              }}
+            />
+          )}
+          <DataListPaper id={pickerId}>
+            {displayedRows.length > 0 && table}
+            <Box p={!reviewing && query.error ? "md" : undefined}>
               <ListState
                 embedded
-                empty={c.availableProductsEmpty}
-                noResults={search ? c.noCatalogMatch : undefined}
-                hasData={Boolean(data)}
-                isEmpty={Boolean(data && !rows.length)}
+                empty={reviewing ? c.noSelectedProducts : c.availableProductsEmpty}
+                noResults={!reviewing && search ? c.noCatalogMatch : undefined}
+                hasData={reviewing || Boolean(data)}
+                isEmpty={(reviewing || Boolean(data)) && !displayedRows.length}
                 loading={loading}
                 loadingPlaceholder={table}
                 loadingLabel={c.loadingSupply}
-                error={query.error ? requestErrorMessage(query.error, t) : ""}
+                error={!reviewing && query.error ? requestErrorMessage(query.error, t) : ""}
                 onRetry={() => void refetch()}
                 retryLabel={t.common.retry}
               />
             </Box>
-            {data && (
+            {!reviewing && data && (
               <>
                 <Divider />
                 <Box px="md" py="sm">
@@ -311,7 +405,7 @@ export function FarmProductPicker({
                     page={page}
                     pageSize={data.meta.page_size}
                     total={data.meta.total}
-                    disabled={query.isFetching || write.unresolved || page > lastPage}
+                    disabled={query.isFetching || page > lastPage}
                     onPage={setPage}
                     previousLabel={t.common.previous}
                     nextLabel={t.common.next}
@@ -323,54 +417,12 @@ export function FarmProductPicker({
               </>
             )}
           </DataListPaper>
-          {(atLimit || !fitsPage) && (
+          {!reviewing && (atLimit || !fitsPage) && (
             <Text size="sm" c="dimmed" role="status">
               {c.productLinkLimit.replace("{limit}", String(MAX_FARM_PRODUCT_LINKS))}
             </Text>
           )}
         </>
-      )}
-      {selection.size > 0 && (
-        <Stack component="ul" gap="xs" m={0} p={0} style={{ listStyle: "none" }}>
-          {[...selection.values()].map((row) => {
-            const name = nameOf(row);
-            const code = issueFor(row.id);
-            return (
-              <Stack component="li" key={row.id} gap={4} style={{ overflowWrap: "anywhere" }}>
-                <Group gap="xs" justify="space-between">
-                  <Text size="sm">
-                    {name} · {row.sku}
-                  </Text>
-                  <Button
-                    aria-label={c.unselectProduct.replace("{name}", name).replace("{sku}", row.sku)}
-                    variant="subtle"
-                    size="compact-sm"
-                    disabled={locked}
-                    onClick={() => select([row], false)}
-                  >
-                    {c.deselectProduct}
-                  </Button>
-                </Group>
-                {code && (
-                  <Text id={`${pickerId}-${row.id}`} c="danger" size="sm">
-                    {reviewMessage(code)}{" "}
-                    {(code === "farm_product_removed" || code === "product_already_linked") && (
-                      <Text
-                        component={AdminNavigationLink}
-                        td="underline"
-                        c="primary"
-                        inherit
-                        href={farmHref(params, { id: farmId, productId: row.id })}
-                      >
-                        {c.openSource}
-                      </Text>
-                    )}
-                  </Text>
-                )}
-              </Stack>
-            );
-          })}
-        </Stack>
       )}
     </ConfirmationDialog>
   );

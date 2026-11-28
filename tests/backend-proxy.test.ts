@@ -2047,18 +2047,30 @@ it("checks supply request list filters and rejects query on link and decisions",
   );
 });
 
-it.each(["products/bulk", "products/33333333-3333-4333-8333-333333333333/re-add"])(
-  "forwards only exact session-bound Farm linking requests on %s",
-  async (tail) => {
+it.each(["legacy", "mixed", "single"])(
+  "forwards only exact session-bound %s Farm linking requests",
+  async (mode) => {
     const key = "55555555-5555-4555-8555-555555555555";
+    const productId = "33333333-3333-4333-8333-333333333333";
+    const bulk = mode !== "single";
+    const tail = bulk ? "products/bulk" : `products/${productId}/re-add`;
     const prefix = `admin/farms/${key}/`;
     const path = prefix + tail;
-    const bulk = tail === "products/bulk";
-    const productId = "33333333-3333-4333-8333-333333333333";
     const body = JSON.stringify(
-      bulk
-        ? { idempotency_key: key, product_ids: [productId] }
-        : { idempotency_key: key, expected_link_id: productId, expected_version: 2 },
+      mode === "single"
+        ? { idempotency_key: key, expected_link_id: productId, expected_version: 2 }
+        : mode === "legacy"
+          ? { idempotency_key: key, product_ids: [productId] }
+          : {
+              idempotency_key: key,
+              items: [
+                { product_id: productId, expected_source: null },
+                {
+                  product_id: "44444444-4444-4444-8444-444444444444",
+                  expected_source: { id: key, version: 2 },
+                },
+              ],
+            },
     );
     const request = (method: "GET" | "POST" | "PATCH", query = "", target = path, headers = {}) =>
       ({ GET, POST, PATCH })[method](
@@ -2101,7 +2113,16 @@ it.each(["products/bulk", "products/33333333-3333-4333-8333-333333333333/re-add"
     expect((await request("GET", receipt)).status).toBe(401);
     expect(upstream).not.toHaveBeenCalled();
 
-    const conflict = { errors: [{ code: "product_already_linked", context: { product_id: key } }] };
+    const conflict = {
+      errors: [
+        mode === "mixed"
+          ? {
+              code: "farm_product_version_conflict",
+              context: { item_index: 1, product_id: productId, source_id: key, version: 3 },
+            }
+          : { code: "product_already_linked", context: { product_id: key } },
+      ],
+    };
     upstream.mockResolvedValueOnce(Response.json(conflict, { status: 409 }));
     const mutation = await request("POST");
     expect(mutation.status).toBe(409);
@@ -2113,7 +2134,7 @@ it.each(["products/bulk", "products/33333333-3333-4333-8333-333333333333/re-add"
     expect(await recovery.json()).toEqual(miss);
     expect(recovery.headers.get("cache-control")).toBe("private, no-store");
     const committed = {
-      data: bulk ? { farm_id: key, created_count: 1 } : null,
+      data: bulk ? { farm_id: key, created_count: mode === "mixed" ? 2 : 1 } : null,
       meta: { idempotent_replay: false },
     };
     const replayed = { ...committed, meta: { idempotent_replay: true } };
