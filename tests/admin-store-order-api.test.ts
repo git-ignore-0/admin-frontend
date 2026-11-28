@@ -25,9 +25,14 @@ const input = {
   delivery_date: "2026-11-28",
   lines: [{ product_id: product, quantity: 2 }],
   locale: "en",
+  include_line_snapshot: true,
 } satisfies StoreOrderQuoteInput;
 const line = {
   product_id: product,
+  name: "Quoted Tomato",
+  sku: "TOMATO-CURRENT",
+  unit_size: "1.000",
+  unit_label: "kg",
   quantity: 2,
   unit_price_vnd: "45000",
   subtotal_vnd: "90000",
@@ -67,6 +72,7 @@ describe("Admin Store order quote contract", () => {
     expect(request.method).toBe("POST");
     expect(request.signal).toBe(signal);
     expect(JSON.parse(request.body)).toEqual(input);
+    expect(JSON.parse(request.body).include_line_snapshot).toBe(true);
     expect(new Headers(request.headers).get("x-nfv-admin-request")).toBe("1");
   });
 
@@ -75,6 +81,7 @@ describe("Admin Store order quote contract", () => {
       kind: "historical",
       guest,
       delivery_date: "2026-11-27",
+      include_line_snapshot: true,
       shipping_fee_vnd: "0001",
       lines: [{ product_id: product, quantity: 1, unit_price_vnd: "9007199254740990" }],
     } satisfies StoreOrderQuoteInput;

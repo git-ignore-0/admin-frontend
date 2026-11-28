@@ -6,6 +6,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -74,12 +75,15 @@ function wrapper({ children }: { children: ReactNode }) {
 function BuyerHarness({
   type = "user",
   kind = "new",
+  errors,
 }: {
   type?: "user" | "guest";
   kind?: "new" | "historical";
+  errors?: { user?: string };
 }) {
   const [buyerType, onBuyerTypeChange] = useState(type);
   const [userId, onUserChange] = useState<string | null>(null);
+  const [guestPhoneRejected, onGuestPhoneRejectionChange] = useState(false);
   const [guest, onGuestChange] = useState({
     recipient_name: "",
     phone_number: "",
@@ -96,8 +100,14 @@ function BuyerHarness({
       userId={userId}
       onUserChange={onUserChange}
       guest={guest}
-      onGuestChange={onGuestChange}
+      onGuestChange={(next) => {
+        if (next.phone_number !== guest.phone_number) onGuestPhoneRejectionChange(false);
+        onGuestChange(next);
+      }}
+      guestPhoneRejected={guestPhoneRejected}
+      onGuestPhoneRejectionChange={onGuestPhoneRejectionChange}
       lookup={lookup}
+      errors={errors}
     />
   );
 }
@@ -118,20 +128,87 @@ it("searches on the server, fetches only the chosen user and renders their read-
       });
     }
     if (path.includes(primary)) return Response.json({ data: detail(primary, "Taylor One") });
+    if (path.includes(secondary)) return Response.json({ data: detail(secondary, "Taylor Two") });
     return Response.json({ data: [] });
   });
   vi.stubGlobal("fetch", fetcher);
   render(<BuyerHarness />, { wrapper });
   expect(fetcher).not.toHaveBeenCalled();
 
-  const input = screen.getByRole("combobox", { name: "System user" });
+  const input = screen.getByRole("combobox", { name: "Search users" });
   fireEvent.focus(input);
   fireEvent.change(input, { target: { value: "Taylor" } });
-  fireEvent.click(await screen.findByRole("option", { name: /Taylor One/ }));
-  expect(await screen.findByText("Taylor One Street")).toBeVisible();
-  expect(screen.getByText("Recipient name").tagName).toBe("DT");
-  expect(screen.queryByRole("textbox", { name: "Recipient name" })).not.toBeInTheDocument();
+  await screen.findByRole("option", { name: /Taylor One/ });
+  fireEvent.keyDown(input, { key: "ArrowDown", code: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+  const change = screen.getByRole("button", { name: "Change user" });
+  expect(change).toHaveFocus();
+  const selected = screen.getByRole("group", { name: "Selected user" });
+  expect(await within(selected).findByText("Taylor One")).toBeVisible();
+  const address = screen.getByRole("region", { name: "Delivery address" });
+  expect(within(address).getByText("Taylor One Street")).toBeVisible();
+  expect(within(address).getByText("Recipient name").tagName).toBe("DT");
+  expect(within(address).queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Search users" })).not.toBeInTheDocument();
   expect(fetcher.mock.calls.some(([path]) => path.includes(secondary))).toBe(false);
+
+  fireEvent.click(change);
+  const replacement = screen.getByRole("combobox", { name: "Search users" });
+  expect(replacement).toHaveFocus();
+  expect(replacement).toHaveValue("");
+  expect(screen.queryByRole("region", { name: "Delivery address" })).not.toBeInTheDocument();
+  fireEvent.change(replacement, { target: { value: "Taylor" } });
+  fireEvent.click(await screen.findByRole("option", { name: /Taylor Two/ }));
+  expect(
+    await within(screen.getByRole("group", { name: "Selected user" })).findByText("Taylor Two"),
+  ).toBeVisible();
+  expect(screen.queryByText("Taylor One Street")).not.toBeInTheDocument();
+});
+
+it("keeps unsubmitted user search text through blur without selecting an account", async () => {
+  const fetcher = vi.fn(async () =>
+    Response.json({
+      data: [user(primary, "Taylor One")],
+      meta: { page: 1, page_size: 30, total: 1 },
+    }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(<BuyerHarness />, { wrapper });
+
+  const input = screen.getByRole("combobox", { name: "Search users" });
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: "Taylor" } });
+  await screen.findByRole("option", { name: /Taylor One/ });
+  fireEvent.blur(input);
+
+  expect(input).toHaveValue("Taylor");
+  expect(screen.queryByRole("button", { name: "Change user" })).not.toBeInTheDocument();
+  expect(fetcher.mock.calls).toHaveLength(1);
+});
+
+it("associates a selected-user error with the Change user button", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) =>
+      path.includes("/users?")
+        ? Response.json({
+            data: [user(primary, "Taylor")],
+            meta: { page: 1, page_size: 20, total: 1 },
+          })
+        : Response.json({ data: detail(primary, "Taylor") }),
+    ),
+  );
+  const view = render(<BuyerHarness />, { wrapper });
+  const search = screen.getByRole("combobox", { name: "Search users" });
+  fireEvent.focus(search);
+  fireEvent.change(search, { target: { value: "Taylor" } });
+  fireEvent.click(await screen.findByRole("option", { name: /Taylor/ }));
+  const change = screen.getByRole("button", { name: "Change user" });
+  view.rerender(<BuyerHarness errors={{ user: "This user is no longer eligible." }} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("This user is no longer eligible.");
+  expect(change).toHaveAccessibleDescription("This user is no longer eligible.");
+  expect(change).toHaveAttribute("aria-invalid", "true");
 });
 
 it("hides a previous choice immediately and ignores a late user detail response", async () => {
@@ -191,6 +268,78 @@ it("restricts new guest orders to supported areas and resets the ward when the p
   expect(ward).toHaveValue("First Ward");
   selectOption(province, "02");
   expect(ward).toHaveValue("");
+});
+
+it("labels guest address controls and validates the shipping phone with the Store phone rules", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ data: [] })),
+  );
+  render(<BuyerHarness type="guest" />, { wrapper });
+  const input = screen.getByRole("textbox", { name: "Phone number" });
+  expect(input).toHaveAttribute("type", "tel");
+  expect(input).toHaveAttribute("inputmode", "tel");
+  expect(input).toHaveAttribute("autocomplete", "shipping tel-national");
+  expect(screen.getByRole("textbox", { name: "Street address" })).toHaveAttribute(
+    "autocomplete",
+    "shipping address-line1",
+  );
+  expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
+
+  fireEvent.change(input, { target: { value: "0912" } });
+  fireEvent.blur(input);
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveAccessibleDescription("Enter a valid phone number.");
+  fireEvent.change(input, { target: { value: "0912345678" } });
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+});
+
+it("keeps guest phone edits to ASCII digits and rejects mixed paste as a whole", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ data: [] })),
+  );
+  render(<BuyerHarness type="guest" />, { wrapper });
+  expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
+  const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
+  fireEvent.input(input, { target: { value: "0912" } });
+  fireEvent.input(input, { target: { value: "0912a" } });
+  expect(input).toHaveValue("0912");
+  fireEvent.input(input, { target: { value: "0912９" } });
+  expect(input).toHaveValue("0912");
+
+  input.setSelectionRange(2, 4);
+  for (const text of ["3abc4", "3\n4", "+8434"]) {
+    expect(fireEvent.paste(input, { clipboardData: { getData: () => text } })).toBe(false);
+    expect(input).toHaveValue("0912");
+    expect(input.selectionStart).toBe(2);
+    expect(input.selectionEnd).toBe(4);
+  }
+  expect(fireEvent.paste(input, { clipboardData: { getData: () => "345678" } })).toBe(true);
+  fireEvent.input(input, { target: { value: "09345678" } });
+  expect(input).toHaveValue("09345678");
+});
+
+it("reports a rejected phone paste until the guest phone is edited or confirmed", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ data: [] })),
+  );
+  render(<BuyerHarness type="guest" />, { wrapper });
+  expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
+  const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
+  fireEvent.input(input, { target: { value: "0912345678" } });
+  input.select();
+  const paste = () => fireEvent.paste(input, { clipboardData: { getData: () => "0902 345 678" } });
+  expect(paste()).toBe(false);
+  expect(input).toHaveValue("0912345678");
+  expect(input).toHaveAccessibleDescription(/paste rejected/i);
+  fireEvent.click(screen.getByRole("button", { name: "Use the current number" }));
+  expect(input).toHaveFocus();
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(paste()).toBe(false);
+  fireEvent.input(input, { target: { value: "0902345678" } });
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
 });
 
 it("clears an unsupported historical guest location while retaining shared recipient fields", async () => {

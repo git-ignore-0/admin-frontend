@@ -4,6 +4,7 @@ import {
   buildBackendTarget,
   isAllowedBackendRequest,
   isFarmReceiptPath,
+  MAX_ORDER_LINES,
   PROVINCE_CODE,
   UUID_PATH_SEGMENT,
 } from "@/lib/backend-target";
@@ -195,7 +196,11 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
   }
   if (resource === "store-products") {
     if (action === "transition") return params.size > 0;
+    const hasOrderFilter = params.has("order_kind") || params.has("product_ids");
+    if (hasOrderFilter && (request.method !== "GET" || id !== undefined)) return true;
     if (request.method === "GET" && id === undefined) {
+      const orderKind = params.get("order_kind");
+      const productIds = params.get("product_ids")?.split(",");
       return (
         hasDuplicateQuery(
           params,
@@ -206,7 +211,14 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
           "csa_eligible",
           "is_active",
           "is_published",
+          "order_kind",
+          "product_ids",
         ) ||
+        (orderKind !== null && orderKind !== "new" && orderKind !== "historical") ||
+        (productIds !== undefined &&
+          (orderKind === null ||
+            productIds.length > MAX_ORDER_LINES ||
+            productIds.some((productId) => !UUID_PATH_SEGMENT.test(productId)))) ||
         (params.has("status") &&
           (!["draft", "active", "discontinued"].includes(params.get("status") ?? "") ||
             params.has("is_active") ||

@@ -13,7 +13,6 @@ vi.mock("@/lib/commerce-api", () => ({ listStoreProducts: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const active = product("1", "Basil", "active");
-const draft = product("2", "Cauliflower", "draft");
 const discontinued = product("3", "Carrot", "discontinued");
 
 function product(id: string, name: string, status: StoreProduct["status"]): StoreProduct {
@@ -52,7 +51,7 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-it("requests the catalog only on open and uses the active filter for new orders", async () => {
+it("requests the eligible new-order catalog only on open", async () => {
   const list = vi.mocked(listStoreProducts);
   list.mockResolvedValue({ data: [active], meta: { page: 1, page_size: 30, total: 1 } });
   const props = { kind: "new", selected: [active], onClose: vi.fn(), onAdd: vi.fn() } as const;
@@ -61,17 +60,17 @@ it("requests the catalog only on open and uses the active filter for new orders"
   view.rerender(<StoreOrderProductPicker {...props} opened />);
   expect(await screen.findByText("Basil")).toBeVisible();
   expect(list).toHaveBeenCalledWith(
-    { page: 1, search: "", status: "active" },
+    { page: 1, search: "", order_kind: "new" },
     expect.any(AbortSignal),
   );
   expect(screen.getByRole("checkbox", { name: /Basil/ })).toBeDisabled();
 });
 
-it("keeps selections across pages and searches while draft rows cannot be added to a historical order", async () => {
+it("keeps selections across eligible historical pages and searches", async () => {
   const list = vi.mocked(listStoreProducts);
-  list.mockImplementation(async ({ page = 1, search }) => ({
-    data: search ? [discontinued] : page === 1 ? [active] : [draft],
-    meta: { page, page_size: 1, total: search ? 1 : 2 },
+  list.mockImplementation(async ({ page = 1, search, product_ids }) => ({
+    data: product_ids ? [discontinued, active] : search || page === 2 ? [discontinued] : [active],
+    meta: { page, page_size: product_ids ? 50 : 1, total: search ? 1 : 2 },
   }));
   const add = vi.fn();
   render(
@@ -87,9 +86,9 @@ it("keeps selections across pages and searches while draft rows cannot be added 
 
   fireEvent.click(await screen.findByRole("checkbox", { name: /Basil/ }));
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  expect(await screen.findByRole("checkbox", { name: /Cauliflower/ })).toBeDisabled();
+  expect(await screen.findByRole("checkbox", { name: /Carrot/ })).toBeEnabled();
   expect(list).toHaveBeenLastCalledWith(
-    { page: 2, search: "", status: undefined },
+    { page: 2, search: "", order_kind: "historical" },
     expect.any(AbortSignal),
   );
 
@@ -99,22 +98,71 @@ it("keeps selections across pages and searches while draft rows cannot be added 
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   const carrot = await screen.findByRole("checkbox", { name: /Carrot/ });
   expect(list).toHaveBeenLastCalledWith(
-    { page: 1, search: "Carrot", status: undefined },
+    { page: 1, search: "Carrot", order_kind: "historical" },
     expect.any(AbortSignal),
   );
   fireEvent.click(carrot);
   await waitFor(() => expect(screen.getByRole("button", { name: "Add products" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Add products" }));
-  expect(add).toHaveBeenCalledWith([active, discontinued]);
+  await waitFor(() => expect(add).toHaveBeenCalledWith([active, discontinued]));
+  expect(list).toHaveBeenLastCalledWith(
+    { order_kind: "historical", product_ids: [active.id, discontinued.id] },
+    expect.any(AbortSignal),
+  );
 });
 
-it("drops a selected product that a later catalog response now marks as draft", async () => {
+it("keeps a selection visible when it disappears and lets the user remove it after verification", async () => {
   const list = vi.mocked(listStoreProducts);
   let changed = false;
-  list.mockImplementation(async ({ page = 1 }) => ({
-    data: page === 1 ? [{ ...active, status: changed ? "draft" : "active" }] : [discontinued],
-    meta: { page, page_size: 1, total: 2 },
-  }));
+  list.mockImplementation(async ({ page = 1, product_ids }) => {
+    const eligible = changed ? [discontinued] : [active, discontinued];
+    const data = product_ids
+      ? eligible.filter(({ id }) => product_ids.includes(id))
+      : eligible.slice(page - 1, page);
+    return {
+      data,
+      meta: {
+        page,
+        page_size: product_ids ? 50 : 1,
+        total: product_ids ? data.length : eligible.length,
+      },
+    };
+  });
+  const add = vi.fn();
+  render(
+    <StoreOrderProductPicker
+      opened
+      kind="historical"
+      selected={[]}
+      onClose={vi.fn()}
+      onAdd={add}
+    />,
+    { wrapper },
+  );
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Basil/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Carrot/ }));
+  changed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  await screen.findByRole("checkbox", { name: /Carrot/ });
+  expect(screen.getByRole("button", { name: "2 selected" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Add products" }));
+  expect(
+    await screen.findByText("This product is unavailable for the selected order type."),
+  ).toBeVisible();
+  expect(screen.getByText("Basil")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add products" })).toBeDisabled();
+  expect(add).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("checkbox", { name: /Remove Basil/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add products" }));
+  await waitFor(() => expect(add).toHaveBeenCalledWith([discontinued]));
+});
+
+it("keeps focus in the picker when removing a focused selected row", async () => {
+  vi.mocked(listStoreProducts).mockResolvedValue({
+    data: [active, discontinued],
+    meta: { page: 1, page_size: 30, total: 2 },
+  });
   render(
     <StoreOrderProductPicker
       opened
@@ -125,13 +173,14 @@ it("drops a selected product that a later catalog response now marks as draft", 
     />,
     { wrapper },
   );
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Basil/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByRole("checkbox", { name: /Carrot/ });
-  changed = true;
-  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
-  expect(await screen.findByText("Draft")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  await screen.findByRole("checkbox", { name: /Carrot/ });
-  expect(screen.getByRole("button", { name: "Add products" })).toBeDisabled();
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Select Basil/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select Carrot/ }));
+  fireEvent.click(screen.getByRole("button", { name: "2 selected" }));
+  const basil = screen.getByRole("checkbox", { name: /Remove Basil/ });
+  const carrot = screen.getByRole("checkbox", { name: /Remove Carrot/ });
+  basil.focus();
+  fireEvent.click(basil);
+  expect(carrot).toHaveFocus();
+  fireEvent.click(carrot);
+  expect(screen.getByRole("button", { name: "Back to catalog" })).toHaveFocus();
 });

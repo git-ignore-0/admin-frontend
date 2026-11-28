@@ -19,3 +19,16 @@
     grid-area: 1 / 1 / 3;
   }
 }
+
+.orderFields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mantine-spacing-md);
+}
+
+@container (min-width: 880px) {
+  .orderFields {
+    grid-template-columns: fit-content(100%) minmax(0, 16rem);
+    align-items: start;
+  }
+}

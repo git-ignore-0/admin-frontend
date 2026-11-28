@@ -38,7 +38,7 @@ vi.mock("@/components/store-order-create-buyer", () => ({
         type="button"
         onClick={() => {
           onBuyerTypeChange("guest");
-          onGuestChange(address);
+          onGuestChange({ ...address, phone_number: "0901234567" });
         }}
       >
         Choose guest
@@ -103,6 +103,10 @@ function makeQuote(input: StoreOrderQuoteInput, storePrice = 45000, recipient = 
     const unitPrice = input.kind === "historical" ? Number(line.unit_price_vnd) : storePrice;
     return {
       product_id: line.product_id,
+      name: "Quoted Tomato",
+      sku: "TOMATO-CURRENT",
+      unit_size: "1.250",
+      unit_label: "kg",
       quantity: line.quantity,
       unit_price_vnd: String(unitPrice),
       subtotal_vnd: String(unitPrice * line.quantity),
@@ -235,6 +239,8 @@ it.each([
     submitDraft();
     const dialog = await screen.findByRole("dialog", { name: "Review order details" });
     expect(within(dialog).getByText("12 Nguyen Hue, Ward, Đắk Lắk")).toBeVisible();
+    expect(within(dialog).getByText("Quoted Tomato")).toBeVisible();
+    expect(within(dialog).getByText("TOMATO-CURRENT · 1.25 kg")).toBeVisible();
     expect(requests).toHaveLength(1);
     await approveQuote();
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/store-orders/${orderId}`));
@@ -242,6 +248,7 @@ it.each([
     expect(requests[0].body).toEqual({
       kind,
       locale: "en",
+      include_line_snapshot: true,
       delivery_date: kind === "new" ? adminTodayIso() : storeOrderDateRange("historical").max,
       ...(buyer === "user" ? { buyer_user_id: userId } : { guest: address }),
       ...(kind === "historical" ? { shipping_fee_vnd: "7000" } : {}),
@@ -376,10 +383,11 @@ it("keeps the receipt across route remount and suppresses completion after a ses
   }
   expect(router.replace).not.toHaveBeenCalled();
   view.rerender(tree());
-  expect(await screen.findByRole("link", { name: "Open order details" })).toHaveAttribute(
-    "href",
-    `/store-orders/${orderId}`,
+  await waitFor(() =>
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith(`/store-orders/${orderId}`),
   );
+  expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+  router.replace.mockClear();
   view.rerender(tree(true, "two"));
   expect(screen.queryByRole("link", { name: "Open order details" })).not.toBeInTheDocument();
   setupDraft();
@@ -393,6 +401,39 @@ it("keeps the receipt across route remount and suppresses completion after a ses
   expect(router.replace).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
 });
+
+it.each([false, true])(
+  "restores the rejected draft and error across remount when the page is already open: %s",
+  async (openBeforeResponse) => {
+    let finish!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string, init: RequestInit) => {
+        if (path === quotePath)
+          return Promise.resolve(makeQuote(readBody(init) as StoreOrderQuoteInput));
+        return new Promise<Response>((resolve) => (finish = resolve));
+      }),
+    );
+    const view = render(tree());
+    setupDraft("historical", "guest");
+    submitDraft();
+    await approveQuote();
+    view.rerender(tree(false));
+    if (openBeforeResponse) view.rerender(tree());
+    await act(async () =>
+      finish(Response.json({ lines: [{ quantity: ["Too much."] }] }, { status: 400 })),
+    );
+    if (!openBeforeResponse) view.rerender(tree());
+    const quantity = await screen.findByRole("textbox", { name: /Quantity/ });
+    await waitFor(() => expect(quantity).toHaveFocus());
+    expect(quantity).toHaveValue("2");
+    expect(quantity).toBeEnabled();
+    expect(quantity).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("textbox", { name: /Unit price/ })).toHaveValue("34000");
+    expect(screen.getByRole("textbox", { name: /Delivery fee/i })).toHaveValue("7000");
+    expect(router.replace).not.toHaveBeenCalled();
+  },
+);
 
 it("recovers the matching receipt after an unreadable create response", async () => {
   let sent: StoreOrderCreateInput | undefined;
@@ -478,7 +519,7 @@ it("keeps the draft and original key after a remounted retry gets a requote conf
   await waitFor(() => expect(router.replace).toHaveBeenCalledOnce());
 });
 
-it("keeps multiline numeric paste invalid and allows a clean replacement", async () => {
+it("rejects the entire multiline numeric paste and allows a clean replacement", async () => {
   const fetcher = vi.fn(async (_path: string, init: RequestInit) =>
     makeQuote(readBody(init) as StoreOrderQuoteInput),
   );
@@ -486,9 +527,9 @@ it("keeps multiline numeric paste invalid and allows a clean replacement", async
   render(tree());
   setupDraft("historical", "guest");
   const unitPrice = screen.getByRole<HTMLInputElement>("textbox", { name: /Unit price/ });
-  unitPrice.select();
+  fireEvent.change(unitPrice, { target: { value: "" } });
   fireEvent.paste(unitPrice, { clipboardData: { getData: () => "34\n000" } });
-  expect(unitPrice).toHaveValue("34 000");
+  expect(unitPrice).toHaveValue("");
   submitDraft();
   expect(screen.getByText(/Enter a whole VND amount/)).toBeVisible();
   expect(fetcher).not.toHaveBeenCalled();
@@ -519,4 +560,55 @@ it("restores focus after closing the confirmation and moves it to recovery when 
   await approveQuote();
   const recovery = await screen.findByRole("button", { name: "Check result" });
   expect(document.activeElement).toContainElement(recovery);
+});
+
+it("focuses the first invalid control and maps Backend errors to the submitted product row", async () => {
+  const fetcher = vi.fn(async () =>
+    Response.json({ lines: [{ quantity: ["Too much."] }] }, { status: 400 }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  submitDraft();
+  expect(screen.getByRole("textbox", { name: "Delivery date" })).toHaveFocus();
+  setupDraft();
+  submitDraft();
+  const quantity = screen.getByRole("textbox", { name: /Quantity/ });
+  await waitFor(() => expect(quantity).toHaveFocus());
+  expect(quantity).toHaveAttribute("aria-invalid", "true");
+  expect(quantity).toHaveValue("2");
+});
+
+it("restores the draft only when Backend confirms that an unknown request was closed", async () => {
+  let sent: StoreOrderCreateInput | undefined;
+  const fetcher = vi.fn(async (path: string, init: RequestInit) => {
+    if (path === quotePath) return makeQuote(readBody(init) as StoreOrderQuoteInput);
+    if (path === collection) {
+      sent = readBody(init) as StoreOrderCreateInput;
+      return businessError("upstream_timeout", 504);
+    }
+    expect(path).toBe(`${collection}/close-creation`);
+    expect(readBody(init)).toEqual({ idempotency_key: sent?.idempotency_key });
+    return Response.json({
+      data: { closed: true },
+      meta: {
+        action_receipt: {
+          action: "create_store_order",
+          idempotency_key: sent?.idempotency_key,
+          resource_id: null,
+        },
+      },
+    });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  setupDraft();
+  submitDraft();
+  await approveQuote();
+  fireEvent.click(await screen.findByRole("button", { name: "Close request and edit" }));
+  expect(await screen.findByText(/previous request was closed/i)).toBeVisible();
+  const quantity = screen.getByRole("textbox", { name: /Quantity/ });
+  expect(quantity).toHaveValue("2");
+  expect(quantity).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+  expect(router.replace).not.toHaveBeenCalled();
 });

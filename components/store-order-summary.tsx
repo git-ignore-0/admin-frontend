@@ -34,7 +34,7 @@ function quotaCovered(order: StoreOrder) {
     .toString();
 }
 
-function PaymentRow({
+export function PaymentRow({
   label,
   children,
   emphasis = false,
@@ -49,10 +49,29 @@ function PaymentRow({
       <Text component="dt" size="sm" c={emphasis ? undefined : "dimmed"} fw={weight}>
         {label}
       </Text>
-      <Box component="dd" m={0} miw={0} ta="end" fw={weight} style={{ overflowWrap: "anywhere" }}>
+      <Box
+        component="dd"
+        m={0}
+        ms="auto"
+        miw={0}
+        ta="end"
+        fw={weight}
+        style={{ overflowWrap: "anywhere" }}
+      >
         {children}
       </Box>
     </Group>
+  );
+}
+
+export function StoreOrderPaymentStatus({ status }: { status: StorePaymentStatus }) {
+  const { locale } = useAdminI18n();
+  return (
+    <Status
+      status={status}
+      color={paymentStatusColors[status]}
+      label={storeOrdersCopy(locale).detailPaymentStatuses[status]}
+    />
   );
 }
 
@@ -70,11 +89,7 @@ function StoreOrderTotals({ order }: { order: StoreOrder }) {
     <>
       <Stack component="dl" m={0} gap="xs">
         <PaymentRow label={c.detailPaymentStatus}>
-          <Status
-            status={order.payment_status}
-            color={paymentStatusColors[order.payment_status]}
-            label={c.detailPaymentStatuses[order.payment_status]}
-          />
+          <StoreOrderPaymentStatus status={order.payment_status} />
         </PaymentRow>
         <PaymentRow label={c.listedSubtotal}>
           {formatStoreMoney(listedSubtotal(order), locale)}

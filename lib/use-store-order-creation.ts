@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   useAdminRecordScope,
   useIsAdminQueryScopeCurrent,
 } from "@/components/admin-query-provider";
 import {
+  closeAdminStoreOrderCreation,
   createAdminStoreOrder,
   recoverAdminStoreOrder,
   type StoreOrderCreateInput,
@@ -20,10 +21,10 @@ import {
 import type { StoreOrderDraft } from "@/lib/store-order-draft";
 import type { StoreProduct } from "@/lib/types";
 
-type Operation = "create" | "recover" | "replay";
+type Operation = "create" | "recover" | "replay" | "close";
 type Draft = StoreOrderDraft<StoreProduct>;
 type CreationAttempt = { request: StoreOrderCreateInput; draft: Draft; conflictingKey: boolean };
-type ConfirmedCreation = { id: string; conflictingKey: boolean };
+type CreationOutcome = { id: string; conflictingKey: boolean } | { draft: Draft; issue: unknown };
 
 export function useStoreOrderCreation({
   onConfirmed,
@@ -36,12 +37,25 @@ export function useStoreOrderCreation({
 }) {
   const isCurrent = useIsAdminQueryScopeCurrent();
   const scope = useAdminRecordScope("create-store-order");
-  const { intent, controls } = useAdminMutationIntent<CreationAttempt, ConfirmedCreation>(
+  const { intent, controls } = useAdminMutationIntent<CreationAttempt, CreationOutcome>(
     "store-order-create",
     "collection",
   );
   const [issue, setIssue] = useState<unknown>();
   const [operation, setOperation] = useState<Operation>();
+
+  useEffect(() => {
+    if (!scope.capture()() || intent?.phase !== "confirmed" || controls.read() !== intent) return;
+    const result = intent.receipt;
+    if ("draft" in result) {
+      controls.clear();
+      onRejected(result.draft);
+      setIssue(result.issue);
+    } else if (!result.conflictingKey) {
+      controls.clear();
+      onConfirmed(result.id);
+    }
+  }, [controls, intent, onConfirmed, onRejected, scope]);
 
   async function run(kind: Operation, payload?: CreationAttempt) {
     const canAct = scope.capture();
@@ -59,10 +73,14 @@ export function useStoreOrderCreation({
     try {
       const result = read
         ? await recoverAdminStoreOrder(request.idempotency_key, read.signal, read.current)
-        : await createAdminStoreOrder(request, canAct);
-      const receipt = { ...result, conflictingKey };
-      if (!isCurrent() || !controls.settle(attempt, { phase: "confirmed", receipt })) return;
-      if (canAct() && !conflictingKey) onConfirmed(receipt.id);
+        : kind === "close"
+          ? await closeAdminStoreOrderCreation(request.idempotency_key, canAct)
+          : await createAdminStoreOrder(request, canAct);
+      const receipt =
+        "closed" in result
+          ? { draft, issue: new Error("store_creation_closed") }
+          : { ...result, conflictingKey };
+      if (isCurrent()) controls.settle(attempt, { phase: "confirmed", receipt });
     } catch (error) {
       if (!isCurrent()) return;
       const problem: ClientApiError | undefined = error instanceof Error ? error : undefined;
@@ -76,11 +94,10 @@ export function useStoreOrderCreation({
             isUncertainMutationError(error) ||
             problem?.status === 499
           ? { phase: "unknown" as const, payload: { request, draft, conflictingKey: conflict } }
-          : null;
+          : { phase: "confirmed" as const, receipt: { draft, issue: error } };
       if (controls.settle(attempt, result) && canAct()) {
-        if (result?.phase === "retired") onAccessDenied();
-        else if (!result) onRejected(draft);
-        setIssue(error);
+        if (result.phase === "retired") onAccessDenied();
+        if (result.phase !== "confirmed") setIssue(error);
       }
     } finally {
       if (canAct()) setOperation(undefined);
@@ -97,6 +114,7 @@ export function useStoreOrderCreation({
       run("create", { request, draft, conflictingKey: false }),
     recover: () => run("recover"),
     replay: () => run("replay"),
+    close: () => run("close"),
     startAnother() {
       if (!scope.capture()() || controls.read()?.phase !== "confirmed") return false;
       controls.clear();

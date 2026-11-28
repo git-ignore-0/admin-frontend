@@ -1,0 +1,28 @@
+.productList {
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.productControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: start;
+  gap: var(--mantine-spacing-xs);
+}
+
+.numeric,
+.referencePrice {
+  font-variant-numeric: tabular-nums;
+}
+
+.referencePrice {
+  display: flex;
+  align-items: center;
+  min-height: var(--input-height-sm, 2.25rem);
+}
+
+.removeProduct {
+  margin-block-start: calc(var(--mantine-font-size-sm) * var(--mantine-line-height));
+  width: var(--input-height-sm, 2.25rem);
+  height: var(--input-height-sm, 2.25rem);
+}

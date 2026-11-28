@@ -109,6 +109,21 @@ describe("Commerce API and compatibility adapter", () => {
     );
   });
 
+  it("verifies only the requested products against a complete order catalog response", async () => {
+    const query = { order_kind: "new", product_ids: [productId, categoryId] } as const;
+    const valid = {
+      data: [{ ...productResponse, status: "active", retail_price_vnd: "10000" }],
+      meta: { page: 1, page_size: 50, total: 1 },
+    };
+    fetchMock.mockResolvedValueOnce(Response.json(valid));
+    await expect(listStoreProducts(query)).resolves.toEqual(valid);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `/api/backend/admin/store-products?page=1&order_kind=new&product_ids=${productId}%2C${categoryId}`,
+    );
+    fetchMock.mockResolvedValueOnce(Response.json({ ...valid, meta: { ...valid.meta, total: 2 } }));
+    await expect(listStoreProducts(query)).rejects.toThrow("invalid_response");
+  });
+
   it("keeps VND as a lossless decimal integer string in product writes", async () => {
     fetchMock.mockResolvedValue(
       Response.json({ data: { ...productResponse, capabilities } }, { status: 201 }),

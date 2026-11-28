@@ -30,6 +30,7 @@ import {
 import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { formatVietnamPhone } from "@/lib/phone-number";
 import { storeOrderCreateCopy } from "@/lib/store-order-create-copy";
+import { storeOrderCreateErrors } from "@/lib/store-order-create-errors";
 import {
   blankStoreOrderDraft,
   MAX_ORDER_LINES,
@@ -103,6 +104,9 @@ export function StoreOrderCreate() {
   const [review, setReview] = useState<OrderReview | null>(null);
   const quotingRef = useRef(false);
   const submit = useRef<HTMLButtonElement>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const [validationAttempt, setValidationAttempt] = useState(0);
+  const lastFocusedAttempt = useRef(0);
   const feedback = useRef<HTMLDivElement>(null);
   const typeHeading = useId();
   const recipientHeading = useId();
@@ -120,7 +124,10 @@ export function StoreOrderCreate() {
       toast(copy.confirmed);
       router.replace(`${listPath}/${id}`);
     },
-    onRejected: setDraft,
+    onRejected(draft) {
+      setDraft(draft);
+      setShowErrors(true);
+    },
     onAccessDenied: resetDraft,
   });
 
@@ -128,7 +135,9 @@ export function StoreOrderCreate() {
   const draft =
     intent?.phase === "pending" || intent?.phase === "unknown"
       ? intent.payload.draft
-      : editableDraft;
+      : intent?.phase === "confirmed" && "draft" in intent.receipt
+        ? intent.receipt.draft
+        : editableDraft;
   const today = useVietnamDay();
   const day = new Date(`${today}T12:00:00+07:00`);
   const range = storeOrderDateRange(draft.kind, day);
@@ -161,12 +170,14 @@ export function StoreOrderCreate() {
     creation.clearIssue();
     setReview(null);
     const { input } = validateStoreOrderDraft(draft, locale);
-    if (!input) return;
     if (
-      draft.buyerType === "user" &&
-      (!buyer.eligible || (draft.kind === "new" && buyer.address?.is_supported === false))
-    )
+      !input ||
+      (draft.buyerType === "user" &&
+        (!buyer.eligible || (draft.kind === "new" && buyer.address?.is_supported === false)))
+    ) {
+      setValidationAttempt((version) => version + 1);
       return;
+    }
     const read = scope.beginRead();
     quotingRef.current = true;
     setQuoting(true);
@@ -201,6 +212,7 @@ export function StoreOrderCreate() {
     if (JSON.stringify(now.input) !== JSON.stringify(activeReview.input)) {
       setReview(null);
       setShowErrors(true);
+      setValidationAttempt((version) => version + 1);
       return;
     }
     const { input, quote } = activeReview;
@@ -214,13 +226,32 @@ export function StoreOrderCreate() {
   const issue = creation.issue ?? quoteError;
   const problem: ClientApiError | undefined = issue instanceof Error ? issue : undefined;
   const issueCode = problem?.message ?? "";
-  const invalidField = issueCode === "validation_error" ? problem?.field : undefined;
+  const backendErrors = storeOrderCreateErrors(
+    problem,
+    draft.lines.map(({ product }) => product.id),
+    copy.guestInvalid,
+    copy.quantityError,
+    copy.moneyError,
+    copy.productUnavailable,
+    copy.stockChanged,
+  );
   const feedbackStage = intent?.phase ?? (issue != null ? issueCode || "failed" : "");
   useLayoutEffect(() => {
-    if (feedbackStage) feedback.current?.focus();
-  }, [feedbackStage]);
+    if (intent || protectedError) {
+      feedback.current?.focus();
+      return;
+    }
+    const attempted = validationAttempt !== lastFocusedAttempt.current;
+    lastFocusedAttempt.current = validationAttempt;
+    if (!attempted && !issue) return;
+    const firstInvalid = form.current?.querySelector<HTMLElement>(
+      '[aria-invalid="true"]:not([disabled]), [data-order-field-error]',
+    );
+    (firstInvalid ?? feedback.current)?.focus();
+  }, [feedbackStage, intent, issue, protectedError, validationAttempt]);
   const businessErrors: Record<string, string> = {
     store_requote_required: copy.requote,
+    store_creation_closed: copy.creationClosed,
     store_stock_changed: copy.stockChanged,
     store_product_changed: copy.productUnavailable,
     store_shipping_area_unsupported: copy.shippingUnsupported,
@@ -235,7 +266,10 @@ export function StoreOrderCreate() {
     store_order_amount_out_of_range: copy.totalError,
     store_duplicate_product: copy.productsRequired,
   };
-  const guestErrors: Partial<Record<keyof StoreOrderGuest | "user", string>> = {};
+  const guestErrors = { ...backendErrors.buyer };
+  if (issueCode === "store_buyer_not_found" || issueCode === "store_buyer_ineligible") {
+    guestErrors.user ??= copy.buyerInvalid;
+  }
   if (showErrors) {
     for (const field of [
       "recipient_name",
@@ -245,8 +279,7 @@ export function StoreOrderCreate() {
       "address",
     ] as const) {
       const fieldIssue = preview.errors.guest[field];
-      if (invalidField === field) guestErrors[field] = copy.guestInvalid;
-      else if (fieldIssue)
+      if (fieldIssue && !guestErrors[field])
         guestErrors[field] =
           fieldIssue === "required"
             ? copy.guestRequired
@@ -254,16 +287,18 @@ export function StoreOrderCreate() {
               ? copy.phoneInvalid
               : copy.guestInvalid;
     }
-    if (invalidField === "buyer_user_id") guestErrors.user = copy.buyerInvalid;
-    else if (preview.errors.user) guestErrors.user = copy.buyerRequired;
+    if (preview.errors.user) guestErrors.user ??= copy.buyerRequired;
   }
   const dateError =
-    showErrors && (preview.errors.deliveryDate || invalidField === "delivery_date")
+    showErrors && (preview.errors.deliveryDate || backendErrors.date)
       ? draft.kind === "new"
         ? copy.dateInvalidNew
         : copy.dateInvalidHistorical
       : undefined;
-  const detailPath = intent?.phase === "confirmed" ? `${listPath}/${intent.receipt.id}` : null;
+  const detailPath =
+    intent?.phase === "confirmed" && "id" in intent.receipt
+      ? `${listPath}/${intent.receipt.id}`
+      : null;
 
   return (
     <Stack gap="md" miw={0}>
@@ -280,12 +315,18 @@ export function StoreOrderCreate() {
         <Paper p="md" ref={feedback} tabIndex={-1}>
           <Stack gap="sm" align="flex-start">
             <Text role="status">
-              {intent?.phase === "confirmed" && intent.receipt.conflictingKey
+              {intent?.phase === "confirmed" &&
+              "id" in intent.receipt &&
+              intent.receipt.conflictingKey
                 ? copy.conflictResolved
                 : copy.confirmed}
             </Text>
             <Group gap="xs">
-              <Button component={AdminNavigationLink} href={detailPath}>
+              <Button
+                component={AdminNavigationLink}
+                href={detailPath}
+                onNavigate={() => creation.startAnother()}
+              >
                 {copy.openOrder}
               </Button>
               <Button
@@ -301,7 +342,13 @@ export function StoreOrderCreate() {
           </Stack>
         </Paper>
       ) : (
-        <Box component="form" noValidate onSubmit={reviewOrder} className={styles.container}>
+        <Box
+          component="form"
+          ref={form}
+          noValidate
+          onSubmit={reviewOrder}
+          className={styles.container}
+        >
           <Stack gap="md">
             {feedbackStage && (
               <Stack ref={feedback} tabIndex={-1} gap="xs">
@@ -324,19 +371,32 @@ export function StoreOrderCreate() {
                       onRetry={() => void creation.recover()}
                     />
                     {!intent.payload.conflictingKey && (
-                      <Button
-                        type="button"
-                        variant="default"
-                        onClick={() => void creation.replay()}
-                      >
-                        {copy.replay}
-                      </Button>
+                      <Group gap="xs">
+                        <Button
+                          type="button"
+                          variant="default"
+                          onClick={() => void creation.replay()}
+                        >
+                          {copy.replay}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="default"
+                          onClick={() => void creation.close()}
+                        >
+                          {copy.closeRequest}
+                        </Button>
+                      </Group>
                     )}
                   </Stack>
                 )}
                 {busy && (
                   <Alert color="info" role="status">
-                    {creation.operation === "recover" ? copy.checking : copy.creating}
+                    {creation.operation === "recover"
+                      ? copy.checking
+                      : creation.operation === "close"
+                        ? copy.closing
+                        : copy.creating}
                   </Alert>
                 )}
                 {!intent && issue != null && (
@@ -365,50 +425,58 @@ export function StoreOrderCreate() {
                 <Title id={typeHeading} order={2} size="md" fw={600}>
                   {copy.order}
                 </Title>
-                <Radio.Group
-                  label={copy.orderType}
-                  value={draft.kind}
-                  onChange={(value) => {
-                    if (value !== "new" && value !== "historical") return;
-                    update((previous) => ({
-                      ...previous,
-                      kind: value,
-                      deliveryDate: validStoreOrderDate(
-                        previous.deliveryDate,
-                        storeOrderDateRange(value),
-                      )
-                        ? previous.deliveryDate
-                        : "",
-                    }));
-                  }}
-                >
-                  <Group gap="md" mt="xs">
-                    <Radio value="new" label={copy.newOrder} disabled={locked} />
-                    <Radio value="historical" label={copy.historical} disabled={locked} />
-                  </Group>
-                </Radio.Group>
-                <Input.Wrapper
-                  id={dateId}
-                  label={c.deliveryDate}
-                  required
-                  error={dateError}
-                  maw="16rem"
-                >
-                  <AdminDateInput
+                <div className={styles.orderFields}>
+                  <Radio.Group
+                    error={backendErrors.orderKind ? copy.guestInvalid : undefined}
+                    label={copy.orderType}
+                    value={draft.kind}
+                    onChange={(value) => {
+                      if (value !== "new" && value !== "historical") return;
+                      update((previous) => ({
+                        ...previous,
+                        kind: value,
+                        deliveryDate: validStoreOrderDate(
+                          previous.deliveryDate,
+                          storeOrderDateRange(value),
+                        )
+                          ? previous.deliveryDate
+                          : "",
+                      }));
+                    }}
+                  >
+                    <Group gap="md" mt="xs">
+                      <Radio
+                        value="new"
+                        label={copy.newOrder}
+                        disabled={locked}
+                        aria-invalid={backendErrors.orderKind || undefined}
+                      />
+                      <Radio value="historical" label={copy.historical} disabled={locked} />
+                    </Group>
+                  </Radio.Group>
+                  <Input.Wrapper
                     id={dateId}
+                    label={c.deliveryDate}
                     required
-                    disabled={locked}
-                    value={draft.deliveryDate}
-                    pickerLabel={copy.datePicker}
-                    min={range.min}
-                    max={range.max}
-                    aria-invalid={Boolean(dateError)}
-                    aria-describedby={dateError ? `${dateId}-error` : undefined}
-                    onValueChange={(deliveryDate) =>
-                      update((previous) => ({ ...previous, deliveryDate }))
-                    }
-                  />
-                </Input.Wrapper>
+                    error={dateError}
+                    maw="16rem"
+                  >
+                    <AdminDateInput
+                      id={dateId}
+                      required
+                      disabled={locked}
+                      value={draft.deliveryDate}
+                      pickerLabel={copy.datePicker}
+                      min={range.min}
+                      max={range.max}
+                      aria-invalid={Boolean(dateError)}
+                      aria-describedby={dateError ? `${dateId}-error` : undefined}
+                      onValueChange={(deliveryDate) =>
+                        update((previous) => ({ ...previous, deliveryDate }))
+                      }
+                    />
+                  </Input.Wrapper>
+                </div>
               </Stack>
             </Paper>
             <div className={styles.sections}>
@@ -422,7 +490,19 @@ export function StoreOrderCreate() {
                     userId={draft.userId}
                     onUserChange={(userId) => update((previous) => ({ ...previous, userId }))}
                     guest={draft.guest}
-                    onGuestChange={(guest) => update((previous) => ({ ...previous, guest }))}
+                    onGuestChange={(guest) =>
+                      update((previous) => ({
+                        ...previous,
+                        guest,
+                        guestPhoneRejected:
+                          previous.guest.phone_number === guest.phone_number &&
+                          previous.guestPhoneRejected,
+                      }))
+                    }
+                    guestPhoneRejected={draft.guestPhoneRejected}
+                    onGuestPhoneRejectionChange={(guestPhoneRejected) =>
+                      update((previous) => ({ ...previous, guestPhoneRejected }))
+                    }
                     buyerType={draft.buyerType}
                     onBuyerTypeChange={(buyerType) =>
                       update((previous) => ({ ...previous, buyerType }))
@@ -440,6 +520,8 @@ export function StoreOrderCreate() {
                   preview={preview}
                   quote={activeReview?.quote}
                   showErrors={showErrors}
+                  lineErrors={backendErrors.lines}
+                  productsError={backendErrors.products ? copy.productsRequired : undefined}
                   disabled={locked}
                   onPicker={() => setPicker(true)}
                   onEdit={(id, values) =>
@@ -461,6 +543,7 @@ export function StoreOrderCreate() {
               <StoreOrderCreatePricing
                 kind={draft.kind}
                 rawShipping={draft.shippingFee}
+                shippingError={backendErrors.shipping}
                 disabled={locked}
                 showErrors={showErrors}
                 preview={preview}
@@ -470,7 +553,7 @@ export function StoreOrderCreate() {
                 }
               />
             </div>
-            <Group justify="flex-end" gap="xs">
+            <Group component="footer" justify="flex-end" gap="xs">
               <Button component={AdminNavigationLink} href={listPath} variant="default">
                 {copy.cancel}
               </Button>
@@ -528,7 +611,7 @@ export function StoreOrderCreate() {
           onCancel={() => setReview(null)}
           onConfirm={create}
         >
-          <OrderReviewFields review={activeReview} products={draft.lines} />
+          <OrderReviewFields review={activeReview} />
         </ConfirmationDialog>
       )}
     </Stack>

@@ -45,6 +45,32 @@ describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
 
+  it.each([50, 51])("checks the BFF limit for order product selections of %i", async (count) => {
+    const path = ["admin", "store-products"];
+    const ids = Array.from(
+      { length: count },
+      (_, index) => `77777777-7777-4777-8777-${String(index).padStart(12, "0")}`,
+    );
+    const search = `?order_kind=new&product_ids=${ids.join("%2C")}`;
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const result = await GET(
+      pageRequest(`https://admin.example.test/api/backend/admin/store-products${search}`),
+      {
+        params: Promise.resolve({ path }),
+      },
+    );
+    if (count === 50) {
+      expect(result.status).toBe(200);
+      expect(String(upstream.mock.calls[0][0])).toBe(
+        `https://auth.example.test/api/v1/admin/store-products${search}`,
+      );
+    } else {
+      expect(result.status).toBe(404);
+      expect(upstream).not.toHaveBeenCalled();
+    }
+  });
+
   it("binds product transition to the page session and same-origin CSRF checks", async () => {
     const path = ["admin", "store-products", membershipId, "transition"];
     const url = `https://admin.example.test/api/backend/${path.join("/")}`;
@@ -494,47 +520,50 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
-  it.each(["", "/quote"])("protects and forwards Store order creation POST%s", async (suffix) => {
-    const path = `admin/store-orders${suffix}`.split("/");
-    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
-    const context = { params: Promise.resolve({ path }) };
-    const body = JSON.stringify({ kind: "new", delivery_date: "2026-11-28" });
-    const headers = {
-      origin: "https://admin.example.test",
-      "x-nfv-admin-request": "1",
-      "content-type": "application/json",
-      authorization: "Bearer browser-supplied-token",
-    };
-    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
-    vi.stubGlobal("fetch", upstream);
-    const send = (query = "", overrides: Record<string, string> = {}) =>
-      POST(
-        pageRequest(`${url}${query}`, {
-          method: "POST",
-          body,
-          headers: { ...headers, ...overrides },
-        }),
-        context,
-      );
+  it.each(["", "/quote", "/close-creation"])(
+    "protects and forwards Store order creation POST%s",
+    async (suffix) => {
+      const path = `admin/store-orders${suffix}`.split("/");
+      const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+      const context = { params: Promise.resolve({ path }) };
+      const body = JSON.stringify({ kind: "new", delivery_date: "2026-11-28" });
+      const headers = {
+        origin: "https://admin.example.test",
+        "x-nfv-admin-request": "1",
+        "content-type": "application/json",
+        authorization: "Bearer browser-supplied-token",
+      };
+      const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+      vi.stubGlobal("fetch", upstream);
+      const send = (query = "", overrides: Record<string, string> = {}) =>
+        POST(
+          pageRequest(`${url}${query}`, {
+            method: "POST",
+            body,
+            headers: { ...headers, ...overrides },
+          }),
+          context,
+        );
 
-    expect((await send("", { origin: "https://other.example.test" })).status).toBe(403);
-    expect((await send("", { "x-nfv-admin-request": "" })).status).toBe(403);
-    vi.mocked(readSession).mockResolvedValueOnce(null);
-    expect((await send()).status).toBe(401);
-    expect((await send("", { "x-nfv-admin-session": "old" })).status).toBe(409);
-    for (const query of ["?page=1", "?locale=vi", `?creation_key=${versionId}`]) {
-      expect((await send(query)).status).toBe(404);
-    }
-    expect(upstream).not.toHaveBeenCalled();
+      expect((await send("", { origin: "https://other.example.test" })).status).toBe(403);
+      expect((await send("", { "x-nfv-admin-request": "" })).status).toBe(403);
+      vi.mocked(readSession).mockResolvedValueOnce(null);
+      expect((await send()).status).toBe(401);
+      expect((await send("", { "x-nfv-admin-session": "old" })).status).toBe(409);
+      for (const query of ["?page=1", "?locale=vi", `?creation_key=${versionId}`]) {
+        expect((await send(query)).status).toBe(404);
+      }
+      expect(upstream).not.toHaveBeenCalled();
 
-    expect((await send()).status).toBe(200);
-    expect(upstream).toHaveBeenCalledTimes(1);
-    const [target, request] = upstream.mock.calls[0];
-    expect(String(target)).toBe(`https://auth.example.test/api/v1/admin/store-orders${suffix}`);
-    expect(request.method).toBe("POST");
-    expect(new TextDecoder().decode(request.body)).toBe(body);
-    expect(new Headers(request.headers).get("authorization")).toBe("Bearer access-token");
-  });
+      expect((await send()).status).toBe(200);
+      expect(upstream).toHaveBeenCalledTimes(1);
+      const [target, request] = upstream.mock.calls[0];
+      expect(String(target)).toBe(`https://auth.example.test/api/v1/admin/store-orders${suffix}`);
+      expect(request.method).toBe("POST");
+      expect(new TextDecoder().decode(request.body)).toBe(body);
+      expect(new Headers(request.headers).get("authorization")).toBe("Bearer access-token");
+    },
+  );
 
   it("allows only a standalone UUID for Store order creation receipt recovery", async () => {
     const path = ["admin", "store-orders"];
@@ -1130,6 +1159,10 @@ describe("admin backend proxy", () => {
       search: `?category_id=${membershipId}&category_id=${versionId}`,
     },
     { path: ["admin", "store-products"], search: "?status=all" },
+    { path: ["admin", "store-products"], search: "?order_kind=new&order_kind=historical" },
+    { path: ["admin", "store-products"], search: "?order_kind=all" },
+    { path: ["admin", "store-products"], search: `?product_ids=${membershipId}` },
+    { path: ["admin", "store-products"], search: "?order_kind=new&product_ids=bad" },
     { path: ["admin", "store-products"], search: "?status=active&status=draft" },
     { path: ["admin", "store-products"], search: "?search=rau&search=qua" },
     { path: ["admin", "store-products"], search: "?csa_eligible=true&csa_eligible=false" },

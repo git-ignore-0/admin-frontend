@@ -23,6 +23,7 @@ const CRUD_COLLECTION = new Set(["GET", "POST"]);
 const CRUD_DETAIL = new Set(["GET", "PATCH", "DELETE"]);
 const BACKEND_SEGMENT = /^[A-Za-z0-9-]+$/u;
 export const PROVINCE_CODE = /^[0-9]{2}$/u;
+export const MAX_ORDER_LINES = 50;
 // Django's uuid converter requires lowercase hyphenated hex in the upstream URL.
 // The converter and model UUID fields impose no version or variant constraint.
 export const UUID_PATH_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -199,7 +200,8 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   }
   if (resource === "store-orders") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
-    if (id === "quote") return path.length === 3 && normalizedMethod === "POST";
+    if (id === "quote" || id === "close-creation")
+      return path.length === 3 && normalizedMethod === "POST";
     if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return path.length === 3 && normalizedMethod === "GET";
     return (

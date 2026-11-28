@@ -1,3 +1,4 @@
+import type { StoreOrderKind } from "@/lib/admin-store-order-api";
 import {
   requirePaginatedList,
   requireResponseEntity,
@@ -101,6 +102,8 @@ export type ProductFilters = {
   status?: ProductStatus;
   csa_eligible?: boolean;
   page?: number;
+  order_kind?: StoreOrderKind;
+  product_ids?: readonly string[];
 };
 
 const lockReasonCodes: ReadonlySet<ProductLockReason["code"]> = new Set([
@@ -239,17 +242,26 @@ function requireStoreProductDetail(
 
 export function listStoreProducts(query: ProductFilters, signal?: AbortSignal) {
   const page = query.page ?? 1;
+  const productIds = query.product_ids;
   const params = new URLSearchParams({ page: String(page) });
   if (query.search) params.set("search", query.search);
   if (query.category_id) params.set("category_id", query.category_id);
-  for (const key of ["status", "csa_eligible"] as const) {
+  for (const key of ["status", "csa_eligible", "order_kind"] as const) {
     if (query[key] !== undefined) params.set(key, String(query[key]));
   }
+  if (productIds) params.set("product_ids", productIds.join(","));
   return apiEnvelope<StoreProduct[], PaginationMeta>(`admin/store-products?${params}`, {
     signal,
   }).then((response) => {
     const result = requirePaginatedList(response, validateStoreProduct);
     if (result.meta.page !== page) throw invalidApiResponse();
+    if (
+      productIds &&
+      (result.meta.total !== result.data.length ||
+        result.data.some(({ id }) => !productIds.includes(id)))
+    ) {
+      throw invalidApiResponse();
+    }
     return result;
   });
 }

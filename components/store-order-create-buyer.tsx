@@ -3,27 +3,29 @@
 import {
   Alert,
   Box,
+  Button,
   Combobox,
   Divider,
   Group,
   Loader,
   Radio,
   ScrollArea,
-  Select,
   SimpleGrid,
   Skeleton,
   Stack,
   Text,
   Textarea,
   TextInput,
+  Title,
   useCombobox,
   VisuallyHidden,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { FormSelect } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -32,7 +34,12 @@ import { userAccountPhone } from "@/lib/admin-users";
 import { useAdminUserDetail, useAdminUsersList } from "@/lib/admin-users-query";
 import { getAdministrativeProvinces, getAdministrativeWards } from "@/lib/administrative-units";
 import { requestErrorMessage } from "@/lib/client-error";
-import { formatVietnamPhone, normalizeVietnamPhone } from "@/lib/phone-number";
+import {
+  formatVietnamPhone,
+  isLocalPhoneDraft,
+  normalizeLocalPhone,
+  normalizeVietnamPhone,
+} from "@/lib/phone-number";
 import { getSupportedShippingAreas } from "@/lib/shipping-areas";
 import type { OrderBuyerType } from "@/lib/store-order-draft";
 import { storeOrdersCopy } from "@/lib/store-orders-copy";
@@ -44,15 +51,27 @@ const buyerCopy = {
     buyerType: "Loại người nhận",
     user: "User hệ thống",
     guest: "Khách vãng lai",
+    searchUsers: "Tìm User",
+    selectedUser: "User đã chọn",
+    changeUser: "Đổi User",
+    loadingWards: "Đang tải phường/xã…",
     ineligible: "Tài khoản này không đủ điều kiện đặt hàng.",
     addressMissing: "Tài khoản chưa có địa chỉ và tên người nhận hợp lệ.",
+    phonePasteRejected: "Không dán được số điện thoại. Chỉ nhập chữ số từ 0 đến 9.",
+    useCurrentPhone: "Dùng số đang hiển thị",
   },
   en: {
     buyerType: "Recipient type",
     user: "System user",
     guest: "Guest",
+    searchUsers: "Search users",
+    selectedUser: "Selected user",
+    changeUser: "Change user",
+    loadingWards: "Loading wards and communes…",
     ineligible: "This account is ineligible to place orders.",
     addressMissing: "This account needs a valid recipient name and shipping address.",
+    phonePasteRejected: "Paste rejected. Enter digits 0 to 9 only.",
+    useCurrentPhone: "Use the current number",
   },
 } as const;
 
@@ -98,6 +117,8 @@ export function StoreOrderBuyerFields({
   onUserChange,
   guest,
   onGuestChange,
+  guestPhoneRejected,
+  onGuestPhoneRejectionChange,
   lookup,
   disabled = false,
   errors = {},
@@ -109,6 +130,8 @@ export function StoreOrderBuyerFields({
   onUserChange: (userId: string | null) => void;
   guest: StoreOrderGuest;
   onGuestChange: (guest: StoreOrderGuest) => void;
+  guestPhoneRejected: boolean;
+  onGuestPhoneRejectionChange: (rejected: boolean) => void;
   lookup: ReturnType<typeof useStoreOrderBuyer>;
   disabled?: boolean;
   errors?: BuyerFieldErrors;
@@ -152,6 +175,8 @@ export function StoreOrderBuyerFields({
           kind={kind}
           guest={guest}
           onChange={onGuestChange}
+          phoneRejected={guestPhoneRejected}
+          onPhoneRejectionChange={onGuestPhoneRejectionChange}
           disabled={disabled}
           errors={errors}
         />
@@ -205,11 +230,17 @@ function UserPicker({
   error: string | undefined;
 }) {
   const { locale, t } = useAdminI18n();
+  const copy = buyerCopy[locale];
+  const selectionLabelId = useId();
+  const selectionErrorId = useId();
+  const changeButton = useRef<HTMLButtonElement>(null);
+  const focusAfterChange = useRef<"selection" | "search" | null>(null);
   const [input, setInput] = useState("");
   const [search] = useDebouncedValue(input.trim(), 220);
   const [page, setPage] = useState(1);
   const combobox = useCombobox({ onDropdownClose: () => combobox.resetSelectedOption() });
-  const ready = !disabled && combobox.dropdownOpened && Boolean(search) && search === input.trim();
+  const ready =
+    !userId && !disabled && combobox.dropdownOpened && Boolean(search) && search === input.trim();
   const query = useAdminUsersList(
     { search: ready ? search : "", status: "", page: ready ? page : 1 },
     ready,
@@ -226,6 +257,60 @@ function UserPicker({
   useEffect(() => {
     if (page > lastPage) setPage(lastPage);
   }, [lastPage, page]);
+  useLayoutEffect(() => {
+    if (userId && focusAfterChange.current === "selection") {
+      focusAfterChange.current = null;
+      changeButton.current?.focus();
+    } else if (!userId && focusAfterChange.current === "search") {
+      focusAfterChange.current = null;
+      combobox.targetRef.current?.focus();
+    }
+  }, [combobox, userId]);
+
+  if (userId) {
+    return (
+      <Group
+        role="group"
+        aria-labelledby={selectionLabelId}
+        gap="xs"
+        align="center"
+        justify="space-between"
+      >
+        <Stack gap={4} miw={0}>
+          <Text id={selectionLabelId} c="dimmed" size="sm">
+            {copy.selectedUser}
+          </Text>
+          <Box role="status">
+            {name && (
+              <Text fw={600} style={{ overflowWrap: "anywhere" }}>
+                {name}
+              </Text>
+            )}
+          </Box>
+          {error && (
+            <Text id={selectionErrorId} size="sm" c="danger" role="alert">
+              {error}
+            </Text>
+          )}
+        </Stack>
+        <Button
+          ref={changeButton}
+          type="button"
+          variant="default"
+          size="compact-sm"
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? selectionErrorId : undefined}
+          onClick={() => {
+            focusAfterChange.current = "search";
+            onChange(null);
+          }}
+        >
+          {copy.changeUser}
+        </Button>
+      </Group>
+    );
+  }
 
   return (
     <Box
@@ -239,6 +324,7 @@ function UserPicker({
         onOptionSubmit={(id) => {
           if (!ready || errorMessage || !data || page > lastPage) return;
           if (!data.data.some((user) => user.id === id)) return;
+          focusAfterChange.current = "selection";
           onChange(id);
           setInput("");
           setPage(1);
@@ -248,12 +334,13 @@ function UserPicker({
         <Combobox.Target withExpandedAttribute>
           <TextInput
             role="combobox"
+            aria-autocomplete="list"
             required
-            label={buyerCopy[locale].user}
+            label={copy.searchUsers}
             placeholder={t.users.searchPlaceholder}
             disabled={disabled}
             error={error}
-            value={combobox.dropdownOpened ? input : (name ?? "")}
+            value={input}
             onFocus={() => !disabled && combobox.openDropdown()}
             onClick={() => !disabled && combobox.openDropdown()}
             onChange={(event) => {
@@ -263,7 +350,7 @@ function UserPicker({
               combobox.openDropdown();
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && combobox.dropdownOpened) event.preventDefault();
+              if (event.key === "Enter") event.preventDefault();
             }}
             rightSection={ready && query.isFetching ? <Loader size="xs" /> : <Combobox.Chevron />}
             rightSectionPointerEvents="none"
@@ -284,12 +371,7 @@ function UserPicker({
                       .filter(Boolean)
                       .join(" · ");
                     return (
-                      <Combobox.Option
-                        key={user.id}
-                        value={user.id}
-                        active={user.id === userId}
-                        aria-selected={user.id === userId}
-                      >
+                      <Combobox.Option key={user.id} value={user.id}>
                         <Text fw={600}>{user.name}</Text>
                         {contact && (
                           <Text c="dimmed" size="sm">
@@ -347,7 +429,8 @@ function UserPicker({
 }
 
 function BuyerAddress({ address }: { address: UserShippingAddress }) {
-  const { locale } = useAdminI18n();
+  const { locale, t } = useAdminI18n();
+  const headingId = useId();
   const copy = storeOrdersCopy(locale);
   const { provinceName, wardName } = useAdministrativeUnitNames(
     address.province_code,
@@ -355,17 +438,25 @@ function BuyerAddress({ address }: { address: UserShippingAddress }) {
     locale,
   );
   return (
-    <RecordDetailFields>
-      <RecordDetailField label={copy.recipientName}>{address.recipient_name}</RecordDetailField>
-      <RecordDetailField label={copy.phone}>
-        {formatVietnamPhone(address.phone_number)}
-      </RecordDetailField>
-      <RecordDetailField label={copy.province}>
-        {provinceName ?? address.province_code}
-      </RecordDetailField>
-      <RecordDetailField label={copy.ward}>{wardName ?? address.ward_code}</RecordDetailField>
-      <RecordDetailField label={copy.address}>{address.address}</RecordDetailField>
-    </RecordDetailFields>
+    <>
+      <Divider />
+      <Stack component="section" aria-labelledby={headingId} gap="xs">
+        <Title id={headingId} order={3} size="sm" fw={600}>
+          {t.csaCustomers.deliveryAddress}
+        </Title>
+        <RecordDetailFields>
+          <RecordDetailField label={copy.recipientName}>{address.recipient_name}</RecordDetailField>
+          <RecordDetailField label={copy.phone}>
+            {formatVietnamPhone(address.phone_number)}
+          </RecordDetailField>
+          <RecordDetailField label={copy.province}>
+            {provinceName ?? address.province_code}
+          </RecordDetailField>
+          <RecordDetailField label={copy.ward}>{wardName ?? address.ward_code}</RecordDetailField>
+          <RecordDetailField label={copy.address}>{address.address}</RecordDetailField>
+        </RecordDetailFields>
+      </Stack>
+    </>
   );
 }
 
@@ -373,17 +464,30 @@ function GuestFields({
   kind,
   guest,
   onChange,
+  phoneRejected,
+  onPhoneRejectionChange,
   disabled,
   errors,
 }: {
   kind: StoreOrderKind;
   guest: StoreOrderGuest;
   onChange: (guest: StoreOrderGuest) => void;
+  phoneRejected: boolean;
+  onPhoneRejectionChange: (rejected: boolean) => void;
   disabled: boolean;
   errors: BuyerFieldErrors;
 }) {
   const { locale, t } = useAdminI18n();
   const copy = storeOrdersCopy(locale);
+  const phoneInput = useRef<HTMLInputElement>(null);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const normalizedPhone = normalizeLocalPhone(guest.phone_number, "contact");
+  const phoneError = phoneRejected
+    ? buyerCopy[locale].phonePasteRejected
+    : (errors.phone_number ??
+      (phoneTouched && guest.phone_number && !normalizedPhone
+        ? t.csaCustomers.invalidPhone
+        : undefined));
   const supported = useQuery({
     queryKey: ["supported-shipping-areas", locale],
     queryFn: ({ signal }) => getSupportedShippingAreas(locale, signal),
@@ -411,7 +515,6 @@ function GuestFields({
   const fault = [provinceQuery, ...(guest.province_code ? [wardQuery] : [])].find(
     (query) => query.error || query.isPaused,
   );
-
   useEffect(() => {
     if (
       kind !== "new" ||
@@ -434,6 +537,7 @@ function GuestFields({
         <TextInput
           required
           label={copy.recipientName}
+          name="recipient_name"
           autoComplete="shipping name"
           maxLength={200}
           disabled={disabled}
@@ -441,22 +545,54 @@ function GuestFields({
           value={guest.recipient_name}
           onChange={(event) => onChange({ ...guest, recipient_name: event.currentTarget.value })}
         />
-        <TextInput
-          required
-          label={copy.phone}
-          type="tel"
-          autoComplete="shipping tel"
-          maxLength={32}
-          disabled={disabled}
-          error={errors.phone_number}
-          value={guest.phone_number}
-          onChange={(event) => onChange({ ...guest, phone_number: event.currentTarget.value })}
-        />
-        <Select
-          role="combobox"
+        <Stack gap={4} miw={0} align="flex-start">
+          <TextInput
+            ref={phoneInput}
+            required
+            w="100%"
+            label={copy.phone}
+            name="phone_number"
+            type="tel"
+            inputMode="tel"
+            autoComplete="shipping tel-national"
+            maxLength={32}
+            disabled={disabled}
+            error={phoneError}
+            errorProps={phoneRejected ? { role: "alert" } : undefined}
+            value={guest.phone_number}
+            onBlur={() => setPhoneTouched(true)}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              if (isLocalPhoneDraft(value)) onChange({ ...guest, phone_number: value });
+            }}
+            onPaste={(event) => {
+              if (isLocalPhoneDraft(event.clipboardData.getData("text/plain"))) return;
+              event.preventDefault();
+              onPhoneRejectionChange(true);
+            }}
+          />
+          {phoneRejected && normalizedPhone && (
+            <Button
+              type="button"
+              variant="subtle"
+              size="compact-sm"
+              disabled={disabled}
+              onClick={() => {
+                phoneInput.current?.focus();
+                onPhoneRejectionChange(false);
+              }}
+            >
+              {buyerCopy[locale].useCurrentPhone}
+            </Button>
+          )}
+        </Stack>
+        <FormSelect
           searchable
           required
+          name="province_code"
           label={copy.province}
+          autoComplete="shipping address-level1"
+          comboboxProps={{ withinPortal: false }}
           placeholder={
             provinceQuery.isFetching
               ? t.csaCustomers.loadingProvinces
@@ -468,12 +604,18 @@ function GuestFields({
           data={provinceOptions.map(({ code, name }) => ({ value: code, label: name }))}
           onChange={(value) => onChange({ ...guest, province_code: value ?? "", ward_code: "" })}
         />
-        <Select
-          role="combobox"
+        <FormSelect
           searchable
           required
+          name="ward_code"
           label={copy.ward}
-          placeholder={t.csaCustomers.chooseWard}
+          autoComplete="shipping address-level2"
+          comboboxProps={{ withinPortal: false }}
+          placeholder={
+            guest.province_code && wardQuery.isFetching
+              ? buyerCopy[locale].loadingWards
+              : t.csaCustomers.chooseWard
+          }
           disabled={disabled || !wardOptions.length || wardQuery.isError}
           error={errors.ward_code}
           value={guest.ward_code || null}
@@ -484,6 +626,7 @@ function GuestFields({
       <Textarea
         required
         label={t.users.shippingAddress.address}
+        name="address"
         autoComplete="shipping address-line1"
         maxLength={500}
         autosize
@@ -500,6 +643,11 @@ function GuestFields({
           loading={fault.isFetching}
           onRetry={() => void fault.refetch()}
         />
+      )}
+      {!fault && kind === "new" && supported.data?.length === 0 && (
+        <Text c="dimmed" size="sm" role="status">
+          {t.users.shippingAddress.noAreas}
+        </Text>
       )}
     </Stack>
   );

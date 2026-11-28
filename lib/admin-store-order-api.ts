@@ -1,12 +1,12 @@
 import type { AdminLocale } from "@/lib/admin-i18n";
-import { PROVINCE_CODE, UUID_PATH_SEGMENT } from "@/lib/backend-target";
+import { MAX_ORDER_LINES, PROVINCE_CODE, UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 import { requireCreationReceipt } from "@/lib/creation-receipt";
 import { parseNonNegativeBigInteger } from "@/lib/numeric-input";
 import { normalizeVietnamPhone } from "@/lib/phone-number";
 
-export const MAX_ORDER_LINES = 50;
+export { MAX_ORDER_LINES };
 export const MAX_ORDER_QUANTITY = 999;
 export const MAX_ORDER_AMOUNT = BigInt(Number.MAX_SAFE_INTEGER);
 
@@ -23,9 +23,11 @@ export type StoreOrderGuest = {
 type StoreOrderLineInput = { product_id: string; quantity: number };
 type StoreOrderMoneyInput = string | number;
 
-export type StoreOrderQuoteInput = { delivery_date: string; locale?: AdminLocale } & (
-  { buyer_user_id: string; guest?: never } | { buyer_user_id?: never; guest: StoreOrderGuest }
-) &
+export type StoreOrderQuoteInput = {
+  delivery_date: string;
+  locale?: AdminLocale;
+  include_line_snapshot: true;
+} & ({ buyer_user_id: string; guest?: never } | { buyer_user_id?: never; guest: StoreOrderGuest }) &
   (
     | {
         kind: "new";
@@ -45,6 +47,10 @@ export type StoreOrderCreateInput = StoreOrderQuoteInput & {
 };
 
 type StoreOrderQuoteLine = StoreOrderLineInput & {
+  name: string;
+  sku: string;
+  unit_size: string;
+  unit_label: string;
   unit_price_vnd: string;
   subtotal_vnd: string;
   available_quantity: number | null;
@@ -116,9 +122,17 @@ function matchesRequestedAmount(response: string, requested: StoreOrderMoneyInpu
 }
 
 function requireQuoteLine(value: unknown, requested: StoreOrderQuoteInput["lines"][number]) {
-  if (!isApiObject(value) || Object.keys(value).length !== 5) throw invalidApiResponse();
-  const { product_id, quantity, available_quantity } = value;
+  if (!isApiObject(value) || Object.keys(value).length !== 9) throw invalidApiResponse();
+  const { product_id, quantity, available_quantity, name, sku, unit_size, unit_label } = value;
   if (
+    typeof name !== "string" ||
+    !name.trim() ||
+    typeof sku !== "string" ||
+    !sku.trim() ||
+    typeof unit_size !== "string" ||
+    !/^\d+\.\d{3}$/u.test(unit_size) ||
+    typeof unit_label !== "string" ||
+    !unit_label.trim() ||
     !isUuid(product_id) ||
     product_id.toLowerCase() !== requested.product_id.toLowerCase() ||
     typeof quantity !== "number" ||
@@ -149,6 +163,10 @@ function requireQuoteLine(value: unknown, requested: StoreOrderQuoteInput["lines
   }
   return {
     product_id,
+    name,
+    sku,
+    unit_size,
+    unit_label,
     quantity,
     unit_price_vnd,
     subtotal_vnd,
@@ -246,6 +264,41 @@ export async function createAdminStoreOrder(
   return orderFromReceipt(data, meta, payload.idempotency_key);
 }
 
+type StoreOrderCreationResolution = { id: string } | { closed: true };
+
+function resolutionFromReceipt(
+  data: unknown,
+  meta: unknown,
+  key: string,
+): StoreOrderCreationResolution {
+  if (isApiObject(data) && data.closed === true) {
+    const receipt = isApiObject(meta) ? meta.action_receipt : undefined;
+    if (
+      !isApiObject(receipt) ||
+      receipt.action !== "create_store_order" ||
+      !isUuid(receipt.idempotency_key) ||
+      receipt.idempotency_key.toLowerCase() !== key.toLowerCase() ||
+      receipt.resource_id !== null
+    )
+      throw invalidApiResponse();
+    return { closed: true };
+  }
+  return orderFromReceipt(data, meta, key);
+}
+
+export async function closeAdminStoreOrderCreation(
+  key: string,
+  shouldRedirectToLogin?: () => boolean,
+) {
+  if (!isUuid(key)) throw invalidApiResponse();
+  const { data, meta } = await apiEnvelope<unknown>(
+    `${storeOrdersPath}/close-creation`,
+    { method: "POST", body: JSON.stringify({ idempotency_key: key }) },
+    { allowMissingData: true, shouldRedirectToLogin },
+  );
+  return resolutionFromReceipt(data, meta, key);
+}
+
 export async function recoverAdminStoreOrder(
   key: string,
   signal?: AbortSignal,
@@ -258,5 +311,5 @@ export async function recoverAdminStoreOrder(
     { signal },
     { allowMissingData: true, shouldRedirectToLogin },
   );
-  return orderFromReceipt(data, meta, key);
+  return resolutionFromReceipt(data, meta, key);
 }

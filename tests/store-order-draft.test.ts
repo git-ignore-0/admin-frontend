@@ -62,6 +62,7 @@ describe("create Store order draft", () => {
       kind: "new",
       delivery_date: "2027-01-01",
       locale: "vi",
+      include_line_snapshot: true,
       guest: {
         ...guest,
         recipient_name: "Nguyễn An",
@@ -88,11 +89,31 @@ describe("create Store order draft", () => {
       kind: "historical",
       delivery_date: "2026-12-31",
       locale: "en",
+      include_line_snapshot: true,
       buyer_user_id: userId,
       shipping_fee_vnd: "7",
       lines: [{ product_id: product.id, quantity: 2, unit_price_vnd: "34000" }],
     });
     expect(historical.total).toBe(68007n);
+  });
+
+  it.each(["+84901234567", "84901234567", "0901234567 ", "090123456x"])(
+    "rejects a non-domestic guest phone draft %j",
+    (phone_number) => {
+      const result = validateStoreOrderDraft(
+        draft({ guest: { ...guest, phone_number } }),
+        "vi",
+        today,
+      );
+      expect(result.input).toBeNull();
+      expect(result.errors.guest.phone_number).toBe("invalid");
+    },
+  );
+
+  it("does not quote a previously valid guest number after a rejected replacement", () => {
+    const result = validateStoreOrderDraft(draft({ guestPhoneRejected: true }), "vi", today);
+    expect(result.input).toBeNull();
+    expect(result.errors.guest.phone_number).toBe("invalid");
   });
 
   it("requires an explicit historical price and enforces exact totals", () => {
