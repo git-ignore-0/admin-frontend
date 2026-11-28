@@ -13,6 +13,7 @@ import { storeOrderDateRange } from "@/lib/store-order-draft";
 import { formatStoreMoney } from "@/lib/store-orders";
 import type { StoreProduct } from "@/lib/types";
 import { useAcknowledgeStoreOrderCreation } from "@/lib/use-store-order-creation";
+import { deferred } from "./deferred";
 import { selectOption } from "./select-option";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
@@ -315,8 +316,8 @@ it.each(["new", "historical"] as const)(
     refresh();
     await waitFor(() => expect(unsupported()).toBeVisible());
     submitDraft();
+    await waitFor(() => expect(province).toHaveFocus());
     expect(orderFetch).not.toHaveBeenCalled();
-    expect(province).toHaveFocus();
 
     areas = supportedShippingAreas;
     refresh();
@@ -330,10 +331,181 @@ it.each(["new", "historical"] as const)(
     await act(async () =>
       fireEvent.click(within(dialog).getByRole("button", { name: "Confirm order" })),
     );
+    await waitFor(() => expect(province).toHaveFocus());
     expect(orderFetch.mock.calls.map(([path]) => path)).toEqual([quotePath]);
     expect(screen.queryByRole("dialog", { name: "Review order details" })).toBeNull();
-    expect(province).toHaveFocus();
     expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue(address.address);
+  },
+);
+
+it("rechecks a historical guest area without cache invalidation before both quote and confirmation", async () => {
+  let areas = supportedShippingAreas;
+  const getAreas = vi.fn(async () => Response.json({ data: areas }));
+  const orderFetch = vi.fn(async (path: string, init: RequestInit) =>
+    path === quotePath
+      ? makeQuote(readBody(init) as StoreOrderQuoteInput)
+      : created(readBody(init) as StoreOrderCreateInput),
+  );
+  stubOrderFetch(orderFetch, getAreas);
+  render(tree());
+  setupDraft("historical", "guest");
+  await fillGuestAddress();
+  expect(getAreas).toHaveBeenCalledTimes(1);
+
+  areas = supportedShippingAreas.slice(1);
+  submitDraft();
+  const province = screen.getByRole("combobox", { name: "Province/City" });
+  await waitFor(() => expect(province).toBeInvalid());
+  expect(province).toHaveFocus();
+  expect(getAreas).toHaveBeenCalledTimes(2);
+  expect(orderFetch).not.toHaveBeenCalled();
+
+  selectOption(province, "01");
+  selectOption(screen.getByRole("combobox", { name: "Ward/Commune" }), "00004");
+  orderFetch.mockImplementationOnce(async (_path, init) =>
+    makeQuote(readBody(init) as StoreOrderQuoteInput, 45000, {
+      ...address,
+      province_code: "01",
+      ward_code: "00004",
+    }),
+  );
+  submitDraft();
+  const dialog = await screen.findByRole("dialog", { name: "Review order details" });
+  expect(getAreas).toHaveBeenCalledTimes(3);
+  areas = supportedShippingAreas.slice(0, 1);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm order" }));
+  await waitFor(() => expect(province).toBeInvalid());
+  expect(province).toHaveFocus();
+  expect(getAreas).toHaveBeenCalledTimes(4);
+  expect(orderFetch.mock.calls.map(([path]) => path)).toEqual([quotePath]);
+  expect(dialog).not.toBeInTheDocument();
+  expect(localStorage.getItem(recoverySlot)).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue(address.address);
+  expect(screen.getByRole("textbox", { name: /Unit price/ })).toHaveValue("34000");
+});
+
+it.each(["quote", "confirmation"] as const)(
+  "fails closed when an area refresh fails before %s and preserves the draft",
+  async (boundary) => {
+    const getAreas = vi.fn(async () => Response.json({ data: supportedShippingAreas }));
+    const orderFetch = vi.fn(async (_path: string, init: RequestInit) =>
+      makeQuote(readBody(init) as StoreOrderQuoteInput),
+    );
+    stubOrderFetch(orderFetch, getAreas);
+    render(tree());
+    setupDraft("historical", "guest");
+    await fillGuestAddress();
+    if (boundary === "confirmation") {
+      submitDraft();
+      await screen.findByRole("dialog", { name: "Review order details" });
+    }
+    getAreas.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    if (boundary === "confirmation") await approveQuote();
+    else submitDraft();
+    expect(await screen.findByText("Could not load delivery areas.")).toBeVisible();
+    expect(orderFetch.mock.calls.map(([path]) => path)).toEqual(
+      boundary === "confirmation" ? [quotePath] : [],
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem(recoverySlot)).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue(address.address);
+    expect(screen.getByRole("textbox", { name: /Quantity/ })).toHaveValue("2");
+    expect(screen.getByRole("textbox", { name: /Delivery fee/i })).toHaveValue("7000");
+  },
+);
+
+it("shares an in-flight area read and retires the quote when the draft changes", async () => {
+  const pending = deferred<Response>();
+  const getAreas = vi.fn(async () => Response.json({ data: supportedShippingAreas }));
+  const orderFetch = vi.fn(async (_path: string, init: RequestInit) =>
+    makeQuote(readBody(init) as StoreOrderQuoteInput),
+  );
+  stubOrderFetch(orderFetch, getAreas);
+  render(tree());
+  setupDraft("historical", "guest");
+  await fillGuestAddress();
+  getAreas.mockReturnValueOnce(pending.promise);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh shipping areas" }));
+  submitDraft();
+  expect(getAreas).toHaveBeenCalledTimes(2);
+  fireEvent.change(screen.getByRole("textbox", { name: /Quantity/ }), { target: { value: "3" } });
+  await act(async () => pending.resolve(Response.json({ data: supportedShippingAreas })));
+  expect(orderFetch).not.toHaveBeenCalled();
+  submitDraft();
+  await screen.findByRole("dialog", { name: "Review order details" });
+  expect(orderFetch).toHaveBeenCalledOnce();
+  expect(readBody(orderFetch.mock.calls[0][1])).toMatchObject({ lines: [{ quantity: 3 }] });
+});
+
+it("revalidates once on repeated confirmation and replays an uncertain guest request unchanged", async () => {
+  const pending = deferred<Response>();
+  const getAreas = vi.fn(async () => Response.json({ data: supportedShippingAreas }));
+  const orderFetch = vi.fn(async (path: string, init: RequestInit) => {
+    const input = readBody(init) as StoreOrderCreateInput;
+    if (path === quotePath) return makeQuote(input);
+    if (orderFetch.mock.calls.length === 2) return businessError("upstream_timeout", 504);
+    return businessError("store_shipping_area_unsupported", 400);
+  });
+  stubOrderFetch(orderFetch, getAreas);
+  render(tree());
+  setupDraft("historical", "guest");
+  await fillGuestAddress();
+  submitDraft();
+  await screen.findByRole("dialog", { name: "Review order details" });
+  getAreas.mockReturnValueOnce(pending.promise);
+  await approveQuote();
+  expect(getAreas).toHaveBeenCalledTimes(3);
+  expect(orderFetch).toHaveBeenCalledOnce();
+  await act(async () => pending.resolve(Response.json({ data: supportedShippingAreas })));
+  fireEvent.click(await screen.findByRole("button", { name: "Send the same request again" }));
+  await waitFor(() => expect(orderFetch).toHaveBeenCalledTimes(3));
+  await screen.findByRole("button", { name: "Send the same request again" });
+  expect(getAreas).toHaveBeenCalledTimes(3);
+  expect(orderFetch.mock.calls[2][1].body).toBe(orderFetch.mock.calls[1][1].body);
+  expect(localStorage.getItem(recoverySlot)).not.toBeNull();
+});
+
+it.each(["quote", "create"] as const)(
+  "refreshes shared areas after a definitive %s rejection and requires reselection",
+  async (boundary) => {
+    let areas = supportedShippingAreas;
+    const getAreas = vi.fn(async () => Response.json({ data: areas }));
+    const orderFetch = vi.fn(async (path: string, init: RequestInit) => {
+      if (path === quotePath && boundary === "create")
+        return makeQuote(readBody(init) as StoreOrderQuoteInput);
+      if (boundary === "quote") areas = supportedShippingAreas.slice(1);
+      return businessError("store_shipping_area_unsupported", 400);
+    });
+    stubOrderFetch(orderFetch, getAreas);
+    render(tree());
+    setupDraft("historical", "guest");
+    await fillGuestAddress();
+    submitDraft();
+    if (boundary === "create") await approveQuote();
+
+    const province = screen.getByRole("combobox", { name: "Province/City" });
+    const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
+    await waitFor(() => expect(boundary === "quote" ? province : ward).toBeInvalid());
+    await waitFor(() => expect(getAreas).toHaveBeenCalledTimes(boundary === "quote" ? 3 : 4));
+    expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue(address.address);
+    expect(localStorage.getItem(recoverySlot)).toBeNull();
+    submitDraft();
+    expect(orderFetch).toHaveBeenCalledTimes(boundary === "quote" ? 1 : 2);
+    fireEvent.click(province);
+    const replacement = screen.getByRole("option", { name: "Hà Nội" });
+    expect(replacement).toBeVisible();
+    if (boundary === "quote") expect(screen.queryByRole("option", { name: "Đắk Lắk" })).toBeNull();
+    fireEvent.click(replacement);
+    selectOption(ward, "00004");
+    orderFetch.mockImplementationOnce(async (_path, init) =>
+      makeQuote(readBody(init) as StoreOrderQuoteInput, 45000, {
+        ...address,
+        province_code: "01",
+        ward_code: "00004",
+      }),
+    );
+    submitDraft();
+    expect(await screen.findByRole("dialog", { name: "Review order details" })).toBeVisible();
   },
 );
 

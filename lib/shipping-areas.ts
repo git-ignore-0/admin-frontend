@@ -36,6 +36,15 @@ export function supportedShippingAreasOptions(locale: Locale) {
   });
 }
 
+export function findSupportedShippingLocation(
+  areas: SupportedShippingProvince[] | undefined,
+  address: { province_code: string; ward_code: string },
+) {
+  const province = areas?.find(({ code }) => code === address.province_code);
+  const ward = province?.wards.find(({ code }) => code === address.ward_code);
+  return { province, ward };
+}
+
 export async function getSupportedShippingAreas(
   locale: Locale,
   signal?: AbortSignal,

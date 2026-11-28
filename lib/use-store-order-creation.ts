@@ -72,7 +72,7 @@ export function useStoreOrderCreation({
   onAccessDenied,
 }: {
   onConfirmed: (id: string) => void;
-  onRejected: (draft: Draft) => void;
+  onRejected: (draft: Draft, issue: unknown) => void;
   onAccessDenied: () => void;
 }) {
   const isCurrent = useIsAdminQueryScopeCurrent();
@@ -112,7 +112,7 @@ export function useStoreOrderCreation({
     if ("editable" in result) {
       refreshStorage();
       controls.clear();
-      if (result.draft) onRejected(result.draft);
+      if (result.draft) onRejected(result.draft, result.issue);
       setIssue(result.issue);
     }
   }, [controls, intent, onRejected, refreshStorage, scope]);

@@ -1,6 +1,7 @@
 "use client";
 
 import { Alert, Box, Button, Group, Input, Paper, Radio, Stack, Text, Title } from "@mantine/core";
+import { onlineManager, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
@@ -28,9 +29,15 @@ import {
   type StoreOrderQuote,
   type StoreOrderQuoteInput,
 } from "@/lib/admin-store-order-api";
-import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import {
+  isProtectedDataError,
+  isUncertainMutationError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { listStoreProducts } from "@/lib/commerce-api";
 import { formatVietnamPhone } from "@/lib/phone-number";
+import { findSupportedShippingLocation, supportedShippingAreasOptions } from "@/lib/shipping-areas";
 import { storeOrderCreateCopy } from "@/lib/store-order-create-copy";
 import { keepUnchangedOrderErrors, storeOrderCreateErrors } from "@/lib/store-order-create-errors";
 import {
@@ -51,6 +58,20 @@ const listPath = "/store-orders";
 const routePath = `${listPath}/new`;
 
 type OrderDraft = StoreOrderDraft<StoreProduct>;
+
+function guestAreaKey({ province_code, ward_code }: StoreOrderGuest) {
+  return `${province_code}:${ward_code}`;
+}
+
+function isUnsupportedAreaRejection(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message === "store_shipping_area_unsupported" &&
+    (error as ClientApiError).status !== 499 &&
+    !isProtectedDataError(error) &&
+    !isUncertainMutationError(error)
+  );
+}
 type OrderReview = {
   input: StoreOrderQuoteInput;
   quote: StoreOrderQuote;
@@ -97,6 +118,7 @@ export function StoreOrderCreate() {
   const copy = storeOrderCreateCopy(locale);
   const toast = useToast();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const scope = useAdminRecordScope(routePath);
   const eligibilityScope = useAdminRecordScope(`${routePath}:products`);
   const [editableDraft, setDraft] = useState(() => blankStoreOrderDraft<StoreProduct>());
@@ -112,6 +134,7 @@ export function StoreOrderCreate() {
     () => new Set(),
   );
   const [review, setReview] = useState<OrderReview | null>(null);
+  const [rejectedGuestArea, setRejectedGuestArea] = useState<string>();
   const quotingRef = useRef(false);
   const submit = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
@@ -122,11 +145,15 @@ export function StoreOrderCreate() {
   const recipientHeading = useId();
   const dateId = useId();
   function resetDraft() {
+    scope.retire();
+    quotingRef.current = false;
+    setQuoting(false);
     setDraft(blankStoreOrderDraft<StoreProduct>());
     setReview(null);
     setShowErrors(false);
     setPicker(false);
     setPreviousError(undefined);
+    setRejectedGuestArea(undefined);
     setUnavailableProducts(new Set());
     eligibilityScope.retire();
   }
@@ -137,9 +164,10 @@ export function StoreOrderCreate() {
       toast(copy.confirmed);
       router.replace(`${listPath}/${id}`);
     },
-    onRejected(draft) {
+    onRejected(draft, issue) {
       setDraft(draft);
       setShowErrors(true);
+      if (isUnsupportedAreaRejection(issue)) refreshRejectedArea(draft);
     },
     onAccessDenied: resetDraft,
   });
@@ -147,6 +175,10 @@ export function StoreOrderCreate() {
   const intent = creation.intent;
   const recovery = creation.unresolved;
   const draft = creation.draft ?? editableDraft;
+  const currentDraft = useRef({ draft, locale });
+  useLayoutEffect(() => {
+    currentDraft.current = { draft, locale };
+  }, [draft, locale]);
   const today = useVietnamDay();
   const day = new Date(`${today}T12:00:00+07:00`);
   const range = storeOrderDateRange(draft.kind, day);
@@ -160,8 +192,44 @@ export function StoreOrderCreate() {
   const protectedError = quoteError && isProtectedDataError(quoteError);
   const locked = Boolean(intent || recovery || protectedError);
   const guestAddress = useAddressFields(draft.guest, draft.buyerType === "guest" && !locked);
-  const guestAddressValid = draft.buyerType !== "guest" || guestAddress.valid;
+  const guestAreaRejected =
+    draft.buyerType === "guest" && rejectedGuestArea === guestAreaKey(draft.guest);
   const storageError = creation.storage.status === "blocked" ? creation.storage.issue : undefined;
+
+  function refreshRejectedArea(rejectedDraft: OrderDraft) {
+    if (rejectedDraft.buyerType === "guest") {
+      setRejectedGuestArea(guestAreaKey(rejectedDraft.guest));
+    }
+    void guestAddress.query.refetch({ cancelRefetch: false });
+  }
+
+  async function revalidateGuestArea(guest: StoreOrderGuest) {
+    const options = supportedShippingAreasOptions(locale);
+    if (
+      !onlineManager.isOnline() ||
+      queryClient.getQueryState(options.queryKey)?.fetchStatus === "paused"
+    ) {
+      setQuoteError(new Error("network_error"));
+      return false;
+    }
+    try {
+      // Force a network read even when the form's cache entry is still fresh.
+      // TanStack shares any already pending read for this key.
+      const areas = await queryClient.fetchQuery({ ...options, staleTime: 0 });
+      return Boolean(findSupportedShippingLocation(areas, guest).ward);
+    } catch {
+      // The shared query exposes the read failure and retry on AddressFields.
+      return false;
+    }
+  }
+
+  function matchesCurrentInput(input: StoreOrderQuoteInput) {
+    const latest = currentDraft.current;
+    return (
+      JSON.stringify(validateStoreOrderDraft(latest.draft, latest.locale).input) ===
+      JSON.stringify(input)
+    );
+  }
 
   function update(change: (previous: OrderDraft) => OrderDraft) {
     if (!creation.canEdit() || protectedError) return;
@@ -218,7 +286,7 @@ export function StoreOrderCreate() {
     const { input } = validateStoreOrderDraft(draft, locale);
     if (
       !input ||
-      !guestAddressValid ||
+      guestAreaRejected ||
       (draft.buyerType === "user" &&
         (!buyer.eligible || (draft.kind === "new" && buyer.address?.is_supported === false)))
     ) {
@@ -229,8 +297,17 @@ export function StoreOrderCreate() {
     quotingRef.current = true;
     setQuoting(true);
     try {
+      if (input.guest) {
+        const supported = await revalidateGuestArea(input.guest);
+        if (!read.current() || !matchesCurrentInput(input) || !creation.canSubmit()) return;
+        if (!supported) {
+          setValidationAttempt((version) => version + 1);
+          return;
+        }
+      }
       const quote = await quoteAdminStoreOrder(input, read.signal);
-      if (read.current()) {
+      if (read.current() && matchesCurrentInput(input)) {
+        if (input.guest) setRejectedGuestArea(undefined);
         setUnavailableProducts(new Set());
         setReview({
           input,
@@ -241,6 +318,7 @@ export function StoreOrderCreate() {
     } catch (error) {
       if (read.current()) {
         setQuoteError(error);
+        if (isUnsupportedAreaRejection(error)) refreshRejectedArea(draft);
         if (isProtectedDataError(error)) {
           setDraft(blankStoreOrderDraft<StoreProduct>());
           setPicker(false);
@@ -254,16 +332,37 @@ export function StoreOrderCreate() {
     }
   }
 
-  function create() {
-    if (!activeReview || !creation.canSubmit()) return;
-    const now = validateStoreOrderDraft(draft, locale);
-    if (!guestAddressValid || JSON.stringify(now.input) !== JSON.stringify(activeReview.input)) {
-      setReview(null);
-      setShowErrors(true);
-      setValidationAttempt((version) => version + 1);
+  function discardReview() {
+    setReview(null);
+    setShowErrors(true);
+    setValidationAttempt((version) => version + 1);
+  }
+
+  async function create() {
+    if (!activeReview || quotingRef.current || !creation.canSubmit()) return;
+    const { input, quote } = activeReview;
+    if (guestAreaRejected || !matchesCurrentInput(input)) {
+      discardReview();
       return;
     }
-    const { input, quote } = activeReview;
+    if (input.guest) {
+      const current = scope.capture();
+      quotingRef.current = true;
+      setQuoting(true);
+      try {
+        const supported = await revalidateGuestArea(input.guest);
+        if (!current()) return;
+        if (!supported || !matchesCurrentInput(input) || !creation.canSubmit()) {
+          discardReview();
+          return;
+        }
+      } finally {
+        if (current()) {
+          quotingRef.current = false;
+          setQuoting(false);
+        }
+      }
+    }
     setReview(null);
     void creation.create(
       { ...input, confirmation: quote.confirmation, idempotency_key: crypto.randomUUID() },
@@ -330,6 +429,9 @@ export function StoreOrderCreate() {
     store_duplicate_product: copy.productsRequired,
   };
   const guestErrors = { ...backendErrors.buyer };
+  if (guestAreaRejected && guestAddress.ward) {
+    guestErrors.ward_code ??= t.csaCustomers.shippingAreaUnsupported;
+  }
   if (issueCode === "store_buyer_not_found" || issueCode === "store_buyer_ineligible") {
     guestErrors.user ??= copy.buyerInvalid;
   }
@@ -675,8 +777,8 @@ export function StoreOrderCreate() {
           title={copy.confirmTitle}
           cancelLabel={copy.cancel}
           confirmLabel={copy.confirm}
-          busyLabel={copy.creating}
-          busy={false}
+          busyLabel={copy.quoting}
+          busy={quoting}
           returnFocusRef={submit}
           fallbackFocusRef={feedback}
           onCancel={() => setReview(null)}

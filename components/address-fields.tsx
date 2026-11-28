@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { RecoveryAlert } from "@/components/recovery-alert";
-import { supportedShippingAreasOptions } from "@/lib/shipping-areas";
+import { findSupportedShippingLocation, supportedShippingAreasOptions } from "@/lib/shipping-areas";
 
 export type AddressFieldsValue = { province_code: string; ward_code: string; address: string };
 
@@ -14,8 +14,7 @@ const maxAddressLength = 500;
 export function useAddressFields(value: AddressFieldsValue, enabled = true) {
   const { locale } = useAdminI18n();
   const query = useQuery({ ...supportedShippingAreasOptions(locale), enabled });
-  const province = query.data?.find(({ code }) => code === value.province_code);
-  const ward = province?.wards.find(({ code }) => code === value.ward_code);
+  const { province, ward } = findSupportedShippingLocation(query.data, value);
   const detail = value.address.trim();
   const valid =
     enabled &&
