@@ -9,18 +9,12 @@ import {
   type StoreOrderQuoteInput,
 } from "@/lib/admin-store-order-api";
 import { normalizeLocalPhone } from "@/lib/phone-number";
-import {
-  parseNonNegativeBigInteger,
-  parsePositiveBigInteger,
-  parsePositiveInteger,
-} from "@/lib/numeric-input";
+import { parseNonNegativeBigInteger, parsePositiveInteger } from "@/lib/numeric-input";
 import type { StoreProduct } from "@/lib/types";
 
 export { MAX_ORDER_AMOUNT, MAX_ORDER_LINES, MAX_ORDER_QUANTITY };
-// Public catalog's price ceiling also applies to active legacy products in Admin.
-const MAX_PUBLIC_CATALOG_PRICE = 1_000_000_000n;
 export type OrderBuyerType = "user" | "guest";
-type DraftProduct = Pick<StoreProduct, "id" | "status" | "retail_price_vnd">;
+type DraftProduct = Pick<StoreProduct, "id" | "retail_price_vnd">;
 
 export type StoreOrderDraft<P extends DraftProduct = DraftProduct> = {
   kind: StoreOrderKind;
@@ -29,8 +23,15 @@ export type StoreOrderDraft<P extends DraftProduct = DraftProduct> = {
   userId: string | null;
   guest: StoreOrderGuest;
   guestPhoneRejected: boolean;
-  lines: { product: P; quantity: string; unitPrice: string }[];
+  lines: {
+    product: P;
+    quantity: string;
+    unitPrice: string;
+    quantityRejected?: boolean;
+    unitPriceRejected?: boolean;
+  }[];
   shippingFee: string;
+  shippingFeeRejected?: boolean;
 };
 
 export function blankStoreOrderDraft<P extends DraftProduct = DraftProduct>(): StoreOrderDraft<P> {
@@ -59,16 +60,8 @@ export function validStoreOrderDate(value: string, range: ReturnType<typeof stor
   return day && (!range.min || day >= range.min) && day <= range.max ? day : null;
 }
 
-export function isStoreOrderProductSelectable(product: DraftProduct, kind: StoreOrderKind) {
-  if (kind === "historical") {
-    return product.status === "active" || product.status === "discontinued";
-  }
-  const price = parsePositiveBigInteger(product.retail_price_vnd).value;
-  return product.status === "active" && price !== undefined && price <= MAX_PUBLIC_CATALOG_PRICE;
-}
-
 type GuestIssues = Partial<Record<keyof StoreOrderGuest, "required" | "invalid">>;
-type LineIssues = { quantity?: boolean; unitPrice?: boolean; product?: boolean };
+type LineIssues = { quantity?: boolean; unitPrice?: boolean };
 type DraftIssues = {
   deliveryDate?: boolean;
   products?: boolean;
@@ -108,9 +101,15 @@ function guestPayload(
   return Object.keys(errors).length ? null : guest;
 }
 
-function parsedAmount(raw: string) {
+export function parseStoreOrderAmount(raw: string) {
+  if (/[^0-9]/u.test(raw)) return null;
   const parsed = parseNonNegativeBigInteger(raw);
   return parsed.value !== undefined && parsed.value <= MAX_ORDER_AMOUNT ? parsed.value : null;
+}
+
+export function parseStoreOrderQuantity(raw: string) {
+  if (/[^0-9]/u.test(raw)) return undefined;
+  return parsePositiveInteger(raw, { max: MAX_ORDER_QUANTITY }).value;
 }
 
 export function validateStoreOrderDraft(
@@ -147,13 +146,15 @@ export function validateStoreOrderDraft(
   const perLine = new Map<string, bigint | null>();
   const lines = [];
   const historicalLines = [];
-  for (const { product, quantity, unitPrice } of draft.lines) {
+  for (const { product, quantity, unitPrice, quantityRejected, unitPriceRejected } of draft.lines) {
     const issue: LineIssues = {};
-    const count = parsePositiveInteger(quantity, { max: MAX_ORDER_QUANTITY }).value;
-    const amount = parsedAmount(historical ? unitPrice : product.retail_price_vnd);
+    const count = quantityRejected ? undefined : parseStoreOrderQuantity(quantity);
+    const amount =
+      historical && unitPriceRejected
+        ? null
+        : parseStoreOrderAmount(historical ? unitPrice : product.retail_price_vnd);
     if (count === undefined) issue.quantity = true;
     if (amount === null && historical) issue.unitPrice = true;
-    if (!isStoreOrderProductSelectable(product, draft.kind)) issue.product = true;
     if (Object.keys(issue).length) errors.lines[product.id] = issue;
     const subtotal = count !== undefined && amount !== null ? BigInt(count) * amount : null;
     perLine.set(product.id, subtotal);
@@ -171,7 +172,8 @@ export function validateStoreOrderDraft(
   let subtotal: bigint | null = draft.lines.length ? 0n : null;
   for (const amount of perLine.values())
     subtotal = subtotal === null || amount === null ? null : subtotal + amount;
-  const fee = historical ? parsedAmount(draft.shippingFee) : null;
+  const fee =
+    historical && !draft.shippingFeeRejected ? parseStoreOrderAmount(draft.shippingFee) : null;
   if (historical && fee === null) errors.shippingFee = true;
   const total = fee === null || subtotal === null ? null : subtotal + fee;
   if (

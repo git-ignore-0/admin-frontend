@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   blankStoreOrderDraft,
-  isStoreOrderProductSelectable,
   storeOrderDateRange,
   validateStoreOrderDraft,
   type StoreOrderDraft,
@@ -78,9 +77,7 @@ describe("create Store order draft", () => {
         buyerType: "user",
         userId,
         shippingFee: "7",
-        lines: [
-          { product: { ...product, status: "discontinued" }, quantity: "2", unitPrice: "34000" },
-        ],
+        lines: [{ product, quantity: "2", unitPrice: "34000" }],
       }),
       "en",
       today,
@@ -138,26 +135,32 @@ describe("create Store order draft", () => {
     ).toBeDefined();
   });
 
-  it("rejects a duplicate and a draft product without rewriting a selected line", () => {
+  it("rejects duplicate product IDs without rewriting a selected line", () => {
     const line = { product, quantity: "2", unitPrice: "" };
     expect(
       validateStoreOrderDraft(draft({ lines: [line, line] }), "vi", today).errors.products,
     ).toBeDefined();
-    expect(
-      validateStoreOrderDraft(
-        draft({ lines: [{ ...line, product: { ...product, status: "draft" } }] }),
-        "vi",
-        today,
-      ).errors.lines[product.id].product,
-    ).toBeDefined();
   });
-});
 
-it("allows a legacy active product above the public price ceiling only for historical orders", () => {
-  expect(isStoreOrderProductSelectable({ ...product, retail_price_vnd: "1000000000" }, "new")).toBe(
-    true,
-  );
-  const legacy = { ...product, retail_price_vnd: "1000000001" };
-  expect(isStoreOrderProductSelectable(legacy, "new")).toBe(false);
-  expect(isStoreOrderProductSelectable(legacy, "historical")).toBe(true);
+  it("does not quote or total any pending rejected historical number", () => {
+    const line = { product, quantity: "2", unitPrice: "34000" };
+    const historical = draft({
+      kind: "historical",
+      deliveryDate: "31/12/2026",
+      lines: [line],
+      shippingFee: "7000",
+    });
+    for (const change of [
+      { lines: [{ ...line, quantityRejected: true }] },
+      { lines: [{ ...line, unitPriceRejected: true }] },
+      { shippingFeeRejected: true },
+      { lines: [{ ...line, quantity: "2\n" }] },
+      { shippingFee: "7000\n" },
+    ]) {
+      const result = validateStoreOrderDraft({ ...historical, ...change }, "vi", today);
+      expect(result.input).toBeNull();
+      expect(result.total).toBeNull();
+    }
+    expect(validateStoreOrderDraft(historical, "vi", today).total).toBe(75000n);
+  });
 });

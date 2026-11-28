@@ -6,8 +6,15 @@
 .productControls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
-  align-items: start;
-  gap: var(--mantine-spacing-xs);
+  grid-template-rows: auto auto auto;
+  column-gap: var(--mantine-spacing-xs);
+}
+
+.productField {
+  display: grid;
+  grid-row: 1 / span 3;
+  grid-template-rows: subgrid;
+  min-inline-size: 0;
 }
 
 .numeric,
@@ -18,11 +25,9 @@
 .referencePrice {
   display: flex;
   align-items: center;
-  min-height: var(--input-height-sm, 2.25rem);
 }
 
 .removeProduct {
-  margin-block-start: calc(var(--mantine-font-size-sm) * var(--mantine-line-height));
-  width: var(--input-height-sm, 2.25rem);
-  height: var(--input-height-sm, 2.25rem);
+  grid-area: 2 / 3;
+  align-self: center;
 }

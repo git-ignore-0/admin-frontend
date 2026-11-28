@@ -23,15 +23,15 @@ import { DataListPaper } from "@/components/data-list-paper";
 import { PaymentRow, StoreOrderPaymentStatus } from "@/components/store-order-summary";
 import { StoreOrderStatusBadge } from "@/components/store-order-status";
 import {
-  MAX_ORDER_AMOUNT,
   MAX_ORDER_LINES,
-  MAX_ORDER_QUANTITY,
   type StoreOrderKind,
   type StoreOrderQuote,
 } from "@/lib/admin-store-order-api";
-import { formatDecimalInput, parsePositiveInteger } from "@/lib/numeric-input";
+import { formatDecimalInput } from "@/lib/numeric-input";
 import { storeOrderCreateCopy } from "@/lib/store-order-create-copy";
 import {
+  parseStoreOrderAmount,
+  parseStoreOrderQuantity,
   storeOrderProductName,
   type StoreOrderDraft,
   type validateStoreOrderDraft,
@@ -54,12 +54,10 @@ function money(value: Amount | undefined, locale: "vi" | "en") {
 
 function acceptsOrderInteger(candidate: string, allowZero: boolean) {
   if (invalidIntegerCharacter.test(candidate)) return false;
-  if (!candidate || (allowZero && /^0+$/u.test(candidate))) return true;
-  return (
-    parsePositiveInteger(candidate, {
-      max: allowZero ? Number(MAX_ORDER_AMOUNT) : MAX_ORDER_QUANTITY,
-    }).value !== undefined
-  );
+  if (!candidate) return true;
+  return allowZero
+    ? parseStoreOrderAmount(candidate) !== null
+    : parseStoreOrderQuantity(candidate) !== undefined;
 }
 
 function selection(input: HTMLInputElement) {
@@ -77,37 +75,58 @@ function replacement(input: HTMLInputElement, inserted: string) {
 function OrderIntegerInput({
   value,
   allowZero = false,
+  rejected,
+  error,
   onValueChange,
   ...props
 }: Omit<TextInputProps, "value" | "onChange" | "inputMode"> & {
   value: string;
   allowZero?: boolean;
-  onValueChange: (value: string) => void;
+  rejected?: boolean;
+  onValueChange: (value: string, rejected: boolean) => void;
 }) {
+  const { locale } = useAdminI18n();
+  const copy = storeOrderCreateCopy(locale);
   const compositionSelection = useRef<ReturnType<typeof selection> | null>(null);
   const [compositionValue, setCompositionValue] = useState<string | null>(null);
+  function reject() {
+    if (!rejected) onValueChange(value, true);
+  }
 
   return (
     <TextInput
       {...props}
       inputMode="numeric"
       value={compositionValue ?? value}
+      error={rejected ? (allowZero ? copy.moneyError : copy.quantityError) : error}
+      errorProps={rejected ? { role: "alert" } : undefined}
       onKeyDown={(event) => {
         if (
-          event.key.length === 1 &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.altKey &&
-          !event.nativeEvent.isComposing &&
-          !acceptsOrderInteger(replacement(event.currentTarget, event.key), allowZero)
-        ) {
+          event.key.length !== 1 ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey ||
+          event.nativeEvent.isComposing ||
+          compositionSelection.current
+        )
+          return;
+        const candidate = replacement(event.currentTarget, event.key);
+        if (!acceptsOrderInteger(candidate, allowZero)) {
           event.preventDefault();
+          reject();
+        } else if (rejected && candidate === value) {
+          onValueChange(value, false);
         }
       }}
       onPaste={(event) => {
         const pasted = event.clipboardData.getData("text/plain");
-        if (pasted && !acceptsOrderInteger(replacement(event.currentTarget, pasted), allowZero)) {
+        if (!pasted) return;
+        const candidate = replacement(event.currentTarget, pasted);
+        if (!acceptsOrderInteger(candidate, allowZero)) {
           event.preventDefault();
+          reject();
+        } else if (rejected && candidate === value) {
+          onValueChange(value, false);
         }
       }}
       onCompositionStart={(event) => {
@@ -124,10 +143,11 @@ function OrderIntegerInput({
           if (input.value !== candidate) input.value = candidate;
           const caret = prior.start + event.data.length;
           input.setSelectionRange(caret, caret);
-          onValueChange(candidate);
+          onValueChange(candidate, false);
         } else {
           input.value = value;
           input.setSelectionRange(prior.start, prior.end);
+          if (event.data) reject();
         }
       }}
       onChange={(event) => {
@@ -142,11 +162,12 @@ function OrderIntegerInput({
           !invalidIntegerCharacter.test(inserted ?? "") &&
           acceptsOrderInteger(input.value, allowZero)
         ) {
-          onValueChange(input.value);
+          onValueChange(input.value, false);
         } else {
           const caret = Math.max(0, selection(input).start - (inserted?.length ?? 0));
           input.value = value;
           input.setSelectionRange(caret, caret);
+          reject();
         }
       }}
     />
@@ -175,7 +196,7 @@ export function StoreOrderCreateProducts({
   productsError?: string;
   lineErrors?: Record<string, LineError>;
   onPicker: () => void;
-  onEdit: (id: string, values: Partial<Pick<Lines[number], "quantity" | "unitPrice">>) => void;
+  onEdit: (id: string, values: Partial<Omit<Lines[number], "product">>) => void;
   onRemove: (id: string) => void;
 }) {
   const heading = useId();
@@ -227,96 +248,113 @@ export function StoreOrderCreateProducts({
         )}
         {lines.length > 0 && (
           <Stack component="ul" role="list" gap={0} m={0} p={0} className={classes.productList}>
-            {lines.map(({ product, quantity, unitPrice }, index) => {
-              const name = storeOrderProductName(product, locale);
-              const productLabel = `${heading}-${product.id}`;
-              const errors = preview.errors.lines[product.id];
-              const serverErrors = lineErrors?.[product.id];
-              const quoted = quotedLines.get(product.id);
-              const removeLabel = copy.removeProduct.replace("{product}", name);
-              return (
-                <Box component="li" key={product.id} miw={0} aria-labelledby={productLabel}>
-                  {index > 0 && <Divider my="sm" aria-hidden />}
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap">
-                      <Stack gap={4} miw={0}>
-                        <Text id={productLabel} size="md" fw={600}>
-                          {name}
+            {lines.map(
+              ({ product, quantity, quantityRejected, unitPrice, unitPriceRejected }, index) => {
+                const name = storeOrderProductName(product, locale);
+                const productLabel = `${heading}-${product.id}`;
+                const errors = preview.errors.lines[product.id];
+                const serverErrors = lineErrors?.[product.id];
+                const quoted = quotedLines.get(product.id);
+                const removeLabel = copy.removeProduct.replace("{product}", name);
+                return (
+                  <Box component="li" key={product.id} miw={0} aria-labelledby={productLabel}>
+                    {index > 0 && <Divider my="sm" aria-hidden />}
+                    <Stack gap="xs">
+                      <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap">
+                        <Stack gap={4} miw={0}>
+                          <Text id={productLabel} size="md" fw={600}>
+                            {name}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {product.sku} · {formatDecimalInput(product.unit_size)}{" "}
+                            {locale === "vi" ? product.unit_label_vi : product.unit_label_en}
+                          </Text>
+                        </Stack>
+                        <Stack gap={4} miw={0} maw="45%" ms="auto" ta="end">
+                          <Text size="md" fw={600} className={classes.numeric}>
+                            {money(quoted?.subtotal_vnd ?? preview.perLine.get(product.id), locale)}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {estimated ? copy.estimatedAmount : copy.amount}
+                          </Text>
+                        </Stack>
+                      </Group>
+                      {serverErrors?.product && (
+                        <Text
+                          size="sm"
+                          c="danger"
+                          role="alert"
+                          tabIndex={-1}
+                          data-order-field-error
+                        >
+                          {serverErrors.product}
                         </Text>
-                        <Text size="sm" c="dimmed">
-                          {product.sku} · {formatDecimalInput(product.unit_size)}{" "}
-                          {locale === "vi" ? product.unit_label_vi : product.unit_label_en}
-                        </Text>
-                      </Stack>
-                      <Stack gap={4} miw={0} maw="45%" ms="auto" ta="end">
-                        <Text size="md" fw={600} className={classes.numeric}>
-                          {money(quoted?.subtotal_vnd ?? preview.perLine.get(product.id), locale)}
-                        </Text>
-                        <Text size="sm" c="dimmed">
-                          {estimated ? copy.estimatedAmount : copy.amount}
-                        </Text>
-                      </Stack>
-                    </Group>
-                    {(serverErrors?.product || errors?.product) && (
-                      <Text size="sm" c="danger" role="alert" tabIndex={-1} data-order-field-error>
-                        {serverErrors?.product ?? copy.productUnavailable}
-                      </Text>
-                    )}
-                    <Box className={classes.productControls}>
-                      <OrderIntegerInput
-                        label={c.quantity}
-                        aria-label={`${c.quantity} · ${name}`}
-                        required
-                        value={quantity}
-                        disabled={disabled}
-                        error={
-                          serverErrors?.quantity ??
-                          (showErrors && errors?.quantity ? copy.quantityError : undefined)
-                        }
-                        onValueChange={(quantity) => onEdit(product.id, { quantity })}
-                      />
-                      {historical ? (
+                      )}
+                      <Box className={classes.productControls}>
                         <OrderIntegerInput
-                          label={copy.unitPrice}
-                          aria-label={`${copy.unitPrice} · ${name}`}
-                          allowZero
+                          className={classes.productField}
+                          label={c.quantity}
+                          aria-label={`${c.quantity} · ${name}`}
                           required
-                          value={unitPrice}
+                          value={quantity}
+                          rejected={quantityRejected}
                           disabled={disabled}
                           error={
-                            serverErrors?.unitPrice ??
-                            (showErrors && errors?.unitPrice ? copy.moneyError : undefined)
+                            serverErrors?.quantity ??
+                            (showErrors && errors?.quantity ? copy.quantityError : undefined)
                           }
-                          onValueChange={(unitPrice) => onEdit(product.id, { unitPrice })}
+                          onValueChange={(quantity, quantityRejected) =>
+                            onEdit(product.id, { quantity, quantityRejected })
+                          }
                         />
-                      ) : (
-                        <Input.Wrapper
-                          label={quoted ? copy.unitPrice : copy.referenceUnitPrice}
-                          labelElement="div"
-                        >
-                          <Text size="sm" fw={500} className={classes.referencePrice}>
-                            {money(quoted?.unit_price_vnd ?? product.retail_price_vnd, locale)}
-                          </Text>
-                        </Input.Wrapper>
-                      )}
-                      <Tooltip label={removeLabel}>
-                        <ActionIcon
-                          className={classes.removeProduct}
-                          aria-label={removeLabel}
-                          type="button"
-                          variant="subtle"
-                          color="danger"
-                          disabled={disabled}
-                          onClick={() => onRemove(product.id)}
-                        >
-                          <IconTrash size={17} aria-hidden />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Box>
-                  </Stack>
-                </Box>
-              );
-            })}
+                        {historical ? (
+                          <OrderIntegerInput
+                            className={classes.productField}
+                            label={copy.unitPriceVnd}
+                            aria-label={`${copy.unitPriceVnd} · ${name}`}
+                            allowZero
+                            required
+                            value={unitPrice}
+                            rejected={unitPriceRejected}
+                            disabled={disabled}
+                            error={
+                              serverErrors?.unitPrice ??
+                              (showErrors && errors?.unitPrice ? copy.moneyError : undefined)
+                            }
+                            onValueChange={(unitPrice, unitPriceRejected) =>
+                              onEdit(product.id, { unitPrice, unitPriceRejected })
+                            }
+                          />
+                        ) : (
+                          <Input.Wrapper
+                            className={classes.productField}
+                            label={quoted ? copy.unitPrice : copy.referenceUnitPrice}
+                            labelElement="div"
+                          >
+                            <Text size="sm" fw={500} className={classes.referencePrice}>
+                              {money(quoted?.unit_price_vnd ?? product.retail_price_vnd, locale)}
+                            </Text>
+                          </Input.Wrapper>
+                        )}
+                        <Tooltip label={removeLabel}>
+                          <ActionIcon
+                            className={classes.removeProduct}
+                            aria-label={removeLabel}
+                            type="button"
+                            variant="subtle"
+                            color="danger"
+                            disabled={disabled}
+                            onClick={() => onRemove(product.id)}
+                          >
+                            <IconTrash size={17} aria-hidden />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Box>
+                    </Stack>
+                  </Box>
+                );
+              },
+            )}
           </Stack>
         )}
         {lines.length > 0 && (
@@ -337,6 +375,7 @@ export function StoreOrderCreateProducts({
 export function StoreOrderCreatePricing({
   kind,
   rawShipping,
+  shippingFeeRejected,
   disabled,
   showErrors,
   preview,
@@ -346,19 +385,20 @@ export function StoreOrderCreatePricing({
 }: {
   kind: StoreOrderKind;
   rawShipping: string;
+  shippingFeeRejected?: boolean;
   disabled: boolean;
   showErrors: boolean;
   preview: Preview;
   quote?: StoreOrderQuote;
   shippingError?: string;
-  onShippingChange: (value: string) => void;
+  onShippingChange: (value: string, rejected: boolean) => void;
 }) {
   const heading = useId();
   const { locale } = useAdminI18n();
   const c = storeOrdersCopy(locale);
   const copy = storeOrderCreateCopy(locale);
   const historical = kind === "historical";
-  const total = quote?.total_vnd ?? preview.total;
+  const total = quote?.total_vnd ?? (preview.errors.total ? null : preview.total);
 
   return (
     <Paper component="section" aria-labelledby={heading} p="md">
@@ -367,6 +407,7 @@ export function StoreOrderCreatePricing({
           {c.paymentSummary}
         </Title>
         <StoreOrderAmounts
+          kind={kind}
           subtotal={quote?.subtotal_vnd ?? preview.subtotal}
           shipping={quote?.shipping_fee_vnd ?? preview.fee}
           total={total}
@@ -375,13 +416,14 @@ export function StoreOrderCreatePricing({
           shippingEditor={
             historical && !quote ? (
               <OrderIntegerInput
-                aria-label={c.shippingFee}
+                aria-label={copy.shippingFeeVnd}
                 allowZero
                 required
                 miw={0}
                 w="11rem"
                 maw="100%"
                 value={rawShipping}
+                rejected={shippingFeeRejected}
                 disabled={disabled}
                 onValueChange={onShippingChange}
                 error={
@@ -393,7 +435,7 @@ export function StoreOrderCreatePricing({
           }
         />
         <StoreOrderProspectiveStatus kind={kind} total={total} />
-        {showErrors && preview.errors.total && (
+        {preview.errors.total && (
           <Text size="sm" c="danger" role="alert" tabIndex={-1} data-order-field-error>
             {copy.totalError}
           </Text>
@@ -404,6 +446,7 @@ export function StoreOrderCreatePricing({
 }
 
 export function StoreOrderAmounts({
+  kind,
   subtotal,
   shipping,
   total,
@@ -411,6 +454,7 @@ export function StoreOrderAmounts({
   shippingDiscountReason,
   shippingEditor,
 }: {
+  kind: StoreOrderKind;
   subtotal: Amount;
   shipping: Amount;
   total: Amount;
@@ -428,7 +472,7 @@ export function StoreOrderAmounts({
         <PaymentRow label={authoritative ? c.listedSubtotal : copy.estimatedSubtotal}>
           {money(subtotal, locale)}
         </PaymentRow>
-        <PaymentRow label={c.shippingFee}>
+        <PaymentRow label={shippingEditor ? copy.shippingFeeVnd : c.shippingFee}>
           {shippingEditor ?? (authoritative ? money(shipping, locale) : copy.pendingQuote)}
         </PaymentRow>
         {shippingDiscountReason && (
@@ -439,8 +483,10 @@ export function StoreOrderAmounts({
       </Stack>
       <Divider />
       <Box component="dl" m={0}>
-        <PaymentRow label={c.total} emphasis>
-          {authoritative ? money(total, locale) : copy.pendingQuote}
+        <PaymentRow label={kind === "historical" ? copy.recordedTotal : c.total} emphasis>
+          <Text component="span" size={authoritative && total !== null ? "lg" : "sm"} fw={700}>
+            {authoritative ? money(total, locale) : copy.pendingQuote}
+          </Text>
         </PaymentRow>
       </Box>
     </Stack>
@@ -460,7 +506,9 @@ export function StoreOrderProspectiveStatus({
   const historical = kind === "historical";
   const paymentStatus =
     total === null
-      ? null
+      ? historical
+        ? null
+        : "unconfirmed"
       : BigInt(total) === 0n
         ? "not_required"
         : historical

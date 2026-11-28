@@ -102,9 +102,10 @@ export type ProductFilters = {
   status?: ProductStatus;
   csa_eligible?: boolean;
   page?: number;
-  order_kind?: StoreOrderKind;
-  product_ids?: readonly string[];
-};
+} & (
+  | { order_kind?: undefined; product_ids?: never }
+  | { order_kind: StoreOrderKind; product_ids?: readonly string[] }
+);
 
 const lockReasonCodes: ReadonlySet<ProductLockReason["code"]> = new Set([
   "stock_batch",
@@ -253,14 +254,15 @@ export function listStoreProducts(query: ProductFilters, signal?: AbortSignal) {
   return apiEnvelope<StoreProduct[], PaginationMeta>(`admin/store-products?${params}`, {
     signal,
   }).then((response) => {
-    const result = requirePaginatedList(response, validateStoreProduct);
-    if (result.meta.page !== page) throw invalidApiResponse();
-    if (
-      productIds &&
-      (result.meta.total !== result.data.length ||
-        result.data.some(({ id }) => !productIds.includes(id)))
-    ) {
-      throw invalidApiResponse();
+    const result = requirePaginatedList(response, validateStoreProduct, page);
+    if (productIds) {
+      const requested = new Set(productIds.map((id) => id.toLowerCase()));
+      if (
+        result.meta.total !== result.data.length ||
+        result.data.some(({ id }) => !requested.has(id.toLowerCase()))
+      ) {
+        throw invalidApiResponse();
+      }
     }
     return result;
   });

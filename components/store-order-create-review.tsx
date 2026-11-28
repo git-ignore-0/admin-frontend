@@ -47,7 +47,9 @@ export function OrderReviewFields({
         <RecordDetailField label={copy.orderType}>
           {kind === "new" ? copy.newOrder : copy.historical}
         </RecordDetailField>
-        <RecordDetailField label={c.deliveryDate}>
+        <RecordDetailField
+          label={kind === "historical" ? c.historicalDeliveryDate : c.deliveryDate}
+        >
           {formatAdminDate(quote.delivery_date)}
         </RecordDetailField>
         <RecordDetailField label={c.recipientName}>{address.recipient_name}</RecordDetailField>
@@ -81,7 +83,14 @@ export function OrderReviewFields({
                   </Text>
                 )}
               </Stack>
-              <Stack gap={2} ms="auto" ta="end" miw={0} maw="100%">
+              <Stack
+                gap={2}
+                ms="auto"
+                ta="end"
+                miw={0}
+                maw="100%"
+                style={{ overflowWrap: "anywhere", fontVariantNumeric: "tabular-nums" }}
+              >
                 <Text fw={600}>{formatStoreMoney(line.subtotal_vnd, locale)}</Text>
                 <Text size="sm" c="dimmed">
                   {line.quantity} × {formatStoreMoney(line.unit_price_vnd, locale)}
@@ -93,6 +102,7 @@ export function OrderReviewFields({
       </Stack>
       <Stack gap="sm">
         <StoreOrderAmounts
+          kind={kind}
           subtotal={quote.subtotal_vnd}
           shipping={quote.shipping_fee_vnd}
           total={quote.total_vnd}

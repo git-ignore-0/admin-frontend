@@ -187,6 +187,28 @@ it("keeps unsubmitted user search text through blur without selecting an account
   expect(fetcher.mock.calls).toHaveLength(1);
 });
 
+it("closes a paginated account search with Escape and restores input focus", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        data: [user(primary, "Taylor One")],
+        meta: { page: 1, page_size: 1, total: 2 },
+      }),
+    ),
+  );
+  render(<BuyerHarness />, { wrapper });
+  const input = screen.getByRole("combobox", { name: "Search users" });
+  act(() => input.focus());
+  fireEvent.change(input, { target: { value: "Taylor" } });
+  const next = await screen.findByRole("button", { name: "Next" });
+  act(() => next.focus());
+  fireEvent.keyDown(next, { key: "Escape", code: "Escape" });
+  expect(input).toHaveFocus();
+  expect(input).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("option")).not.toBeInTheDocument();
+});
+
 it("associates a selected-user error with the Change user button", async () => {
   vi.stubGlobal(
     "fetch",
@@ -209,6 +231,28 @@ it("associates a selected-user error with the Change user button", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("This user is no longer eligible.");
   expect(change).toHaveAccessibleDescription("This user is no longer eligible.");
   expect(change).toHaveAttribute("aria-invalid", "true");
+});
+
+it("associates a locally ineligible account with the Change user control", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) =>
+      path.includes("/users?")
+        ? Response.json({
+            data: [user(primary, "Taylor")],
+            meta: { page: 1, page_size: 20, total: 1 },
+          })
+        : Response.json({ data: { ...detail(primary, "Taylor"), status: "suspended" } }),
+    ),
+  );
+  render(<BuyerHarness />, { wrapper });
+  const search = screen.getByRole("combobox", { name: "Search users" });
+  fireEvent.focus(search);
+  fireEvent.change(search, { target: { value: "Taylor" } });
+  fireEvent.click(await screen.findByRole("option", { name: /Taylor/ }));
+  const change = screen.getByRole("button", { name: "Change user" });
+  await waitFor(() => expect(change).toHaveAttribute("aria-invalid", "true"));
+  expect(change).toHaveAccessibleDescription("This account is ineligible to place orders.");
 });
 
 it("hides a previous choice immediately and ignores a late user detail response", async () => {
@@ -280,6 +324,7 @@ it("labels guest address controls and validates the shipping phone with the Stor
   expect(input).toHaveAttribute("type", "tel");
   expect(input).toHaveAttribute("inputmode", "tel");
   expect(input).toHaveAttribute("autocomplete", "shipping tel-national");
+  expect(input).toHaveAccessibleDescription(/start with 0/);
   expect(screen.getByRole("textbox", { name: "Street address" })).toHaveAttribute(
     "autocomplete",
     "shipping address-line1",
@@ -289,7 +334,7 @@ it("labels guest address controls and validates the shipping phone with the Stor
   fireEvent.change(input, { target: { value: "0912" } });
   fireEvent.blur(input);
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(input).toHaveAccessibleDescription("Enter a valid phone number.");
+  expect(input).toHaveAccessibleDescription(/Enter a valid phone number\./);
   fireEvent.change(input, { target: { value: "0912345678" } });
   expect(input).not.toHaveAttribute("aria-invalid", "true");
 });
@@ -333,11 +378,28 @@ it("reports a rejected phone paste until the guest phone is edited or confirmed"
   const paste = () => fireEvent.paste(input, { clipboardData: { getData: () => "0902 345 678" } });
   expect(paste()).toBe(false);
   expect(input).toHaveValue("0912345678");
-  expect(input).toHaveAccessibleDescription(/paste rejected/i);
+  expect(input).toHaveAccessibleDescription(/phone entry rejected/i);
   fireEvent.click(screen.getByRole("button", { name: "Use the current number" }));
   expect(input).toHaveFocus();
   expect(input).not.toHaveAttribute("aria-invalid", "true");
   expect(paste()).toBe(false);
+  fireEvent.input(input, { target: { value: "0902345678" } });
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+});
+
+it("blocks a retained guest phone after an invalid typed or autofilled replacement", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ data: [] })),
+  );
+  render(<BuyerHarness type="guest" />, { wrapper });
+  expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
+  const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
+  fireEvent.input(input, { target: { value: "0912345678" } });
+  fireEvent.input(input, { target: { value: "0912345678a" } });
+  expect(input).toHaveValue("0912345678");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByRole("alert")).toHaveTextContent(/phone entry rejected/i);
   fireEvent.input(input, { target: { value: "0902345678" } });
   expect(input).not.toHaveAttribute("aria-invalid", "true");
 });
@@ -380,4 +442,26 @@ it("clears an unsupported historical guest location while retaining shared recip
   view.rerender(<BuyerHarness type="guest" kind="historical" />);
   expect(province).toHaveValue("");
   expect(ward).toHaveValue("");
+});
+
+it("explains why the historical ward control is disabled when the province has no results", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) =>
+      Response.json({
+        data: path.includes("administrative-units/provinces")
+          ? [{ code: "02", name: "Historical city" }]
+          : [],
+      }),
+    ),
+  );
+  render(<BuyerHarness type="guest" kind="historical" />, { wrapper });
+  const province = screen.getByRole("combobox", { name: "Province/city" });
+  const ward = screen.getByRole("combobox", { name: "Ward/commune" });
+  await waitFor(() => expect(province).toBeEnabled());
+  selectOption(province, "02");
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "No wards or communes are available for this province.",
+  );
+  expect(ward).toBeDisabled();
 });

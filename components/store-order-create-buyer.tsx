@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Alert,
   Box,
   Button,
   Combobox,
@@ -57,8 +56,10 @@ const buyerCopy = {
     loadingWards: "Đang tải phường/xã…",
     ineligible: "Tài khoản này không đủ điều kiện đặt hàng.",
     addressMissing: "Tài khoản chưa có địa chỉ và tên người nhận hợp lệ.",
-    phonePasteRejected: "Không dán được số điện thoại. Chỉ nhập chữ số từ 0 đến 9.",
+    phoneFormat: "Nhập 10 hoặc 11 chữ số, bắt đầu bằng 0.",
+    phoneEntryRejected: "Thay đổi số điện thoại bị từ chối. Chỉ nhập chữ số từ 0 đến 9.",
     useCurrentPhone: "Dùng số đang hiển thị",
+    noWards: "Không có phường/xã cho tỉnh/thành phố này.",
   },
   en: {
     buyerType: "Recipient type",
@@ -70,8 +71,10 @@ const buyerCopy = {
     loadingWards: "Loading wards and communes…",
     ineligible: "This account is ineligible to place orders.",
     addressMissing: "This account needs a valid recipient name and shipping address.",
-    phonePasteRejected: "Paste rejected. Enter digits 0 to 9 only.",
+    phoneFormat: "Enter 10 or 11 digits and start with 0.",
+    phoneEntryRejected: "Phone entry rejected. Enter digits 0 to 9 only.",
     useCurrentPhone: "Use the current number",
+    noWards: "No wards or communes are available for this province.",
   },
 } as const;
 
@@ -187,7 +190,7 @@ export function StoreOrderBuyerFields({
             name={lookup.userName}
             onChange={onUserChange}
             disabled={disabled}
-            error={errors.user}
+            error={errors.user ?? (issue || undefined)}
           />
           {userId && detailError && (
             <RecoveryAlert
@@ -205,11 +208,6 @@ export function StoreOrderBuyerFields({
             </Stack>
           )}
           {userId && lookup.address && <BuyerAddress address={lookup.address} />}
-          {userId && issue && (
-            <Alert color="warning" role="alert">
-              {issue}
-            </Alert>
-          )}
         </>
       )}
     </Stack>
@@ -483,7 +481,7 @@ function GuestFields({
   const [phoneTouched, setPhoneTouched] = useState(false);
   const normalizedPhone = normalizeLocalPhone(guest.phone_number, "contact");
   const phoneError = phoneRejected
-    ? buyerCopy[locale].phonePasteRejected
+    ? buyerCopy[locale].phoneEntryRejected
     : (errors.phone_number ??
       (phoneTouched && guest.phone_number && !normalizedPhone
         ? t.csaCustomers.invalidPhone
@@ -515,6 +513,10 @@ function GuestFields({
   const fault = [provinceQuery, ...(guest.province_code ? [wardQuery] : [])].find(
     (query) => query.error || query.isPaused,
   );
+  const noProvinces =
+    provinceQuery.isSuccess && !provinceQuery.isFetching && !provinceOptions.length;
+  const noWards =
+    guest.province_code && wardQuery.isSuccess && !wardQuery.isFetching && !wardOptions.length;
   useEffect(() => {
     if (
       kind !== "new" ||
@@ -551,6 +553,7 @@ function GuestFields({
             required
             w="100%"
             label={copy.phone}
+            description={buyerCopy[locale].phoneFormat}
             name="phone_number"
             type="tel"
             inputMode="tel"
@@ -564,6 +567,7 @@ function GuestFields({
             onChange={(event) => {
               const value = event.currentTarget.value;
               if (isLocalPhoneDraft(value)) onChange({ ...guest, phone_number: value });
+              else onPhoneRejectionChange(true);
             }}
             onPaste={(event) => {
               if (isLocalPhoneDraft(event.clipboardData.getData("text/plain"))) return;
@@ -644,9 +648,14 @@ function GuestFields({
           onRetry={() => void fault.refetch()}
         />
       )}
-      {!fault && kind === "new" && supported.data?.length === 0 && (
+      {!fault && noProvinces && (
         <Text c="dimmed" size="sm" role="status">
-          {t.users.shippingAddress.noAreas}
+          {kind === "new" ? t.users.shippingAddress.noAreas : t.shippingSettings.noProvinces}
+        </Text>
+      )}
+      {!fault && !noProvinces && noWards && (
+        <Text c="dimmed" size="sm" role="status">
+          {buyerCopy[locale].noWards}
         </Text>
       )}
     </Stack>

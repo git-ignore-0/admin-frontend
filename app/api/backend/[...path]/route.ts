@@ -199,26 +199,33 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     const hasOrderFilter = params.has("order_kind") || params.has("product_ids");
     if (hasOrderFilter && (request.method !== "GET" || id !== undefined)) return true;
     if (request.method === "GET" && id === undefined) {
+      const keys = [
+        "page",
+        "category_id",
+        "status",
+        "search",
+        "csa_eligible",
+        "is_active",
+        "is_published",
+        "order_kind",
+        "product_ids",
+      ];
       const orderKind = params.get("order_kind");
       const productIds = params.get("product_ids")?.split(",");
+      const page = params.get("page");
       return (
-        hasDuplicateQuery(
-          params,
-          "page",
-          "category_id",
-          "status",
-          "search",
-          "csa_eligible",
-          "is_active",
-          "is_published",
-          "order_kind",
-          "product_ids",
-        ) ||
+        hasDuplicateQuery(params, ...keys) ||
+        (hasOrderFilter &&
+          ([...params.keys()].some((key) => !keys.includes(key)) ||
+            (page !== null && (!/^[1-9]\d*$/u.test(page) || Number(page) > 10_000)) ||
+            Array.from((params.get("search") ?? "").trim()).length > 200)) ||
         (orderKind !== null && orderKind !== "new" && orderKind !== "historical") ||
         (productIds !== undefined &&
           (orderKind === null ||
             productIds.length > MAX_ORDER_LINES ||
-            productIds.some((productId) => !UUID_PATH_SEGMENT.test(productId)))) ||
+            productIds.some((productId) => !UUID_PATH_SEGMENT.test(productId)) ||
+            new Set(productIds.map((productId) => productId.toLowerCase())).size !==
+              productIds.length)) ||
         (params.has("status") &&
           (!["draft", "active", "discontinued"].includes(params.get("status") ?? "") ||
             params.has("is_active") ||

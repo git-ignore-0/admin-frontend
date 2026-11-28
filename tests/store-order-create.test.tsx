@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { type RefObject } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider, useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
@@ -10,6 +10,7 @@ import { adminTodayIso, isoDateToAdminInput } from "@/lib/admin-date";
 import type { StoreOrderCreateInput, StoreOrderQuoteInput } from "@/lib/admin-store-order-api";
 import { storeOrderDateRange } from "@/lib/store-order-draft";
 import type { StoreProduct } from "@/lib/types";
+import { useAcknowledgeStoreOrderCreation } from "@/lib/use-store-order-creation";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
@@ -93,6 +94,7 @@ const product: StoreProduct = {
 const confirmation = "c".repeat(64);
 const collection = "/api/backend/admin/store-orders";
 const quotePath = `${collection}/quote`;
+const recoverySlot = "nfv-admin-store-order-recovery:v1:test-one";
 
 function readBody(init: RequestInit | undefined): unknown {
   return JSON.parse(String(init?.body));
@@ -159,16 +161,29 @@ function SwitchLocale() {
   );
 }
 
-function tree(show = true, session = "one", scope?: RefObject<(() => void) | null>) {
+function AcknowledgeDetail({ id }: { id?: string }) {
+  useAcknowledgeStoreOrderCreation(id);
+  return null;
+}
+
+function tree(
+  show = true,
+  session = "one",
+  scope?: RefObject<(() => void) | null>,
+  loadedOrderId?: string,
+) {
   return (
-    <AdminI18nProvider initialLocale="en">
-      <ToastProvider>
-        <AdminQueryProvider key={session} ref={scope}>
-          <SwitchLocale />
-          {show && <StoreOrderCreate />}
-        </AdminQueryProvider>
-      </ToastProvider>
-    </AdminI18nProvider>
+    <div data-admin-order-recovery={`test-${session}`}>
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <AdminQueryProvider key={session} ref={scope}>
+            <SwitchLocale />
+            <AcknowledgeDetail id={loadedOrderId} />
+            {show && <StoreOrderCreate />}
+          </AdminQueryProvider>
+        </ToastProvider>
+      </AdminI18nProvider>
+    </div>
   );
 }
 
@@ -206,10 +221,189 @@ async function approveQuote() {
   fireEvent.click(confirm);
 }
 
+beforeEach(() => {
+  let pending = Promise.resolve<unknown>(undefined);
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request(_name: string, work: () => unknown) {
+        const next = pending.then(work);
+        pending = next.catch(() => undefined);
+        return next;
+      },
+    },
+  });
+});
+
 afterEach(() => {
   cleanup();
+  localStorage.clear();
+  Reflect.deleteProperty(navigator, "locks");
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+it("recovers a committed order after full reload with only scoped transaction metadata", async () => {
+  let sent: StoreOrderCreateInput | undefined;
+  const fetcher = vi.fn(async (path: string, init: RequestInit) => {
+    if (path === quotePath) return makeQuote(readBody(init) as StoreOrderQuoteInput);
+    if (path === collection) {
+      sent = readBody(init) as StoreOrderCreateInput;
+      expect(JSON.parse(localStorage.getItem(recoverySlot) ?? "{}")).toEqual({
+        key: sent.idempotency_key,
+      });
+      return businessError("upstream_timeout", 504);
+    }
+    if (!sent) throw new Error("Create was not sent");
+    expect(path).toBe(`${collection}?creation_key=${sent.idempotency_key}`);
+    return created(sent);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const first = render(tree());
+  setupDraft("historical", "guest");
+  submitDraft();
+  await approveQuote();
+  await screen.findByRole("button", { name: "Check result" });
+  first.unmount();
+
+  const reloaded = render(tree());
+  const check = await screen.findByRole("button", { name: "Check result" });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(
+    screen.queryByRole("button", { name: "Send the same request again" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: /Quantity/ })).not.toBeInTheDocument();
+  fireEvent.click(check);
+  expect(await screen.findByRole("link", { name: "Open order details" })).toHaveAttribute(
+    "href",
+    `/store-orders/${orderId}`,
+  );
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(localStorage.getItem(recoverySlot)).toContain(orderId);
+  reloaded.rerender(tree(false, "one", undefined, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+  expect(localStorage.getItem(recoverySlot)).toContain(orderId);
+  reloaded.rerender(tree(false, "one", undefined, orderId));
+  reloaded.rerender(tree());
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+    expect(localStorage.getItem(recoverySlot)).toBeNull();
+  });
+  reloaded.unmount();
+  render(tree(true, "two"));
+  expect(screen.queryByRole("button", { name: "Check result" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+});
+
+it("keeps the reload form blocked after a 404 and closes only the old key", async () => {
+  const key = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  localStorage.setItem(recoverySlot, JSON.stringify({ key }));
+  const fetcher = vi.fn(async (path: string, init: RequestInit) => {
+    if (path === `${collection}?creation_key=${key}`)
+      return businessError("create_receipt_not_found", 404);
+    expect(path).toBe(`${collection}/close-creation`);
+    expect(readBody(init)).toEqual({ idempotency_key: key });
+    return Response.json({
+      data: { closed: true },
+      meta: {
+        action_receipt: { action: "create_store_order", idempotency_key: key, resource_id: null },
+      },
+    });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  fireEvent.click(await screen.findByRole("button", { name: "Check result" }));
+  expect(await screen.findByText(/may still be processing/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Create order" })).toBeDisabled();
+  expect(localStorage.getItem(recoverySlot)).toContain(key);
+  fireEvent.click(screen.getByRole("button", { name: "Close previous request" }));
+  expect(await screen.findByText(/previous request was closed/i)).toBeVisible();
+  expect(localStorage.getItem(recoverySlot)).toBeNull();
+  expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("refuses to send from an already reviewed tab when another tab reserves a key first", async () => {
+  const key = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const fetcher = vi.fn(async (path: string, init: RequestInit) => {
+    expect(path).toBe(quotePath);
+    return makeQuote(readBody(init) as StoreOrderQuoteInput);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  setupDraft();
+  submitDraft();
+  await screen.findByRole("dialog", { name: "Review order details" });
+  // Delay the other tab's storage event so this tab must check inside the lock.
+  localStorage.setItem(recoverySlot, JSON.stringify({ key }));
+  await approveQuote();
+  expect(await screen.findByRole("button", { name: "Check result" })).toBeVisible();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem(recoverySlot)).toBe(JSON.stringify({ key }));
+});
+
+it.each(["corrupt", "unavailable"])(
+  "blocks create when recovery storage is %s",
+  async (failure) => {
+    if (failure === "corrupt")
+      localStorage.setItem(recoverySlot, '{"key":"wrong","payload":"private"}');
+    const getItem = vi.spyOn(Storage.prototype, "getItem");
+    if (failure === "unavailable")
+      getItem.mockImplementation(() => {
+        throw new Error("storage disabled");
+      });
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      render(tree());
+      expect(
+        await screen.findByText(
+          failure === "corrupt" ? /information is invalid/ : /storage is unavailable/,
+        ),
+      ).toBeVisible();
+      expect(screen.getByRole("button", { name: "Create order" })).toBeDisabled();
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      getItem.mockRestore();
+    }
+  },
+);
+
+it("does not send a create when the browser cannot write its recovery key", async () => {
+  const fetcher = vi.fn(async (path: string, init: RequestInit) => {
+    expect(path).toBe(quotePath);
+    return makeQuote(readBody(init) as StoreOrderQuoteInput);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  setupDraft();
+  submitDraft();
+  await screen.findByRole("dialog", { name: "Review order details" });
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota exceeded");
+  });
+  try {
+    await approveQuote();
+    expect(await screen.findByText(/storage is unavailable/)).toBeVisible();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: /Quantity/ })).toHaveValue("2");
+  } finally {
+    write.mockRestore();
+  }
+});
+
+it("keeps the key when the current Admin session changes during recovery", async () => {
+  const key = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  localStorage.setItem(recoverySlot, JSON.stringify({ key }));
+  const fetcher = vi.fn(async () => businessError("session_changed", 409));
+  vi.stubGlobal("fetch", fetcher);
+  const previous = render(tree());
+  fireEvent.click(await screen.findByRole("button", { name: "Check result" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/permission|allowed|access/i);
+  expect(localStorage.getItem(recoverySlot)).toContain(key);
+  previous.unmount();
+  render(tree());
+  expect(await screen.findByRole("button", { name: "Check result" })).toBeEnabled();
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it.each([
@@ -376,6 +570,7 @@ it("keeps the receipt across route remount and suppresses completion after a ses
   setupDraft();
   submitDraft();
   await approveQuote();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
   view.rerender(tree(false));
   if (request) {
     const response = created(request, { malformed: true });
@@ -383,16 +578,20 @@ it("keeps the receipt across route remount and suppresses completion after a ses
   }
   expect(router.replace).not.toHaveBeenCalled();
   view.rerender(tree());
-  await waitFor(() =>
-    expect(router.replace).toHaveBeenCalledExactlyOnceWith(`/store-orders/${orderId}`),
+  expect(await screen.findByRole("link", { name: "Open order details" })).toHaveAttribute(
+    "href",
+    `/store-orders/${orderId}`,
   );
-  expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+  expect(router.replace).not.toHaveBeenCalled();
   router.replace.mockClear();
   view.rerender(tree(true, "two"));
   expect(screen.queryByRole("link", { name: "Open order details" })).not.toBeInTheDocument();
   setupDraft();
   submitDraft();
   await approveQuote();
+  await waitFor(() =>
+    expect(localStorage.getItem("nfv-admin-store-order-recovery:v1:test-two")).not.toBeNull(),
+  );
   view.rerender(tree(true, "three"));
   if (request) {
     const response = created(request);
@@ -418,6 +617,7 @@ it.each([false, true])(
     setupDraft("historical", "guest");
     submitDraft();
     await approveQuote();
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
     view.rerender(tree(false));
     if (openBeforeResponse) view.rerender(tree());
     await act(async () =>
@@ -486,7 +686,7 @@ it("checks a conflicting key without treating the other order as this intent", a
   expect(await screen.findByText(/belongs to another order/)).toBeVisible();
   expect(router.replace).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Create another order" }));
-  expect(screen.getByRole("button", { name: "Create order" })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Create order" })).toBeEnabled();
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
@@ -527,13 +727,12 @@ it("rejects the entire multiline numeric paste and allows a clean replacement", 
   render(tree());
   setupDraft("historical", "guest");
   const unitPrice = screen.getByRole<HTMLInputElement>("textbox", { name: /Unit price/ });
-  fireEvent.change(unitPrice, { target: { value: "" } });
   fireEvent.paste(unitPrice, { clipboardData: { getData: () => "34\n000" } });
-  expect(unitPrice).toHaveValue("");
+  expect(unitPrice).toHaveValue("34000");
   submitDraft();
   expect(screen.getByText(/Enter a whole VND amount/)).toBeVisible();
   expect(fetcher).not.toHaveBeenCalled();
-  fireEvent.change(unitPrice, { target: { value: "34000" } });
+  fireEvent.change(unitPrice, { target: { value: "35000" } });
   submitDraft();
   expect(await screen.findByRole("dialog", { name: "Review order details" })).toBeVisible();
 });
@@ -576,6 +775,41 @@ it("focuses the first invalid control and maps Backend errors to the submitted p
   await waitFor(() => expect(quantity).toHaveFocus());
   expect(quantity).toHaveAttribute("aria-invalid", "true");
   expect(quantity).toHaveValue("2");
+});
+
+it("reconciles products in one request on kind change and preserves unrelated line errors", async () => {
+  const fetcher = vi.fn(async (path: string) => {
+    if (path.startsWith("/api/backend/admin/store-products?")) {
+      const query = new URL(path, "https://admin.test").searchParams;
+      expect(query.get("order_kind")).toBe("new");
+      expect(query.get("product_ids")).toBe(product.id);
+      return Response.json({ data: [], meta: { page: 1, page_size: 50, total: 0 } });
+    }
+    expect(path).toBe(quotePath);
+    return Response.json(
+      { errors: [{ code: "store_product_changed", context: { product_ids: [product.id] } }] },
+      { status: 400 },
+    );
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  setupDraft("historical", "guest");
+  fireEvent.click(screen.getByRole("radio", { name: "New order" }));
+  expect(await screen.findByText(/unavailable for the selected order type/i)).toBeVisible();
+  expect(screen.getByRole("textbox", { name: /Quantity/ })).toHaveValue("2");
+  fireEvent.change(screen.getByRole("textbox", { name: "Delivery date" }), {
+    target: { value: isoDateToAdminInput(adminTodayIso()) },
+  });
+  submitDraft();
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(document.activeElement).toHaveTextContent(/unavailable for the selected order type/i),
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: /Quantity/ }), { target: { value: "3" } });
+  expect(screen.getByRole("textbox", { name: /Quantity/ })).toHaveValue("3");
+  expect(screen.getByText(/unavailable for the selected order type/i)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /Remove Tomato/ }));
+  expect(screen.queryByText(/unavailable for the selected order type/i)).not.toBeInTheDocument();
 });
 
 it("restores the draft only when Backend confirms that an unknown request was closed", async () => {

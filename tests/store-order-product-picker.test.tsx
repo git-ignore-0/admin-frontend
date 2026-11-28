@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -152,6 +152,7 @@ it("keeps a selection visible when it disappears and lets the user remove it aft
   ).toBeVisible();
   expect(screen.getByText("Basil")).toBeVisible();
   expect(screen.getByRole("button", { name: "Add products" })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: /Remove Basil/ })).toHaveFocus();
   expect(add).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("checkbox", { name: /Remove Basil/ }));
   fireEvent.click(screen.getByRole("button", { name: "Add products" }));
@@ -183,4 +184,113 @@ it("keeps focus in the picker when removing a focused selected row", async () =>
   expect(carrot).toHaveFocus();
   fireEvent.click(carrot);
   expect(screen.getByRole("button", { name: "Back to catalog" })).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Back to catalog" }));
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+});
+
+it("selects only unadded products on the current page and explains when a whole page won't fit", async () => {
+  const list = vi.mocked(listStoreProducts);
+  const kale = product("4", "Kale", "active");
+  list.mockResolvedValue({
+    data: [active, discontinued, kale],
+    meta: { page: 1, page_size: 30, total: 3 },
+  });
+  const props = { opened: true, kind: "historical", onClose: vi.fn(), onAdd: vi.fn() } as const;
+  const view = render(<StoreOrderProductPicker {...props} selected={[active]} />, { wrapper });
+  const selectPage = await screen.findByRole("checkbox", { name: /Select products on this page/ });
+  fireEvent.click(selectPage);
+  expect(screen.getByRole("button", { name: "2 selected" })).toBeEnabled();
+  expect(screen.getByRole("checkbox", { name: /Select Basil/ })).toBeDisabled();
+  fireEvent.click(selectPage);
+  expect(screen.getByText("0 selected")).toBeVisible();
+
+  const almostFull = [
+    active,
+    ...Array.from({ length: 48 }, (_, index) => ({ id: `extra-${index}` })),
+  ];
+  view.rerender(<StoreOrderProductPicker {...props} selected={almostFull} />);
+  expect(selectPage).toBeDisabled();
+  expect(screen.getByText("Up to 50 product lines per order.")).toBeVisible();
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select Carrot/ }));
+  expect(screen.getByRole("checkbox", { name: /Select Kale/ })).toBeDisabled();
+});
+
+it("retains selections after a verification error and retries the same batch with fresh snapshots", async () => {
+  const list = vi.mocked(listStoreProducts);
+  const meta = { page: 1, page_size: 30, total: 1 };
+  const updated = { ...active, sku: "RENAMED", retail_price_vnd: "16000" };
+  list
+    .mockResolvedValueOnce({ data: [active], meta })
+    .mockRejectedValueOnce(new Error("network_error"))
+    .mockResolvedValueOnce({ data: [updated], meta: { ...meta, page_size: 50 } });
+  const add = vi.fn();
+  render(
+    <StoreOrderProductPicker opened kind="new" selected={[]} onClose={vi.fn()} onAdd={add} />,
+    { wrapper },
+  );
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Select Basil/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add products" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: /Select Basil/ })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(add).toHaveBeenCalledWith([updated]));
+  expect(list).toHaveBeenCalledTimes(3);
+  expect(list).toHaveBeenLastCalledWith(
+    { order_kind: "new", product_ids: [active.id] },
+    expect.any(AbortSignal),
+  );
+});
+
+it("discards a late verification after the modal closes", async () => {
+  const list = vi.mocked(listStoreProducts);
+  const response = { data: [active], meta: { page: 1, page_size: 50, total: 1 } };
+  let finish = () => {};
+  list.mockResolvedValueOnce(response).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(response);
+      }),
+  );
+  const props = { kind: "new", selected: [], onClose: vi.fn(), onAdd: vi.fn() } as const;
+  const view = render(<StoreOrderProductPicker {...props} opened />, { wrapper });
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Select Basil/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add products" }));
+  const signal = list.mock.calls[1]?.[1];
+  view.rerender(<StoreOrderProductPicker {...props} opened={false} />);
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish());
+  expect(props.onAdd).not.toHaveBeenCalled();
+});
+
+it("does not add products when a concurrent catalog read withdraws access", async () => {
+  const list = vi.mocked(listStoreProducts);
+  const response = { data: [active], meta: { page: 1, page_size: 50, total: 1 } };
+  let denyPage = () => {};
+  let finishVerification = () => {};
+  list.mockImplementation(({ page, product_ids }) => {
+    if (product_ids) {
+      return new Promise((resolve) => {
+        finishVerification = () => resolve(response);
+      });
+    }
+    if (page === 2) {
+      return new Promise((_resolve, reject) => {
+        denyPage = () => reject(Object.assign(new Error("forbidden"), { status: 403 }));
+      });
+    }
+    return Promise.resolve({ data: [active], meta: { page: 1, page_size: 1, total: 2 } });
+  });
+  const add = vi.fn();
+  render(
+    <StoreOrderProductPicker opened kind="new" selected={[]} onClose={vi.fn()} onAdd={add} />,
+    { wrapper },
+  );
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Select Basil/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add products" }));
+  await act(async () => denyPage());
+  expect(await screen.findByRole("alert")).toBeVisible();
+  await act(async () => finishVerification());
+  expect(add).not.toHaveBeenCalled();
+  expect(screen.queryByText("Basil")).not.toBeInTheDocument();
 });

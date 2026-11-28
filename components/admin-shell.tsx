@@ -63,6 +63,7 @@ import classes from "./admin-shell.module.css";
 type Props = {
   user: Pick<AdminSessionUser, "name" | "email" | "login_phone_number">;
   sessionBinding: string;
+  orderRecoveryScope?: string;
   children: React.ReactNode;
 };
 const SIDEBAR_PREFERENCE_KEY = "nfv-admin-sidebar-collapsed";
@@ -133,7 +134,7 @@ function Brand({ compact = false, onNavigate }: { compact?: boolean; onNavigate?
   );
 }
 
-export function AdminShell({ user, sessionBinding, children }: Props) {
+export function AdminShell({ user, sessionBinding, orderRecoveryScope, children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const [navigationPending, startNavigation] = useTransition();
@@ -323,6 +324,7 @@ export function AdminShell({ user, sessionBinding, children }: Props) {
   return (
     <AppShell
       data-admin-session={sessionBinding}
+      data-admin-order-recovery={orderRecoveryScope}
       data-sidebar={collapsed ? "collapsed" : "expanded"}
       data-active-section={activeSection?.key}
       layout="alt"

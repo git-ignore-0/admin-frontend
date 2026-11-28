@@ -124,6 +124,16 @@ describe("Commerce API and compatibility adapter", () => {
     await expect(listStoreProducts(query)).rejects.toThrow("invalid_response");
   });
 
+  it("matches verified product UUIDs case-insensitively and rejects unrequested rows", async () => {
+    const query = { order_kind: "historical", product_ids: [productId.toUpperCase()] } as const;
+    const meta = { page: 1, page_size: 50, total: 1 };
+    const row = { ...productResponse, status: "discontinued" };
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [row], meta }));
+    await expect(listStoreProducts(query)).resolves.toMatchObject({ data: [row] });
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [{ ...row, id: categoryId }], meta }));
+    await expect(listStoreProducts(query)).rejects.toThrow("invalid_response");
+  });
+
   it("keeps VND as a lossless decimal integer string in product writes", async () => {
     fetchMock.mockResolvedValue(
       Response.json({ data: { ...productResponse, capabilities } }, { status: 201 }),

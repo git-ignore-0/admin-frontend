@@ -33,6 +33,7 @@ import { StoreOrderProducts } from "@/components/store-order-products";
 import { StoreOrderStatusBadge } from "@/components/store-order-status";
 import { StoreOrderSummary } from "@/components/store-order-summary";
 import { useToast } from "@/components/toast-provider";
+import { useAcknowledgeStoreOrderCreation } from "@/lib/use-store-order-creation";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
 import { useAdminMutationIntent } from "@/lib/admin-mutation-intent";
 import {
@@ -156,6 +157,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     (savedIntent?.phase === "pending" || savedIntent?.phase === "unknown") &&
     savedIntent.payload.action === "approve";
   const [order, setOrder] = useState<StoreOrder | null>(null);
+  useAcknowledgeStoreOrderCreation(order?.id);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<StoreFarmDraft>(() => new Map());

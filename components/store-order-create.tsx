@@ -28,9 +28,10 @@ import {
   type StoreOrderQuoteInput,
 } from "@/lib/admin-store-order-api";
 import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import { listStoreProducts } from "@/lib/commerce-api";
 import { formatVietnamPhone } from "@/lib/phone-number";
 import { storeOrderCreateCopy } from "@/lib/store-order-create-copy";
-import { storeOrderCreateErrors } from "@/lib/store-order-create-errors";
+import { keepUnchangedOrderErrors, storeOrderCreateErrors } from "@/lib/store-order-create-errors";
 import {
   blankStoreOrderDraft,
   MAX_ORDER_LINES,
@@ -96,11 +97,19 @@ export function StoreOrderCreate() {
   const toast = useToast();
   const router = useRouter();
   const scope = useAdminRecordScope(routePath);
+  const eligibilityScope = useAdminRecordScope(`${routePath}:products`);
   const [editableDraft, setDraft] = useState(() => blankStoreOrderDraft<StoreProduct>());
   const [showErrors, setShowErrors] = useState(false);
   const [picker, setPicker] = useState(false);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<unknown>();
+  const [previousError, setPreviousError] = useState<{
+    error: ClientApiError;
+    draft: OrderDraft;
+  }>();
+  const [unavailableProducts, setUnavailableProducts] = useState<ReadonlySet<StoreProduct>>(
+    () => new Set(),
+  );
   const [review, setReview] = useState<OrderReview | null>(null);
   const quotingRef = useRef(false);
   const submit = useRef<HTMLButtonElement>(null);
@@ -116,6 +125,9 @@ export function StoreOrderCreate() {
     setReview(null);
     setShowErrors(false);
     setPicker(false);
+    setPreviousError(undefined);
+    setUnavailableProducts(new Set());
+    eligibilityScope.retire();
   }
 
   const creation = useStoreOrderCreation({
@@ -132,12 +144,8 @@ export function StoreOrderCreate() {
   });
 
   const intent = creation.intent;
-  const draft =
-    intent?.phase === "pending" || intent?.phase === "unknown"
-      ? intent.payload.draft
-      : intent?.phase === "confirmed" && "draft" in intent.receipt
-        ? intent.receipt.draft
-        : editableDraft;
+  const recovery = creation.unresolved;
+  const draft = creation.draft ?? editableDraft;
   const today = useVietnamDay();
   const day = new Date(`${today}T12:00:00+07:00`);
   const range = storeOrderDateRange(draft.kind, day);
@@ -149,7 +157,8 @@ export function StoreOrderCreate() {
       : null;
   const busy = intent?.phase === "pending";
   const protectedError = quoteError && isProtectedDataError(quoteError);
-  const locked = Boolean(intent || protectedError);
+  const locked = Boolean(intent || recovery || protectedError);
+  const storageError = creation.storage.status === "blocked" ? creation.storage.issue : undefined;
 
   function update(change: (previous: OrderDraft) => OrderDraft) {
     if (!creation.canEdit() || protectedError) return;
@@ -157,16 +166,50 @@ export function StoreOrderCreate() {
     quotingRef.current = false;
     setQuoting(false);
     setReview(null);
+    if (problem) setPreviousError({ error: problem, draft });
     setQuoteError(undefined);
     creation.clearIssue();
     setDraft(change);
   }
 
+  function changeKind(kind: OrderDraft["kind"]) {
+    if (!creation.canEdit() || protectedError || kind === draft.kind) return;
+    update((previous) => ({
+      ...previous,
+      kind,
+      deliveryDate: validStoreOrderDate(previous.deliveryDate, storeOrderDateRange(kind))
+        ? previous.deliveryDate
+        : "",
+    }));
+    setUnavailableProducts(new Set());
+    const read = eligibilityScope.beginRead();
+    const products = draft.lines.map(({ product }) => product);
+    if (!products.length) return;
+    void listStoreProducts(
+      { order_kind: kind, product_ids: products.map(({ id }) => id) },
+      read.signal,
+    )
+      .then(({ data }) => {
+        if (!read.current()) return;
+        const available = new Set(data.map(({ id }) => id));
+        setUnavailableProducts(new Set(products.filter(({ id }) => !available.has(id))));
+      })
+      .catch((error: unknown) => {
+        if (read.current() && isProtectedDataError(error)) {
+          setQuoteError(error);
+          resetDraft();
+        }
+        // A new quote also checks eligibility if this optional read fails.
+      });
+  }
+
   async function reviewOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!creation.canEdit() || quotingRef.current || protectedError) return;
+    if (!creation.canSubmit() || quotingRef.current || protectedError) return;
     setShowErrors(true);
     setQuoteError(undefined);
+    setPreviousError(undefined);
+    eligibilityScope.retire();
     creation.clearIssue();
     setReview(null);
     const { input } = validateStoreOrderDraft(draft, locale);
@@ -184,6 +227,7 @@ export function StoreOrderCreate() {
     try {
       const quote = await quoteAdminStoreOrder(input, read.signal);
       if (read.current()) {
+        setUnavailableProducts(new Set());
         setReview({
           input,
           quote,
@@ -207,7 +251,7 @@ export function StoreOrderCreate() {
   }
 
   function create() {
-    if (!activeReview || !creation.canEdit()) return;
+    if (!activeReview || !creation.canSubmit()) return;
     const now = validateStoreOrderDraft(draft, locale);
     if (JSON.stringify(now.input) !== JSON.stringify(activeReview.input)) {
       setReview(null);
@@ -226,18 +270,32 @@ export function StoreOrderCreate() {
   const issue = creation.issue ?? quoteError;
   const problem: ClientApiError | undefined = issue instanceof Error ? issue : undefined;
   const issueCode = problem?.message ?? "";
-  const backendErrors = storeOrderCreateErrors(
-    problem,
-    draft.lines.map(({ product }) => product.id),
-    copy.guestInvalid,
-    copy.quantityError,
-    copy.moneyError,
-    copy.productUnavailable,
-    copy.stockChanged,
+  const validationError = problem ? { error: problem, draft } : previousError;
+  const backendErrors = keepUnchangedOrderErrors(
+    storeOrderCreateErrors(
+      validationError?.error,
+      validationError?.draft.lines.map(({ product }) => product.id) ?? [],
+      copy.guestInvalid,
+      copy.quantityError,
+      copy.moneyError,
+      copy.productUnavailable,
+      copy.stockChanged,
+    ),
+    validationError?.draft,
+    draft,
   );
-  const feedbackStage = intent?.phase ?? (issue != null ? issueCode || "failed" : "");
+  for (const { product } of draft.lines) {
+    if (unavailableProducts.has(product)) {
+      backendErrors.lines[product.id] = {
+        ...backendErrors.lines[product.id],
+        product: copy.productUnavailable,
+      };
+    }
+  }
+  const feedbackStage =
+    intent?.phase ?? (recovery ? "unknown" : issue != null ? issueCode || "failed" : "");
   useLayoutEffect(() => {
-    if (intent || protectedError) {
+    if (intent || recovery || protectedError) {
       feedback.current?.focus();
       return;
     }
@@ -248,10 +306,11 @@ export function StoreOrderCreate() {
       '[aria-invalid="true"]:not([disabled]), [data-order-field-error]',
     );
     (firstInvalid ?? feedback.current)?.focus();
-  }, [feedbackStage, intent, issue, protectedError, validationAttempt]);
+  }, [feedbackStage, intent, issue, protectedError, recovery, validationAttempt]);
   const businessErrors: Record<string, string> = {
     store_requote_required: copy.requote,
     store_creation_closed: copy.creationClosed,
+    store_recovered_request_closed: copy.recoveredRequestClosed,
     store_stock_changed: copy.stockChanged,
     store_product_changed: copy.productUnavailable,
     store_shipping_area_unsupported: copy.shippingUnsupported,
@@ -307,6 +366,17 @@ export function StoreOrderCreate() {
         items={[{ label: t.common.storeOrders, href: listPath }, { label: c.createOrder }]}
       />
       <PageHeading title={c.createOrder} visuallyHiddenTitle />
+      {storageError !== undefined && (
+        <RecoveryAlert
+          message={
+            storageError instanceof Error && storageError.message === "store_recovery_corrupt"
+              ? copy.recoveryCorrupt
+              : copy.recoveryUnavailable
+          }
+          retryLabel={t.common.retry}
+          onRetry={creation.refreshStorage}
+        />
+      )}
       {intent?.phase === "retired" || protectedError ? (
         <Alert ref={feedback} tabIndex={-1} color="danger" role="alert">
           {t.common.forbidden}
@@ -322,18 +392,14 @@ export function StoreOrderCreate() {
                 : copy.confirmed}
             </Text>
             <Group gap="xs">
-              <Button
-                component={AdminNavigationLink}
-                href={detailPath}
-                onNavigate={() => creation.startAnother()}
-              >
+              <Button component={AdminNavigationLink} href={detailPath}>
                 {copy.openOrder}
               </Button>
               <Button
                 type="button"
                 variant="default"
-                onClick={() => {
-                  if (creation.startAnother()) resetDraft();
+                onClick={async () => {
+                  if (await creation.startAnother()) resetDraft();
                 }}
               >
                 {copy.startAnother}
@@ -352,39 +418,43 @@ export function StoreOrderCreate() {
           <Stack gap="md">
             {feedbackStage && (
               <Stack ref={feedback} tabIndex={-1} gap="xs">
-                {intent?.phase === "unknown" && (
+                {recovery && creation.storage.status === "ready" && (
                   <Stack gap="xs" align="flex-start">
                     <RecoveryAlert
                       message={
                         issueCode === "create_receipt_not_found"
                           ? copy.creationMissing
-                          : intent.payload.conflictingKey
+                          : recovery.conflictingKey
                             ? copy.creationConflict
                             : issueCode === "store_payment_unavailable"
                               ? copy.paymentUnavailable
                               : issueCode === "store_requote_required" ||
                                   issueCode === "store_stock_changed"
                                 ? copy.replayRequote
-                                : copy.creationUnknown
+                                : recovery.submission
+                                  ? copy.creationUnknown
+                                  : copy.recoveryOnly
                       }
                       retryLabel={copy.check}
                       onRetry={() => void creation.recover()}
                     />
-                    {!intent.payload.conflictingKey && (
+                    {!recovery.conflictingKey && (
                       <Group gap="xs">
-                        <Button
-                          type="button"
-                          variant="default"
-                          onClick={() => void creation.replay()}
-                        >
-                          {copy.replay}
-                        </Button>
+                        {recovery.submission && (
+                          <Button
+                            type="button"
+                            variant="default"
+                            onClick={() => void creation.replay()}
+                          >
+                            {copy.replay}
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="default"
                           onClick={() => void creation.close()}
                         >
-                          {copy.closeRequest}
+                          {recovery.submission ? copy.closeRequest : copy.closeRecoveredRequest}
                         </Button>
                       </Group>
                     )}
@@ -431,17 +501,7 @@ export function StoreOrderCreate() {
                     label={copy.orderType}
                     value={draft.kind}
                     onChange={(value) => {
-                      if (value !== "new" && value !== "historical") return;
-                      update((previous) => ({
-                        ...previous,
-                        kind: value,
-                        deliveryDate: validStoreOrderDate(
-                          previous.deliveryDate,
-                          storeOrderDateRange(value),
-                        )
-                          ? previous.deliveryDate
-                          : "",
-                      }));
+                      if (value === "new" || value === "historical") changeKind(value);
                     }}
                   >
                     <Group gap="md" mt="xs">
@@ -544,12 +604,13 @@ export function StoreOrderCreate() {
                 kind={draft.kind}
                 rawShipping={draft.shippingFee}
                 shippingError={backendErrors.shipping}
+                shippingFeeRejected={draft.shippingFeeRejected}
                 disabled={locked}
                 showErrors={showErrors}
                 preview={preview}
                 quote={activeReview?.quote}
-                onShippingChange={(shippingFee) =>
-                  update((previous) => ({ ...previous, shippingFee }))
+                onShippingChange={(shippingFee, shippingFeeRejected) =>
+                  update((previous) => ({ ...previous, shippingFee, shippingFeeRejected }))
                 }
               />
             </div>
@@ -563,6 +624,7 @@ export function StoreOrderCreate() {
                 loading={quoting || busy}
                 disabled={
                   locked ||
+                  creation.storage.status !== "ready" ||
                   (draft.buyerType === "user" &&
                     Boolean(draft.userId) &&
                     (!buyer.eligible ||

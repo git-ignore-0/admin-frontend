@@ -1163,6 +1163,16 @@ describe("admin backend proxy", () => {
     { path: ["admin", "store-products"], search: "?order_kind=all" },
     { path: ["admin", "store-products"], search: `?product_ids=${membershipId}` },
     { path: ["admin", "store-products"], search: "?order_kind=new&product_ids=bad" },
+    {
+      path: ["admin", "store-products"],
+      search: `?order_kind=new&product_ids=${membershipId}%2C${membershipId.toUpperCase()}`,
+    },
+    {
+      path: ["admin", "store-products"],
+      search: `?order_kind=new&product_ids=${membershipId}&product_ids=${versionId}`,
+    },
+    { path: ["admin", "store-products"], search: "?order_kind=historical&page=10001" },
+    { path: ["admin", "store-products"], search: "?order_kind=historical&unknown=true" },
     { path: ["admin", "store-products"], search: "?status=active&status=draft" },
     { path: ["admin", "store-products"], search: "?search=rau&search=qua" },
     { path: ["admin", "store-products"], search: "?csa_eligible=true&csa_eligible=false" },

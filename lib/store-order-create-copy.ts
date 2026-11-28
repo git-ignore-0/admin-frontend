@@ -15,6 +15,9 @@ const copy = {
     removeProduct: "Xóa {product}",
     noProducts: "Chưa có sản phẩm.",
     unitPrice: "Đơn giá",
+    unitPriceVnd: "Đơn giá (VND)",
+    shippingFeeVnd: "Phí giao hàng (VND)",
+    recordedTotal: "Tổng tiền ghi nhận",
     referenceUnitPrice: "Đơn giá tham chiếu",
     amount: "Thành tiền",
     estimatedAmount: "Thành tiền dự kiến",
@@ -53,6 +56,14 @@ const copy = {
     closing: "Đang chốt yêu cầu trước…",
     closeRequest: "Chốt yêu cầu và sửa đơn",
     creationClosed: "Yêu cầu trước đã đóng. Bạn có thể sửa đơn và xác nhận lại.",
+    recoveredRequestClosed: "Yêu cầu trước đã đóng. Bạn có thể nhập đơn mới.",
+    recoveryOnly:
+      "Chưa xác định kết quả của yêu cầu từ trang hoặc tab trước. Bạn có thể kiểm tra hoặc chốt yêu cầu. Nội dung đơn không được lưu qua tải lại.",
+    closeRecoveredRequest: "Chốt yêu cầu trước",
+    recoveryUnavailable:
+      "Không thể dùng bộ nhớ khôi phục của trình duyệt. Bật lại quyền lưu trữ rồi thử lại trước khi tạo đơn.",
+    recoveryCorrupt:
+      "Thông tin khôi phục của phiên này không hợp lệ. Kiểm tra danh sách đơn và yêu cầu đang chờ trước khi tiếp tục.",
     replay: "Gửi lại yêu cầu trước",
     confirmed: "Đơn hàng đã được ghi nhận.",
     openOrder: "Mở chi tiết đơn",
@@ -74,6 +85,9 @@ const copy = {
     removeProduct: "Remove {product}",
     noProducts: "No products selected.",
     unitPrice: "Unit price",
+    unitPriceVnd: "Unit price (VND)",
+    shippingFeeVnd: "Delivery fee (VND)",
+    recordedTotal: "Total to record",
     referenceUnitPrice: "Reference unit price",
     amount: "Line total",
     estimatedAmount: "Estimated line total",
@@ -114,6 +128,14 @@ const copy = {
     closing: "Closing the previous request…",
     closeRequest: "Close request and edit",
     creationClosed: "The previous request was closed. You can edit and confirm the order again.",
+    recoveredRequestClosed: "The previous request was closed. You can enter a new order.",
+    recoveryOnly:
+      "A request from a previous page or tab is unresolved. Check its result or close it. The order draft was kept in memory only.",
+    closeRecoveredRequest: "Close previous request",
+    recoveryUnavailable:
+      "Browser recovery storage is unavailable. Restore storage access and try again before creating an order.",
+    recoveryCorrupt:
+      "This session’s recovery information is invalid. Check the orders list and the pending request before continuing.",
     replay: "Send the same request again",
     confirmed: "The order was recorded.",
     openOrder: "Open order details",
