@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildBackendTarget,
   isAllowedBackendRequest,
+  isFarmReceiptPath,
   PROVINCE_CODE,
   UUID_PATH_SEGMENT,
 } from "@/lib/backend-target";
@@ -85,20 +86,14 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     const codes = params.getAll("province");
     return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
-  const [scope, resource, id, action, extra] = path;
-  const farmBulkReceipt =
-    scope === "admin" &&
-    resource === "farms" &&
-    path.length === 5 &&
-    UUID_PATH_SEGMENT.test(id ?? "") &&
-    action === "stock-batches" &&
-    extra === "bulk";
-  if (params.has("creation_key") || (farmBulkReceipt && request.method === "GET")) {
+  const [, resource, id, action, extra] = path;
+  const farmReceipt = isFarmReceiptPath(path);
+  if (params.has("creation_key") || (farmReceipt && request.method === "GET")) {
     const collectionReceipt =
       id === undefined && ["store-products", "csa-round-configurations"].includes(resource);
     return (
       request.method !== "GET" ||
-      !(collectionReceipt || farmBulkReceipt) ||
+      !(collectionReceipt || farmReceipt) ||
       params.size !== 1 ||
       !UUID_PATH_SEGMENT.test(params.get("creation_key") ?? "")
     );

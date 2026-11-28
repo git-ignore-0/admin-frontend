@@ -27,6 +27,20 @@ export const PROVINCE_CODE = /^[0-9]{2}$/u;
 // The converter and model UUID fields impose no version or variant constraint.
 export const UUID_PATH_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function isFarmReceiptPath(path: string[]) {
+  const [scope, resource, farm, collection, item, action] = path;
+  return (
+    scope === "admin" &&
+    resource === "farms" &&
+    UUID_PATH_SEGMENT.test(farm ?? "") &&
+    ((path.length === 5 && ["products", "stock-batches"].includes(collection) && item === "bulk") ||
+      (path.length === 6 &&
+        collection === "products" &&
+        UUID_PATH_SEGMENT.test(item) &&
+        action === "re-add"))
+  );
+}
+
 export function isAllowedBackendRequest(method: string, path: string[]) {
   // Next passes decoded segments. Every allowed literal and identifier uses this alphabet.
   if (path.some((segment) => !BACKEND_SEGMENT.test(segment))) return false;
@@ -99,16 +113,14 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
         (path.length === 5 && extra === "rotate" && normalizedMethod === "POST")
       );
     if (action === "available-products") return path.length === 4 && normalizedMethod === "GET";
-    if (action === "stock-batches")
-      return path.length === 5 && extra === "bulk" && ["GET", "POST"].includes(normalizedMethod);
+    if (isFarmReceiptPath(path)) return CRUD_COLLECTION.has(normalizedMethod);
     if (action !== "products") return false;
-    if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);
+    if (extra === undefined) return path.length === 4 && READ.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(extra)) return false;
     if (path.length === 5) return normalizedMethod === "GET";
     const sourceAction = path[5];
     if (sourceAction === "history") return path.length === 6 && normalizedMethod === "GET";
-    if (sourceAction === "remove" || sourceAction === "re-add")
-      return path.length === 6 && normalizedMethod === "POST";
+    if (sourceAction === "remove") return path.length === 6 && normalizedMethod === "POST";
     if (sourceAction !== "batches") return false;
     if (path.length === 6) return CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(path[6] ?? "")) return false;

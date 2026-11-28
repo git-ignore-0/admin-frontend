@@ -756,8 +756,6 @@ export type FarmSourceCapabilities = {
 };
 
 export type FarmProductDetail = FarmProduct & { capabilities: FarmSourceCapabilities };
-export type FarmProductWithFirstBatch = FarmProduct & { first_batch_id: string };
-
 export const farmProductHistoryActions = [
   "farm.product.add",
   "farm.product.remove",

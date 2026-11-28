@@ -18,17 +18,17 @@ import {
   farmBulkBlocksWrite,
   farmDeleteBlocksWrite,
   farmListKey,
+  farmProductLinkBlocksWrite,
   farmSupplyKey,
   farmSupplyWriteKey,
   retireFarmAccess,
   useFarmBulkBlocksWrite,
   useFarmDeleteBlocksWrite,
+  useFarmProductLinkBlocksWrite,
 } from "@/lib/farm-query";
 import {
   cancelFarmStockBatch,
-  createFarmStockBatch,
   parseFarmSourceBlocker,
-  readdFarmProduct,
   removeFarmProduct,
   updateFarmStockBatch,
 } from "@/lib/farms-api";
@@ -45,12 +45,7 @@ type SourceAction<Kind extends string> = { kind: Kind; source: FarmProductDetail
 type BatchAction<Kind extends string> = SourceAction<Kind> & {
   batch: FarmStockBatch;
 };
-export type FarmSupplyAction =
-  | SourceAction<"remove">
-  | SourceAction<"readd">
-  | SourceAction<"create">
-  | BatchAction<"edit">
-  | BatchAction<"cancel">;
+export type FarmSupplyAction = SourceAction<"remove"> | BatchAction<"edit"> | BatchAction<"cancel">;
 type Attempt = { action: FarmSupplyAction; input?: StockBatchInput; startedAt: number };
 type Failure = {
   type: "uncertain" | "conflict" | "rejected";
@@ -86,16 +81,13 @@ async function writeSupply({ action, input }: Attempt) {
   if (action.kind === "cancel")
     return cancelFarmStockBatch(farm_id, product_id, action.batch.id, action.batch.version, source);
   if (!input) throw new Error("validation_error");
-  if (action.kind === "edit")
-    return updateFarmStockBatch(
-      farm_id,
-      product_id,
-      action.batch.id,
-      { ...input, version: action.batch.version },
-      source,
-    );
-  if (action.kind === "readd") return readdFarmProduct(farm_id, product_id, source, input);
-  return createFarmStockBatch(farm_id, product_id, input, source);
+  return updateFarmStockBatch(
+    farm_id,
+    product_id,
+    action.batch.id,
+    { ...input, version: action.batch.version },
+    source,
+  );
 }
 
 export function useFarmSourceWrite(
@@ -111,7 +103,8 @@ export function useFarmSourceWrite(
   const supplyWriting = useIsMutating({ mutationKey: writeScope }) > 0;
   const deletionLocked = useFarmDeleteBlocksWrite(farmId);
   const bulkLocked = useFarmBulkBlocksWrite(farmId);
-  const isWriting = supplyWriting || deletionLocked || bulkLocked;
+  const linkingLocked = useFarmProductLinkBlocksWrite(farmId);
+  const isWriting = supplyWriting || deletionLocked || bulkLocked || linkingLocked;
   // Only uncertain outcomes survive the finally block until review or session retirement.
   const mutation = useMutation({ mutationKey, mutationFn: writeSupply, gcTime: Infinity });
   const cache = client.getMutationCache();
@@ -175,7 +168,7 @@ export function useFarmSourceWrite(
   }
 
   function refreshDependents(kind: FarmSupplyAction["kind"], observedWrite: boolean) {
-    const lifecycle = kind === "remove" || kind === "readd";
+    const lifecycle = kind === "remove";
     void client.invalidateQueries({
       queryKey: [...scope, "batches", productId],
       refetchType: lifecycle ? "none" : "active",
@@ -218,26 +211,6 @@ export function useFarmSourceWrite(
         latest.supply_status === "removed";
       if (newer) refreshDependents("remove", true);
       return setReview(expected ? "matches" : newer ? "changed" : "unknown");
-    }
-    if (action.kind === "readd" || action.kind === "create") {
-      if (!newer) return setReview("unknown");
-      refreshDependents(action.kind, true);
-      const expectedGeneration = previous.supply_generation + (action.kind === "readd" ? 1 : 0);
-      if (
-        latest.supply_status !== "supplying" ||
-        latest.supply_generation !== expectedGeneration ||
-        latest.version !== previous.version + 1
-      )
-        return setReview("changed");
-      // Without the returned batch UUID, an identical batch is evidence about current state,
-      // not attribution of the write. Another administrator can submit the same values.
-      const batches = farmBatchQuery(latest, { scope: "current", page: 1 });
-      recoveryRead.current = batches.queryKey;
-      const page = await client.fetchQuery(batches);
-      if (!canUpdate()) return;
-      return setReview(
-        page.data.some((batch) => batchMatchesInput(batch, input)) ? "matches" : "batch_missing",
-      );
     }
     if ("batch" in action) {
       const { batch } = action;
@@ -317,6 +290,7 @@ export function useFarmSourceWrite(
       isWriting ||
       farmDeleteBlocksWrite(client, farmId) ||
       farmBulkBlocksWrite(client, farmId) ||
+      farmProductLinkBlocksWrite(client, farmId) ||
       client.isMutating({ mutationKey: writeScope }) > 0
     )
       return;
@@ -377,7 +351,6 @@ export function useFarmSourceWrite(
     review,
     checking,
     pending: mutation.isPending,
-    attemptedKind: attempt?.action.kind,
     reviewingBatchId:
       failure?.type === "uncertain" && attempt && "batch" in attempt.action
         ? attempt.action.batch.id

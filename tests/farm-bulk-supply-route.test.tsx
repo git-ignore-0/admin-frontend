@@ -12,7 +12,7 @@ import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { ToastProvider } from "@/components/toast-provider";
 import { FarmBulkSupply } from "@/components/farm-bulk-supply";
-import { getFarm, listFarmProducts, postFarmBulkSupply } from "@/lib/farms-api";
+import { getFarm, getFarmProduct, listFarmProducts, postFarmBulkSupply } from "@/lib/farms-api";
 import type { FarmBulkSupplyDraft, FarmBulkSupplyProduct } from "@/lib/farm-bulk-draft";
 import type { FarmSupplyInput } from "@/lib/farm-supply-form";
 import {
@@ -21,7 +21,7 @@ import {
   retireFarmAccess,
   retryFarmAccess,
 } from "@/lib/farm-query";
-import type { Farm, FarmProduct } from "@/lib/types";
+import type { Farm, FarmProduct, FarmProductDetail } from "@/lib/types";
 
 const nav = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -44,6 +44,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/farms-api", async (original) => ({
   ...(await original<typeof import("@/lib/farms-api")>()),
   getFarm: vi.fn(),
+  getFarmProduct: vi.fn(),
   listFarmProducts: vi.fn(),
   postFarmBulkSupply: vi.fn(),
 }));
@@ -120,6 +121,7 @@ const farm: Farm = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  nav.search.delete("supply_product");
 });
 
 it("fetches eligible pages only for the opened Farm and keeps return context", async () => {
@@ -226,6 +228,30 @@ function draftJourney() {
     retire: () => retireSession?.(),
   };
 }
+
+it("opens the source shortcut in the existing supply form and preserves existing quantities", async () => {
+  const journey = draftJourney();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+  journey.navigate(null);
+  nav.search.set("supply_product", otherId);
+  vi.mocked(getFarmProduct).mockResolvedValue({
+    ...product,
+    product_id: otherId,
+    sku: "BATCH-SKU-55",
+    capabilities: { can_create_batch: true },
+  } as FarmProductDetail);
+  journey.navigate(id);
+  await waitFor(() =>
+    expect(listFarmProducts).toHaveBeenLastCalledWith(
+      id,
+      { supplyStatus: "supplying", productStatus: "active", search: "BATCH-SKU-55", page: 1 },
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(currentDraft()).toEqual(unsavedDraft);
+  expect(postFarmBulkSupply).not.toHaveBeenCalled();
+  expect(getFarmProduct).toHaveBeenCalledExactlyOnceWith(id, otherId, expect.any(AbortSignal));
+});
 
 function currentDraft(): FarmBulkSupplyDraft {
   return JSON.parse(screen.getByTestId("draft").textContent ?? "");

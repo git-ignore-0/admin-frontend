@@ -3,11 +3,14 @@ import { invalidApiResponse, isApiObject } from "@/lib/client-error";
 
 export type CreationReceipt = { id: string; removed: boolean };
 
-export function requireCreationReceipt(
-  meta: unknown,
-  key: string,
-  action: "create_product" | "create_csa_configuration" | "create_farm_stock_batches",
-) {
+type CreationAction =
+  | "create_product"
+  | "create_csa_configuration"
+  | "create_farm_stock_batches"
+  | "link_farm_products"
+  | "readd_farm_product";
+
+export function requireCreationReceipt(meta: unknown, key: string, action: CreationAction) {
   const receipt = isApiObject(meta) ? meta.action_receipt : undefined;
   if (
     !isApiObject(receipt) ||

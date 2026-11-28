@@ -1,7 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { queryOptions, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  matchMutation,
+  queryOptions,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   useAdminRecordScope,
   useIsAdminQueryScopeCurrent,
@@ -19,7 +24,7 @@ import {
   farmSupplyKey,
   farmSupplyRequestDetailKey,
   farmSupplyRequestListKey,
-  farmSupplyWriteKey,
+  farmSupplyDecisionWriteKey,
   isFarmGone,
   retireFarmAccess,
 } from "@/lib/farm-query";
@@ -52,7 +57,7 @@ export function useFarmSupplyDecision(requestId: string, item?: AdminSupplyReque
   );
   const [report, setReport] = useState<DecisionReport>();
   const farmId = item?.farm.id;
-  const mutationKey = [...farmSupplyWriteKey(farmId ?? ""), "decision", requestId];
+  const mutationKey = farmSupplyDecisionWriteKey(farmId ?? "", requestId);
   const mutationCache = client.getMutationCache();
   const detailKey = farmSupplyRequestDetailKey(requestId);
   const [checking, setChecking] = useState(false);
@@ -110,8 +115,8 @@ export function useFarmSupplyDecision(requestId: string, item?: AdminSupplyReque
     const relatedWrites = mutationCache.findAll(farmDeleteSupplyWriteFilters(farmId));
     if (
       relatedWrites.some(
-        ({ options, state }) =>
-          state.status === "pending" || options.mutationKey?.[mutationKey.length - 1] !== requestId,
+        (write) =>
+          write.state.status === "pending" || !matchMutation({ mutationKey, exact: true }, write),
       )
     )
       return;

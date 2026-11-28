@@ -55,6 +55,10 @@ export const farmSupplyKey = (farmId: string) => [...supplyKey, farmId.toLowerCa
 export const farmSupplyWriteKey = (farmId: string) => [...farmSupplyKey(farmId), "write"] as const;
 export const farmBulkWriteKey = (farmId: string) =>
   [...farmSupplyWriteKey(farmId), "bulk"] as const;
+export const farmSupplyDecisionWriteKey = (farmId: string, requestId: string) =>
+  [...farmSupplyWriteKey(farmId), "decision", requestId] as const;
+export const farmProductLinkWriteKey = (farmId: string, productId?: string) =>
+  [...farmSupplyWriteKey(farmId), "link", ...(productId ? [productId.toLowerCase()] : [])] as const;
 export const farmBulkDraftKey = (farmId: string) =>
   [...farmSupplyKey(farmId), "bulk-draft"] as const;
 const farmDeleteMutationKey = (farmId: string) =>
@@ -153,13 +157,13 @@ export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
     predicate: ({ options, state }) => {
       const { variables, status, error } = state;
       const writer = options.mutationKey?.[mutationKey.length];
-      if (writer === "bulk") return bulkBlocksWrite({ state });
+      if (writer === "bulk" || writer === "link") return receiptWriteUnsettled({ state });
       if (writer === "decision") return status === "pending" || state.data === "unknown";
       const action =
         isApiObject(variables) && isApiObject(variables.action) ? variables.action.kind : undefined;
       return (
         status === "pending" ||
-        ((writer === "add" || action === "remove" || action === "readd") &&
+        (action === "remove" &&
           status === "error" &&
           !farmAccessDenied(error) &&
           isUncertainFarmSupplyWrite(error))
@@ -168,7 +172,7 @@ export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
   };
 }
 
-function bulkBlocksWrite({ state }: { state: { status: string; data: unknown } }) {
+function receiptWriteUnsettled({ state }: { state: { status: string; data: unknown } }) {
   return (
     state.status === "pending" ||
     (isApiObject(state.data) &&
@@ -180,7 +184,7 @@ function bulkBlocksWrite({ state }: { state: { status: string; data: unknown } }
 const farmBulkWriteFilters = (farmId: string): MutationFilters => ({
   mutationKey: farmBulkWriteKey(farmId),
   exact: true,
-  predicate: bulkBlocksWrite,
+  predicate: receiptWriteUnsettled,
 });
 
 export function farmBulkBlocksWrite(client: QueryClient, farmId: string) {
@@ -189,6 +193,22 @@ export function farmBulkBlocksWrite(client: QueryClient, farmId: string) {
 
 export function useFarmBulkBlocksWrite(farmId: string) {
   return useMutationState({ filters: farmBulkWriteFilters(farmId), select: () => true }).length > 0;
+}
+
+const farmProductLinkWriteFilters = (farmId: string): MutationFilters => ({
+  mutationKey: farmProductLinkWriteKey(farmId),
+  predicate: receiptWriteUnsettled,
+});
+
+export function farmProductLinkBlocksWrite(client: QueryClient, farmId: string) {
+  return Boolean(client.getMutationCache().find(farmProductLinkWriteFilters(farmId)));
+}
+
+export function useFarmProductLinkBlocksWrite(farmId: string) {
+  return (
+    useMutationState({ filters: farmProductLinkWriteFilters(farmId), select: () => true }).length >
+    0
+  );
 }
 
 export function farmAccessDenied(cause: unknown): cause is Error {

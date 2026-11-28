@@ -93,6 +93,18 @@
 
 /* Retain room for a refresh and a longer primary action beside an active filter. */
 @container list-toolbar (max-width: 26rem) {
+  .container[data-wrap-primary-action] .actions {
+    flex-wrap: wrap;
+  }
+
+  .container[data-wrap-primary-action] .primaryAction {
+    flex-basis: 100%;
+  }
+
+  .container[data-wrap-primary-action] .primaryAction :global(.mantine-Button-label) {
+    white-space: normal;
+  }
+
   .filterTrigger {
     max-inline-size: none;
   }

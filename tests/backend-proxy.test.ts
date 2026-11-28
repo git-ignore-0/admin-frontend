@@ -2046,3 +2046,96 @@ it("checks supply request list filters and rejects query on link and decisions",
     `https://auth.example.test/api/v1/admin/farm-supply-requests?farm_id=${id}&status=pending&page=2`,
   );
 });
+
+it.each(["products/bulk", "products/33333333-3333-4333-8333-333333333333/re-add"])(
+  "forwards only exact session-bound Farm linking requests on %s",
+  async (tail) => {
+    const key = "55555555-5555-4555-8555-555555555555";
+    const prefix = `admin/farms/${key}/`;
+    const path = prefix + tail;
+    const bulk = tail === "products/bulk";
+    const productId = "33333333-3333-4333-8333-333333333333";
+    const body = JSON.stringify(
+      bulk
+        ? { idempotency_key: key, product_ids: [productId] }
+        : { idempotency_key: key, expected_link_id: productId, expected_version: 2 },
+    );
+    const request = (method: "GET" | "POST" | "PATCH", query = "", target = path, headers = {}) =>
+      ({ GET, POST, PATCH })[method](
+        pageRequest(`https://admin.example.test/api/backend/${target}${query}`, {
+          method,
+          body: method === "POST" ? body : undefined,
+          headers: {
+            "content-type": "application/json",
+            origin: "https://admin.example.test",
+            "x-nfv-admin-request": "1",
+            ...headers,
+          },
+        }),
+        { params: Promise.resolve({ path: target.split("/") }) },
+      );
+    const receipt = `?creation_key=${key}`;
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ data: null }));
+    vi.stubGlobal("fetch", upstream);
+    for (const query of [
+      "",
+      "?creation_key=bad",
+      receipt + "&page=1",
+      receipt + "&creation_key=" + key,
+    ]) {
+      expect((await request("GET", query)).status).toBe(404);
+    }
+    expect((await request("GET", receipt, "admin/farms/bad/" + tail)).status).toBe(404);
+    expect((await request("GET", receipt, path + "/extra")).status).toBe(404);
+    expect((await request("PATCH")).status).toBe(404);
+    expect((await request("POST", "?page=1")).status).toBe(404);
+    expect((await request("POST", receipt)).status).toBe(404);
+    expect((await request("POST", "", prefix + "products")).status).toBe(404);
+    expect((await request("POST", "", path, { origin: "https://untrusted.test" })).status).toBe(
+      403,
+    );
+    expect(
+      (await request("GET", receipt, path, { "x-nfv-admin-session": "obsolete" })).status,
+    ).toBe(409);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await request("GET", receipt)).status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const conflict = { errors: [{ code: "product_already_linked", context: { product_id: key } }] };
+    upstream.mockResolvedValueOnce(Response.json(conflict, { status: 409 }));
+    const mutation = await request("POST");
+    expect(mutation.status).toBe(409);
+    expect(await mutation.json()).toEqual(conflict);
+    const miss = { errors: [{ code: "create_receipt_not_found" }] };
+    upstream.mockResolvedValueOnce(Response.json(miss, { status: 404 }));
+    const recovery = await request("GET", receipt);
+    expect(recovery.status).toBe(404);
+    expect(await recovery.json()).toEqual(miss);
+    expect(recovery.headers.get("cache-control")).toBe("private, no-store");
+    const committed = {
+      data: bulk ? { farm_id: key, created_count: 1 } : null,
+      meta: { idempotent_replay: false },
+    };
+    const replayed = { ...committed, meta: { idempotent_replay: true } };
+    upstream
+      .mockResolvedValueOnce(Response.json(committed, { status: bulk ? 201 : 200 }))
+      .mockResolvedValueOnce(Response.json(replayed));
+    const post = await request("POST");
+    expect(post.status).toBe(bulk ? 201 : 200);
+    expect(await post.json()).toEqual(committed);
+    const get = await request("GET", receipt);
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual(replayed);
+    const target = `https://auth.example.test/api/v1/${path}`;
+    expect(upstream.mock.calls.map(([url]) => String(url))).toEqual([
+      target,
+      target + receipt,
+      target,
+      target + receipt,
+    ]);
+    expect(new TextDecoder().decode(upstream.mock.calls[2][1]?.body as ArrayBuffer)).toBe(body);
+    expect(new Headers(upstream.mock.calls[0][1]?.headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+  },
+);

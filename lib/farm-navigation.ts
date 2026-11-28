@@ -1,3 +1,4 @@
+import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import type { FarmSupplyFilter } from "@/lib/types";
 
 export const FARM_LIST_PATH = "/farms";
@@ -17,6 +18,7 @@ type FarmDestination = {
   tab?: FarmDetailTab;
   productId?: string;
   bulk?: boolean;
+  supplyProductId?: string;
   supply?: FarmSupplyContext;
 };
 
@@ -56,13 +58,18 @@ export function readFarmSupplyContext(search: SearchReader | null): FarmSupplyCo
   };
 }
 
+export function readFarmSupplyProduct(search: SearchReader | null) {
+  const id = search?.get("supply_product");
+  return id && UUID_PATH_SEGMENT.test(id) ? id.toLowerCase() : undefined;
+}
+
 export function readFarmDetailTab(search: SearchReader | null): FarmDetailTab {
   const tab = search?.get("tab");
   return tab === "tracker" || tab === "information" ? "information" : "products";
 }
 
 export function farmHref(search: SearchReader | null, destination: FarmDestination = {}) {
-  const { id, mode, tab, productId, supply, bulk } = destination;
+  const { id, mode, tab, productId, supply, bulk, supplyProductId } = destination;
   const suffix = bulk
     ? "/stock-batches/new"
     : productId
@@ -84,6 +91,8 @@ export function farmHref(search: SearchReader | null, destination: FarmDestinati
     if (sourceFilters.search) query.set("supply_search", sourceFilters.search);
     if (sourceFilters.status !== "supplying") query.set("supply_status", sourceFilters.status);
     if (sourceFilters.page > 1) query.set("supply_page", String(sourceFilters.page));
+    if (bulk && supplyProductId && UUID_PATH_SEGMENT.test(supplyProductId))
+      query.set("supply_product", supplyProductId.toLowerCase());
     const detailTab = tab ?? readFarmDetailTab(search);
     if (!bulk && !productId && detailTab !== "products") query.set("tab", detailTab);
   }

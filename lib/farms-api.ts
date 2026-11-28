@@ -15,7 +15,6 @@ import type {
   FarmProduct,
   FarmProductDetail,
   FarmProductHistoryEntry,
-  FarmProductWithFirstBatch,
   FarmSourceBlocker,
   FarmStockBatch,
   FarmSupplyFilter,
@@ -485,28 +484,6 @@ function requireSourceTransition(
     throw invalidApiResponse();
 }
 
-function requireFirstBatch(data: FarmProductWithFirstBatch) {
-  if (!uuid(data.first_batch_id)) throw invalidApiResponse();
-}
-
-export function addFarmProduct(farmId: string, productId: string, batch: StockBatchInput) {
-  return api<FarmProductWithFirstBatch>(supplyPath(farmId), {
-    method: "POST",
-    body: JSON.stringify({ product_id: productId, ...batch }),
-  }).then((data) => {
-    requireFarmProduct(data, farmId, productId);
-    requireFirstBatch(data);
-    if (
-      data.supply_status !== "supplying" ||
-      data.product_status !== "active" ||
-      data.supply_generation !== 1 ||
-      data.version !== 1
-    )
-      throw invalidApiResponse();
-    return data;
-  });
-}
-
 export function removeFarmProduct(farmId: string, productId: string, source: SourceRevision) {
   return api<FarmProduct>(`${sourcePath(farmId, productId)}/remove`, {
     method: "POST",
@@ -518,22 +495,130 @@ export function removeFarmProduct(farmId: string, productId: string, source: Sou
   });
 }
 
+export type FarmProductLinkIntent = Readonly<{
+  idempotency_key: string;
+  product_ids: readonly string[];
+}>;
+
+export type FarmProductReaddIntent = Readonly<{
+  idempotency_key: string;
+  expected_link_id: string;
+  expected_version: number;
+  previous_generation: number;
+}>;
+
+export const MAX_FARM_PRODUCT_LINKS = 50;
+
+function creationReceiptPath(path: string, key: string) {
+  return `${path}?${new URLSearchParams({ creation_key: key })}`;
+}
+
+function verifyFarmCreationReceipt(
+  meta: unknown,
+  key: string,
+  action: Parameters<typeof requireCreationReceipt>[2],
+  resourceId: string,
+  recovery: boolean,
+) {
+  if (
+    !uuid(requireCreationReceipt(meta, key, action), resourceId) ||
+    !isApiObject(meta) ||
+    typeof meta.idempotent_replay !== "boolean" ||
+    (recovery && !meta.idempotent_replay)
+  ) {
+    throw invalidApiResponse();
+  }
+  return meta.idempotent_replay;
+}
+
+function requireLinkReceipt(
+  { data, meta }: ApiEnvelope<unknown>,
+  farmId: string,
+  intent: FarmProductLinkIntent,
+  recovery: boolean,
+) {
+  const replay = verifyFarmCreationReceipt(
+    meta,
+    intent.idempotency_key,
+    "link_farm_products",
+    farmId,
+    recovery,
+  );
+  if (
+    !isApiObject(data) ||
+    !uuid(data.farm_id, farmId) ||
+    !integer(data.created_count, 1) ||
+    data.created_count !== intent.product_ids.length
+  )
+    throw invalidApiResponse();
+  return { farm_id: data.farm_id, created_count: data.created_count, idempotent_replay: replay };
+}
+
+export function linkFarmProducts(farmId: string, intent: FarmProductLinkIntent) {
+  return apiEnvelope<unknown>(`${supplyPath(farmId)}/bulk`, {
+    method: "POST",
+    body: JSON.stringify(intent),
+  }).then((payload) => requireLinkReceipt(payload, farmId, intent, false));
+}
+
+export function recoverFarmProductLinking(farmId: string, intent: FarmProductLinkIntent) {
+  return apiEnvelope<unknown>(
+    creationReceiptPath(`${supplyPath(farmId)}/bulk`, intent.idempotency_key),
+  ).then((payload) => requireLinkReceipt(payload, farmId, intent, true));
+}
+
+function requireReaddReceipt(
+  { data, meta }: ApiEnvelope<FarmProduct | null | undefined>,
+  farmId: string,
+  productId: string,
+  intent: FarmProductReaddIntent,
+  recovery: boolean,
+) {
+  verifyFarmCreationReceipt(
+    meta,
+    intent.idempotency_key,
+    "readd_farm_product",
+    intent.expected_link_id,
+    recovery,
+  );
+  if (data === null) return null;
+  if (!data) throw invalidApiResponse();
+  const source = requireFarmProduct(data, farmId, productId);
+  if (
+    !uuid(source.id, intent.expected_link_id) ||
+    source.version <= intent.expected_version ||
+    source.supply_generation <= intent.previous_generation
+  )
+    throw invalidApiResponse();
+  return source;
+}
+
 export function readdFarmProduct(
   farmId: string,
   productId: string,
-  source: SourceRevision,
-  batch: StockBatchInput,
+  intent: FarmProductReaddIntent,
 ) {
-  return api<FarmProductWithFirstBatch>(`${sourcePath(farmId, productId)}/re-add`, {
-    method: "POST",
-    body: JSON.stringify({ ...expectedSource(source), ...batch }),
-  }).then((data) => {
-    requireFarmProduct(data, farmId, productId);
-    requireFirstBatch(data);
-    requireSourceTransition(data, source, "supplying", source.supply_generation + 1);
-    if (data.product_status !== "active") throw invalidApiResponse();
-    return data;
-  });
+  const { expected_link_id, expected_version, idempotency_key } = intent;
+  return apiEnvelope<FarmProduct>(
+    `${sourcePath(farmId, productId)}/re-add`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_link_id, expected_version, idempotency_key }),
+    },
+    { allowMissingData: true },
+  ).then((payload) => requireReaddReceipt(payload, farmId, productId, intent, false));
+}
+
+export function recoverFarmProductReadd(
+  farmId: string,
+  productId: string,
+  intent: FarmProductReaddIntent,
+) {
+  return apiEnvelope<FarmProduct>(
+    creationReceiptPath(`${sourcePath(farmId, productId)}/re-add`, intent.idempotency_key),
+    undefined,
+    { allowMissingData: true },
+  ).then((payload) => requireReaddReceipt(payload, farmId, productId, intent, true));
 }
 
 type BatchListSource = SourceRevision & Pick<FarmProduct, "supply_status">;
@@ -591,25 +676,6 @@ function validateBatchMutation(
 }
 
 const stockInputFields = ["start_date", "end_date", "quantity_units"] as const;
-
-export function createFarmStockBatch(
-  farmId: string,
-  productId: string,
-  batch: StockBatchInput,
-  source: SourceRevision,
-) {
-  return api<FarmStockBatch>(`${sourcePath(farmId, productId)}/batches`, {
-    method: "POST",
-    body: JSON.stringify({ ...expectedSource(source), ...batch }),
-  }).then((data) => {
-    requireStockBatch(data, source.id);
-    validateBatchMutation(data, source, 1, batch);
-    if (data.source_version !== source.version + 1 || data.status === "cancelled") {
-      throw invalidApiResponse();
-    }
-    return data;
-  });
-}
 
 export function updateFarmStockBatch(
   farmId: string,
@@ -715,26 +781,24 @@ function requireBulkReceipt(
   intent: FarmBulkIntent,
   recovery: boolean,
 ) {
-  const resourceId = requireCreationReceipt(
+  const replay = verifyFarmCreationReceipt(
     meta,
     intent.idempotency_key,
     "create_farm_stock_batches",
+    farmId,
+    recovery,
   );
   if (
-    !uuid(resourceId, farmId) ||
     !isApiObject(data) ||
     !uuid(data.farm_id, farmId) ||
     !integer(data.created_count, 1) ||
-    data.created_count !== intent.items.length ||
-    !isApiObject(meta) ||
-    typeof meta.idempotent_replay !== "boolean" ||
-    (recovery && !meta.idempotent_replay)
+    data.created_count !== intent.items.length
   )
     throw invalidApiResponse();
   return {
     farm_id: data.farm_id,
     created_count: data.created_count,
-    idempotent_replay: meta.idempotent_replay,
+    idempotent_replay: replay,
   };
 }
 

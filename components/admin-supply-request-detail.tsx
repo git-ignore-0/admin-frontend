@@ -13,7 +13,7 @@ import {
   Textarea,
   VisuallyHidden,
 } from "@mantine/core";
-import { useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import { matchMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
@@ -38,6 +38,7 @@ import {
 } from "@/lib/client-error";
 import {
   farmDeleteSupplyWriteFilters,
+  farmSupplyDecisionWriteKey,
   isFarmGone,
   retryFarmAccess,
   useFarmAccess,
@@ -116,9 +117,10 @@ export function AdminSupplyRequestDetail({
   const pending = decision.intent?.phase === "pending";
   const uncertain = decision.intent?.phase === "unknown";
   const blockedByDeletion = useFarmDeleteBlocksWrite(item?.farm.id ?? "");
+  const decisionKey = farmSupplyDecisionWriteKey(item?.farm.id ?? "", recordId);
   const otherWritePending = useMutationState({
     filters: farmDeleteSupplyWriteFilters(item?.farm.id ?? ""),
-    select: ({ options }) => options.mutationKey?.at(-1) !== recordId,
+    select: (entry) => !matchMutation({ mutationKey: decisionKey, exact: true }, entry),
   }).some(Boolean);
   const blocked = blockedByDeletion || otherWritePending;
   const actionsVisible = item?.status === "pending" && !access.error;

@@ -27,7 +27,7 @@ import {
   farmDetailRead,
   shareFarmDetail,
 } from "@/lib/farm-detail-snapshot";
-import { farmHref, normalizeFarmSupplySearch } from "@/lib/farm-navigation";
+import { farmHref, normalizeFarmSupplySearch, readFarmSupplyProduct } from "@/lib/farm-navigation";
 import {
   farmAccess,
   farmAccessDenied,
@@ -64,8 +64,10 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   const access = useFarmAccess();
   const path = farmHref(null, { id: farmId, bulk: true });
   const listHref = farmHref(params);
-  const returnHref = farmHref(params, { id: farmId, tab: "products" });
-  const [search, setSearch] = useState("");
+  const sourceId = readFarmSupplyProduct(params);
+  const returnHref = farmHref(params, { id: farmId, tab: "products", productId: sourceId });
+  const farmHrefWithContext = farmHref(params, { id: farmId, tab: "products" });
+  const [appliedSearch, setSearch] = useState<string>();
   const [page, setPage] = useState(1);
   const draftKey = farmBulkDraftKey(farmId);
   const { data: cachedDraft } = useQuery<FarmBulkSupplyDraft>({
@@ -100,6 +102,13 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
     usable && !farmAccessDenied(farmQuery.error) && !farmNotFound(farmQuery.error)
       ? farmQuery.data
       : undefined;
+  const shortcut = useQuery({
+    queryKey: [...farmSupplyKey(farmId), "source", sourceId ?? ""],
+    queryFn: sourceId ? ({ signal }) => getFarmProduct(farmId, sourceId, signal) : skipToken,
+    enabled: Boolean(snapshot && sourceId && appliedSearch === undefined),
+  });
+  const search =
+    appliedSearch ?? (shortcut.data?.capabilities.can_create_batch ? shortcut.data.sku : "");
   const products = useQuery({
     queryKey: [...farmSupplyKey(farmId), "eligible", "supplying", "active", search, page],
     queryFn: ({ signal }) =>
@@ -113,9 +122,9 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
         },
         signal,
       ),
-    enabled: Boolean(snapshot),
+    enabled: Boolean(snapshot) && (!sourceId || appliedSearch !== undefined || !shortcut.isPending),
   });
-  const accessCause = [farmQuery.error, products.error].find(farmAccessDenied);
+  const accessCause = [farmQuery.error, shortcut.error, products.error].find(farmAccessDenied);
   const farm = accessCause ? undefined : snapshot;
   const missingFarm = farmNotFound(farmQuery.error);
   useEffect(() => {
@@ -131,10 +140,10 @@ function BulkSupplyScreen({ farmId }: { farmId: string }) {
   const crumbs = useMemo(
     () => [
       { label: c.list, href: listHref },
-      ...(farmName ? [{ label: farmName, href: returnHref }] : []),
+      ...(farmName ? [{ label: farmName, href: farmHrefWithContext }] : []),
       { label: title },
     ],
-    [c.list, listHref, farmName, returnHref, title],
+    [c.list, listHref, farmName, farmHrefWithContext, title],
   );
 
   const lastPage = products.data

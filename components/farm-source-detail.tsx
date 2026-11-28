@@ -24,6 +24,7 @@ import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FarmBatchDialog } from "@/components/farm-batch-dialog";
+import { FarmProductLinkRecovery } from "@/components/farm-product-link-recovery";
 import { FarmStockBatches } from "@/components/farm-stock-batches";
 import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
@@ -43,6 +44,7 @@ import { farmSourceQuery, type FarmBatchFilter } from "@/lib/farm-supply-query";
 import { formatDecimalInput } from "@/lib/numeric-input";
 import type {
   Farm,
+  FarmProductDetail,
   FarmProductHistoryEntry,
   FarmSourceBlocker,
   StockBatchInput,
@@ -52,6 +54,8 @@ import {
   useFarmSourceWrite,
   type FarmSupplyAction,
 } from "@/lib/use-farm-source-write";
+
+import { useFarmProductLinkWrite } from "@/lib/use-farm-product-link-write";
 
 type Props = { farm: Farm; productId: string; onAccessLost?: (cause: unknown) => void };
 
@@ -67,6 +71,8 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
   const params = useSearchParams();
   const query = useQuery(farmSourceQuery(farm.id, productId));
   const write = useFarmSourceWrite(farm.id, productId, onAccessLost);
+  const readd = useFarmProductLinkWrite(farm.id, productId, onAccessLost);
+  const [readdSource, setReaddSource] = useState<FarmProductDetail | null>(null);
   const [action, setAction] = useState<FarmSupplyAction | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyPanelId = useId();
@@ -94,6 +100,11 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
     [batchScopeKey],
   );
   const recover = () => write.recover(batchFilter);
+  function savedReadd() {
+    toast(c.readdedProduct);
+    setReaddSource(null);
+  }
+  const readdFeedback = <FarmProductLinkRecovery write={readd} onSuccess={savedReadd} />;
   const productName =
     source && !notFound ? (locale === "vi" ? source.name_vi : source.name_en) : c.sourceDetail;
   const farmName = locale === "vi" ? farm.name_vi : farm.name_en;
@@ -131,6 +142,7 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
     return (
       <>
         {breadcrumb}
+        {readdFeedback}
         {query.isPending ? (
           <DataState kind="loading" title={c.loadingSource} />
         ) : (
@@ -156,18 +168,15 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
   const stale = Boolean(action && !sameFarmSourceRevision(source, action.source));
   const unresolved = Boolean(write.failure && write.failure.type !== "rejected");
   const busy = write.pending || write.checking;
-  const locked = Boolean(query.error) || query.isFetching || write.isWriting || busy || unresolved;
-  const comparable =
-    write.review === "matches" ||
-    write.review === "changed" ||
-    (write.review === "batch_missing" &&
-      (write.attemptedKind === "create" || write.attemptedKind === "readd"));
-  const blocked =
-    locked ||
-    stale ||
-    (action?.kind === "remove" && !caps.can_remove) ||
-    (action?.kind === "create" && !caps.can_create_batch) ||
-    (action?.kind === "readd" && !caps.can_readd);
+  const locked =
+    Boolean(query.error) ||
+    query.isFetching ||
+    write.isWriting ||
+    busy ||
+    unresolved ||
+    readd.unresolved;
+  const comparable = write.review === "matches" || write.review === "changed";
+  const blocked = locked || stale || (action?.kind === "remove" && !caps.can_remove);
   const openAllocations = caps.blockers.remove;
   const newBlocker = write.failure?.blocker;
   const stockReserved =
@@ -190,8 +199,6 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
         : undefined;
   const messages = {
     remove: c.removedProduct,
-    readd: c.readdedProduct,
-    create: c.savedBatch,
     edit: c.savedBatch,
     cancel: c.cancelledBatch,
   };
@@ -302,8 +309,21 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
                 </Stack>
                 <Group gap="xs">
                   {active && caps.can_create_batch && (
-                    <Button disabled={locked} onClick={() => begin({ kind: "create", source })}>
-                      {c.addBatch}
+                    <Button
+                      component={AdminNavigationLink}
+                      href={farmHref(params, {
+                        id: farm.id,
+                        bulk: true,
+                        supplyProductId: productId,
+                      })}
+                      data-disabled={locked || undefined}
+                      aria-disabled={locked || undefined}
+                      tabIndex={locked ? -1 : undefined}
+                      onClick={(event) => {
+                        if (locked) event.preventDefault();
+                      }}
+                    >
+                      {c.addSupply}
                     </Button>
                   )}
                   {active && caps.can_remove && (
@@ -317,7 +337,10 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
                     </Button>
                   )}
                   {!active && caps.can_readd && (
-                    <Button disabled={locked} onClick={() => begin({ kind: "readd", source })}>
+                    <Button
+                      disabled={locked || readd.blocked}
+                      onClick={() => setReaddSource(source)}
+                    >
                       {c.readdProduct}
                     </Button>
                   )}
@@ -357,6 +380,7 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
             </Stack>
           </Paper>
           {!action && feedback}
+          {!readdSource && readdFeedback}
           <Paper p="md" miw={0}>
             <FarmStockBatches
               source={source}
@@ -431,35 +455,54 @@ function SourceDetail({ farm, productId, onAccessLost }: Props) {
           {feedback}
         </ConfirmationDialog>
       )}
-      {action && action.kind !== "remove" && action.kind !== "cancel" && (
+      {readdSource && (
+        <ConfirmationDialog
+          title={c.readdProduct}
+          busy={readd.pending}
+          busyLabel={c.saving}
+          confirmLabel={c.readdProduct}
+          cancelLabel={c.cancel}
+          confirmDisabled={
+            locked ||
+            readd.blocked ||
+            !caps.can_readd ||
+            !sameFarmSourceRevision(source, readdSource) ||
+            readd.failure?.kind === "conflict" ||
+            readd.failure?.kind === "idempotency_conflict"
+          }
+          error={
+            readd.failure?.kind === "conflict" || !sameFarmSourceRevision(source, readdSource)
+              ? c.supplyWriteConflict
+              : readd.failure?.kind === "rejected"
+                ? requestErrorMessage(readd.failure.cause, t)
+                : undefined
+          }
+          onCancel={() => {
+            setReaddSource(null);
+            readd.clearFailure();
+          }}
+          onConfirm={() => void readd.submit({ kind: "readd", source: readdSource }, savedReadd)}
+          fallbackFocusRef={heading}
+        >
+          <Text>{c.readdExplain}</Text>
+          {readdFeedback}
+        </ConfirmationDialog>
+      )}
+      {action?.kind === "edit" && (
         <FarmBatchDialog
-          title={
-            action.kind === "edit"
-              ? c.editBatch
-              : action.kind === "create"
-                ? c.addBatch
-                : c.readdProduct
-          }
-          confirmLabel={
-            action.kind === "edit" ? c.save : action.kind === "create" ? c.addBatch : c.readdProduct
-          }
+          title={c.editBatch}
+          confirmLabel={c.save}
           product={action.source}
-          batch={action.kind === "edit" ? action.batch : undefined}
+          batch={action.batch}
           restrictIncrease={source.product_status !== "active"}
-          blocked={
-            blocked ||
-            (action.kind === "create" && !caps.can_create_batch) ||
-            (action.kind === "readd" && !caps.can_readd)
-          }
+          blocked={blocked}
           busy={busy}
           error={localizedError}
           onCancel={dismiss}
           onSubmit={confirm}
           feedback={feedback}
           fallbackFocusRef={heading}
-        >
-          {action.kind === "readd" && <Text size="sm">{c.readdExplain}</Text>}
-        </FarmBatchDialog>
+        />
       )}
     </Stack>
   );

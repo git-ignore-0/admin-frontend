@@ -20,6 +20,7 @@ import {
   farmDeleteSupplyWriteFilters,
   farmDetailKey,
   farmListKey,
+  farmProductLinkWriteKey,
   farmSupplyKey,
   farmSupplyRequestDetailKey,
   farmSupplyRequestListKey,
@@ -390,6 +391,24 @@ it("identifies the item in product identity and source generation conflicts", as
   expect(
     await within(dialog).findByText("Greens · The product was removed and added back to supply."),
   ).toBeVisible();
+});
+
+it("blocks a Farmer request decision behind unresolved re-linking even when their UUIDs match", async () => {
+  renderDetail();
+  const approve = await screen.findByRole("button", { name: "Approve" });
+  await waitFor(() => expect(approve).toBeEnabled());
+  const cache = client.getMutationCache();
+  const relink = cache.build(client, {
+    mutationKey: farmProductLinkWriteKey(farmId, requestId),
+    mutationFn: async () => ({ failure: { kind: "unknown" } }),
+  });
+  await act(async () => relink.execute(undefined));
+  await waitFor(() => expect(approve).toBeDisabled());
+  expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+  fireEvent.click(approve);
+  expect(decideSupplyRequest).not.toHaveBeenCalled();
+  act(() => cache.remove(relink));
+  await waitFor(() => expect(approve).toBeEnabled());
 });
 
 it("retires request snapshots on actual permission loss", async () => {

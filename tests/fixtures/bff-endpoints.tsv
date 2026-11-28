@@ -22,10 +22,11 @@ admin/farms/{farm}	GET,PATCH,DELETE	no
 admin/farms/{farm}/growth-tracker	GET,POST,PATCH,DELETE	no
 admin/farms/{farm}/available-products	GET	no
 admin/farms/{farm}/stock-batches/bulk	GET,POST	no
-admin/farms/{farm}/products	GET,POST	no
+admin/farms/{farm}/products	GET	no
+admin/farms/{farm}/products/bulk	GET,POST	no
 admin/farms/{farm}/products/{product}	GET	no
 admin/farms/{farm}/products/{product}/remove	POST	no
-admin/farms/{farm}/products/{product}/re-add	POST	no
+admin/farms/{farm}/products/{product}/re-add	GET,POST	no
 admin/farms/{farm}/products/{product}/history	GET	no
 admin/farms/{farm}/products/{product}/batches	GET,POST	no
 admin/farms/{farm}/products/{product}/batches/{batch}	PATCH	no

@@ -2,9 +2,10 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 import { apiErrorContext, isApiObject } from "@/lib/client-error";
 import {
-  addFarmProduct,
+  linkFarmProducts,
+  recoverFarmProductLinking,
+  recoverFarmProductReadd,
   cancelFarmStockBatch,
-  createFarmStockBatch,
   deleteFarm,
   deleteFarmImage,
   getFarm,
@@ -22,7 +23,7 @@ import {
   updateFarmStockBatch,
   enableFarmTracker,
 } from "@/lib/farms-api";
-import type { FarmProduct, FarmStockBatch, StockBatchInput } from "@/lib/types";
+import type { FarmProduct, FarmStockBatch } from "@/lib/types";
 
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
@@ -99,11 +100,6 @@ const stockBatch: FarmStockBatch = {
   updated_at: "2026-10-26T00:00:00Z",
 };
 
-const batchInput: StockBatchInput = {
-  start_date: stockBatch.start_date,
-  end_date: stockBatch.end_date,
-  quantity_units: stockBatch.quantity_units,
-};
 const sourceRemoved: FarmProduct = {
   ...farmProduct,
   is_active: false,
@@ -308,34 +304,15 @@ it.each([
   await expect(listFarmProductHistory(farmId, productId)).rejects.toThrow("invalid_response");
 });
 
-it("removes and re-adds a source using the original link identity and source revision", async () => {
-  const readded = {
-    ...farmProduct,
-    version: 3,
-    supply_generation: 2,
-    first_batch_id: batchId,
-  };
+it("removes a source using the original link identity and source revision", async () => {
   fetchMock.mockResolvedValueOnce(Response.json({ data: sourceRemoved }));
-  fetchMock.mockResolvedValueOnce(Response.json({ data: readded }));
   await expect(removeFarmProduct(farmId, productId, farmProduct)).resolves.toEqual(sourceRemoved);
-  await expect(readdFarmProduct(farmId, productId, sourceRemoved, batchInput)).resolves.toEqual(
-    readded,
+  expect(fetchMock.mock.calls[0][0]).toBe(
+    `/api/backend/admin/farms/${farmId}/products/${productId}/remove`,
   );
-
-  const source = `/api/backend/admin/farms/${farmId}/products/${productId}`;
-  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-    `${source}/remove`,
-    `${source}/re-add`,
-  ]);
-  expect(fetchMock.mock.calls.map(([, request]) => request.method)).toEqual(["POST", "POST"]);
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
     expected_link_id: linkId,
     expected_version: 1,
-  });
-  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-    ...batchInput,
-    expected_link_id: linkId,
-    expected_version: 2,
   });
 });
 
@@ -355,19 +332,56 @@ it.each([
   },
 );
 
-it("cannot confirm a re-add that returns the previous generation or omits the first batch ID", async () => {
+it("verifies the re-add receipt and projected identity without inferring the current lifecycle state", async () => {
+  const intent = {
+    idempotency_key: batchId,
+    expected_link_id: linkId,
+    expected_version: sourceRemoved.version,
+    previous_generation: sourceRemoved.supply_generation,
+  };
+  const action_receipt = {
+    idempotency_key: batchId,
+    action: "readd_farm_product",
+    resource_id: linkId,
+  };
+  const meta = { action_receipt, idempotent_replay: true };
   const readded = {
     ...farmProduct,
     version: 3,
     supply_generation: 2,
-    first_batch_id: batchId,
+    initial_quantity: 0,
+    available_quantity: 0,
+    active_batch_count: 0,
+    next_expiry_date: null,
   };
-  for (const data of [
-    { ...readded, supply_generation: 1 },
-    { ...readded, first_batch_id: undefined },
+  const changed = { ...sourceRemoved, version: 4, supply_generation: 2 };
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ data: readded, meta: { ...meta, idempotent_replay: false } }),
+    )
+    .mockResolvedValueOnce(Response.json({ data: changed, meta }))
+    .mockResolvedValueOnce(Response.json({ data: null, meta }));
+  await expect(readdFarmProduct(farmId, productId, intent)).resolves.toEqual(readded);
+  await expect(recoverFarmProductReadd(farmId, productId, intent)).resolves.toEqual(changed);
+  await expect(recoverFarmProductReadd(farmId, productId, intent)).resolves.toBeNull();
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    expected_link_id: linkId,
+    expected_version: sourceRemoved.version,
+    idempotency_key: batchId,
+  });
+  expect(fetchMock.mock.calls[1][0]).toBe(
+    `/api/backend/admin/farms/${farmId}/products/${productId}/re-add?creation_key=${batchId}`,
+  );
+  for (const invalid of [
+    { meta },
+    { data: sourceRemoved, meta },
+    { data: { ...changed, farm_id: productId }, meta },
+    { data: { ...changed, product_id: farmId }, meta },
+    { data: null, meta: { ...meta, idempotent_replay: false } },
+    { data: null, meta: { ...meta, action_receipt: { ...action_receipt, resource_id: farmId } } },
   ]) {
-    fetchMock.mockResolvedValueOnce(Response.json({ data }));
-    await expect(readdFarmProduct(farmId, productId, sourceRemoved, batchInput)).rejects.toThrow(
+    fetchMock.mockResolvedValueOnce(Response.json(invalid));
+    await expect(recoverFarmProductReadd(farmId, productId, intent)).rejects.toThrow(
       "invalid_response",
     );
   }
@@ -598,31 +612,9 @@ it("does not treat a Farm save with a missing record ID as authoritative", async
   expect(fetchMock).toHaveBeenCalledOnce();
 });
 
-it("creates a Farm product together with its first stock batch", async () => {
-  fetchMock.mockResolvedValue(
-    Response.json({ data: { ...farmProduct, first_batch_id: batchId } }, { status: 201 }),
-  );
-
-  await addFarmProduct(farmId, productId, {
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
-  });
-
-  expect(fetchMock.mock.calls[0][0]).toBe(`/api/backend/admin/farms/${farmId}/products`);
-  expect(fetchMock.mock.calls[0][1].method).toBe("POST");
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
-    product_id: productId,
-    start_date: "2026-10-26",
-    end_date: "2026-11-01",
-    quantity_units: 10,
-  });
-});
-
 it("writes only the appropriate source or batch revision and accepts a newer source snapshot after editing", async () => {
   fetchMock
     .mockResolvedValueOnce(Response.json({ data: [], meta: { page: 2, page_size: 20, total: 0 } }))
-    .mockResolvedValueOnce(Response.json({ data: { ...stockBatch, version: 1 } }))
     .mockResolvedValueOnce(
       Response.json({
         data: { ...stockBatch, quantity_units: 12, end_date: "2026-11-02", source_version: 4 },
@@ -646,7 +638,6 @@ it("writes only the appropriate source or batch revision and accepts a newer sou
     { page: 2, status: "active", scope: "current" },
     { source: farmProduct },
   );
-  await createFarmStockBatch(farmId, productId, batchInput, farmProduct);
   await updateFarmStockBatch(
     farmId,
     productId,
@@ -662,23 +653,16 @@ it("writes only the appropriate source or batch revision and accepts a newer sou
 
   const base = `/api/backend/admin/farms/${farmId}/products/${productId}/batches`;
   expect(fetchMock.mock.calls[0][0]).toBe(`${base}?page=2&scope=current&status=active`);
-  expect(fetchMock.mock.calls[1][0]).toBe(base);
-  expect(fetchMock.mock.calls[1][1].method).toBe("POST");
+  expect(fetchMock.mock.calls[1][0]).toBe(`${base}/${batchId}`);
+  expect(fetchMock.mock.calls[1][1].method).toBe("PATCH");
   expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-    expected_link_id: linkId,
-    expected_version: farmProduct.version,
-    ...batchInput,
-  });
-  expect(fetchMock.mock.calls[2][0]).toBe(`${base}/${batchId}`);
-  expect(fetchMock.mock.calls[2][1].method).toBe("PATCH");
-  expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
     version: 2,
     end_date: "2026-11-02",
     quantity_units: 12,
   });
-  expect(fetchMock.mock.calls[3][0]).toBe(`${base}/${batchId}/cancel`);
-  expect(fetchMock.mock.calls[3][1].method).toBe("POST");
-  expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ version: 3 });
+  expect(fetchMock.mock.calls[2][0]).toBe(`${base}/${batchId}/cancel`);
+  expect(fetchMock.mock.calls[2][1].method).toBe("POST");
+  expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ version: 3 });
 });
 
 it("accepts historical batches with active date status but keeps them out of current scope", async () => {
@@ -794,3 +778,46 @@ it.each(["farm", "action", "resource", "key", "replay"] as const)(
     await expect(postFarmBulkSupply(farmId, intent)).rejects.toThrow("invalid_response");
   },
 );
+
+it("links a product set with a verified scoped receipt and no batch fields", async () => {
+  const intent = { idempotency_key: linkId, product_ids: [productId, batchId] };
+  const data = { farm_id: farmId, created_count: 2 };
+  const action_receipt = {
+    action: "link_farm_products",
+    resource_id: farmId,
+    idempotency_key: linkId,
+  };
+  const meta = { action_receipt, idempotent_replay: true };
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({ data, meta: { ...meta, idempotent_replay: false } }, { status: 201 }),
+    )
+    .mockResolvedValueOnce(Response.json({ data, meta }));
+  await expect(linkFarmProducts(farmId, intent)).resolves.toEqual({
+    ...data,
+    idempotent_replay: false,
+  });
+  await expect(recoverFarmProductLinking(farmId, intent)).resolves.toEqual({
+    ...data,
+    idempotent_replay: true,
+  });
+  const path = `/api/backend/admin/farms/${farmId}/products/bulk`;
+  expect(fetchMock.mock.calls[0][0]).toBe(path);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(intent);
+  expect(fetchMock.mock.calls[1][0]).toBe(`${path}?creation_key=${linkId}`);
+  for (const invalid of [
+    { data: { ...data, farm_id: productId }, meta },
+    { data: { ...data, created_count: 1 }, meta },
+    { data: { ...data, created_count: "2" }, meta },
+    { data, meta: { ...meta, idempotent_replay: false } },
+    {
+      data,
+      meta: { ...meta, action_receipt: { ...action_receipt, action: "create_farm_stock_batches" } },
+    },
+    { data, meta: { ...meta, action_receipt: { ...action_receipt, idempotency_key: productId } } },
+    { data, meta: { ...meta, action_receipt: { ...action_receipt, resource_id: productId } } },
+  ]) {
+    fetchMock.mockResolvedValueOnce(Response.json(invalid));
+    await expect(recoverFarmProductLinking(farmId, intent)).rejects.toThrow("invalid_response");
+  }
+});

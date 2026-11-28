@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 130 canonical route shapes and 181 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(130);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(130);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(181);
+  it("covers the 131 canonical route shapes and 183 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(131);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(131);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(183);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);
@@ -150,15 +150,17 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", [...base, farm, "products"])).toBe(true);
     expect(isAllowedBackendRequest("GET", [...base, farm, "available-products"])).toBe(true);
     expect(isAllowedBackendRequest("POST", [...base, farm, "available-products"])).toBe(false);
-    expect(isAllowedBackendRequest("POST", [...base, farm, "products"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, farm, "products"])).toBe(false);
     const source = [...base, farm, "products", product];
     expect(isAllowedBackendRequest("GET", source)).toBe(true);
     expect(isAllowedBackendRequest("PATCH", source)).toBe(false);
     expect(isAllowedBackendRequest("DELETE", source)).toBe(false);
     expect(isAllowedBackendRequest("GET", [...source, "history"])).toBe(true);
-    for (const action of ["remove", "re-add"]) {
-      expect(isAllowedBackendRequest("POST", [...source, action])).toBe(true);
-      expect(isAllowedBackendRequest("GET", [...source, action])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...source, "remove"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...source, "remove"])).toBe(false);
+    for (const method of ["GET", "POST"]) {
+      expect(isAllowedBackendRequest(method, [...source, "re-add"])).toBe(true);
+      expect(isAllowedBackendRequest(method, [...base, farm, "products", "bulk"])).toBe(true);
     }
     const batch = "22222222-2222-4222-8222-222222222222";
     expect(isAllowedBackendRequest("GET", [...base, farm, "products", product, "batches"])).toBe(

@@ -15,6 +15,7 @@ type Props = {
   alternateLabel?: string;
   onAlternate?: () => void;
   error?: string;
+  footerSummary?: ReactNode;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onCancel: () => void;
@@ -39,6 +40,7 @@ export function ConfirmationDialog({
   alternateLabel,
   onAlternate,
   error,
+  footerSummary,
   fallbackFocusRef,
   returnFocusRef,
   onCancel,
@@ -103,6 +105,7 @@ export function ConfirmationDialog({
           </Stack>
         </Modal.Body>
         <Group component="footer" className={layout.footer} justify="flex-end" gap="xs" p="md">
+          {footerSummary}
           <Button
             ref={closeButton}
             data-autofocus={(!busy && (!confirmLabel || (danger && !formId))) || undefined}
