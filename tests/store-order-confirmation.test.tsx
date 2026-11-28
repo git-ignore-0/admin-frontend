@@ -5,6 +5,7 @@ import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
+import type { AdminLocale } from "@/lib/admin-i18n";
 import type { StoreOrder } from "@/lib/types";
 import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 
@@ -21,9 +22,9 @@ const otherUuid = "e2a05262-9d39-4b51-b729-4c355b8dd841";
 const initial = storeOrderFixture({ expires_at: null });
 const cancelled = { ...initial, status: "cancelled", cancelled_at: stamp } as const;
 
-function orderTree(item: StoreOrder) {
+function orderTree(item: StoreOrder, locale: AdminLocale = "vi") {
   return (
-    <AdminI18nProvider initialLocale="vi">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
         <AdminQueryProvider>
           {" "}
@@ -201,90 +202,135 @@ const batchId = "0eb05ea3-2160-49f4-9e6f-d7099a1f6afa";
 const farmId = "1a5940a9-71b7-464a-901c-6fca01a8b99b";
 const allocationId = "9f958471-bb55-4acc-ad7c-dc65eb24b742";
 
-it("accepts an approval receipt on explicit replay after the order was delivered", async () => {
-  const line = initial.lines[0];
-  const order = {
-    ...initial,
-    source_inventory: {
-      refresh_required_before_approve: true,
-      lines: [
-        sourceLineFixture(
-          line,
-          [{ farm_id: farmId, farm_name: "A", available_quantity: line.quantity, eligible: true }],
-          farmId,
-        ),
-      ],
-      product_reservations: [],
-      candidates: [
-        {
-          line_id: line.id,
-          product_id: line.product_id,
-          farm_id: farmId,
-          farm_name: "A",
-          batch_id: batchId,
-          start_date: "2026-11-01",
-          end_date: "2026-11-05",
-          available_quantity: line.quantity,
-        },
-      ],
-    },
-    allocation_suggestion: [{ line_id: line.id, batch_id: batchId, quantity: line.quantity }],
-  };
-  const sent: string[] = [];
-  let reads = 0;
-  const fetch = fetchOrders(
-    () =>
-      ++reads === 1
-        ? order
-        : {
-            ...order,
-            source_inventory: {
-              ...order.source_inventory,
-              lines: [sourceLineFixture(line, [], null, farmId)],
-            },
+it.each(["remount-with-new-suggestion", "refresh-with-farm-removed"] as const)(
+  "describes approval replay without showing an editable draft (%s)",
+  async (scenario) => {
+    const remount = scenario === "remount-with-new-suggestion";
+    const locale = remount ? "vi" : "en";
+    const approve = remount ? "Duyệt đơn" : "Approve order";
+    const retry = remount ? "Thử lại yêu cầu trước" : "Retry previous request";
+    const unknown = remount
+      ? /Chưa xác định được kết quả duyệt đơn/
+      : /The approval result is unconfirmed/;
+    const line = initial.lines[0];
+    const farmA = { farm_id: farmId, farm_name: "Farm A", available_quantity: 4, eligible: true };
+    const farmB = { ...farmA, farm_id: otherUuid, farm_name: "Farm B" };
+    const readAt = (farm: typeof farmB, farms: (typeof farmA)[]) => ({
+      ...initial,
+      source_inventory: {
+        refresh_required_before_approve: true,
+        lines: [sourceLineFixture(line, farms, farm.farm_id, farmA.farm_id)],
+        product_reservations: [],
+        candidates: [],
+      },
+    });
+    const order = readAt(farmB, [farmA, farmB]);
+    const refreshed = readAt(farmB, remount ? [farmA, farmB] : [farmB]);
+    const other = storeOrderFixture({ id: otherUuid, reference_code: "OTHER-ORDER" });
+    const sent: string[] = [];
+    let reads = 0;
+    let finishReplay = () => {};
+    const pendingReplay = new Promise<void>((resolve) => {
+      finishReplay = resolve;
+    });
+    const fetch = fetchOrders(
+      (path) => (path.endsWith(other.id) ? other : ++reads === 1 ? order : refreshed),
+      async ({ body, key }) => {
+        sent.push(body);
+        if (sent.length === 1) return Response.json({ error: "upstream_timeout" }, { status: 504 });
+        await pendingReplay;
+        return wire(
+          {
+            ...refreshed,
+            status: "delivered",
+            approved_at: stamp,
+            delivered_at: "2026-11-04T12:00:00Z",
+            payment_status: "received",
+            payment_received_at: stamp,
+            allocations: [
+              {
+                id: allocationId,
+                line_id: line.id,
+                product_id: line.product_id,
+                farm_id: farmA.farm_id,
+                farm_name: farmA.farm_name,
+                batch_id: batchId,
+                start_date: "2026-11-01",
+                end_date: "2026-11-05",
+                quantity: line.quantity,
+                restocked_quantity: 0,
+                restock_remaining_quantity: line.quantity,
+                restock_eligible: false,
+                restock_unavailable_reason: "order_not_cancelled",
+              },
+            ],
           },
-    ({ body, key }) => {
-      sent.push(body);
-      if (sent.length === 1) return Response.json({ error: "upstream_timeout" }, { status: 504 });
-      return wire(
-        {
-          ...order,
-          status: "delivered",
-          approved_at: stamp,
-          delivered_at: "2026-11-04T12:00:00Z",
-          payment_status: "received",
-          payment_received_at: stamp,
-        },
-        receipt(order.id, "approve", key),
-      );
-    },
-  );
-  render(orderTree(order));
-  fireEvent.click(await screen.findByRole("button", { name: "Duyệt đơn" }));
-  const confirm = within(screen.getByRole("dialog")).getByRole("button", { name: "Duyệt đơn" });
-  fireEvent.click(confirm);
-  await within(screen.getByRole("dialog")).findByRole("alert");
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Đóng" }));
-  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
-  const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
-  await waitFor(() =>
-    expect(select).toHaveAccessibleDescription(
-      "Trang trại đã chọn không còn khả dụng. Vui lòng chọn lại.",
-    ),
-  );
-  expect(select).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Duyệt đơn" }));
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Duyệt đơn" }));
-  expect(await screen.findByText("Đã cập nhật đơn hàng.")).toBeVisible();
-  expect(screen.getByText("Đã giao", { selector: ".mantine-Badge-label" })).toBeVisible();
-  expect(sent).toHaveLength(2);
-  expect(sent[1]).toBe(sent[0]);
-  expect(JSON.parse(sent[0])).toEqual({
-    idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
-    sources: [{ line_id: line.id, farm_id: farmId }],
-  });
-  expect(fetch).toHaveBeenCalledTimes(4);
-});
+          receipt(order.id, "approve", key),
+        );
+      },
+    );
+    const view = render(orderTree(order, locale));
+    const input = await screen.findByRole("combobox");
+    expect(input).toHaveDisplayValue(/Farm B/);
+    fireEvent.click(input);
+    fireEvent.click(screen.getByRole("option", { name: /Farm A/ }));
+    expect(input).toHaveDisplayValue(/Farm A/);
+    fireEvent.click(screen.getByRole("button", { name: approve }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: approve }));
+    const timeout = await within(screen.getByRole("dialog")).findByRole("alert");
+    const timeoutMessage = timeout.textContent;
+
+    if (remount) {
+      view.rerender(orderTree(other, locale));
+      await screen.findByRole("heading", { name: other.reference_code });
+      view.rerender(orderTree(order, locale));
+      await screen.findByRole("heading", { name: order.reference_code });
+    } else {
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(reads).toBe(2));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+    }
+
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(unknown);
+    expect(timeoutMessage).toMatch(unknown);
+    expect(screen.queryByText(/Farm B|select another farm|chọn lại/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: approve })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: retry })).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: retry }));
+    const replay = screen.getByRole("dialog", { name: retry });
+    expect(within(replay).getByRole("alert")).toHaveTextContent(unknown);
+    const confirm = within(replay).getByRole("button", { name: retry });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(
+      await screen.findByRole("dialog", {
+        name: remount ? "Đang gửi yêu cầu duyệt đơn" : "Submitting approval",
+      }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    finishReplay();
+    expect(
+      await screen.findByText(remount ? "Đã cập nhật đơn hàng." : "Order updated."),
+    ).toBeVisible();
+    expect(
+      screen.getByText(remount ? "Đã giao" : "Delivered", { selector: ".mantine-Badge-label" }),
+    ).toBeVisible();
+    expect(screen.getByText("Farm A")).toBeVisible();
+    expect(screen.queryByRole("button", { name: retry })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toBe(sent[0]);
+    expect(JSON.parse(sent[0])).toEqual({
+      idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      sources: [{ line_id: line.id, farm_id: farmId }],
+    });
+    expect(fetch).toHaveBeenCalledTimes(remount ? 5 : 4);
+  },
+);
 
 it("keeps a confirmed approval with missing inventory locked until a GET reflects it", async () => {
   const approved = { ...initial, status: "pending_delivery", approved_at: stamp } as const;

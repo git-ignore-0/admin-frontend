@@ -152,6 +152,9 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   >("store-order", orderId);
   const pendingIntent = savedIntent?.phase === "unknown" ? savedIntent.payload : null;
   const unresolved = pendingIntent !== null;
+  const approvalInFlight =
+    (savedIntent?.phase === "pending" || savedIntent?.phase === "unknown") &&
+    savedIntent.payload.action === "approve";
   const [order, setOrder] = useState<StoreOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -359,9 +362,14 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const recoveryAction =
     pendingIntent && !visibleActions.includes(pendingIntent.action) ? pendingIntent.action : null;
   const replaying = pendingIntent?.orderId === orderId && pendingIntent.action === action;
+  const recoveryDialog =
+    action !== null && (recoveryAction === action || (action === "approve" && replaying));
   const primaryAction = getStoreOrderPrimaryAction(actions);
   visibleActions.sort((a, b) => Number(a === primaryAction) - Number(b === primaryAction));
-  const farmDraft = actions.includes("approve") ? inspectStoreFarmDraft(currentOrder, draft) : null;
+  const farmDraft =
+    !approvalInFlight && actions.includes("approve")
+      ? inspectStoreFarmDraft(currentOrder, draft)
+      : null;
   const actionLocked = loading || Boolean(error) || reloadRequired || actionBusy;
   const fieldsLocked = actionLocked || unresolved;
   const showCancelNote =
@@ -452,7 +460,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         );
       }
       setAction(next);
-      setActionError(c.mutationUncertain);
+      setActionError(next === "approve" ? c.approvalUncertain : c.mutationUncertain);
       return;
     }
     if (!actions.includes(next) || (next === "approve" && !farmDraft?.sources)) return;
@@ -662,7 +670,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           status === 408
             ? dictionary.common.requestTimeout
             : requestErrorMessage(caught, dictionary);
-        setActionError(unknownResult ? `${feedback} ${copy.mutationUncertain}` : feedback);
+        const uncertain = action === "approve" ? copy.approvalUncertain : copy.mutationUncertain;
+        setActionError(unknownResult ? `${feedback} ${uncertain}` : feedback);
       }
     } finally {
       submitting.current = false;
@@ -754,7 +763,9 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                   onClick={() => openAction(item)}
                   type="button"
                 >
-                  {storeOrderActionLabel(order, item, locale)}
+                  {item === "approve" && pendingIntent?.action === "approve"
+                    ? c.retryRequest
+                    : storeOrderActionLabel(order, item, locale)}
                 </Button>
               ))}
             </Group>
@@ -787,7 +798,11 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           </List>
         </Alert>
       )}
-      {unresolved && !action && <Alert color="warning">{c.mutationUncertain}</Alert>}
+      {unresolved && !action && (
+        <Alert color="warning">
+          {approvalInFlight ? c.approvalUncertain : c.mutationUncertain}
+        </Alert>
+      )}
       <CSAOrderPanel
         order={order}
         disabled={fieldsLocked}
@@ -815,6 +830,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         <Grid.Col className={styles.products} miw={0}>
           <StoreOrderProducts
             order={order}
+            hideUnallocatedSources={approvalInFlight}
             farms={
               farmDraft
                 ? {
@@ -870,7 +886,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           cancelLabel={c.cancelButton}
           confirmDisabled={actionDisabled()}
           confirmLabel={
-            recoveryAction === action
+            recoveryDialog
               ? c.retryRequest
               : reconciliationDialog
                 ? c.confirmReconciliation
@@ -884,11 +900,13 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           onCancel={() => !actionBusy && setAction(null)}
           onConfirm={() => void submitAction()}
           title={
-            recoveryAction === action
-              ? c.retryRequest
-              : reconciliationDialog
-                ? c.reconcile
-                : storeOrderActionTitle(order, action, locale)
+            action === "approve" && actionBusy
+              ? c.approvalSubmitting
+              : recoveryDialog
+                ? c.retryRequest
+                : reconciliationDialog
+                  ? c.reconcile
+                  : storeOrderActionTitle(order, action, locale)
           }
         >
           {loading ? (
@@ -941,7 +959,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
               ]}
             />
           )}
-          {action === "approve" && !farmDraft?.sources && !replaying && (
+          {action === "approve" && !approvalInFlight && !farmDraft?.sources && (
             <Text size="sm">{c.approveSourcesInvalid}</Text>
           )}
           {reasonRequired && (

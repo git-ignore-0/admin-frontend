@@ -16,6 +16,7 @@ import styles from "./store-order-detail.module.css";
 
 type StoreOrderProductsProps = {
   order?: StoreOrder;
+  hideUnallocatedSources?: boolean;
   farms?: {
     selections: ReturnType<typeof inspectStoreFarmDraft>["selections"];
     onChange: (lineId: string, farmId: string) => void;
@@ -84,7 +85,11 @@ function SourceSnapshot({ order, lineId }: { order: StoreOrder; lineId: string }
   );
 }
 
-export function StoreOrderProducts({ order, farms }: StoreOrderProductsProps) {
+export function StoreOrderProducts({
+  order,
+  farms,
+  hideUnallocatedSources,
+}: StoreOrderProductsProps) {
   const { locale, t } = useAdminI18n();
   const c = storeOrdersCopy(locale);
   const id = useId();
@@ -121,6 +126,9 @@ export function StoreOrderProducts({ order, farms }: StoreOrderProductsProps) {
               const skuLabelId = `${productLabelId}-sku`;
               const farmLabelId = `${productLabelId}-farm`;
               const selection = farms?.selections.get(lineId);
+              const showSourceRow =
+                !hideUnallocatedSources ||
+                order.allocations?.some((row) => row.line_id === line.id);
               const options = new Map(
                 selection?.line.farms.map((farm) => [farm.farm_id.toLowerCase(), farm]),
               );
@@ -172,54 +180,61 @@ export function StoreOrderProducts({ order, farms }: StoreOrderProductsProps) {
                       </Stack>
                     </Table.Td>
                   </Table.Tr>
-                  <Table.Tr>
-                    <Table.Td colSpan={4} style={longText}>
-                      {farms && selection ? (
-                        <FormSelect
-                          className={styles.farmControl}
-                          label={<span id={farmLabelId}>{c.supplyingFarm}</span>}
-                          aria-labelledby={`${farmLabelId} ${productLabelId} ${skuLabelId}`}
-                          placeholder={
-                            selection.error === "farmUnavailable"
-                              ? c.farmUnavailableOption
-                              : c.chooseFarmPlaceholder
-                          }
-                          value={
-                            selection.value && options.has(selection.value) ? selection.value : null
-                          }
-                          error={selection.error ? c[selection.error] : undefined}
-                          disabled={farms.disabled}
-                          comboboxProps={{ withinPortal: true }}
-                          data={Array.from(options, ([value, option]) => ({
-                            value,
-                            label: `${option.farm_name} · ${c.farmStock.replace("{count}", String(option.available_quantity))}`,
-                            disabled: !option.eligible,
-                          }))}
-                          onChange={(value) => {
-                            if (value && options.get(value)?.eligible)
-                              farms.onChange(lineId, value);
-                          }}
-                          renderOption={({ option, checked }) => {
-                            const farm = options.get(option.value);
-                            if (!farm) return option.label;
-                            return (
-                              <Group wrap="nowrap" gap="xs" w="100%">
-                                {checked && <CheckIcon size="0.75em" aria-hidden />}
-                                <Text size="sm" flex={1} style={longText}>
-                                  {farm.farm_name}
-                                </Text>
-                                <Text size="sm">
-                                  {c.farmStock.replace("{count}", String(farm.available_quantity))}
-                                </Text>
-                              </Group>
-                            );
-                          }}
-                        />
-                      ) : (
-                        <SourceSnapshot order={order} lineId={line.id} />
-                      )}
-                    </Table.Td>
-                  </Table.Tr>
+                  {showSourceRow && (
+                    <Table.Tr>
+                      <Table.Td colSpan={4} style={longText}>
+                        {farms && selection ? (
+                          <FormSelect
+                            className={styles.farmControl}
+                            label={<span id={farmLabelId}>{c.supplyingFarm}</span>}
+                            aria-labelledby={`${farmLabelId} ${productLabelId} ${skuLabelId}`}
+                            placeholder={
+                              selection.error === "farmUnavailable"
+                                ? c.farmUnavailableOption
+                                : c.chooseFarmPlaceholder
+                            }
+                            value={
+                              selection.value && options.has(selection.value)
+                                ? selection.value
+                                : null
+                            }
+                            error={selection.error ? c[selection.error] : undefined}
+                            disabled={farms.disabled}
+                            comboboxProps={{ withinPortal: true }}
+                            data={Array.from(options, ([value, option]) => ({
+                              value,
+                              label: `${option.farm_name} · ${c.farmStock.replace("{count}", String(option.available_quantity))}`,
+                              disabled: !option.eligible,
+                            }))}
+                            onChange={(value) => {
+                              if (value && options.get(value)?.eligible)
+                                farms.onChange(lineId, value);
+                            }}
+                            renderOption={({ option, checked }) => {
+                              const farm = options.get(option.value);
+                              if (!farm) return option.label;
+                              return (
+                                <Group wrap="nowrap" gap="xs" w="100%">
+                                  {checked && <CheckIcon size="0.75em" aria-hidden />}
+                                  <Text size="sm" flex={1} style={longText}>
+                                    {farm.farm_name}
+                                  </Text>
+                                  <Text size="sm">
+                                    {c.farmStock.replace(
+                                      "{count}",
+                                      String(farm.available_quantity),
+                                    )}
+                                  </Text>
+                                </Group>
+                              );
+                            }}
+                          />
+                        ) : (
+                          <SourceSnapshot order={order} lineId={line.id} />
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
                 </Fragment>
               );
             })

@@ -155,6 +155,9 @@ const copy = {
     mutationSuccess: "Đã cập nhật đơn hàng.",
     mutationUncertain:
       "Chưa xác định được kết quả. Nếu thử lại, hệ thống sẽ gửi lại đúng yêu cầu trước.",
+    approvalUncertain:
+      "Chưa xác định được kết quả duyệt đơn. Nếu thử lại, hệ thống sẽ gửi lại đúng yêu cầu trước.",
+    approvalSubmitting: "Đang gửi yêu cầu duyệt đơn",
     mutationConfirmedReload: "Đã xác nhận thao tác. Hãy tải lại trạng thái đơn trước khi tiếp tục.",
     saving: "Đang xử lý…",
     cancelButton: "Đóng",
@@ -346,6 +349,8 @@ const copy = {
     restockInvalid: "Restock quantities must be whole numbers within the remaining limit.",
     mutationSuccess: "Order updated.",
     mutationUncertain: "The result is unconfirmed. Retrying will send the same request.",
+    approvalUncertain: "The approval result is unconfirmed. Retrying will send the same request.",
+    approvalSubmitting: "Submitting approval",
     mutationConfirmedReload: "The action is confirmed. Reload the order before continuing.",
     saving: "Processing…",
     cancelButton: "Close",

@@ -7,7 +7,7 @@ import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
-import { storeOrderFixture } from "@/tests/store-orders-fixture";
+import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 import type { StoreOrder } from "@/lib/types";
 
 vi.mock("@/lib/client-api", async () => {
@@ -38,7 +38,7 @@ const orderTree = (id: string) => (
 const renderOrder = (id = storeOrderFixture().id) => render(orderTree(id));
 
 it.each([false, true])(
-  "replays legacy approval bytes with no valid current Farm (conflict=%s)",
+  "replays legacy approval bytes without using the current Farm suggestion (conflict=%s)",
   async (conflict) => {
     const item = storeOrderFixture({ expires_at: null });
     const line = item.lines[0];
@@ -51,15 +51,17 @@ it.each([false, true])(
         { line_id: line.id, batch_id: firstBatch, quantity: 2 },
       ],
     };
+    const suggestedFarm = {
+      farm_id: "00000000-0000-4000-8000-0000000000b1",
+      farm_name: "Current suggestion",
+      available_quantity: 4,
+      eligible: true,
+    };
     const snapshot = {
       ...item,
       source_inventory: item.source_inventory && {
         ...item.source_inventory,
-        lines: item.source_inventory.lines.map((row) => ({
-          ...row,
-          suggested_farm_id: null,
-          farms: [],
-        })),
+        lines: [sourceLineFixture(line, [suggestedFarm], suggestedFarm.farm_id)],
       },
     };
     function RecoverLegacy() {
@@ -81,9 +83,11 @@ it.each([false, true])(
     }
     vi.mocked(api).mockResolvedValueOnce(snapshot);
     if (conflict) {
-      vi.mocked(api).mockRejectedValueOnce(
-        Object.assign(new Error("store_allocation_mixed_farm"), { status: 409 }),
-      );
+      vi.mocked(api)
+        .mockRejectedValueOnce(
+          Object.assign(new Error("store_allocation_mixed_farm"), { status: 409 }),
+        )
+        .mockResolvedValueOnce(snapshot);
     } else {
       vi.mocked(api).mockResolvedValueOnce({
         ...snapshot,
@@ -113,21 +117,29 @@ it.each([false, true])(
         </ToastProvider>
       </AdminI18nProvider>,
     );
-    const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp/ });
-    expect(select).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Duyệt đơn" }));
-    const dialog = screen.getByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Duyệt đơn" }));
+    await screen.findByRole("heading", { name: item.reference_code });
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByText(suggestedFarm.farm_name)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Thử lại yêu cầu trước" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Thử lại yêu cầu trước" }));
+    const dialog = screen.getByRole("dialog", { name: "Thử lại yêu cầu trước" });
+    const confirm = within(dialog).getByRole("button", { name: "Thử lại yêu cầu trước" });
+    fireEvent.click(confirm);
     if (conflict) {
-      expect(
-        await within(dialog).findByRole("button", { name: "Tải trạng thái mới" }),
-      ).toBeEnabled();
+      const reload = await within(dialog).findByRole("button", { name: "Tải trạng thái mới" });
+      expect(reload).toBeEnabled();
       expect(within(dialog).getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+      expect(api).toHaveBeenCalledTimes(2);
+      fireEvent.click(reload);
+      const selection = await screen.findByRole("combobox", { name: /Trang trại cung cấp/ });
+      expect(selection).toBeEnabled();
+      expect(selection).toHaveDisplayValue(/Current suggestion/);
+      expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
     } else {
       expect(await screen.findByText("Historic Farm A")).toBeVisible();
       expect(screen.getByText("Historic Farm B")).toBeVisible();
     }
-    expect(api).toHaveBeenCalledTimes(2);
+    expect(api).toHaveBeenCalledTimes(conflict ? 3 : 2);
     expect(vi.mocked(api).mock.calls[1]?.[0]).toBe(`admin/store-orders/${item.id}/approve`);
     expect(vi.mocked(api).mock.calls[1]?.[1]?.body).toBe(JSON.stringify(payload));
   },
