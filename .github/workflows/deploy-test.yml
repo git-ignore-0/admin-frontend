@@ -38,6 +38,7 @@ jobs:
           pnpm test
           bash tests/prepare-cpanel-deploy.test.sh
           bash tests/deploy-test-ftps.test.sh
+          bash tests/smoke-test.test.sh
           python3 tests/test_deploy_worker.py
       - name: Build Passenger bundle from commit
         run: pnpm prepare:cpanel
@@ -52,9 +53,4 @@ jobs:
           TEST_FTP_PASSWORD: ${{ secrets.TEST_FTP_PASSWORD }}
         run: bash scripts/deploy-test-ftps.sh
       - name: Check Admin test login page
-        run: |
-          curl --fail --silent --show-error --location \
-            --retry 6 --retry-delay 10 --retry-all-errors --max-time 30 \
-            https://admin-test.naturalfarmingvietnam.com/login \
-            --output "$RUNNER_TEMP/admin-test-login.html"
-          grep -q '/_next/static/' "$RUNNER_TEMP/admin-test-login.html"
+        run: bash scripts/smoke-test.sh
