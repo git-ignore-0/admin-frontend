@@ -10,6 +10,7 @@ import {
   farmAccess,
   farmDeleteSupplyWriteFilters,
   farmDetailKey,
+  farmProductBulkRemoveWriteKey,
   farmSupplyKey,
   farmSupplyWriteKey,
   retireFarmAccess,
@@ -60,7 +61,6 @@ afterEach(() => {
 
 it("keeps an unknown intent locked through a receipt miss and retries the original snapshot", async () => {
   const first = { ...source };
-  const confirmed = vi.fn();
   const { result } = renderHook(
     () => ({ writer: useFarmProductBulkRemove(farmId), client: useQueryClient() }),
     { wrapper: AdminQueryProvider },
@@ -69,8 +69,8 @@ it("keeps an unknown intent locked through a receipt miss and retries the origin
   api.recoverFarmProductBulkRemove.mockRejectedValueOnce(apiError("create_receipt_not_found", 404));
 
   act(() => {
-    void result.current.writer.submit([first], confirmed);
-    void result.current.writer.submit([first], confirmed);
+    void result.current.writer.submit([first]);
+    void result.current.writer.submit([first]);
     first.version = 19;
   });
   await waitFor(() => expect(result.current.writer.failure?.kind).toBe("unknown"));
@@ -86,27 +86,28 @@ it("keeps an unknown intent locked through a receipt miss and retries the origin
     result.current.client.getMutationCache().find(farmDeleteSupplyWriteFilters(otherFarm)),
   ).toBeUndefined();
 
-  await act(async () => result.current.writer.recover(confirmed));
+  await act(async () => result.current.writer.recover());
   await waitFor(() => expect(result.current.writer.failure?.receiptNotFound).toBe(true));
   act(() => {
     result.current.writer.clearFailure();
-    void result.current.writer.submit([first], confirmed);
+    void result.current.writer.submit([first]);
   });
   expect(api.removeFarmProductsBulk).toHaveBeenCalledTimes(1);
-  expect(confirmed).not.toHaveBeenCalled();
+  expect(result.current.writer.confirmedId).toBeUndefined();
 
   api.recoverFarmProductBulkRemove.mockRejectedValueOnce(apiError("idempotency_conflict", 409));
-  await act(async () => result.current.writer.recover(confirmed));
+  await act(async () => result.current.writer.recover());
   await waitFor(() =>
     expect(result.current.writer.failure?.cause).toMatchObject({ message: "idempotency_conflict" }),
   );
   expect(result.current.writer.unresolved).toBe(true);
 
   api.removeFarmProductsBulk.mockResolvedValueOnce({ removed_count: 1 });
-  await act(async () => result.current.writer.retry(confirmed));
+  await act(async () => result.current.writer.retry());
   expect(api.removeFarmProductsBulk.mock.calls[1]).toEqual([farmId, sent]);
   expect(api.removeFarmProductsBulk.mock.calls[1][1]).toBe(sent);
-  expect(confirmed).toHaveBeenCalledExactlyOnceWith(1);
+  await waitFor(() => expect(result.current.writer.confirmedId).toBe(sent.idempotency_key));
+  act(() => expect(result.current.writer.acknowledgeSuccess(sent.idempotency_key)).toBe(1));
 });
 
 it("refreshes only related query scopes after receipt confirmation without forcing row removal", async () => {
@@ -134,18 +135,19 @@ it("refreshes only related query scopes after receipt confirmation without forci
   for (const key of [...invalidated, ...unaffected]) client.setQueryData(key, relinked);
   api.removeFarmProductsBulk.mockRejectedValueOnce(apiError("upstream_timeout", 504));
   api.recoverFarmProductBulkRemove.mockResolvedValueOnce({ removed_count: 1 });
-  const confirmed = vi.fn();
-  await act(async () => result.current.writer.submit([source], confirmed));
+  await act(async () => result.current.writer.submit([source]));
   await waitFor(() => expect(result.current.writer.failure?.kind).toBe("unknown"));
   expect(invalidated.every((key) => !client.getQueryState(key)?.isInvalidated)).toBe(true);
 
-  await act(async () => result.current.writer.recover(confirmed));
+  await act(async () => result.current.writer.recover());
   expect(api.removeFarmProductsBulk).toHaveBeenCalledTimes(1);
   expect(api.recoverFarmProductBulkRemove).toHaveBeenCalledExactlyOnceWith(
     farmId,
     api.removeFarmProductsBulk.mock.calls[0][1],
   );
-  expect(confirmed).toHaveBeenCalledExactlyOnceWith(1);
+  const id = api.removeFarmProductsBulk.mock.calls[0][1].idempotency_key;
+  await waitFor(() => expect(result.current.writer.confirmedId).toBe(id));
+  act(() => expect(result.current.writer.acknowledgeSuccess(id)).toBe(1));
   for (const key of invalidated)
     expect(client.getQueryState(key)?.isInvalidated, key.join("/")).toBe(true);
   for (const key of unaffected)
@@ -243,7 +245,7 @@ it("blocks overlapping writers and survives route remounts within the same sessi
     capabilities: { delete: { allowed: true, reasons: [] } },
   });
   act(() => {
-    operation = writer.submit([source], confirmed);
+    operation = writer.submit([source]);
   });
   await waitFor(() => expect(writer.pending).toBe(true));
   rerender(route("related"));
@@ -291,7 +293,7 @@ it("cannot start while a conflicting stock batch write has an unknown outcome", 
     await expect(entry.execute({ action: { kind: "edit" } })).rejects.toThrow("network_error");
   });
   await waitFor(() => expect(result.current.writer.blocked).toBe(true));
-  expect(result.current.writer.submit([source], vi.fn())).toBeUndefined();
+  expect(result.current.writer.submit([source])).toBeUndefined();
   expect(api.removeFarmProductsBulk).not.toHaveBeenCalled();
 });
 
@@ -301,15 +303,14 @@ it.each(["farm_product_version_conflict", "farm_product_identity_changed"])(
     const { result } = renderHook(() => useFarmProductBulkRemove(farmId), {
       wrapper: AdminQueryProvider,
     });
-    const confirmed = vi.fn();
     api.removeFarmProductsBulk.mockRejectedValueOnce(
       apiError(code, 409, { item_index: 4, product_id: productId }),
     );
-    await act(async () => result.current.submit([source], confirmed));
+    await act(async () => result.current.submit([source]));
     await waitFor(() =>
       expect(result.current.failure).toMatchObject({ kind: "conflict", item: undefined }),
     );
-    expect(confirmed).not.toHaveBeenCalled();
+    expect(result.current.confirmedId).toBeUndefined();
 
     api.removeFarmProductsBulk.mockRejectedValueOnce(new Error("network_error"));
     api.removeFarmProductsBulk.mockRejectedValueOnce(
@@ -317,13 +318,13 @@ it.each(["farm_product_version_conflict", "farm_product_identity_changed"])(
     );
     await act(async () => {
       result.current.clearFailure();
-      await result.current.submit([source], confirmed);
+      await result.current.submit([source]);
     });
     await waitFor(() => expect(result.current.failure?.kind).toBe("unknown"));
-    await act(async () => result.current.retry(confirmed));
+    await act(async () => result.current.retry());
     await waitFor(() => expect(result.current.failure?.item).toMatchObject({ productId, code }));
     expect(result.current.unresolved).toBe(false);
-    expect(confirmed).not.toHaveBeenCalled();
+    expect(result.current.confirmedId).toBeUndefined();
   },
 );
 
@@ -331,14 +332,13 @@ it("stops at an idempotency conflict and requires a new explicit selection", asy
   const { result } = renderHook(() => useFarmProductBulkRemove(farmId), {
     wrapper: AdminQueryProvider,
   });
-  const confirmed = vi.fn();
   api.removeFarmProductsBulk.mockRejectedValueOnce(apiError("idempotency_conflict", 409));
-  await act(async () => result.current.submit([source], confirmed));
+  await act(async () => result.current.submit([source]));
   await waitFor(() => expect(result.current.failure?.kind).toBe("idempotency_conflict"));
-  expect(result.current.retry(confirmed)).toBeUndefined();
-  expect(result.current.submit([source], confirmed)).toBeUndefined();
+  expect(result.current.retry()).toBeUndefined();
+  expect(result.current.submit([source])).toBeUndefined();
   expect(api.removeFarmProductsBulk).toHaveBeenCalledTimes(1);
-  expect(confirmed).not.toHaveBeenCalled();
+  expect(result.current.confirmedId).toBeUndefined();
 });
 
 it.each([
@@ -355,42 +355,40 @@ it.each([
   const { client } = result.current;
   const key = [...farmSupplyKey(farmId), "list"];
   const cause = apiError(status === 403 ? "forbidden" : "auth_required", status);
-  const confirmed = vi.fn();
   client.setQueryData(key, [source]);
   if (request === "receipt") {
     api.removeFarmProductsBulk.mockRejectedValueOnce(new Error("network_error"));
     api.recoverFarmProductBulkRemove.mockRejectedValueOnce(cause);
   } else api.removeFarmProductsBulk.mockRejectedValueOnce(cause);
 
-  await act(async () => result.current.writer.submit([source], confirmed));
+  await act(async () => result.current.writer.submit([source]));
   if (request === "receipt") {
     await waitFor(() => expect(result.current.writer.unresolved).toBe(true));
-    await act(async () => result.current.writer.recover(confirmed));
+    await act(async () => result.current.writer.recover());
   }
   await waitFor(() => expect(result.current.writer.intent).toBeUndefined());
   expect(farmAccess(client).error).toBe(cause);
   expect(client.getQueryData(key)).toBeUndefined();
   expect(client.getMutationCache().find(farmDeleteSupplyWriteFilters(farmId))).toBeUndefined();
   expect(onAccessLost).toHaveBeenCalledExactlyOnceWith(cause);
-  expect(confirmed).not.toHaveBeenCalled();
+  expect(result.current.writer.confirmedId).toBeUndefined();
 });
 
-it.each(["session", "permission", "deleted"] as const)(
-  "drops a late response after %s retirement",
-  async (retirement) => {
+it.each([
+  ["session", "pending"],
+  ["permission", "pending"],
+  ["deleted", "pending"],
+  ["permission", "rejected"],
+  ["session", "confirmed"],
+  ["permission", "confirmed"],
+  ["deleted", "confirmed"],
+] as const)(
+  "leaves no removal feedback after %s retirement with a %s write",
+  async (retirement, phase) => {
     const retire = createRef<() => void>();
-    const confirmed = vi.fn();
     const forbidden = apiError("forbidden", 403);
-    let finish!: () => void;
-    api.removeFarmProductsBulk.mockImplementationOnce(
-      () =>
-        new Promise((resolve, reject) => {
-          finish = () =>
-            retirement === "permission"
-              ? reject(new Error("network_error"))
-              : resolve({ removed_count: 1 });
-        }),
-    );
+    const pending = Promise.withResolvers<{ removed_count: number }>();
+    api.removeFarmProductsBulk.mockReturnValueOnce(pending.promise);
     const { result } = renderHook(
       () => ({ writer: useFarmProductBulkRemove(farmId), client: useQueryClient() }),
       {
@@ -402,27 +400,39 @@ it.each(["session", "permission", "deleted"] as const)(
     client.setQueryData(key, [source]);
     let operation: Promise<void> | undefined;
     act(() => {
-      operation = result.current.writer.submit([source], confirmed);
+      operation = result.current.writer.submit([source]);
     });
-    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await waitFor(() => expect(api.removeFarmProductsBulk).toHaveBeenCalledTimes(1));
+    const id = api.removeFarmProductsBulk.mock.calls[0][1].idempotency_key;
+    if (phase === "confirmed") {
+      await act(async () => {
+        pending.resolve({ removed_count: 1 });
+        await operation;
+      });
+      await waitFor(() => expect(result.current.writer.confirmedId).toBe(id));
+    }
     act(() => {
       if (retirement === "session") retire.current?.();
       else if (retirement === "permission") retireFarmAccess(client, forbidden);
       else confirmFarmGone(client, farmId);
     });
-    await act(async () => {
-      finish();
-      await operation;
-    });
+    if (phase !== "confirmed") {
+      await act(async () => {
+        if (phase === "rejected") pending.reject(new Error("network_error"));
+        else pending.resolve({ removed_count: 1 });
+        await operation;
+      });
+    }
+    await waitFor(() => expect(result.current.writer.confirmedId).toBeUndefined());
+    expect(result.current.writer.acknowledgeSuccess(id)).toBeUndefined();
     expect(client.getQueryData(key)).toBeUndefined();
-    expect(client.getMutationCache().find(farmDeleteSupplyWriteFilters(farmId))).toBeUndefined();
-    expect(confirmed).not.toHaveBeenCalled();
+    expect(
+      client.getMutationCache().find({ mutationKey: farmProductBulkRemoveWriteKey(farmId) }),
+    ).toBeUndefined();
   },
 );
 
 it("allows only one same-Farm submission across two mounted instances", async () => {
-  const confirmed = vi.fn();
-  const duplicate = vi.fn();
   const { result, rerender } = renderHook(
     ({ compareFarm }) =>
       [useFarmProductBulkRemove(farmId), useFarmProductBulkRemove(compareFarm)] as const,
@@ -430,26 +440,24 @@ it("allows only one same-Farm submission across two mounted instances", async ()
   );
   api.removeFarmProductsBulk.mockRejectedValueOnce(new Error("network_error"));
   await act(async () => {
-    const first = result.current[0].submit([source], confirmed);
-    expect(result.current[1].submit([source], duplicate)).toBeUndefined();
+    const first = result.current[0].submit([source]);
+    expect(result.current[1].submit([source])).toBeUndefined();
     await first;
   });
   await waitFor(() => expect(result.current[1].unresolved).toBe(true));
   rerender({ compareFarm: otherFarm });
   expect(result.current[1].intent).toBeUndefined();
   expect(result.current[1].unresolved).toBe(false);
-  expect(result.current[1].recover(duplicate)).toBeUndefined();
+  expect(result.current[1].recover()).toBeUndefined();
   expect(result.current[0].intent?.products).toEqual([source]);
   expect(api.removeFarmProductsBulk).toHaveBeenCalledTimes(1);
-  expect(duplicate).not.toHaveBeenCalled();
 });
 
-it("updates affected data on a late same-session confirmation without calling the abandoned screen", async () => {
+it("invalidates data while away and lets only the remounted writer acknowledge the confirmation", async () => {
   let client!: QueryClient;
   let writer!: ReturnType<typeof useFarmProductBulkRemove>;
   let finish!: (value: { removed_count: number }) => void;
   let operation: Promise<void> | undefined;
-  const confirmed = vi.fn();
   api.removeFarmProductsBulk.mockImplementationOnce(
     () => new Promise((resolve) => (finish = resolve)),
   );
@@ -463,7 +471,7 @@ it("updates affected data on a late same-session confirmation without calling th
   const key = [...farmSupplyKey(farmId), "list"];
   client.setQueryData(key, [source]);
   act(() => {
-    operation = writer.submit([source], confirmed);
+    operation = writer.submit([source]);
   });
   await waitFor(() => expect(writer.pending).toBe(true));
   rerender(route(false));
@@ -471,9 +479,42 @@ it("updates affected data on a late same-session confirmation without calling th
     finish({ removed_count: 1 });
     await operation;
   });
-  expect(confirmed).not.toHaveBeenCalled();
+  const id = api.removeFarmProductsBulk.mock.calls[0][1].idempotency_key;
+  expect(writer.acknowledgeSuccess(id)).toBeUndefined();
   expect(client.getQueryState(key)?.isInvalidated).toBe(true);
   expect(client.getMutationCache().find(farmDeleteSupplyWriteFilters(farmId))).toBeUndefined();
+  rerender(route(true));
+  await waitFor(() => expect(writer.confirmedId).toBe(id));
+  expect(writer.unresolved).toBe(false);
+  act(() => {
+    expect(writer.acknowledgeSuccess(id)).toBe(1);
+    expect(writer.acknowledgeSuccess(id)).toBeUndefined();
+  });
+  await waitFor(() => expect(writer.confirmedId).toBeUndefined());
+});
+
+it("retains each confirmation across later submissions and lets only one consumer claim it", async () => {
+  const { result } = renderHook(
+    () => [useFarmProductBulkRemove(farmId), useFarmProductBulkRemove(farmId)] as const,
+    { wrapper: AdminQueryProvider },
+  );
+  api.removeFarmProductsBulk.mockResolvedValue({ removed_count: 1 });
+  await act(async () => result.current[0].submit([source]));
+  const first = api.removeFarmProductsBulk.mock.calls[0][1].idempotency_key;
+  await waitFor(() => expect(result.current[1].confirmedId).toBe(first));
+  expect(result.current[1].unresolved).toBe(false);
+
+  const anotherSource = { ...source, id: crypto.randomUUID(), product_id: crypto.randomUUID() };
+  await act(async () => result.current[1].submit([anotherSource]));
+  const second = api.removeFarmProductsBulk.mock.calls[1][1].idempotency_key;
+  expect(second).not.toBe(first);
+  act(() => {
+    expect(result.current[1].acknowledgeSuccess(first)).toBe(1);
+    expect(result.current[0].acknowledgeSuccess(first)).toBeUndefined();
+  });
+  await waitFor(() => expect(result.current[0].confirmedId).toBe(second));
+  act(() => expect(result.current[0].acknowledgeSuccess(second)).toBe(1));
+  await waitFor(() => expect(result.current[1].confirmedId).toBeUndefined());
 });
 
 it("holds a Farm's approval and rejection until bulk removal is resolved", async () => {
@@ -492,7 +533,7 @@ it("holds a Farm's approval and rejection until bulk removal is resolved", async
   const { client } = result.current;
   client.setQueryData(farmSupplyRequestDetailKey(requestId), request);
   api.removeFarmProductsBulk.mockRejectedValueOnce(new Error("network_error"));
-  await act(async () => result.current.writer.submit([source], vi.fn()));
+  await act(async () => result.current.writer.submit([source]));
   await waitFor(() => expect(result.current.writer.unresolved).toBe(true));
   await act(async () => {
     await result.current.decision.run("approve");

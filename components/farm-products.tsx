@@ -79,6 +79,7 @@ export function FarmProducts({
   const lastPage = data ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size)) : page;
   const linkWrite = useFarmProductLinkWrite(farm.id, undefined, onAccessLost);
   const removeWrite = useFarmProductBulkRemove(farm.id, onAccessLost);
+  const { confirmedId, acknowledgeSuccess } = removeWrite;
   const supplyHref = (supply: SupplyContext) =>
     farmHref(params, { id: farm.id, tab: "products", supply });
   const lastHref =
@@ -116,6 +117,18 @@ export function FarmProducts({
   useEffect(() => {
     if (accessLost) onAccessLost?.(query.error);
   }, [accessLost, onAccessLost, query.error]);
+  useEffect(() => {
+    if (!isTabActive || accessLost || !confirmedId) return;
+    const count = acknowledgeSuccess(confirmedId);
+    if (count === undefined) return;
+    setConfirmation(undefined);
+    setSelection(undefined);
+    toast(
+      count === 1
+        ? c.removedOneProduct
+        : c.removedProducts.replace("{count}", new Intl.NumberFormat(locale).format(count)),
+    );
+  }, [isTabActive, accessLost, confirmedId, acknowledgeSuccess, c, locale, toast]);
 
   function change(change: Partial<SupplyContext>) {
     router.push(supplyHref({ ...context, page: 1, ...change }), { scroll: false });
@@ -140,16 +153,6 @@ export function FarmProducts({
       setSelection(undefined);
     setConfirmation(undefined);
     removeWrite.clearFailure();
-  }
-
-  function removed(count: number) {
-    setConfirmation(undefined);
-    setSelection(undefined);
-    toast(
-      count === 1
-        ? c.removedOneProduct
-        : c.removedProducts.replace("{count}", quantity.format(count)),
-    );
   }
 
   if (!currentSession() || access.error || accessLost) return null;
@@ -359,7 +362,6 @@ export function FarmProducts({
           stale={confirmationStale}
           confirmDisabled={selectionLocked}
           onCancel={closeRemoval}
-          onConfirmed={removed}
           returnFocusRef={removeButton}
           fallbackFocusRef={addButton}
         />

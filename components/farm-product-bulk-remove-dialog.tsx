@@ -20,7 +20,6 @@ export function FarmProductBulkRemoveDialog({
   stale,
   confirmDisabled,
   onCancel,
-  onConfirmed,
   returnFocusRef,
   fallbackFocusRef,
 }: {
@@ -29,7 +28,6 @@ export function FarmProductBulkRemoveDialog({
   stale: boolean;
   confirmDisabled: boolean;
   onCancel: () => void;
-  onConfirmed: (count: number) => void;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
   fallbackFocusRef: RefObject<HTMLButtonElement | null>;
 }) {
@@ -49,7 +47,7 @@ export function FarmProductBulkRemoveDialog({
         confirmLabel: c.removeProducts,
         busyLabel: c.removingProducts,
         onConfirm: () => {
-          if (!confirmDisabled && !stale) void write.submit(products, onConfirmed);
+          if (!confirmDisabled && !stale) void write.submit(products);
         },
       }
     : {};
@@ -88,7 +86,7 @@ export function FarmProductBulkRemoveDialog({
             <RecoveryAlert
               message={failure.receiptNotFound ? c.linkReceiptMissing : c.removeProductsUnconfirmed}
               retryLabel={c.checkLinkReceipt}
-              onRetry={() => void write.recover(onConfirmed)}
+              onRetry={() => void write.recover()}
               loading={write.checking}
             />
             <Button
@@ -96,7 +94,7 @@ export function FarmProductBulkRemoveDialog({
               variant="default"
               disabled={write.pending || write.blocked}
               loading={write.pending && !write.checking}
-              onClick={() => void write.retry(onConfirmed)}
+              onClick={() => void write.retry()}
             >
               {c.retryLinkIntent}
             </Button>

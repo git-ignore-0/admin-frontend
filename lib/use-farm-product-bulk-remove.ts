@@ -54,7 +54,6 @@ type Attempt = {
   previous?: Failure;
 };
 type Outcome = { count?: number; failure?: Failure; denied?: Error };
-type OnSuccess = (count: number) => void;
 
 const itemConflictCodes = new Set([
   "farm_product_changed",
@@ -153,7 +152,7 @@ export function useFarmProductBulkRemove(farmId: string, onAccessLost?: (cause: 
   };
   const otherWriting = useMutationState({ filters: otherWrites, select: () => true }).length > 0;
   const deletionLocked = useFarmDeleteBlocksWrite(farmId);
-  const latest = useMutationState({
+  const states = useMutationState({
     filters,
     select: ({ options, state }) => ({
       farm: options.mutationKey?.[1],
@@ -161,14 +160,15 @@ export function useFarmProductBulkRemove(farmId: string, onAccessLost?: (cause: 
       attempt: state.variables as Attempt | undefined,
       outcome: state.data as Outcome | undefined,
     }),
-  }).at(-1);
-  const current =
-    sessionCurrent() &&
-    !access.error &&
-    latest?.farm === mutationKey[1] &&
-    latest.attempt?.revision === access.revision
-      ? latest
-      : undefined;
+  });
+  const visible = permitted(access.revision)
+    ? states.filter(
+        (state) => state.farm === mutationKey[1] && state.attempt?.revision === access.revision,
+      )
+    : [];
+  const current = visible.at(-1);
+  const confirmedId = visible.find(({ outcome }) => outcome?.count !== undefined)?.attempt?.intent
+    .payload.idempotency_key;
   const pending = Boolean(current?.pending);
   const failure = current?.outcome?.failure ?? (pending ? current?.attempt?.previous : undefined);
 
@@ -213,11 +213,12 @@ export function useFarmProductBulkRemove(farmId: string, onAccessLost?: (cause: 
     },
   });
 
-  function run(kind: Attempt["kind"], onSuccess: OnSuccess, products?: readonly FarmProduct[]) {
+  function run(kind: Attempt["kind"], products?: readonly FarmProduct[]) {
     const currentRecord = record.capture();
     const { revision } = farmAccess(client);
     const previous = cache.findAll(filters).at(-1);
-    const previousFailure = (previous?.state.data as Outcome | undefined)?.failure;
+    const previousOutcome = previous?.state.data as Outcome | undefined;
+    const previousFailure = previousOutcome?.failure;
     if (
       !currentRecord() ||
       !permitted(revision) ||
@@ -245,14 +246,31 @@ export function useFarmProductBulkRemove(farmId: string, onAccessLost?: (cause: 
         ...filters,
         predicate: ({ state }) => state.variables === attempt,
       });
-      if (!outcome.failure && entry) cache.remove(entry);
-      if (!currentRecord()) return;
-      if (outcome.count !== undefined && permitted(revision)) onSuccess(outcome.count);
-      else if (outcome.denied && farmAccess(client).error === outcome.denied)
+      if (outcome.count === undefined && !outcome.failure && entry) cache.remove(entry);
+      if (currentRecord() && outcome.denied && farmAccess(client).error === outcome.denied)
         onAccessLost?.(outcome.denied);
     });
-    if (previous) cache.remove(previous);
+    if (previous && previousOutcome?.count === undefined) cache.remove(previous);
     return operation;
+  }
+
+  function acknowledgeSuccess(id: string) {
+    const currentRecord = record.capture();
+    const { revision } = farmAccess(client);
+    if (!currentRecord() || !permitted(revision)) return;
+    const entry = cache.find({
+      ...filters,
+      status: "success",
+      predicate: ({ state }) => {
+        const attempt = state.variables as Attempt | undefined;
+        return attempt?.revision === revision && attempt.intent.payload.idempotency_key === id;
+      },
+    });
+    const count = (entry?.state.data as Outcome | undefined)?.count;
+    // Claim the cached result synchronously so only one mounted consumer can show it.
+    if (!entry || count === undefined) return;
+    cache.remove(entry);
+    return count;
   }
 
   function clearFailure() {
@@ -275,11 +293,12 @@ export function useFarmProductBulkRemove(farmId: string, onAccessLost?: (cause: 
     checking: pending && current?.attempt?.kind === "recover",
     unresolved: pending || failure?.kind === "unknown",
     failure,
-    intent: current?.attempt?.intent,
+    intent: pending || failure ? current?.attempt?.intent : undefined,
+    confirmedId,
+    acknowledgeSuccess,
     clearFailure,
-    submit: (products: readonly FarmProduct[], onSuccess: OnSuccess) =>
-      run("submit", onSuccess, products),
-    recover: (onSuccess: OnSuccess) => run("recover", onSuccess),
-    retry: (onSuccess: OnSuccess) => run("retry", onSuccess),
+    submit: (products: readonly FarmProduct[]) => run("submit", products),
+    recover: () => run("recover"),
+    retry: () => run("retry"),
   };
 }

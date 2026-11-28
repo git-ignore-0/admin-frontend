@@ -3036,6 +3036,45 @@ it("confirms the selected source versions once and reconciles a now-empty last p
   });
 });
 
+it.each(["during", "after"] as const)(
+  "shows one removal success toast when remounting %s confirmation",
+  async (remount) => {
+    const pending = deferred<{ removed_count: number }>();
+    const success = "Đã gỡ 1 sản phẩm khỏi trang trại.";
+    const page = <FarmProducts farm={farm} />;
+    mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+    mocks.bulkRemove.mockReturnValueOnce(pending.promise);
+    const rendered = view(page);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Gỡ sản phẩm" }),
+    );
+    await waitFor(() => expect(mocks.bulkRemove).toHaveBeenCalledTimes(1));
+    rendered.close();
+
+    if (remount === "during") {
+      rendered.change(page);
+      expect(await screen.findByRole("button", { name: "Đang gỡ sản phẩm…" })).toBeDisabled();
+    }
+    mocks.linked.mockResolvedValue(linkedResult([]));
+    await act(async () => pending.resolve({ removed_count: 1 }));
+    if (remount === "after") {
+      expect(screen.queryByText(success)).not.toBeInTheDocument();
+      rendered.change(page);
+    }
+
+    await screen.findByText(success);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    rendered.change(<FarmProducts farm={farm} canAddSupply />);
+    expect(screen.getAllByText(success)).toHaveLength(1);
+    rendered.close();
+    rendered.change(page);
+    expect(screen.getAllByText(success)).toHaveLength(1);
+    expect(mocks.bulkRemove).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("keeps a missed removal receipt across remount and explicitly resends the immutable intent", async () => {
   mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
   mocks.bulkRemove
