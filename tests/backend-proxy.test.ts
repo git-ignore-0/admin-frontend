@@ -1418,6 +1418,72 @@ describe("admin backend proxy", () => {
     }
   });
 
+  describe("Farm bulk supply product-status query contract", () => {
+    const farm = "1f373011-45a6-4a1b-9607-1f0ea865bccf";
+    const product = "11111111-1111-4111-8111-111111111111";
+    const collection = ["admin", "farms", farm, "products"];
+
+    it.each([
+      "product_status=active",
+      "product_status=draft",
+      "product_status=discontinued",
+      // Exact query emitted when FarmBulkSupply opens Farm 1.
+      "page=1&supply_status=supplying&product_status=active",
+      "page=2&supply_status=supplying&search=rau+mu%E1%BB%91ng&product_status=active",
+    ])("forwards the complete valid query through the real BFF: %s", async (query) => {
+      const payload = { data: [], meta: { page: 1, page_size: 20, total: 0 } };
+      const upstream = vi.fn<typeof fetch>(async () => Response.json(payload));
+      vi.stubGlobal("fetch", upstream);
+      const response = await GET(
+        pageRequest(`https://admin.example.test/api/backend/${collection.join("/")}?${query}`),
+        { params: Promise.resolve({ path: collection }) },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(payload);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(upstream).toHaveBeenCalledTimes(1);
+      const [target, init] = upstream.mock.calls[0];
+      expect(String(target)).toBe(
+        `https://auth.example.test/api/v1/${collection.join("/")}?${query}`,
+      );
+      expect(init?.method).toBe("GET");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+    });
+
+    it.each([
+      ["GET", collection, "product_status=unknown"],
+      ["GET", collection, "product_status="],
+      ["GET", collection, "product_status=ACTIVE"],
+      ["GET", collection, "product_status=active&product_status=draft"],
+      ["GET", collection, "product_status=active&product_status=active"],
+      ["GET", ["admin", "farms"], "product_status=active"],
+      ["GET", ["admin", "farms", farm], "product_status=active"],
+      ["GET", ["admin", "farms", farm, "available-products"], "product_status=active"],
+      ["GET", [...collection, product], "product_status=active"],
+      ["GET", [...collection, product, "batches"], "product_status=active"],
+      ["GET", [...collection, product, "batches", product], "product_status=active"],
+      ["GET", [...collection, product, "history"], "product_status=active"],
+      ["POST", collection, "product_status=active"],
+      ["POST", [...collection, product, "remove"], "product_status=active"],
+      ["PATCH", ["admin", "farms", farm], "product_status=active"],
+      ["DELETE", ["admin", "farms", farm], "product_status=active"],
+      ["PUT", collection, "product_status=active"],
+    ] as const)("rejects %s %j?%s without upstream access", async (method, path, query) => {
+      const upstream = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", upstream);
+      const response = await { GET, POST, PATCH, DELETE, PUT }[method](
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}?${query}`, {
+          method,
+          headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        }),
+        { params: Promise.resolve({ path: [...path] }) },
+      );
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "backend_route_not_allowed" });
+      expect(upstream).not.toHaveBeenCalled();
+    });
+  });
+
   it("forwards Farm stock-batch writes through the same-origin proxy", async () => {
     const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const product = "11111111-1111-4111-8111-111111111111";

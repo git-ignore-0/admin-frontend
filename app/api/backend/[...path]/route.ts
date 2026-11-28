@@ -51,7 +51,7 @@ function invalidFarmQuery(method: string, path: string[], params: URLSearchParam
   } else if (collection === "available-products") {
     allowed = ["page", "search"];
   } else if (collection === "products" && product === undefined) {
-    allowed = ["page", "search", "supply_status"];
+    allowed = ["page", "search", "supply_status", "product_status"];
   } else if (sourceAction === "batches" && path.length === 6) {
     allowed = ["page", "scope", "status"];
   } else if (sourceAction === "history") {
@@ -60,6 +60,7 @@ function invalidFarmQuery(method: string, path: string[], params: URLSearchParam
 
   const page = params.get("page");
   const supplyStatus = params.get("supply_status");
+  const productStatus = params.get("product_status");
   const scope = params.get("scope");
   const status = params.get("status");
   const activity = params.get("is_active");
@@ -69,6 +70,7 @@ function invalidFarmQuery(method: string, path: string[], params: URLSearchParam
     Array.from(params.get("search") ?? "").length > 200 ||
     (activity !== null && activity !== "true" && activity !== "false") ||
     (supplyStatus !== null && !farmSupplyFilters.some((value) => value === supplyStatus)) ||
+    (productStatus !== null && !["draft", "active", "discontinued"].includes(productStatus)) ||
     (scope !== null && !farmBatchScopes.some((value) => value === scope)) ||
     (status !== null && !stockBatchStatuses.some((value) => value === status))
   );
