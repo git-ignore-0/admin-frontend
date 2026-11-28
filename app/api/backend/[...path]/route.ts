@@ -85,12 +85,20 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     const codes = params.getAll("province");
     return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
-  const [, resource, id, action, extra] = path;
-  if (params.has("creation_key")) {
+  const [scope, resource, id, action, extra] = path;
+  const farmBulkReceipt =
+    scope === "admin" &&
+    resource === "farms" &&
+    path.length === 5 &&
+    UUID_PATH_SEGMENT.test(id ?? "") &&
+    action === "stock-batches" &&
+    extra === "bulk";
+  if (params.has("creation_key") || (farmBulkReceipt && request.method === "GET")) {
+    const collectionReceipt =
+      id === undefined && ["store-products", "csa-round-configurations"].includes(resource);
     return (
       request.method !== "GET" ||
-      id !== undefined ||
-      !["store-products", "csa-round-configurations"].includes(resource) ||
+      !(collectionReceipt || farmBulkReceipt) ||
       params.size !== 1 ||
       !UUID_PATH_SEGMENT.test(params.get("creation_key") ?? "")
     );

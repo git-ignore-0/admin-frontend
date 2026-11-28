@@ -114,6 +114,34 @@ it("invalidates the affected source when a confirmed receipt arrives after unmou
   expect(client.getQueryState(draft)).toBeUndefined();
 });
 
+it("commits a verified recovery receipt without sending another bulk write", async () => {
+  const { useFarmBulkWrite } = await import("@/lib/use-farm-bulk-write");
+  const confirmed = vi.fn();
+  const { result } = renderHook(
+    () => ({ writer: useFarmBulkWrite(farmId), client: useQueryClient() }),
+    { wrapper: AdminQueryProvider },
+  );
+  const key = ["farm-supply", farmId, "source", productId];
+  result.current.client.setQueryData(key, { cached: true });
+  api.postFarmBulkSupply.mockRejectedValueOnce(
+    Object.assign(new Error("upstream_timeout"), { status: 504 }),
+  );
+  api.recoverFarmBulkSupply.mockResolvedValueOnce({
+    farm_id: farmId,
+    created_count: 1,
+    idempotent_replay: true,
+  });
+  await act(async () => result.current.writer.submit(input, confirmed));
+  await waitFor(() => expect(result.current.writer.failure?.kind).toBe("unknown"));
+  const sent = api.postFarmBulkSupply.mock.calls[0][1];
+  await act(async () => result.current.writer.recover(confirmed));
+  expect(api.recoverFarmBulkSupply).toHaveBeenCalledExactlyOnceWith(farmId, sent);
+  expect(api.postFarmBulkSupply).toHaveBeenCalledTimes(1);
+  expect(confirmed).toHaveBeenCalledExactlyOnceWith(sent);
+  expect(result.current.client.getQueryState(key)?.isInvalidated).toBe(true);
+  await waitFor(() => expect(result.current.writer.locked).toBe(false));
+});
+
 it("reconstructs an unknown transaction on remount and retires it after permission loss", async () => {
   const { useFarmBulkWrite } = await import("@/lib/use-farm-bulk-write");
   let client!: QueryClient;

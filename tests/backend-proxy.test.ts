@@ -1484,6 +1484,126 @@ describe("admin backend proxy", () => {
     });
   });
 
+  describe("Farm bulk receipt query", () => {
+    const farm = ["admin", "farms", membershipId];
+    const bulk = [...farm, "stock-batches", "bulk"];
+    const query = `creation_key=${versionId}`;
+    const request = (path: string[], search: string, method = "GET") =>
+      pageRequest(`https://admin.example.test/api/backend/${path.join("/")}?${search}`, {
+        method,
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      });
+    const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
+
+    it.each([200, 404])(
+      "forwards the exact receipt GET and preserves upstream %i",
+      async (status) => {
+        const payload =
+          status === 200
+            ? {
+                data: { farm_id: membershipId, created_count: 1 },
+                meta: {
+                  idempotent_replay: true,
+                  action_receipt: {
+                    action: "create_farm_stock_batches",
+                    resource_id: membershipId,
+                    idempotency_key: versionId,
+                  },
+                },
+              }
+            : { errors: [{ code: "create_receipt_not_found" }] };
+        const upstream = vi.fn<typeof fetch>(async () => Response.json(payload, { status }));
+        vi.stubGlobal("fetch", upstream);
+        const response = await GET(request(bulk, query), context(bulk));
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual(payload);
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        expect(upstream).toHaveBeenCalledTimes(1);
+        const [url, init] = upstream.mock.calls[0];
+        expect(String(url)).toBe(`https://auth.example.test/api/v1/${bulk.join("/")}?${query}`);
+        expect(init?.method).toBe("GET");
+        expect(init?.cache).toBe("no-store");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+      },
+    );
+
+    it.each(["store-products", "csa-round-configurations"])(
+      "preserves the %s collection receipt GET",
+      async (resource) => {
+        const path = ["admin", resource];
+        const upstream = vi.fn<typeof fetch>(async () => Response.json({ data: {} }));
+        vi.stubGlobal("fetch", upstream);
+        expect((await GET(request(path, query), context(path))).status).toBe(200);
+        expect(String(upstream.mock.calls[0][0])).toBe(
+          `https://auth.example.test/api/v1/${path.join("/")}?${query}`,
+        );
+      },
+    );
+
+    it("rejects receipt parameters outside the exact read contract", async () => {
+      const upstream = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", upstream);
+      for (const search of [
+        "",
+        "creation_key=",
+        "creation_key=bad",
+        `${query}&${query}`,
+        `${query}&page=1`,
+      ]) {
+        expect((await GET(request(bulk, search), context(bulk))).status).toBe(404);
+      }
+      for (const path of [
+        ["admin", "farms", "bad-id", "stock-batches", "bulk"],
+        [...bulk, "extra"],
+        farm,
+        [...farm, "products"],
+        [...farm, "products", versionId],
+        [...farm, "products", versionId, "batches"],
+        [...farm, "stock-batches", versionId],
+        ["admin", "store-orders", membershipId],
+      ]) {
+        expect((await GET(request(path, query), context(path))).status).toBe(404);
+      }
+      for (const [method, invoke] of [
+        ["POST", POST],
+        ["PATCH", PATCH],
+        ["DELETE", DELETE],
+      ] as const) {
+        expect((await invoke(request(bulk, query, method), context(bulk))).status).toBe(404);
+      }
+      expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it("keeps session binding and origin checks before forwarding a receipt", async () => {
+      const upstream = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", upstream);
+      vi.mocked(readSession).mockResolvedValueOnce(null);
+      expect((await GET(request(bulk, query), context(bulk))).status).toBe(401);
+      const url = `https://admin.example.test/api/backend/${bulk.join("/")}?${query}`;
+      expect((await GET(new NextRequest(url), context(bulk))).status).toBe(409);
+      expect(
+        (
+          await GET(
+            pageRequest(url, { headers: { "x-nfv-admin-session": "old-session" } }),
+            context(bulk),
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await POST(
+            pageRequest(url, {
+              method: "POST",
+              headers: { origin: "https://elsewhere.example.test" },
+            }),
+            context(bulk),
+          )
+        ).status,
+      ).toBe(403);
+      expect(upstream).not.toHaveBeenCalled();
+    });
+  });
+
   it("forwards Farm stock-batch writes through the same-origin proxy", async () => {
     const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const product = "11111111-1111-4111-8111-111111111111";

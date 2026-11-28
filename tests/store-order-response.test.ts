@@ -107,6 +107,10 @@ it.each([
   ["invalid capability", [{ ...source, farms: [{ ...farm, eligible: "true" }] }]],
   ["invalid capacity", [{ ...source, farms: [{ ...farm, available_quantity: -1 }] }]],
   ["fractional capacity", [{ ...source, farms: [{ ...farm, available_quantity: 3.5 }] }]],
+  [
+    "unsafe capacity",
+    [{ ...source, farms: [{ ...farm, available_quantity: Number.MAX_SAFE_INTEGER + 1 }] }],
+  ],
   ["eligible without capacity", [{ ...source, farms: [{ ...farm, available_quantity: 2 }] }]],
   ["ineligible suggestion", [{ ...source, farms: [{ ...farm, eligible: false }] }]],
 ])("rejects new inventory with %s and still recognizes a valid receipt", async (_, lines) => {
@@ -116,6 +120,30 @@ it.each([
   await expect(getStoreOrder(order.id)).rejects.toThrow("invalid_response");
   await expect(mutateStoreOrder(order.id, "cancel", cancelPayload)).resolves.toBeNull();
 });
+
+it.each([3_000_000_000, Number.MAX_SAFE_INTEGER])(
+  "accepts a consistent Farm projection with aggregate stock %i",
+  async (available_quantity) => {
+    const [line] = order.lines;
+    const data = {
+      ...order,
+      source_inventory: {
+        ...order.source_inventory,
+        lines: [{ ...source, farms: [{ ...farm, available_quantity }] }],
+        product_reservations: [
+          {
+            product_id: line.product_id,
+            reserved_quantity: available_quantity,
+            this_order_quantity: line.quantity,
+            other_orders_quantity: available_quantity - line.quantity,
+          },
+        ],
+      },
+    };
+    vi.mocked(api).mockResolvedValueOnce(data);
+    await expect(getStoreOrder(order.id)).resolves.toBe(data);
+  },
+);
 
 it("accepts an assigned Farm absent from the options, same-name Farms, and empty options", async () => {
   const second = { ...order.lines[0], id: "00000000-0000-4000-8000-000000000038" };

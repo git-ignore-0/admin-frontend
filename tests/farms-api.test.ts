@@ -744,13 +744,18 @@ it("accepts only a bulk receipt matching the submitted farm, key and count", asy
   await expect(postFarmBulkSupply(farmId, intent)).resolves.toMatchObject(result);
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(intent);
   fetchMock.mockResolvedValueOnce(
+    Response.json({ data: result, meta: { idempotent_replay: true, action_receipt } }),
+  );
+  await expect(recoverFarmBulkSupply(farmId, intent)).resolves.toMatchObject(result);
+  expect(String(fetchMock.mock.calls[1][0])).toContain("creation_key=" + batchId);
+  fetchMock.mockResolvedValueOnce(
     Response.json({
       data: { ...result, created_count: 2 },
       meta: { idempotent_replay: true, action_receipt },
     }),
   );
   await expect(recoverFarmBulkSupply(farmId, intent)).rejects.toThrow("invalid_response");
-  expect(String(fetchMock.mock.calls[1][0])).toContain("creation_key=" + batchId);
+  expect(String(fetchMock.mock.calls[2][0])).toContain("creation_key=" + batchId);
 });
 
 it.each(["farm", "action", "resource", "key", "replay"] as const)(
