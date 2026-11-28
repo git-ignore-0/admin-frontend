@@ -1,6 +1,7 @@
 import { selectOption } from "./select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deferred } from "@/tests/deferred";
 
 import { StoreProductList } from "@/components/store-product-list";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -220,7 +221,7 @@ describe("store product filters", () => {
 
   it("distinguishes loading and a completed empty result with applied filters", async () => {
     mocks.search = new URLSearchParams("search=rau&status=draft");
-    const pending = Promise.withResolvers<{
+    const pending = deferred<{
       data: [];
       meta: { page: number; page_size: number; total: number };
     }>();
@@ -237,8 +238,8 @@ describe("store product filters", () => {
   });
 
   it("hides rows and totals for superseded filter and page requests", async () => {
-    const oldFilter = Promise.withResolvers<ReturnType<typeof productPage>>();
-    const newPage = Promise.withResolvers<ReturnType<typeof productPage>>();
+    const oldFilter = deferred<ReturnType<typeof productPage>>();
+    const newPage = deferred<ReturnType<typeof productPage>>();
     mocks.products
       .mockResolvedValueOnce(productPage("Previous query", 2, 70))
       .mockReturnValueOnce(oldFilter.promise)
@@ -266,7 +267,7 @@ describe("store product filters", () => {
   });
 
   it.each([403, 401])("retires rows and categories when a refresh receives %s", async (status) => {
-    const pending = Promise.withResolvers<ReturnType<typeof productPage>>();
+    const pending = deferred<ReturnType<typeof productPage>>();
     mocks.search = new URLSearchParams();
     mocks.categories.mockResolvedValue([
       { id: "category-1", slug: "rau", translations: [{ locale: "vi", name: "Tên danh mục" }] },
@@ -294,8 +295,8 @@ describe("store product filters", () => {
   });
 
   it("requires a fresh catalog read after the category filter loses access", async () => {
-    const category = Promise.withResolvers<[]>();
-    const products = Promise.withResolvers<ReturnType<typeof productPage>>();
+    const category = deferred<[]>();
+    const products = deferred<ReturnType<typeof productPage>>();
     mocks.search = new URLSearchParams();
     mocks.categories.mockReturnValueOnce(category.promise);
     mocks.products
@@ -314,7 +315,7 @@ describe("store product filters", () => {
   });
 
   it("unmounts the protected list and aborts refresh when the bound session changes", async () => {
-    const pending = Promise.withResolvers<ReturnType<typeof productPage>>();
+    const pending = deferred<ReturnType<typeof productPage>>();
     mocks.search = new URLSearchParams();
     mocks.products
       .mockResolvedValueOnce(productPage("Old session product", 1, 70))

@@ -19,6 +19,7 @@ import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { readRoundNavigationContext } from "@/app/(admin)/csa-rounds/round-navigation";
 import { CSARoundDetail } from "@/components/csa-round-detail";
 import { api, apiEnvelope } from "@/lib/client-api";
+import { deferred } from "@/tests/deferred";
 
 function render(ui: ReactElement) {
   return renderView(ui, { wrapper: AdminQueryProvider });
@@ -51,7 +52,7 @@ const round = {
 const rootId = "3894c718-0ed1-414f-9dfe-c6d880fd871b";
 
 it("uses the native member and demand table layouts while waiting for a round's selections", async () => {
-  const pending = Promise.withResolvers<Awaited<ReturnType<typeof apiEnvelope>>>();
+  const pending = deferred<Awaited<ReturnType<typeof apiEnvelope>>>();
   vi.mocked(api).mockResolvedValue({ ...round, status: "open" });
   vi.mocked(apiEnvelope).mockReturnValue(pending.promise);
   render(

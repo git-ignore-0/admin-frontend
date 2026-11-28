@@ -27,6 +27,7 @@ import {
   readRoundNavigationContext,
   roundRecordHref,
 } from "@/app/(admin)/csa-rounds/round-navigation";
+import { deferred } from "@/tests/deferred";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 const { replace } = vi.hoisted(() => ({ replace: vi.fn() }));
@@ -534,7 +535,7 @@ it.each([
   "limits the %s session redirect to the submitting route",
   async (label, method, action, status) => {
     window.history.replaceState(null, "", groupedPath);
-    const write = Promise.withResolvers<unknown>();
+    const write = deferred<unknown>();
     vi.mocked(api).mockImplementation(async (_path, init) =>
       init?.method === method
         ? write.promise

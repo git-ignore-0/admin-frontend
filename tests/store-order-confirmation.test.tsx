@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -7,6 +7,7 @@ import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
 import type { StoreOrder } from "@/lib/types";
+import { deferred } from "@/tests/deferred";
 import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 
 vi.mock("@/lib/use-administrative-unit-names", () => ({
@@ -47,7 +48,7 @@ function wire(item: StoreOrder, actionReceipt?: unknown) {
 }
 
 function fetchOrders(
-  read: (path: string) => StoreOrder | Response,
+  read: (path: string) => StoreOrder | Response | Promise<Response>,
   write: (request: { path: string; body: string; key: string }) => Response | Promise<Response>,
 ) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
@@ -56,7 +57,7 @@ function fetchOrders(
       return write({ path, body, key: JSON.parse(body).idempotency_key });
     }
     const result = read(path);
-    return result instanceof Response ? result : wire(result);
+    return result instanceof Response || result instanceof Promise ? result : wire(result);
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
@@ -103,8 +104,13 @@ it("confirms a valid receipt with a stale snapshot and blocks further writes unt
   const write = vi.fn(({ key }: { key: string }) =>
     wire(initial, receipt(initial.id, "cancel", key)),
   );
+  const staleRead = deferred<Response>();
+  const consistentRead = deferred<Response>();
   let reads = 0;
-  const fetch = fetchOrders(() => (++reads === 3 ? cancelled : initial), write);
+  const fetch = fetchOrders(
+    () => [initial, staleRead.promise, consistentRead.promise][reads++],
+    write,
+  );
   render(orderTree(initial));
   const { confirm } = await openCancel();
   fireEvent.click(confirm);
@@ -115,9 +121,16 @@ it("confirms a valid receipt with a stale snapshot and blocks further writes unt
   fireEvent.click(within(screen.getByRole("alert")).getByRole("button"));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
   expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeDisabled();
-  fireEvent.click(within(screen.getByRole("alert")).getByRole("button"));
-  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
-  expect(screen.queryByRole("button", { name: "Hủy đơn" })).not.toBeInTheDocument();
+  await act(async () => staleRead.resolve(wire(initial)));
+  expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeDisabled();
+  fireEvent.click(within(await screen.findByRole("alert")).getByRole("button"));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+  expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeDisabled();
+  await act(async () => consistentRead.resolve(wire(cancelled)));
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Hủy đơn" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
   expect(write).toHaveBeenCalledTimes(1);
 });
 

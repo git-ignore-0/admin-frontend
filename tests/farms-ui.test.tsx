@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useEffect, useSyncExternalStore } from "react";
+import { deferred } from "@/tests/deferred";
 
 import { FarmList } from "@/components/farm-list";
 import { FarmEditor } from "@/components/farm-editor";
@@ -776,15 +777,6 @@ function prepareInventory() {
     meta: { page: 1, page_size: 20, total: 1 },
   });
 }
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((complete, fail) => {
-    resolve = complete;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
-}
 
 it("selects a date from the Foundation calendar and closes an open calendar during an update", async () => {
   prepareInventory();
@@ -1014,8 +1006,8 @@ it("pages linked Farm products without loading every Product detail", async () =
 
 it("keeps a verified Farm product page on refresh timeout and locks Add until retry succeeds", async () => {
   const first = linkedResult([linkedProduct], 1, 21);
-  const failed = Promise.withResolvers<typeof first>();
-  const retry = Promise.withResolvers<typeof first>();
+  const failed = deferred<typeof first>();
+  const retry = deferred<typeof first>();
   mocks.linked
     .mockResolvedValueOnce(first)
     .mockReturnValueOnce(failed.promise)
@@ -2999,7 +2991,7 @@ it("confirms the selected source versions once and reconciles a now-empty last p
     sku: "RAU-02",
     name_vi: "Cải ngọt",
   };
-  const pending = Promise.withResolvers<{ removed_count: number }>();
+  const pending = deferred<{ removed_count: number }>();
   mocks.bulkRemove.mockReturnValue(pending.promise);
   mocks.linked.mockResolvedValueOnce(linkedResult([first], 2, 21));
   view(<FarmProducts farm={farm} canAddSupply />);

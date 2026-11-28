@@ -2,6 +2,7 @@ import { act, cleanup, render, renderHook, waitFor } from "@testing-library/reac
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { deferred } from "@/tests/deferred";
 
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { useFarmDeletion } from "@/components/use-farm-deletion";
@@ -387,7 +388,7 @@ it.each([
   async (retirement, phase) => {
     const retire = createRef<() => void>();
     const forbidden = apiError("forbidden", 403);
-    const pending = Promise.withResolvers<{ removed_count: number }>();
+    const pending = deferred<{ removed_count: number }>();
     api.removeFarmProductsBulk.mockReturnValueOnce(pending.promise);
     const { result } = renderHook(
       () => ({ writer: useFarmProductBulkRemove(farmId), client: useQueryClient() }),

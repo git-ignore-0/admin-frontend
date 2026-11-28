@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { deferred } from "@/tests/deferred";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
@@ -436,8 +437,8 @@ it("reloads after CSA reopen even when an older expiry read is still in flight",
     const order = { ...csaSummaryOrder(), expires_at: "2026-11-19T18:01:00+07:00" };
     const next = csaSummaryOrder(3);
     next.csa!.selection.reopen_until = "2026-11-19T23:00:00+07:00";
-    const old = Promise.withResolvers<StoreOrder>();
-    const post = Promise.withResolvers<object>();
+    const old = deferred<StoreOrder>();
+    const post = deferred<object>();
     vi.mocked(api)
       .mockResolvedValueOnce(order)
       .mockResolvedValueOnce(order)

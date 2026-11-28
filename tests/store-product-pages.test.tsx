@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deferred } from "@/tests/deferred";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
@@ -1105,8 +1106,8 @@ describe("store product editor", () => {
 
   it("keeps Cancel locked during a save and discards a safe pending image before leaving", async () => {
     mocks.search = new URLSearchParams("status=draft&page=2");
-    const write = Promise.withResolvers<typeof storedProduct>();
-    const discard = Promise.withResolvers<void>();
+    const write = deferred<typeof storedProduct>();
+    const discard = deferred<void>();
     mocks.save.mockReturnValueOnce(write.promise);
     mocks.deleteImage.mockReturnValueOnce(discard.promise);
     const { container } = render(<StoreProductEditor />);

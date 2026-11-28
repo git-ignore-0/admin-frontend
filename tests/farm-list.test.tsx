@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { NextRouter } from "next/router";
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import { afterEach, expect, it, vi } from "vitest";
+import { deferred } from "@/tests/deferred";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminNavigationProvider } from "@/components/admin-navigation-link";
@@ -224,8 +225,8 @@ it("hides the cached Farm rows after a protected refresh fails", async () => {
 it("keeps the current Farm page during a transient refresh error and updates it on retry", async () => {
   searchParams = new URLSearchParams("search=green&page=2");
   const first = { data: [farm], meta: { page: 2, page_size: 20, total: 22 } };
-  const failed = Promise.withResolvers<typeof first>();
-  const retry = Promise.withResolvers<typeof first>();
+  const failed = deferred<typeof first>();
+  const retry = deferred<typeof first>();
   vi.mocked(apiEnvelope)
     .mockResolvedValueOnce(first)
     .mockReturnValueOnce(failed.promise)

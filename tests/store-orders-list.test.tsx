@@ -1,6 +1,7 @@
 import { selectOption } from "@/tests/select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { deferred } from "@/tests/deferred";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { StoreOrderList } from "@/components/store-order-list";
@@ -315,7 +316,7 @@ describe("Store order list", () => {
 
   it("keeps an empty result and its footer visible while refreshing", async () => {
     const empty = { data: [], meta: { page: 1, page_size: 20, total: 0 } };
-    const pending = Promise.withResolvers<typeof empty>();
+    const pending = deferred<typeof empty>();
     vi.mocked(apiEnvelope).mockResolvedValueOnce(empty).mockReturnValueOnce(pending.promise);
     view();
     const message = await screen.findByText("Không có đơn hàng phù hợp.");
