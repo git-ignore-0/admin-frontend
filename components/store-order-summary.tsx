@@ -45,13 +45,13 @@ function PaymentRow({
 }) {
   const weight = emphasis ? 600 : undefined;
   return (
-    <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+    <Group justify="space-between" align="center" gap="xs">
       <Text component="dt" size="sm" c={emphasis ? undefined : "dimmed"} fw={weight}>
         {label}
       </Text>
-      <Text component="dd" m={0} miw={0} ta="end" fw={weight} style={{ overflowWrap: "anywhere" }}>
+      <Box component="dd" m={0} miw={0} ta="end" fw={weight} style={{ overflowWrap: "anywhere" }}>
         {children}
-      </Text>
+      </Box>
     </Group>
   );
 }
@@ -68,16 +68,14 @@ function StoreOrderTotals({ order }: { order: StoreOrder }) {
 
   return (
     <>
-      <Box component="dl" m={0}>
-        <RecordDetailField label={c.paymentStatus}>
+      <Stack component="dl" m={0} gap="xs">
+        <PaymentRow label={c.detailPaymentStatus}>
           <Status
             status={order.payment_status}
             color={paymentStatusColors[order.payment_status]}
-            label={c.paymentStatuses[order.payment_status]}
+            label={c.detailPaymentStatuses[order.payment_status]}
           />
-        </RecordDetailField>
-      </Box>
-      <Stack component="dl" m={0} gap="xs">
+        </PaymentRow>
         <PaymentRow label={c.listedSubtotal}>
           {formatStoreMoney(listedSubtotal(order), locale)}
         </PaymentRow>
@@ -203,7 +201,6 @@ export function StoreOrderSummary({ order }: { order: StoreOrder }) {
               </Title>
               <RecordDetailFields>
                 <RecordDetailField label={c.bank}>{payment.bank_name}</RecordDetailField>
-                <RecordDetailField label={c.bankBin}>{payment.bank_bin}</RecordDetailField>
                 <RecordDetailField label={c.account}>{payment.account_number}</RecordDetailField>
                 <RecordDetailField label={c.accountName}>{payment.account_name}</RecordDetailField>
                 <RecordDetailField label={c.transferContent}>

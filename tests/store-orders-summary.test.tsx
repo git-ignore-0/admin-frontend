@@ -117,9 +117,10 @@ describe("Store order localized summaries", () => {
     expect(field("Địa chỉ").getByText(address)).toBeVisible();
     expect(field("Ngày giao").getByText("20/11/2026")).toHaveAttribute("datetime", "2026-11-20");
     expect(field("Ngân hàng").getByText("Vietcombank")).toBeVisible();
-    expect(field("Mã BIN ngân hàng").getByText("000436")).toBeVisible();
+    expect(screen.queryByText("Mã BIN ngân hàng")).not.toBeInTheDocument();
+    expect(screen.queryByText("000436")).not.toBeInTheDocument();
     expect(field("Số tài khoản").getByText("000123456789")).toBeVisible();
-    expect(field("Tên tài khoản").getByText("NFV")).toBeVisible();
+    expect(field("Chủ tài khoản").getByText("NFV")).toBeVisible();
     expect(field("Nội dung chuyển khoản").getByText(transferContent)).toBeVisible();
   });
 
@@ -130,7 +131,7 @@ describe("Store order localized summaries", () => {
       </AdminI18nProvider>,
     );
 
-    expect(field("Payment status").getByText("Payment unconfirmed")).toHaveClass(
+    expect(field("Payment status").getByText("Payment not confirmed")).toHaveClass(
       "mantine-Badge-label",
     );
     expect(

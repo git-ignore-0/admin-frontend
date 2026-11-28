@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { getStoreOrder, mutateStoreOrder } from "@/lib/store-orders";
-import { storeOrderFixture } from "./store-orders-fixture";
+import { sourceLineFixture, storeOrderFixture } from "./store-orders-fixture";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 
@@ -82,3 +82,56 @@ it.each([1, 2] as const)(
     expect(await mutateStoreOrder(row.id, "cancel", cancelPayload)).toBe(cancelled);
   },
 );
+
+const farmId = "00000000-0000-4000-8000-000000000037";
+const farm = { farm_id: farmId, farm_name: "Farm A", available_quantity: 3, eligible: true };
+const source = sourceLineFixture(order.lines[0], [farm], farmId, other);
+
+it.each([
+  ["missing", undefined],
+  ["non-array", {}],
+  ["missing line", []],
+  ["duplicate line", [source, source]],
+  ["foreign line", [{ ...source, line_id: other }]],
+  ["invalid line UUID", [{ ...source, line_id: "bad" }]],
+  ["mismatched product", [{ ...source, product_id: other }]],
+  ["mismatched quantity", [{ ...source, required_quantity: 2 }]],
+  ["unsafe quantity", [{ ...source, required_quantity: Number.MAX_SAFE_INTEGER + 1 }]],
+  ["invalid assignment", [{ ...source, assigned_farm_id: 1 }]],
+  ["invalid suggestion", [{ ...source, suggested_farm_id: "bad" }]],
+  ["missing suggested farm", [{ ...source, suggested_farm_id: other }]],
+  ["non-array farms", [{ ...source, farms: null }]],
+  ["duplicate farm", [{ ...source, farms: [farm, farm] }]],
+  ["invalid farm UUID", [{ ...source, farms: [{ ...farm, farm_id: 1 }] }]],
+  ["invalid farm name", [{ ...source, farms: [{ ...farm, farm_name: 42 }] }]],
+  ["invalid capability", [{ ...source, farms: [{ ...farm, eligible: "true" }] }]],
+  ["invalid capacity", [{ ...source, farms: [{ ...farm, available_quantity: -1 }] }]],
+  ["fractional capacity", [{ ...source, farms: [{ ...farm, available_quantity: 3.5 }] }]],
+  ["eligible without capacity", [{ ...source, farms: [{ ...farm, available_quantity: 2 }] }]],
+  ["ineligible suggestion", [{ ...source, farms: [{ ...farm, eligible: false }] }]],
+])("rejects new inventory with %s and still recognizes a valid receipt", async (_, lines) => {
+  const data = { ...order, source_inventory: { ...order.source_inventory, lines } };
+  vi.mocked(api).mockResolvedValueOnce(data);
+  vi.mocked(apiEnvelope).mockResolvedValueOnce(cancelResponse(data));
+  await expect(getStoreOrder(order.id)).rejects.toThrow("invalid_response");
+  await expect(mutateStoreOrder(order.id, "cancel", cancelPayload)).resolves.toBeNull();
+});
+
+it("accepts an assigned Farm absent from the options, same-name Farms, and empty options", async () => {
+  const second = { ...order.lines[0], id: "00000000-0000-4000-8000-000000000038" };
+  const data = {
+    ...order,
+    lines: [...order.lines, second],
+    source_inventory: {
+      ...order.source_inventory,
+      lines: [
+        { ...source, farms: [farm, { ...farm, farm_id: second.id, eligible: false }] },
+        sourceLineFixture(second),
+      ],
+    },
+  };
+  vi.mocked(api).mockResolvedValueOnce(data);
+  await expect(getStoreOrder(order.id)).resolves.toBe(data);
+  vi.mocked(api).mockResolvedValueOnce({ ...data, lines: [data.lines[0], data.lines[0]] });
+  await expect(getStoreOrder(order.id)).rejects.toThrow("invalid_response");
+});

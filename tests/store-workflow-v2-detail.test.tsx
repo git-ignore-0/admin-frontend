@@ -92,21 +92,21 @@ it.each([false, true])(
       });
     render(tree(item.id));
     await act(async () => {});
-    const modal = await dialog("Ghi nhận đã nhận tiền");
+    const modal = await dialog("Xác nhận đã nhận tiền");
     fireEvent.change(within(modal).getByRole("textbox"), { target: { value: "receipt ref 123" } });
     if (unknown) {
-      fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+      fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
       await act(async () => {});
     }
     await act(async () => {
       elapsed = 60_000;
       vi.advanceTimersByTime(60_000);
     });
-    expect(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeDisabled();
     expect(within(modal).getAllByRole("alert")[0]).toBeVisible();
     fireEvent.click(within(modal).getByRole("button", { name: "Thử lại" }));
     expect(within(modal).getByRole("status")).toBeVisible();
-    expect(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeDisabled();
     await act(async () => finish(next));
     expect(screen.getByRole("dialog")).toBe(modal);
     expect(within(modal).getByRole("textbox")).toHaveValue("receipt ref 123");
@@ -144,9 +144,9 @@ it("buyer cancellation before v2 goods approval offers no receipt or refund acti
     });
   render(tree(item.id));
   await screen.findByRole("button", { name: "Xác nhận đủ hàng" });
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" });
-  for (const name of ["Ghi nhận đã nhận tiền", "Xác nhận hoàn tiền", "Xác minh không có tiền"])
+  for (const name of ["Xác nhận đã nhận tiền", "Xác nhận hoàn tiền", "Xác nhận chưa nhận tiền"])
     expect(screen.queryByRole("button", { name })).toBeNull();
   expect(screen.queryByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeNull();
   expect(api).toHaveBeenCalledTimes(2);
@@ -225,7 +225,7 @@ it("renders payment history from top-level fields even when payment is null", as
   });
   vi.mocked(api).mockResolvedValueOnce(item);
   render(tree(item.id));
-  expect(await screen.findByText("Admin ghi nhận tiền")).toBeVisible();
+  expect(await screen.findByText("Đã xác nhận nhận tiền")).toBeVisible();
   expect(screen.getByText("Mở đối soát lúc")).toBeVisible();
   expect(screen.getByText("Hoàn tiền lúc")).toBeVisible();
   expect(screen.getByText("Đã chuyển hoàn")).toBeVisible();
@@ -250,20 +250,20 @@ it("late receipt after elapsed payment deadline renders cancelled plus refund wi
   );
   render(tree(item.id));
   // The elapsed deadline refresh must settle before the receipt action opens.
-  const trigger = await screen.findByRole("button", { name: "Ghi nhận đã nhận tiền" });
+  const trigger = await screen.findByRole("button", { name: "Xác nhận đã nhận tiền" });
   await waitFor(() => {
     expect(api).toHaveBeenCalledTimes(2);
     expect(trigger).toBeEnabled();
   });
   fireEvent.click(trigger);
   const modal = screen.getByRole("dialog");
-  const confirm = within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" });
+  const confirm = within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" });
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(screen.getByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Xác nhận đã giao" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Xác minh không có tiền" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Xác nhận chưa nhận tiền" })).toBeNull();
 });
 
 it("unknown receipt keeps exact intent despite edit, locale and retry", async () => {
@@ -279,9 +279,9 @@ it("unknown receipt keeps exact intent despite edit, locale and retry", async ()
       expires_at: null,
     });
   render(tree(item.id));
-  const modal = await dialog("Ghi nhận đã nhận tiền");
+  const modal = await dialog("Xác nhận đã nhận tiền");
   fireEvent.change(within(modal).getByRole("textbox"), { target: { value: "Bank checked" } });
-  fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+  fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
   await within(modal).findByRole("alert");
   expect(within(modal).getByRole("textbox")).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "English" }));
@@ -313,8 +313,8 @@ it("late mutation from previous order never overwrites the next order", async ()
     )
     .mockResolvedValueOnce(second);
   const view = render(tree(first.id));
-  const modal = await dialog("Ghi nhận đã nhận tiền");
-  fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+  const modal = await dialog("Xác nhận đã nhận tiền");
+  fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
   view.rerender(tree(second.id));
   await screen.findByRole("heading", { name: "NEXT-ORDER" });
   await act(async () =>
@@ -434,7 +434,7 @@ it("separates terminal recovery from order actions and replays the exact unresol
   fireEvent.click(within(modal).getByRole("button", { name: "Hủy đơn" }));
   await within(modal).findByRole("alert");
   fireEvent.click(within(modal).getByRole("button", { name: "Đóng" }));
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" });
   expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Hủy đơn" })).toBeNull();
@@ -503,8 +503,8 @@ it.each([null, "2026-10-31T09:59:00Z"])(
     vi.mocked(api).mockResolvedValueOnce(item).mockResolvedValueOnce(received);
     render(tree(item.id));
     const modal = await dialog("Xử lý đối soát");
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Xác minh không có tiền" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Xác nhận chưa nhận tiền" })).toBeNull();
     expect(screen.getByText("Chờ đối soát", { selector: ".mantine-Badge-label" })).toBeVisible();
     const confirm = within(modal).getByRole("button", { name: "Xác nhận đối soát" });
     expect(confirm).toBeDisabled();
@@ -539,8 +539,8 @@ it("keeps closed no-money reconciliation final on approved v2 orders", async () 
   for (const name of [
     "Xử lý đối soát",
     "Xử lý hoàn tiền",
-    "Ghi nhận đã nhận tiền",
-    "Xác minh không có tiền",
+    "Xác nhận đã nhận tiền",
+    "Xác nhận chưa nhận tiền",
   ])
     expect(screen.queryByRole("button", { name })).toBeNull();
 });
@@ -569,10 +569,8 @@ it.each(["record-payment", "close-refund-request"] as const)(
     const original = vi.mocked(api).mock.calls[1];
     expect(original[0]).toBe(`admin/store-orders/${item.id}/${choice}`);
     fireEvent.click(within(modal).getByRole("button", { name: "Đóng" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeEnabled(),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled());
     expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
     modal = await dialog("Thử lại yêu cầu trước");
     expect(within(modal).getByRole("combobox")).toHaveValue(
@@ -605,13 +603,13 @@ it.each(["payment_pending", "payment_review"] as const)(
         expires_at: null,
       });
     render(tree(item.id));
-    const modal = await dialog("Ghi nhận đã nhận tiền");
-    fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+    const modal = await dialog("Xác nhận đã nhận tiền");
+    fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(vi.mocked(api).mock.calls[1][0]).toBe(`admin/store-orders/${item.id}/record-payment`);
     expect(screen.getByText("Chờ giao", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Xác nhận đã giao" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeNull();
   },
 );
 

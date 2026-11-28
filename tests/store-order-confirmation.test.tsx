@@ -6,7 +6,7 @@ import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import type { StoreOrder } from "@/lib/types";
-import { storeOrderFixture } from "@/tests/store-orders-fixture";
+import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: null, wardName: null }),
@@ -136,10 +136,10 @@ it.each([false, true])(
       ({ key }) => wire(after, receipt(initial.id, "close_refund_request", key)),
     );
     render(orderTree(request));
-    const label = "Xác minh không có tiền";
+    const label = "Xác nhận chưa nhận tiền";
     fireEvent.click(await screen.findByRole("button", { name: label }));
     const dialog = within(screen.getByRole("dialog"));
-    fireEvent.change(dialog.getByLabelText("Lý do xác minh không có tiền"), {
+    fireEvent.change(dialog.getByLabelText("Lý do xác nhận chưa nhận tiền"), {
       target: { value: "Không tìm thấy giao dịch" },
     });
     fireEvent.click(dialog.getByRole("button", { name: label }));
@@ -207,6 +207,13 @@ it("accepts an approval receipt on explicit replay after the order was delivered
     ...initial,
     source_inventory: {
       refresh_required_before_approve: true,
+      lines: [
+        sourceLineFixture(
+          line,
+          [{ farm_id: farmId, farm_name: "A", available_quantity: line.quantity, eligible: true }],
+          farmId,
+        ),
+      ],
       product_reservations: [],
       candidates: [
         {
@@ -224,8 +231,18 @@ it("accepts an approval receipt on explicit replay after the order was delivered
     allocation_suggestion: [{ line_id: line.id, batch_id: batchId, quantity: line.quantity }],
   };
   const sent: string[] = [];
-  fetchOrders(
-    () => order,
+  let reads = 0;
+  const fetch = fetchOrders(
+    () =>
+      ++reads === 1
+        ? order
+        : {
+            ...order,
+            source_inventory: {
+              ...order.source_inventory,
+              lines: [sourceLineFixture(line, [], null, farmId)],
+            },
+          },
     ({ body, key }) => {
       sent.push(body);
       if (sent.length === 1) return Response.json({ error: "upstream_timeout" }, { status: 504 });
@@ -247,11 +264,50 @@ it("accepts an approval receipt on explicit replay after the order was delivered
   const confirm = within(screen.getByRole("dialog")).getByRole("button", { name: "Duyệt đơn" });
   fireEvent.click(confirm);
   await within(screen.getByRole("dialog")).findByRole("alert");
-  fireEvent.click(confirm);
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Đóng" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+  const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+  await waitFor(() =>
+    expect(select).toHaveAccessibleDescription(
+      "Trang trại đã chọn không còn khả dụng. Vui lòng chọn lại.",
+    ),
+  );
+  expect(select).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Duyệt đơn" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Duyệt đơn" }));
   expect(await screen.findByText("Đã cập nhật đơn hàng.")).toBeVisible();
   expect(screen.getByText("Đã giao", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(sent).toHaveLength(2);
   expect(sent[1]).toBe(sent[0]);
+  expect(JSON.parse(sent[0])).toEqual({
+    idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    sources: [{ line_id: line.id, farm_id: farmId }],
+  });
+  expect(fetch).toHaveBeenCalledTimes(4);
+});
+
+it("keeps a confirmed approval with missing inventory locked until a GET reflects it", async () => {
+  const approved = { ...initial, status: "pending_delivery", approved_at: stamp } as const;
+  const reads = [initial, initial, approved];
+  const fetch = fetchOrders(
+    () => reads.shift() ?? approved,
+    ({ key }) =>
+      wire({ ...approved, source_inventory: undefined }, receipt(initial.id, "approve", key)),
+  );
+  render(orderTree(initial));
+  fireEvent.click(await screen.findByRole("button", { name: "Duyệt đơn" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Duyệt đơn" }));
+  const notice = await screen.findByRole("alert");
+  expect(notice).toHaveTextContent(/đã xác nhận/i);
+  expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+  fireEvent.click(within(notice).getByRole("button"));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+  expect(await screen.findByRole("button", { name: "Xác nhận đã giao" })).toBeEnabled();
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  expect(fetch).toHaveBeenCalledTimes(4);
 });
 
 function historicalRestock(quantity: number): StoreOrder {
@@ -280,12 +336,12 @@ function historicalRestock(quantity: number): StoreOrder {
 }
 
 async function openRestock() {
-  fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn kho" }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
     target: { value: "1" },
   });
-  return { dialog, confirm: within(dialog).getByRole("button", { name: "Hoàn tồn" }) };
+  return { dialog, confirm: within(dialog).getByRole("button", { name: "Hoàn tồn kho" }) };
 }
 
 it("uses the original restock key and ledger threshold after a newer GET", async () => {
@@ -305,13 +361,13 @@ it("uses the original restock key and ledger threshold after a newer GET", async
   fireEvent.click(confirm);
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(/chưa xác định/i);
   fireEvent.click(within(dialog).getByRole("button", { name: "Đóng" }));
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-  const open = screen.getByRole("button", { name: "Hoàn tồn" });
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+  const open = screen.getByRole("button", { name: "Hoàn tồn kho" });
   await waitFor(() => expect(open).toBeEnabled());
   fireEvent.click(open);
   const replay = screen.getByRole("dialog");
   expect(within(replay).getByRole("textbox", { name: /^Số lượng hoàn/u })).toBeDisabled();
-  fireEvent.click(within(replay).getByRole("button", { name: "Hoàn tồn" }));
+  fireEvent.click(within(replay).getByRole("button", { name: "Hoàn tồn kho" }));
   expect(await screen.findByText("Đã cập nhật đơn hàng.")).toBeVisible();
   expect(sent).toHaveLength(2);
   expect(sent[1]).toBe(sent[0]);
@@ -329,11 +385,11 @@ it("blocks a new restock when its receipt confirms more movement than the respon
   fireEvent.click(confirm);
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(/đã xác nhận/i);
-  expect(screen.getByRole("button", { name: "Hoàn tồn" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Hoàn tồn kho" })).toBeDisabled();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   fireEvent.click(within(alert).getByRole("button"));
   await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Hoàn tồn" })).not.toBeInTheDocument(),
+    expect(screen.queryByRole("button", { name: "Hoàn tồn kho" })).not.toBeInTheDocument(),
   );
   expect(write).toHaveBeenCalledTimes(1);
 });
@@ -364,7 +420,7 @@ it.each(["received", "refunded"] as const)(
       },
     );
     render(orderTree(initial));
-    const label = "Ghi nhận đã nhận tiền";
+    const label = "Xác nhận đã nhận tiền";
     fireEvent.click(await screen.findByRole("button", { name: label }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: label }));
     expect(await screen.findByText("Đã cập nhật đơn hàng.")).toBeVisible();

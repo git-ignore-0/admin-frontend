@@ -8,10 +8,11 @@ import type {
   PaginationMeta,
   StoreOrder,
   StoreOrderAction,
-  StoreOrderAllocationDraft,
+  StoreApprovalSource,
   StoreOrderSort,
   StoreOrderStatus,
   StorePaymentStatus,
+  StoreSourceLine,
 } from "@/lib/types";
 import type { AdminLocale } from "@/lib/admin-i18n";
 
@@ -187,6 +188,54 @@ function hasOrderCSA(value: unknown, orderId: string) {
   );
 }
 
+function hasSourceLines(value: unknown, orderLines: StoreOrder["lines"]) {
+  if (!Array.isArray(value) || value.length !== orderLines.length) return false;
+  const lines = new Map(orderLines.map((line) => [line.id.toLowerCase(), line]));
+  if (lines.size !== orderLines.length) return false;
+  return value.every((row: unknown) => {
+    if (
+      !isApiObject(row) ||
+      !isUuid(row.line_id) ||
+      !isUuid(row.product_id) ||
+      !count(row.required_quantity) ||
+      row.required_quantity < 1 ||
+      (row.assigned_farm_id !== null && !isUuid(row.assigned_farm_id)) ||
+      (row.suggested_farm_id !== null && !isUuid(row.suggested_farm_id)) ||
+      !Array.isArray(row.farms)
+    )
+      return false;
+    const id = row.line_id.toLowerCase();
+    const line = lines.get(id);
+    if (
+      !line ||
+      line.product_id.toLowerCase() !== row.product_id.toLowerCase() ||
+      line.quantity !== row.required_quantity
+    )
+      return false;
+    lines.delete(id);
+    const farms = new Set<string>();
+    const suggested = row.suggested_farm_id?.toLowerCase();
+    let suggestionValid = suggested === undefined;
+    const options: unknown[] = row.farms;
+    for (const farm of options) {
+      if (
+        !isApiObject(farm) ||
+        !isUuid(farm.farm_id) ||
+        typeof farm.farm_name !== "string" ||
+        !count(farm.available_quantity) ||
+        typeof farm.eligible !== "boolean" ||
+        (farm.eligible && farm.available_quantity < line.quantity)
+      )
+        return false;
+      const farmId = farm.farm_id.toLowerCase();
+      if (farms.has(farmId)) return false;
+      farms.add(farmId);
+      if (suggested === farmId && farm.eligible) suggestionValid = true;
+    }
+    return suggestionValid;
+  });
+}
+
 function requireStoreOrderDetail(order: StoreOrder, orderId: string): StoreOrder {
   if (
     !hasStoreOrderSummary(order) ||
@@ -276,6 +325,7 @@ function requireStoreOrderDetail(order: StoreOrder, orderId: string): StoreOrder
     ) ||
     !isApiObject(inventory) ||
     typeof inventory.refresh_required_before_approve !== "boolean" ||
+    !hasSourceLines(inventory.lines, order.lines) ||
     !Array.isArray(inventory.candidates) ||
     !inventory.candidates.every((row) => batchRow(row) && count(row.available_quantity)) ||
     !Array.isArray(inventory.product_reservations) ||
@@ -472,18 +522,60 @@ export function getStoreOrderPrimaryAction(
   return priority.find((action) => actions.includes(action)) ?? null;
 }
 
-export type StoreAllocationError =
-  | "duplicate"
-  | "invalid_quantity"
-  | "source_invalid"
-  | "line_incomplete"
-  | "line_exceeded"
-  | "batch_exceeded";
+export type StoreFarmDraft = ReadonlyMap<string, string | null>;
 
-export type StoreOrderAllocationInput = Omit<StoreOrderAllocationDraft, "quantity"> & {
-  key: string;
-  quantity: string;
-};
+export function reconcileStoreFarmDraft(
+  order: StoreOrder,
+  previous?: StoreFarmDraft,
+): StoreFarmDraft {
+  return new Map(
+    (order.source_inventory?.lines ?? []).map(({ line_id, suggested_farm_id }) => {
+      const id = line_id.toLowerCase();
+      return [
+        id,
+        previous?.has(id) ? (previous.get(id) ?? null) : (suggested_farm_id?.toLowerCase() ?? null),
+      ];
+    }),
+  );
+}
+
+type FarmSelectionError = "chooseFarm" | "noEligibleFarm" | "farmIneligible" | "farmUnavailable";
+
+export function inspectStoreFarmDraft(order: StoreOrder, draft: StoreFarmDraft) {
+  const inventory = new Map(
+    (order.source_inventory?.lines ?? []).map((line) => [line.line_id.toLowerCase(), line]),
+  );
+  const selections = new Map<
+    string,
+    { value: string | null; line: StoreSourceLine; error?: FarmSelectionError }
+  >();
+  const sources: StoreApprovalSource[] = [];
+  for (const { id } of order.lines) {
+    const key = id.toLowerCase();
+    const line = inventory.get(key);
+    if (!line) continue;
+    const value = draft.get(key) ?? null;
+    const farm = line.farms.find((option) => option.farm_id.toLowerCase() === value);
+    const error = value
+      ? !farm
+        ? "farmUnavailable"
+        : !farm.eligible
+          ? "farmIneligible"
+          : undefined
+      : line.farms.some((option) => option.eligible)
+        ? "chooseFarm"
+        : "noEligibleFarm";
+    selections.set(key, { value, line, error });
+    if (farm && !error) sources.push({ line_id: id, farm_id: farm.farm_id });
+  }
+  const valid =
+    order.lines.length > 0 &&
+    order.lines.length <= 100 &&
+    sources.length === order.lines.length &&
+    selections.size === order.lines.length &&
+    draft.size === selections.size;
+  return { selections, sources: valid ? sources : null };
+}
 
 export const MAX_STORE_QUANTITY = 999999;
 
@@ -530,72 +622,6 @@ export function storeQuantityInputValue(input: HTMLInputElement, nativeEvent: Ev
     );
   }
   return input.value;
-}
-
-export function inspectStoreAllocations(order: StoreOrder, rows: StoreOrderAllocationDraft[]) {
-  const errors: StoreAllocationError[] = [];
-  const pairCounts = new Map<string, number>();
-  const lines = new Map(order.lines.map((line) => [line.id, line]));
-  const candidates = new Map(
-    (order.source_inventory?.candidates ?? []).map((candidate) => [
-      `${candidate.line_id}:${candidate.batch_id}`,
-      candidate,
-    ]),
-  );
-  const byLine = new Map<string, number>();
-  const byBatch = new Map<string, number>();
-  const selectedByLine = new Map<string, number>();
-  const availability = new Map<string, number>();
-  let duplicate = false;
-  for (const row of rows) {
-    const pair = `${row.line_id}:${row.batch_id}`;
-    const pairCount = (pairCounts.get(pair) ?? 0) + 1;
-    pairCounts.set(pair, pairCount);
-    if (pairCount > 1) duplicate = true;
-    if (
-      !Number.isSafeInteger(row.quantity) ||
-      row.quantity < 1 ||
-      row.quantity > MAX_STORE_QUANTITY
-    ) {
-      errors.push("invalid_quantity");
-      continue;
-    }
-    selectedByLine.set(row.line_id, (selectedByLine.get(row.line_id) ?? 0) + row.quantity);
-    const candidate = candidates.get(pair);
-    if (!lines.has(row.line_id) || !candidate) {
-      errors.push("source_invalid");
-      continue;
-    }
-    byLine.set(row.line_id, (byLine.get(row.line_id) ?? 0) + row.quantity);
-    byBatch.set(row.batch_id, (byBatch.get(row.batch_id) ?? 0) + row.quantity);
-    availability.set(row.batch_id, candidate.available_quantity);
-  }
-  for (const line of order.lines) {
-    const allocated = byLine.get(line.id) ?? 0;
-    if (allocated < line.quantity) errors.push("line_incomplete");
-    if (allocated > line.quantity) errors.push("line_exceeded");
-  }
-  if (order.lines.length === 0 && rows.length === 0) errors.push("line_incomplete");
-  for (const [batchId, allocated] of byBatch) {
-    if (allocated > (availability.get(batchId) ?? 0)) errors.push("batch_exceeded");
-  }
-  const uniqueErrors = duplicate ? ["duplicate" as const] : [...new Set(errors)];
-  return {
-    validation: { valid: uniqueErrors.length === 0, errors: uniqueErrors },
-    selectedByLine,
-    sourceError(row: Pick<StoreOrderAllocationDraft, "line_id" | "batch_id">) {
-      const pair = `${row.line_id}:${row.batch_id}`;
-      const candidate = candidates.get(pair);
-      if (!candidate) return "source_invalid";
-      if ((pairCounts.get(pair) ?? 0) > 1) return "duplicate";
-      if ((byBatch.get(row.batch_id) ?? 0) > candidate.available_quantity) return "batch_exceeded";
-      return null;
-    },
-  };
-}
-
-export function validateStoreAllocations(order: StoreOrder, rows: StoreOrderAllocationDraft[]) {
-  return inspectStoreAllocations(order, rows).validation;
 }
 
 function stableValue(value: unknown): unknown {

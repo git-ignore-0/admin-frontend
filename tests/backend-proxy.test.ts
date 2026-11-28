@@ -552,6 +552,63 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it.each(["sources", "allocations"] as const)(
+    "forwards Store approval %s bytes and preserves the upstream status and receipt",
+    async (shape) => {
+      const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+      const key = "77777777-7777-4777-8777-777777777777";
+      const line = "11111111-1111-4111-8111-111111111111";
+      const farmOrBatch = "22222222-2222-4222-8222-222222222222";
+      const path = ["admin", "store-orders", id, "approve"];
+      const request = (body: string) =>
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
+          method: "POST",
+          headers: {
+            origin: "https://admin.example.test",
+            "x-nfv-admin-request": "1",
+            "content-type": "application/json",
+          },
+          body,
+        });
+      const payload = JSON.stringify({
+        idempotency_key: key,
+        ...(shape === "sources"
+          ? { sources: [{ line_id: line, farm_id: farmOrBatch }] }
+          : { allocations: [{ line_id: line, batch_id: farmOrBatch, quantity: 3 }] }),
+      });
+      const receipt = { order_id: id, action: "approve", idempotency_key: key };
+      const success = { data: { id }, meta: { action_receipt: receipt } };
+      const conflict = {
+        errors: [
+          { code: "store_allocation_stale", context: { line_id: line, available_quantity: 2 } },
+        ],
+      };
+      const upstream = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json(success))
+        .mockResolvedValueOnce(Response.json(conflict, { status: 409 }));
+      vi.stubGlobal("fetch", upstream);
+      const options = { params: Promise.resolve({ path }) };
+      for (const [status, data] of [
+        [200, success],
+        [409, conflict],
+      ] as const) {
+        const response = await POST(request(payload), options);
+        expect(response.status).toBe(status);
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        expect(await response.json()).toEqual(data);
+      }
+      expect(upstream).toHaveBeenCalledTimes(2);
+      for (const [target, init] of upstream.mock.calls) {
+        expect(String(target)).toBe(
+          `https://auth.example.test/api/v1/admin/store-orders/${id}/approve`,
+        );
+        expect(init.method).toBe("POST");
+        expect(new TextDecoder().decode(init.body)).toBe(payload);
+      }
+    },
+  );
+
   it("keeps Store order authorization server-side and preserves permission denials", async () => {
     const path = ["admin", "store-orders"];
     const request = pageRequest("https://admin.example.test/api/backend/admin/store-orders");

@@ -849,6 +849,24 @@ export type StoreSourceCandidate = {
   available_quantity: number;
 };
 
+export type StoreApprovalSource = { line_id: string; farm_id: string };
+
+export type StoreSourceFarm = {
+  farm_id: string;
+  farm_name: string;
+  available_quantity: number;
+  eligible: boolean;
+};
+
+export type StoreSourceLine = {
+  line_id: string;
+  product_id: string;
+  required_quantity: number;
+  assigned_farm_id: string | null;
+  suggested_farm_id: string | null;
+  farms: StoreSourceFarm[];
+};
+
 export type StoreOrderAllocationDraft = {
   line_id: string;
   batch_id: string;
@@ -963,6 +981,7 @@ export type StoreOrder = {
   allocation_suggestion?: StoreOrderAllocationDraft[];
   source_inventory?: {
     refresh_required_before_approve: boolean;
+    lines: StoreSourceLine[];
     product_reservations: Array<{
       product_id: string;
       reserved_quantity: number;

@@ -1,7 +1,23 @@
 import { vi } from "vitest";
 
 import type { api as clientApi } from "@/lib/client-api";
-import type { StoreOrder } from "@/lib/types";
+import type { StoreOrder, StoreSourceFarm } from "@/lib/types";
+
+export function sourceLineFixture(
+  line: StoreOrder["lines"][number],
+  farms: StoreSourceFarm[] = [],
+  suggested: string | null = null,
+  assigned: string | null = suggested,
+) {
+  return {
+    line_id: line.id,
+    product_id: line.product_id,
+    required_quantity: line.quantity,
+    assigned_farm_id: assigned,
+    suggested_farm_id: suggested,
+    farms,
+  };
+}
 
 // UI fixtures queue explicit snapshots/errors on one transport spy. POSTs wrap
 // that snapshot with the successful receipt for the submitted test intent.
@@ -22,7 +38,7 @@ export function createStoreOrderApiMock() {
 }
 
 export function storeOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrder {
-  return {
+  const item: StoreOrder = {
     id: "11111111-1111-4111-8111-111111111111",
     reference_code: "NFV-STORE-001",
     workflow_version: 1,
@@ -106,10 +122,31 @@ export function storeOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrd
     allocation_suggestion: [],
     source_inventory: {
       refresh_required_before_approve: true,
+      lines: [],
       product_reservations: [],
       candidates: [],
     },
     allocations: [],
     ...overrides,
   };
+  if (item.source_inventory && !Object.hasOwn(overrides, "source_inventory"))
+    item.source_inventory.lines = item.lines.map((line) => {
+      const farmId = "77777777-7777-4777-8777-777777777777";
+      const eligible =
+        item.status === "pending_review" &&
+        (!item.csa || ["locked", "confirmed"].includes(item.csa.selection.state));
+      return sourceLineFixture(
+        line,
+        [
+          {
+            farm_id: farmId,
+            farm_name: "Trang trại A",
+            available_quantity: line.quantity,
+            eligible,
+          },
+        ],
+        eligible ? farmId : null,
+      );
+    });
+  return item;
 }

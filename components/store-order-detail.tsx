@@ -46,29 +46,37 @@ import {
   getStoreOrderActions,
   getStoreOrderPrimaryAction,
   IdempotencyKeyStore,
+  inspectStoreFarmDraft,
   MAX_STORE_QUANTITY,
   mutateStoreOrder,
   parseStoreQuantity,
+  reconcileStoreFarmDraft,
   reflectsStoreOrderAction,
   storeDeadlineRemainingMs,
   storeOrderHasDeadline,
   storeQuantityDisplayValue,
   storeQuantityInputValue,
   storeQuantityPasteReplacement,
-  type StoreOrderAllocationInput,
+  type StoreFarmDraft,
   type StoreOrderConfirmation,
-  validateStoreAllocations,
 } from "@/lib/store-orders";
 import {
   storeCancellationReason,
   storeOrderActionLabel,
   storeOrderActionTitle,
+  storeOrderConflictMessage,
   storeOrderDeadlineLabel,
+  storeOrderCountdown,
   storeOrdersCopy,
   storeRefundStatusLabel,
   storeRestockUnavailableReason,
 } from "@/lib/store-orders-copy";
-import type { StoreOrder, StoreOrderAction, StoreOrderAllocationDraft } from "@/lib/types";
+import type {
+  StoreApprovalSource,
+  StoreOrder,
+  StoreOrderAction,
+  StoreOrderAllocationDraft,
+} from "@/lib/types";
 import styles from "./store-order-detail.module.css";
 
 type StoreRestockAllocation = { allocation_id: string; quantity: number };
@@ -78,6 +86,8 @@ type StoreOrderActionPayload = {
   note?: string;
   reconciliation_note?: string;
   amount_vnd?: string;
+  sources?: StoreApprovalSource[];
+  // Previously submitted approvals may still contain the ordered legacy allocations.
   allocations?: StoreOrderAllocationDraft[] | StoreRestockAllocation[];
 };
 
@@ -132,8 +142,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const { ref: layoutRef, width: contentWidth } = useElementSize();
   const historyHeading = useId();
   const isSessionCurrent = useIsAdminQueryScopeCurrent();
-  const latestCopy = useRef({ t, c });
-  latestCopy.current = { t, c };
+  const latestCopy = useRef({ t, c, locale });
+  latestCopy.current = { t, c, locale };
   const mounted = useRef(false);
   const isMounted = useCallback(() => mounted.current && isSessionCurrent(), [isSessionCurrent]);
   const { intent: savedIntent, controls } = useAdminMutationIntent<
@@ -145,9 +155,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const [order, setOrder] = useState<StoreOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [draft, setDraft] = useState<StoreOrderAllocationInput[]>([]);
+  const [draft, setDraft] = useState<StoreFarmDraft>(() => new Map());
   const [tick, setTick] = useState(0);
-  const draftInitialized = useRef(false);
   const csaRevision = useRef<string | null>(null);
   const receivedAt = useRef(performance.now());
   const requestId = useRef(0);
@@ -175,11 +184,20 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const [restock, setRestock] = useState<Record<string, string>>({});
   const restockLedgerAtOpen = useRef<Record<string, number>>({});
 
+  const applyOrder = useCallback((next: StoreOrder) => {
+    const selection = next.csa?.selection;
+    const revision = selection ? `${selection.id}:${selection.revision}:${selection.state}` : null;
+    const preserveDraft = revision === csaRevision.current;
+    csaRevision.current = revision;
+    receivedAt.current = performance.now();
+    setOrder(next);
+    setDraft((previous) => reconcileStoreFarmDraft(next, preserveDraft ? previous : undefined));
+  }, []);
+
   const retireOrder = useCallback(
     (discardIntent: boolean) => {
       setOrder(null);
-      setDraft([]);
-      draftInitialized.current = false;
+      setDraft(new Map());
       csaRevision.current = null;
       expiryReloaded.current = null;
       setAction(null);
@@ -221,28 +239,10 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         setError("");
         return;
       }
-      receivedAt.current = performance.now();
-      setOrder(next);
+      applyOrder(next);
       setError("");
       setReloadConflictGate(false);
       if (confirmation) controls.clear();
-      const nextCSARevision = next.csa
-        ? `${next.csa.selection.revision}:${next.csa.selection.state}`
-        : null;
-      if (nextCSARevision !== csaRevision.current) {
-        draftInitialized.current = false;
-        csaRevision.current = nextCSARevision;
-      }
-      if (!draftInitialized.current) {
-        setDraft(
-          (next.allocation_suggestion ?? []).map((row, index) => ({
-            ...row,
-            key: `${row.line_id}:${row.batch_id}:${index}`,
-            quantity: String(row.quantity),
-          })),
-        );
-        draftInitialized.current = true;
-      }
     } catch (caught) {
       if (!isCurrent()) return;
       const { message, status } = (caught ?? {}) as { message?: string; status?: number };
@@ -253,7 +253,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       if (readController.current === controller) readController.current = null;
       if (isCurrent()) setLoading(false);
     }
-  }, [controls, isMounted, orderId, retireOrder]);
+  }, [applyOrder, controls, isMounted, orderId, retireOrder]);
 
   useLayoutEffect(() => {
     mounted.current = true;
@@ -307,7 +307,30 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
               <Skeleton height="var(--mantine-h1-font-size)" width="12rem" maw="100%" />
               <Skeleton height="var(--mantine-font-size-sm)" width="8rem" maw="100%" />
             </Stack>
-            <StoreOrderProducts />
+            <Grid
+              gutter="md"
+              className={styles.layout}
+              classNames={
+                contentWidth >= 880
+                  ? { inner: styles.desktopGrid, col: styles.desktopColumn }
+                  : undefined
+              }
+            >
+              <Grid.Col className={styles.products} miw={0}>
+                <StoreOrderProducts />
+              </Grid.Col>
+              {contentWidth >= 880 && (
+                <Grid.Col className={styles.information} miw={0}>
+                  <Paper p="md" aria-hidden>
+                    <Stack gap="sm">
+                      <Skeleton height="var(--mantine-font-size-md)" width="7rem" />
+                      <Skeleton height="var(--mantine-font-size-sm)" />
+                      <Skeleton height="var(--mantine-font-size-sm)" />
+                    </Stack>
+                  </Paper>
+                </Grid.Col>
+              )}
+            </Grid>
           </>
         ) : (
           <RecoveryAlert
@@ -322,7 +345,6 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
 
   const currentOrder = order;
   const deadlineLabel = storeOrderDeadlineLabel(currentOrder, locale);
-  const remainingMinutes = remaining === null ? null : Math.ceil(remaining / 60_000);
   const actions = getStoreOrderActions(currentOrder, { expired: remaining === 0 });
   const groupedReconciliation =
     currentOrder.workflow_version === 2 &&
@@ -339,16 +361,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const replaying = pendingIntent?.orderId === orderId && pendingIntent.action === action;
   const primaryAction = getStoreOrderPrimaryAction(actions);
   visibleActions.sort((a, b) => Number(a === primaryAction) - Number(b === primaryAction));
-  const allocationPayload = draft.flatMap(({ line_id, batch_id, quantity }) => {
-    const parsed = parseStoreQuantity(quantity, 1);
-    return parsed === null ? [] : [{ line_id, batch_id, quantity: parsed }];
-  });
-  const allocationsValid =
-    currentOrder.status !== "pending_review" ||
-    (allocationPayload.length === draft.length &&
-      validateStoreAllocations(currentOrder, allocationPayload).valid);
-  const showAllocationEditor =
-    order.status === "pending_review" && order.csa?.selection.state !== "reselecting";
+  const farmDraft = actions.includes("approve") ? inspectStoreFarmDraft(currentOrder, draft) : null;
   const actionLocked = loading || Boolean(error) || reloadRequired || actionBusy;
   const fieldsLocked = actionLocked || unresolved;
   const showCancelNote =
@@ -442,7 +455,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       setActionError(c.mutationUncertain);
       return;
     }
-    if (!actions.includes(next)) return;
+    if (!actions.includes(next) || (next === "approve" && !farmDraft?.sources)) return;
     setAction(next);
     setReconciliationDialog(groupedReconciliation && next === "record-payment");
     setReconciliationChoice(null);
@@ -465,7 +478,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
 
   function actionPayload(): StoreOrderActionPayload | null {
     if (!action) return null;
-    if (action === "approve") return { allocations: allocationPayload };
+    if (action === "approve") return farmDraft?.sources ? { sources: farmDraft.sources } : null;
     if (action === "cancel")
       return currentOrder.workflow_version === 2 && !currentOrder.csa
         ? { reason: trimActionText(reason) }
@@ -495,7 +508,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   function validateActionInput() {
     if (replaying) return undefined;
     if (reasonError || noteError) return reasonError ?? noteError;
-    if (action === "approve" && !allocationsValid) return c.approveAllocationInvalid;
+    if (action === "approve" && !farmDraft?.sources) return c.approveSourcesInvalid;
     if (action === "restock" && !restockAllocationPayload) return c.restockInvalid;
   }
 
@@ -614,12 +627,9 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       setAction(null);
       setError("");
       if (updated && usable) {
-        receivedAt.current = performance.now();
-        setOrder(updated);
+        applyOrder(updated);
         setReloadConflictGate(false);
         toast(latestCopy.current.c.mutationSuccess);
-      } else {
-        draftInitialized.current = false;
       }
     } catch (caught) {
       const { message, status } = (caught ?? {}) as { message?: string; status?: number };
@@ -645,7 +655,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       if (!unknownResult && status === 409) {
         setReloadConflictGate(true);
         setActionConflict(true);
-        setActionError(latestCopy.current.c.conflict);
+        setActionError(storeOrderConflictMessage(message, latestCopy.current.locale));
       } else {
         const { t: dictionary, c: copy } = latestCopy.current;
         const feedback =
@@ -697,9 +707,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                 <time dateTime={order.expires_at}>{formatAdminDateTime(order.expires_at)}</time>
               </Text>
               <Text size="sm" fw={600}>
-                {remainingMinutes
-                  ? c.remainingMinutes.replace("{count}", String(remainingMinutes))
-                  : c.expired}
+                {storeOrderCountdown(remaining, locale)}
               </Text>
             </Group>
           )}
@@ -740,7 +748,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                   disabled={
                     actionLocked ||
                     (pendingIntent !== null && pendingIntent.action !== item) ||
-                    (!unresolved && item === "approve" && !allocationsValid)
+                    (!unresolved && item === "approve" && !farmDraft?.sources)
                   }
                   key={item}
                   onClick={() => openAction(item)}
@@ -779,11 +787,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           </List>
         </Alert>
       )}
-      {showAllocationEditor && visibleActions.includes("approve") && !allocationsValid && (
-        <Alert color="warning" role="note">
-          {c.allocationCheck}
-        </Alert>
-      )}
+      {unresolved && !action && <Alert color="warning">{c.mutationUncertain}</Alert>}
       <CSAOrderPanel
         order={order}
         disabled={fieldsLocked}
@@ -811,9 +815,16 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         <Grid.Col className={styles.products} miw={0}>
           <StoreOrderProducts
             order={order}
-            allocation={
-              showAllocationEditor
-                ? { value: draft, onChange: setDraft, disabled: fieldsLocked }
+            farms={
+              farmDraft
+                ? {
+                    selections: farmDraft.selections,
+                    onChange: (lineId, farmId) => {
+                      if (fieldsLocked) return;
+                      setDraft((previous) => new Map(previous).set(lineId, farmId));
+                    },
+                    disabled: fieldsLocked,
+                  }
                 : undefined
             }
           />
@@ -930,8 +941,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
               ]}
             />
           )}
-          {action === "approve" && !allocationsValid && !replaying && (
-            <Text size="sm">{c.approveAllocationInvalid}</Text>
+          {action === "approve" && !farmDraft?.sources && !replaying && (
+            <Text size="sm">{c.approveSourcesInvalid}</Text>
           )}
           {reasonRequired && (
             <Textarea
@@ -1005,8 +1016,16 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
                 <Text size="sm" c="dimmed">
                   {c.restockAllocation
                     .replace("{allocated}", String(row.quantity))
-                    .replace("{restocked}", String(row.restocked_quantity))
-                    .replace("{remaining}", String(row.restock_remaining_quantity))}
+                    .replace("{restocked}", String(row.restocked_quantity))}
+                  {" · "}
+                  {row.restock_eligible && row.restock_remaining_quantity > 0
+                    ? c.restockableQuantity.replace(
+                        "{count}",
+                        String(row.restock_remaining_quantity),
+                      )
+                    : row.restock_remaining_quantity === 0
+                      ? c.fullyRestocked
+                      : c.restockUnavailable}
                 </Text>
                 {!row.restock_eligible && (
                   <Text size="sm" c="danger">

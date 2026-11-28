@@ -9,7 +9,7 @@ import { adminDictionaries, type AdminLocale } from "@/lib/admin-i18n";
 import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { api } from "@/lib/client-api";
 import layout from "@/components/store-order-detail.module.css";
-import { storeOrderFixture } from "@/tests/store-orders-fixture";
+import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 vi.mock("@/lib/use-administrative-unit-names", () => ({
@@ -24,6 +24,7 @@ const batchA = "00000000-0000-4000-8000-0000000000a1";
 const batchB = "00000000-0000-4000-8000-0000000000a2";
 const farmA = "00000000-0000-4000-8000-0000000000b1";
 const farmB = "00000000-0000-4000-8000-0000000000b2";
+const farmC = "00000000-0000-4000-8000-0000000000b3";
 const allocationA = "00000000-0000-4000-8000-0000000000c1";
 
 afterEach(() => {
@@ -47,6 +48,18 @@ function detailOrder() {
     ],
     source_inventory: {
       refresh_required_before_approve: true,
+      lines: [
+        sourceLineFixture(
+          item.lines[0],
+          [
+            { farm_id: farmA, farm_name: "Vườn A", available_quantity: 4, eligible: true },
+            { farm_id: farmB, farm_name: "Vườn B", available_quantity: 6, eligible: true },
+            { farm_id: farmC, farm_name: "Vườn C", available_quantity: 2, eligible: false },
+          ],
+          farmA,
+          farmC,
+        ),
+      ],
       product_reservations: [
         {
           product_id: item.lines[0].product_id,
@@ -104,32 +117,36 @@ describe("Store order detail", () => {
     expect(within(alert).getByRole("button", { name: "Thử lại" })).toBeVisible();
   });
 
-  it("renders recipient, product snapshots, paid totals, transfer data, reservations and timeline", async () => {
+  it("renders recipient, product snapshots, paid totals, transfer data, farm options and timeline", async () => {
     vi.mocked(api).mockResolvedValue(detailOrder());
     view();
 
     expect(await screen.findByRole("heading", { name: "NFV-STORE-001" })).toBeVisible();
     expect(screen.getByText("Nguyễn An")).toBeVisible();
-    expect(screen.getByText("RAU-01")).toBeVisible();
+    expect(screen.getByText("Mã sản phẩm: RAU-01")).toBeVisible();
     expect(screen.queryByText("Quyền lợi CSA: 0 sản phẩm · 0 lượt")).not.toBeInTheDocument();
     expect(screen.getAllByText("Rau muống")).toHaveLength(1);
     expect(screen.getByText("Tiền hàng")).toBeVisible();
     expect(screen.getAllByText(/90\.000/).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Thông tin chuyển khoản" })).toBeVisible();
     expect(screen.getByText("NFVSTORE001")).toBeVisible();
-    expect(screen.getByText("Đơn này giữ 3 · đơn khác giữ 2")).toBeVisible();
+    expect(screen.queryByText(/Đơn này giữ/)).not.toBeInTheDocument();
     expect(screen.queryByText("Xem lịch sử")).not.toBeInTheDocument();
-    expect(screen.getByText("Khách báo chuyển", { selector: "dt" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toHaveClass(
-      "mantine-ActionIcon-root",
+    expect(screen.getByText("Khách báo đã chuyển khoản", { selector: "dt" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Làm mới" })).toHaveClass("mantine-ActionIcon-root");
+    const editor = screen.getByRole("region", { name: "Sản phẩm" });
+    const select = within(editor).getByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+    expect(select).toHaveValue("Vườn A · Còn 4");
+    expect(within(editor).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(editor).queryByRole("button")).not.toBeInTheDocument();
+    fireEvent.click(select);
+    const unavailable = screen.getByRole("option", { name: /Vườn C.*Còn 2/ });
+    expect(unavailable).toHaveAttribute("data-combobox-disabled");
+    expect(unavailable.closest("[role=listbox]")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Vườn A.*Còn 4/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
-    const editor = screen.getByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    for (const control of [
-      ...within(editor).getAllByRole("combobox"),
-      ...within(editor).getAllByRole("textbox", { name: /^Số lượng nguồn/u }),
-    ]) {
-      expect(control).toHaveClass("mantine-Input-input");
-    }
   });
 
   it("shows transfer details and history for delivered orders without disclosure controls", async () => {
@@ -137,7 +154,7 @@ describe("Store order detail", () => {
     const { container } = view();
     expect(await screen.findByRole("heading", { name: "Thông tin chuyển khoản" })).toBeVisible();
     expect(screen.getByText("NFVSTORE001")).toBeVisible();
-    expect(screen.getByText("Khách báo chuyển", { selector: "dt" })).toBeVisible();
+    expect(screen.getByText("Khách báo đã chuyển khoản", { selector: "dt" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Xem chi tiết" })).not.toBeInTheDocument();
     expect(container.querySelector("details")).toBeNull();
   });
@@ -155,10 +172,8 @@ describe("Store order detail", () => {
     const buttons = within(actions).getAllByRole("button");
     expect(buttons.at(-1)).toHaveTextContent("Xác nhận đã giao");
     expect(buttons.at(-1)).toHaveAttribute("data-variant", "filled");
-    expect(header.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeVisible();
-    expect(
-      screen.queryByRole("region", { name: "Phân bổ nguồn Farm / batch" }),
-    ).not.toBeInTheDocument();
+    expect(header.getByRole("button", { name: "Làm mới" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: /Trang trại cung cấp/ })).not.toBeInTheDocument();
   });
 
   it("shows zero-total CSA benefit wording without bank reconciliation fields", async () => {
@@ -206,7 +221,7 @@ describe("Store order detail", () => {
     view();
 
     expect(await screen.findByText("Hạn duyệt đơn")).toBeVisible();
-    const countdown = screen.getByText("Còn 480 phút");
+    const countdown = screen.getByText("Còn 8 giờ");
     expect(countdown).toBeVisible();
     expect(countdown.closest("[aria-live]")).toBeNull();
   });
@@ -256,10 +271,11 @@ describe("Store order detail", () => {
     view();
 
     expect(await screen.findByRole("heading", { name: "NFV-STORE-001", level: 1 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Sản phẩm & nguồn hàng" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sản phẩm" })).toBeVisible();
     expect(screen.getByText("Vườn A")).toBeVisible();
-    expect(screen.getByText("Đã hoàn 1 · Còn có thể hoàn 2")).toBeVisible();
-    expect(screen.getByText("Còn hàng chưa hoàn tồn")).toBeVisible();
+    expect(screen.getByText("Đã hoàn tồn kho 1")).toBeVisible();
+    expect(screen.getByText("Có thể hoàn thêm 2")).toBeVisible();
+    expect(screen.getByText("Còn hàng có thể hoàn tồn kho")).toBeVisible();
     expect(screen.queryByText("Cần hoàn tiền")).not.toBeInTheDocument();
   });
 
@@ -282,133 +298,217 @@ describe("Store order detail", () => {
     expect(await screen.findByText("Admin nhập lý do riêng")).toBeVisible();
   });
 
-  it("prefills split FEFO once and does not overwrite a dirty allocation draft on refresh", async () => {
+  it("keeps the selected farm and refreshes its label without fetching on Select change", async () => {
     const first = detailOrder();
+    const [source] = first.source_inventory.lines;
     const refreshed = {
-      ...detailOrder(),
-      allocation_suggestion: [{ line_id: first.lines[0].id, batch_id: batchB, quantity: 3 }],
+      ...first,
+      source_inventory: {
+        ...first.source_inventory,
+        lines: [
+          {
+            ...source,
+            farms: source.farms.map((farm) =>
+              farm.farm_id === farmB ? { ...farm, available_quantity: 5 } : farm,
+            ),
+          },
+        ],
+      },
     };
     vi.mocked(api).mockResolvedValueOnce(first).mockResolvedValueOnce(refreshed);
     view();
 
-    const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    expect(within(editor).getAllByRole("textbox", { name: /^Số lượng nguồn/u })).toHaveLength(2);
-    expect(within(editor).getByText("Đủ 3/3")).toBeVisible();
-    fireEvent.change(within(editor).getByLabelText("Số lượng nguồn 1"), { target: { value: "1" } });
-    expect(within(editor).getByText("Đã chọn 2/3 · Còn thiếu 1")).toBeVisible();
+    const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+    expect(select).toHaveValue("Vườn A · Còn 4");
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole("option", { name: /Vườn B.*Còn 6/ }));
+    expect(select).toHaveValue("Vườn B · Còn 6");
+    expect(api).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("1");
-    expect(within(editor).getAllByRole("textbox", { name: /^Số lượng nguồn/u })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    await waitFor(() => expect(select).toHaveValue("Vườn B · Còn 5"));
+    expect(screen.getByRole("combobox", { name: /Trang trại cung cấp Rau muống/ })).toBe(select);
+    expect(api).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the snapshot and dirty draft visible when refresh fails, then clears the warning after retry", async () => {
+  it("keeps the snapshot and selected farm on a recoverable refresh error", async () => {
     const first = detailOrder();
     vi.mocked(api)
       .mockResolvedValueOnce(first)
       .mockRejectedValueOnce(new Error("network_error"))
-      .mockResolvedValueOnce({ ...first, updated_at: "2026-10-31T10:03:00Z" });
+      .mockResolvedValueOnce(first);
     view();
 
-    const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    fireEvent.change(within(editor).getByLabelText("Số lượng nguồn 1"), {
-      target: { value: "1" },
-    });
-    fireEvent.change(within(editor).getByLabelText("Số lượng nguồn 2"), {
-      target: { value: "2" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+    const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole("option", { name: /Vườn B.*Còn 6/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/Không thể kết nối/);
     expect(alert).toHaveTextContent(/chưa được làm mới/i);
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("1");
+    expect(select).toHaveValue("Vườn B · Còn 6");
+    expect(select).toBeDisabled();
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
 
     fireEvent.click(within(alert).getByRole("button", { name: "Thử lại" }));
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("1");
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(select).toHaveValue("Vườn B · Còn 6");
     expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
+    expect(api).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps a removed batch selected after refresh and explains why approval is blocked", async () => {
+  it.each(["removed", "ineligible"])(
+    "keeps a %s selection stale after refresh without switching farms",
+    async (status) => {
+      const first = detailOrder();
+      const [source] = first.source_inventory.lines;
+      vi.mocked(api)
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce({
+          ...first,
+          source_inventory: {
+            ...first.source_inventory,
+            lines: [
+              {
+                ...source,
+                suggested_farm_id: farmB,
+                farms:
+                  status === "removed"
+                    ? source.farms.filter((farm) => farm.farm_id !== farmA)
+                    : source.farms.map((farm) =>
+                        farm.farm_id === farmA
+                          ? { ...farm, available_quantity: 1, eligible: false }
+                          : farm,
+                      ),
+              },
+            ],
+          },
+        });
+      view();
+
+      const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+      fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+      await waitFor(() => expect(select).toHaveAttribute("aria-invalid", "true"));
+      expect(select).toHaveValue(status === "removed" ? "" : "Vườn A · Còn 1");
+      expect(select).toHaveAccessibleDescription(
+        status === "removed"
+          ? "Trang trại đã chọn không còn khả dụng. Vui lòng chọn lại."
+          : "Trang trại đã chọn không còn đáp ứng đủ số lượng. Vui lòng chọn lại.",
+      );
+      expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeEnabled();
+    },
+  );
+
+  it.each([false, true])(
+    "explains a missing selection with eligible options = %s",
+    async (eligible) => {
+      const first = detailOrder();
+      const [source] = first.source_inventory.lines;
+      vi.mocked(api).mockResolvedValueOnce({
+        ...first,
+        source_inventory: {
+          ...first.source_inventory,
+          lines: [{ ...source, suggested_farm_id: null, farms: eligible ? source.farms : [] }],
+        },
+      });
+      view();
+      const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+      expect(select).toHaveValue("");
+      expect(select).toHaveAccessibleDescription(
+        eligible
+          ? "Chọn trang trại cung cấp."
+          : "Không có trang trại nào đáp ứng đủ số lượng sản phẩm này.",
+      );
+      expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeEnabled();
+    },
+  );
+
+  it("clears retired Farm choices when CSA reselection replaces the order line", async () => {
     const first = detailOrder();
-    const refreshed = {
+    const [line] = first.lines;
+    const [source] = first.source_inventory.lines;
+    const roundId = "a1123456-0000-4000-8000-000000000000";
+    const selectionId = "b1123456-0000-4000-8000-000000000000";
+    const membershipId = "c1123456-0000-4000-8000-000000000000";
+    const orderWithCSA = {
       ...first,
-      source_inventory: {
-        ...first.source_inventory,
-        candidates: first.source_inventory.candidates.filter(
-          (candidate) => candidate.batch_id !== batchA,
-        ),
+      expires_at: null,
+      csa: {
+        round: {
+          id: roundId,
+          name: "CSA tháng 11",
+          status: "closed",
+          sequence: 1,
+          opens_at: first.server_time,
+          closes_at: first.server_time,
+          delivery_date: "2026-11-02",
+          server_time: first.server_time,
+        },
+        selection: {
+          id: selectionId,
+          round_id: roundId,
+          order_id: first.id,
+          membership_id: membershipId,
+          state: "locked",
+          revision: 1,
+          reopen_until: null,
+          server_time: first.server_time,
+          lines: [],
+        },
       },
     };
-    vi.mocked(api).mockResolvedValueOnce(first).mockResolvedValueOnce(refreshed);
+    const second = { ...line, id: "d1123456-0000-4000-8000-000000000000", name: "Cà chua" };
+    vi.mocked(api)
+      .mockResolvedValueOnce(orderWithCSA)
+      .mockResolvedValueOnce({
+        ...orderWithCSA,
+        csa: {
+          ...orderWithCSA.csa,
+          selection: { ...orderWithCSA.csa.selection, state: "reselecting", revision: 2 },
+        },
+        source_inventory: {
+          ...first.source_inventory,
+          lines: [sourceLineFixture(line)],
+          candidates: [],
+        },
+        allocation_suggestion: [],
+      })
+      .mockResolvedValueOnce({
+        ...orderWithCSA,
+        csa: {
+          ...orderWithCSA.csa,
+          selection: { ...orderWithCSA.csa.selection, state: "confirmed", revision: 3 },
+        },
+        lines: [second],
+        source_inventory: {
+          ...first.source_inventory,
+          lines: [sourceLineFixture(second, source.farms, farmA)],
+          candidates: [],
+        },
+        allocation_suggestion: [],
+      });
     view();
-
-    const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    const source = within(editor).getAllByRole("combobox")[0];
-    expect(source).toHaveValue("Vườn A · 2026-10-29–2026-11-01 · còn 2");
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-
-    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(source).toHaveValue("Nguồn không còn khả dụng");
-    expect(within(editor).getByText("Nguồn đã chọn không còn khả dụng.")).toBeVisible();
-    expect(source).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
-  });
-
-  it("shows reduced availability inline without replacing the allocation draft", async () => {
-    const first = detailOrder();
-    const refreshed = {
-      ...first,
-      source_inventory: {
-        ...first.source_inventory,
-        candidates: first.source_inventory.candidates.map((candidate) =>
-          candidate.batch_id === batchA ? { ...candidate, available_quantity: 1 } : candidate,
-        ),
-      },
-    };
-    vi.mocked(api).mockResolvedValueOnce(first).mockResolvedValueOnce(refreshed);
-    view();
-
-    const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-
-    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-    expect(within(editor).getByLabelText("Số lượng nguồn 1")).toHaveValue("2");
-    expect(within(editor).getByText("Nguồn chỉ còn 1, thấp hơn số lượng đã chọn.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
-  });
-
-  it("explains empty, duplicate, and invalid allocation states inline", async () => {
-    const noSources = detailOrder();
-    vi.mocked(api).mockResolvedValueOnce({
-      ...noSources,
-      allocation_suggestion: [],
-      source_inventory: { ...noSources.source_inventory, candidates: [] },
-    });
-    const first = view();
-    expect(await screen.findByText("Hiện không có nguồn khả dụng cho sản phẩm này.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
-    first.unmount();
-
-    const duplicate = detailOrder();
-    duplicate.allocation_suggestion[0].batch_id = batchB;
-    vi.mocked(api).mockResolvedValueOnce(duplicate);
-    view();
-    const editor = await screen.findByRole("region", { name: "Phân bổ nguồn Farm / batch" });
-    expect(within(editor).getAllByText("Nguồn này đã được chọn cho sản phẩm.")).toHaveLength(2);
-    fireEvent.change(within(editor).getByLabelText("Số lượng nguồn 1"), {
-      target: { value: "0" },
-    });
-    expect(within(editor).getByText("Số lượng nguồn phải là số nguyên dương.")).toBeVisible();
+    const previous = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+    fireEvent.click(previous);
+    fireEvent.click(screen.getByRole("option", { name: /Vườn B.*Còn 6/ }));
+    expect(previous).toHaveValue("Vườn B · Còn 6");
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    await waitFor(() => expect(previous).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Duyệt đơn" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    expect(
+      await screen.findByRole("combobox", { name: /Trang trại cung cấp Cà chua/ }),
+    ).toHaveValue("Vườn A · Còn 4");
+    expect(api).toHaveBeenCalledTimes(3);
   });
 });
 
 it.each([
-  ["vi", "Đơn hàng", "Chi tiết đơn hàng", "Sản phẩm & nguồn hàng"],
-  ["en", "Orders", "Order details", "Products & sources"],
+  ["vi", "Đơn hàng", "Chi tiết đơn hàng", "Sản phẩm"],
+  ["en", "Orders", "Order details", "Products"],
 ] as const)(
   "uses the AdminShell %s breadcrumb and one content heading",
   async (locale, parent, detail, products) => {
@@ -434,7 +534,7 @@ it.each([
   },
 );
 
-it("keeps the allocation draft and DOM input while the measured content crosses 880px", async () => {
+it("keeps the farm draft and DOM input while the measured content crosses 880px", async () => {
   const listeners = new Map<Element, (width: number) => void>();
   const Observer = window.ResizeObserver;
   window.ResizeObserver = class extends Observer {
@@ -455,7 +555,7 @@ it("keeps the allocation draft and DOM input while the measured content crosses 
   try {
     vi.mocked(api).mockResolvedValue(detailOrder());
     view();
-    const input = await screen.findByRole("textbox", { name: "Số lượng nguồn 1" });
+    const input = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
     const table = screen.getByRole("table");
     const grid = table.closest(".mantine-Grid-inner")!;
     const content = screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
@@ -466,7 +566,8 @@ it("keeps the allocation draft and DOM input while the measured content crosses 
     expect(
       sidebar.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    fireEvent.change(input, { target: { value: "1" } });
+    fireEvent.click(input);
+    fireEvent.click(screen.getByRole("option", { name: /Vườn B.*Còn 6/ }));
     act(() => input.focus());
     expect(input).toHaveFocus();
 
@@ -474,8 +575,8 @@ it("keeps the allocation draft and DOM input while the measured content crosses 
     await waitFor(() => expect(grid).toHaveClass(layout.desktopGrid));
     act(() => setWidth(879));
     await waitFor(() => expect(grid).not.toHaveClass(layout.desktopGrid));
-    expect(screen.getByRole("textbox", { name: "Số lượng nguồn 1" })).toBe(input);
-    expect(input).toHaveValue("1");
+    expect(screen.getByRole("combobox", { name: /Trang trại cung cấp Rau muống/ })).toBe(input);
+    expect(input).toHaveValue("Vườn B · Còn 6");
     expect(input).toHaveFocus();
     expect(api).toHaveBeenCalledTimes(1);
   } finally {

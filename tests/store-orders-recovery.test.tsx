@@ -1,4 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useLayoutEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
@@ -7,6 +9,7 @@ import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 import type { StoreOrder } from "@/lib/types";
+
 vi.mock("@/lib/client-api", async () => {
   const { createStoreOrderApiMock } = await import("@/tests/store-orders-fixture");
   return createStoreOrderApiMock();
@@ -34,6 +37,102 @@ const orderTree = (id: string) => (
 );
 const renderOrder = (id = storeOrderFixture().id) => render(orderTree(id));
 
+it.each([false, true])(
+  "replays legacy approval bytes with no valid current Farm (conflict=%s)",
+  async (conflict) => {
+    const item = storeOrderFixture({ expires_at: null });
+    const line = item.lines[0];
+    const firstBatch = "00000000-0000-4000-8000-0000000000a1";
+    const secondBatch = "00000000-0000-4000-8000-0000000000a2";
+    const payload = {
+      idempotency_key: "00000000-0000-4000-8000-000000000045",
+      allocations: [
+        { line_id: line.id, batch_id: secondBatch, quantity: 1 },
+        { line_id: line.id, batch_id: firstBatch, quantity: 2 },
+      ],
+    };
+    const snapshot = {
+      ...item,
+      source_inventory: item.source_inventory && {
+        ...item.source_inventory,
+        lines: item.source_inventory.lines.map((row) => ({
+          ...row,
+          suggested_farm_id: null,
+          farms: [],
+        })),
+      },
+    };
+    function RecoverLegacy() {
+      const client = useQueryClient();
+      const [ready, setReady] = useState(false);
+      useLayoutEffect(() => {
+        client.setQueryData(["admin-mutation-intent", "store-order", item.id], {
+          phase: "unknown",
+          payload: {
+            orderId: item.id,
+            action: "approve",
+            payload,
+            confirmation: { action: "approve" },
+          },
+        });
+        setReady(true);
+      }, [client]);
+      return ready ? <StoreOrderDetail orderId={item.id} /> : null;
+    }
+    vi.mocked(api).mockResolvedValueOnce(snapshot);
+    if (conflict) {
+      vi.mocked(api).mockRejectedValueOnce(
+        Object.assign(new Error("store_allocation_mixed_farm"), { status: 409 }),
+      );
+    } else {
+      vi.mocked(api).mockResolvedValueOnce({
+        ...snapshot,
+        status: "pending_delivery",
+        approved_at: "2026-10-31T10:01:00Z",
+        allocations: payload.allocations.map((allocation, index) => ({
+          ...allocation,
+          id: index === 0 ? firstBatch : secondBatch,
+          product_id: line.product_id,
+          farm_id: index === 0 ? line.id : line.product_id,
+          farm_name: index === 0 ? "Historic Farm A" : "Historic Farm B",
+          start_date: "2026-10-29",
+          end_date: "2026-11-03",
+          restocked_quantity: 0,
+          restock_remaining_quantity: allocation.quantity,
+          restock_eligible: false,
+          restock_unavailable_reason: "order_not_cancelled",
+        })),
+      });
+    }
+    render(
+      <AdminI18nProvider initialLocale="vi">
+        <ToastProvider>
+          <AdminQueryProvider>
+            <RecoverLegacy />
+          </AdminQueryProvider>
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    const select = await screen.findByRole("combobox", { name: /Trang trại cung cấp/ });
+    expect(select).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt đơn" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duyệt đơn" }));
+    if (conflict) {
+      expect(
+        await within(dialog).findByRole("button", { name: "Tải trạng thái mới" }),
+      ).toBeEnabled();
+      expect(within(dialog).getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+    } else {
+      expect(await screen.findByText("Historic Farm A")).toBeVisible();
+      expect(screen.getByText("Historic Farm B")).toBeVisible();
+    }
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api).mock.calls[1]?.[0]).toBe(`admin/store-orders/${item.id}/approve`);
+    expect(vi.mocked(api).mock.calls[1]?.[1]?.body).toBe(JSON.stringify(payload));
+  },
+);
+
 it("pending delivery never polls an inactive expiry and blocks refresh during delivery", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const initial = storeOrderFixture({
@@ -56,7 +155,7 @@ it("pending delivery never polls an inactive expiry and blocks refresh during de
   const dialog = screen.getByRole("dialog");
   fireEvent.click(within(dialog).getByRole("checkbox"));
   fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận đã giao" }));
-  expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Làm mới" })).toBeDisabled();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(60_000);
   });
@@ -132,36 +231,34 @@ it.each([0, 1])(
       .mockResolvedValueOnce(withRestock(completed))
       .mockResolvedValueOnce(withRestock(1));
     renderOrder();
-    fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn kho" }));
     let dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
       target: { value: "1" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn kho" }));
     await within(dialog).findByRole("alert");
     const first = JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body));
     fireEvent.click(within(dialog).getByRole("button", { name: "Đóng" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn kho" }));
     dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
       target: { value: "1" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn kho" }));
     const second = JSON.parse(String(vi.mocked(api).mock.calls[3][1]?.body));
     expect(second.allocations).toEqual(first.allocations);
     expect(second.idempotency_key).toBe(first.idempotency_key);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     vi.mocked(api).mockResolvedValueOnce(withRestock(2));
-    fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn kho" }));
     const deliberate = screen.getByRole("dialog");
     fireEvent.change(within(deliberate).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
       target: { value: "1" },
     });
-    fireEvent.click(within(deliberate).getByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(within(deliberate).getByRole("button", { name: "Hoàn tồn kho" }));
     const third = JSON.parse(String(vi.mocked(api).mock.calls[4][1]?.body));
     expect(third.idempotency_key).not.toBe(first.idempotency_key);
   },
@@ -193,19 +290,17 @@ it.each([
     .mockResolvedValueOnce(reconciled)
     .mockResolvedValueOnce(reconciled);
   renderOrder();
-  fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Hoàn tồn kho" }));
   const dialog = screen.getByRole("dialog");
   fireEvent.change(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u }), {
     target: { value: "1" },
   });
-  const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn" });
+  const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn kho" });
   fireEvent.click(confirm);
   await within(dialog).findByRole("alert");
   const first = JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body));
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeEnabled(),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled());
   expect(api).toHaveBeenCalledTimes(3);
   expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
@@ -255,7 +350,7 @@ it.each([
     vi.mocked(api).mockResolvedValueOnce(item);
     renderOrder(item.id);
     await screen.findByText("Nguyễn An");
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
     await screen.findByRole("alert");
     expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
     expect(screen.queryByText("Other recipient")).not.toBeInTheDocument();
@@ -364,7 +459,7 @@ it("keeps a stale readable snapshot after a network read error but blocks action
   vi.mocked(api).mockResolvedValueOnce(item).mockRejectedValueOnce(new Error("network_error"));
   renderOrder(item.id);
   await screen.findByText("Nguyễn An");
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByRole("alert");
   expect(screen.getByText("Nguyễn An")).toBeVisible();
   expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeDisabled();
@@ -410,7 +505,7 @@ it("only lets a newer verified read restore the same route after access loss", a
     .mockResolvedValueOnce(response);
   renderOrder(item.id);
   await screen.findByText("Nguyễn An");
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByRole("alert");
   expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));
@@ -436,7 +531,7 @@ it("preserves only the exact submitted intent across a bad read and CSRF rejecti
   await within(screen.getByRole("dialog")).findByRole("alert");
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByRole("alert");
   expect(screen.queryByText("Nguyễn An")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Thử lại" }));

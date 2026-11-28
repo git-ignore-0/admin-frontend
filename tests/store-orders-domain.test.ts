@@ -14,105 +14,19 @@ import {
   parseStoreQuantity,
   storeOrderStatusQuery,
   storeDeadlineRemainingMs,
-  validateStoreAllocations,
+  inspectStoreFarmDraft,
+  reconcileStoreFarmDraft,
 } from "@/lib/store-orders";
-import { storeCancellationReason, storeShippingDiscountReason } from "@/lib/store-orders-copy";
-import type { StoreOrder, StoreOrderAllocationDraft } from "@/lib/types";
+import {
+  storeCancellationReason,
+  storeOrderCountdown,
+  storeShippingDiscountReason,
+} from "@/lib/store-orders-copy";
+import type { StoreOrder } from "@/lib/types";
+import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 
-function order(overrides: Partial<StoreOrder> = {}): StoreOrder {
-  return {
-    id: "11111111-1111-4111-8111-111111111111",
-    reference_code: "NFV-STORE-001",
-    workflow_version: 1,
-    status: "pending_review",
-    payment_status: "unconfirmed",
-    refund_status: null,
-    locale: "vi",
-    lines: [
-      {
-        id: "22222222-2222-4222-8222-222222222222",
-        product_id: "33333333-3333-4333-8333-333333333333",
-        sku: "RAU-01",
-        name: "Rau muống",
-        unit_size: "0.5",
-        unit_label: "kg",
-        unit_price_vnd: "30000",
-        quantity: 3,
-        quota_group_id: null,
-        quota_cost: null,
-        quota_quantity: 0,
-        quota_units: 0,
-        cash_quantity: 3,
-        cash_subtotal_vnd: "90000",
-      },
-    ],
-    shipping_address: {
-      recipient_name: "Nguyễn An",
-      phone_number: "+84901234567",
-      province_code: "79",
-      ward_code: "26734",
-      address: "1 Đường Vườn",
-    },
-    subtotal_vnd: "90000",
-    shipping_fee_vnd: "15000",
-    shipping_discount_reason: null,
-    total_vnd: "105000",
-    payment: null,
-    expires_at: "2026-10-31T10:08:00Z",
-    server_time: "2026-10-31T10:00:00Z",
-    transfer_reported_at: "2026-10-31T09:59:00Z",
-    transfer_reported_by: null,
-    payment_received_at: null,
-    payment_received_by: null,
-    refund_requested_at: null,
-    refund_requested_by: null,
-    refund_request_closed_at: null,
-    refund_request_closed_by: null,
-    refund_request_closed_reason: null,
-    refunded_at: null,
-    refunded_by: null,
-    refund_amount_vnd: null,
-    refund_note: "",
-    approved_at: null,
-    approved_by: null,
-    delivered_at: null,
-    delivered_by: null,
-    cancelled_at: null,
-    cancelled_by: null,
-    cancellation_reason: null,
-    reconciliation_note: "",
-    created_at: "2026-10-31T09:55:00Z",
-    updated_at: "2026-10-31T10:00:00Z",
-    allocation_suggestion: [],
-    source_inventory: {
-      refresh_required_before_approve: true,
-      product_reservations: [],
-      candidates: [
-        {
-          line_id: "22222222-2222-4222-8222-222222222222",
-          product_id: "33333333-3333-4333-8333-333333333333",
-          farm_id: "44444444-4444-4444-8444-444444444444",
-          farm_name: "Vườn A",
-          batch_id: "55555555-5555-4555-8555-555555555555",
-          start_date: "2026-10-30",
-          end_date: "2026-11-02",
-          available_quantity: 2,
-        },
-        {
-          line_id: "22222222-2222-4222-8222-222222222222",
-          product_id: "33333333-3333-4333-8333-333333333333",
-          farm_id: "66666666-6666-4666-8666-666666666666",
-          farm_name: "Vườn B",
-          batch_id: "77777777-7777-4777-8777-777777777777",
-          start_date: "2026-10-31",
-          end_date: "2026-11-03",
-          available_quantity: 2,
-        },
-      ],
-    },
-    allocations: [],
-    ...overrides,
-  };
+function order(overrides: Partial<StoreOrder> = {}) {
+  return storeOrderFixture({ payment: null, ...overrides });
 }
 
 describe("Store order admin domain", () => {
@@ -222,34 +136,63 @@ describe("Store order admin domain", () => {
     expect(getStoreOrderPrimaryAction([])).toBeNull();
   });
 
-  it("validates complete unique allocations against each line and shared batch availability", () => {
-    const valid: StoreOrderAllocationDraft[] = [
-      {
-        line_id: order().lines[0].id,
-        batch_id: "55555555-5555-4555-8555-555555555555",
-        quantity: 2,
+  it("requires one eligible farm per current line and rejects foreign or missing drafts", () => {
+    const base = order();
+    const [first] = base.lines;
+    const second = { ...first, id: "second", product_id: "other-product" };
+    const farm = { farm_id: "a", farm_name: "Farm A", available_quantity: 3, eligible: true };
+    const unavailable = { ...farm, farm_id: "b", eligible: false };
+    const item = order({
+      lines: [first, second],
+      source_inventory: {
+        refresh_required_before_approve: true,
+        candidates: [],
+        product_reservations: [],
+        lines: [
+          sourceLineFixture(first, [farm, unavailable], "a", "b"),
+          sourceLineFixture(second, [farm], null),
+        ],
       },
-      {
-        line_id: order().lines[0].id,
-        batch_id: "77777777-7777-4777-8777-777777777777",
-        quantity: 1,
-      },
-    ];
-    expect(validateStoreAllocations(order(), valid)).toEqual({ valid: true, errors: [] });
-    expect(validateStoreAllocations(order(), [...valid, valid[0]])).toEqual({
-      valid: false,
-      errors: ["duplicate"],
     });
-    expect(validateStoreAllocations(order(), valid.slice(0, 1))).toEqual({
-      valid: false,
-      errors: ["line_incomplete"],
-    });
+    const initial = reconcileStoreFarmDraft(item);
+    const incomplete = inspectStoreFarmDraft(item, initial);
+    expect(incomplete.sources).toBeNull();
+    expect(incomplete.selections.get(second.id)?.error).toBe("chooseFarm");
+    const complete = new Map(initial).set(second.id, "a");
+    expect(inspectStoreFarmDraft(item, complete).sources).toEqual([
+      { line_id: first.id, farm_id: "a" },
+      { line_id: second.id, farm_id: "a" },
+    ]);
+    expect(inspectStoreFarmDraft(item, new Map(complete).set("foreign", "a")).sources).toBeNull();
     expect(
-      validateStoreAllocations(order(), [
-        { ...valid[0], quantity: 3 },
-        { ...valid[1], quantity: 1 },
-      ]),
-    ).toEqual({ valid: false, errors: ["line_exceeded", "batch_exceeded"] });
+      inspectStoreFarmDraft(item, new Map(complete).set(first.id, "b")).selections.get(first.id)
+        ?.error,
+    ).toBe("farmIneligible");
+    expect(
+      inspectStoreFarmDraft(item, new Map(complete).set(first.id, "invalid")).selections.get(
+        first.id,
+      )?.error,
+    ).toBe("farmUnavailable");
+  });
+
+  it.each([
+    [4453, "Còn 3 ngày 2 giờ 13 phút"],
+    [1440, "Còn 1 ngày"],
+    [1500, "Còn 1 ngày 1 giờ"],
+    [125, "Còn 2 giờ 5 phút"],
+    [60, "Còn 1 giờ"],
+    [45, "Còn 45 phút"],
+  ])("formats %i minutes", (minutes, label) => {
+    expect(storeOrderCountdown(minutes * 60000, "vi")).toBe(label);
+  });
+
+  it("formats singular, plural, positive sub-minute, expired and missing deadlines", () => {
+    expect(storeOrderCountdown(1501 * 60000, "en")).toBe("1 day 1 hour 1 minute remaining");
+    expect(storeOrderCountdown(3002 * 60000, "en")).toBe("2 days 2 hours 2 minutes remaining");
+    expect(storeOrderCountdown(59999, "vi")).toBe("Còn dưới 1 phút");
+    expect(storeOrderCountdown(1, "en")).toBe("Less than 1 minute remaining");
+    expect(storeOrderCountdown(0, "vi")).toBe("Đã hết thời hạn xử lý");
+    expect(storeOrderCountdown(null, "en")).toBe("");
   });
 
   it.each([
@@ -289,60 +232,25 @@ describe("Store order admin domain", () => {
     expect(parseStoreQuantity("1000000", 0, 2000000)).toBeNull();
   });
 
-  it("enforces the backend allocation maximum independently of stock and line totals", () => {
+  it.each([0, 100, 101])("enforces the approval limit for %i lines", (lineCount) => {
     const item = order();
-    const [line] = item.lines;
-    const inventory = item.source_inventory!;
-    const [candidate] = inventory.candidates;
-    function validateQuantity(quantity: number) {
-      return validateStoreAllocations(
-        {
-          ...item,
-          lines: [{ ...line, quantity }],
-          source_inventory: {
-            ...inventory,
-            candidates: [{ ...candidate, available_quantity: quantity }],
-          },
-        },
-        [{ line_id: line.id, batch_id: candidate.batch_id, quantity }],
-      );
-    }
-    expect(validateQuantity(999999)).toEqual({ valid: true, errors: [] });
-    expect(validateQuantity(1000000)).toEqual({
-      valid: false,
-      errors: ["invalid_quantity", "line_incomplete"],
+    const lines = Array.from({ length: lineCount }, (_, index) => ({
+      ...item.lines[0],
+      id: String(index),
+    }));
+    const farm = { farm_id: "a", farm_name: "Farm A", available_quantity: 3, eligible: true };
+    const snapshot = order({
+      lines,
+      source_inventory: {
+        refresh_required_before_approve: true,
+        candidates: [],
+        product_reservations: [],
+        lines: lines.map((line) => sourceLineFixture(line, [farm], "a")),
+      },
     });
-  });
-
-  it("validates the aggregate across different lines using the same batch", () => {
-    const item = order();
-    const [line] = item.lines;
-    const inventory = item.source_inventory!;
-    const [candidate] = inventory.candidates;
-    const second = { ...line, id: "second-line", quantity: 1 };
-    expect(
-      validateStoreAllocations(
-        {
-          ...item,
-          lines: [{ ...line, quantity: 2 }, second],
-          source_inventory: {
-            ...inventory,
-            candidates: [candidate, { ...candidate, line_id: second.id }],
-          },
-        },
-        [
-          { line_id: line.id, batch_id: candidate.batch_id, quantity: 2 },
-          { line_id: second.id, batch_id: candidate.batch_id, quantity: 1 },
-        ],
-      ),
-    ).toEqual({ valid: false, errors: ["batch_exceeded"] });
-  });
-
-  it("rejects an empty approve allocation array even when the order has no lines", () => {
-    expect(validateStoreAllocations(order({ lines: [] }), [])).toEqual({
-      valid: false,
-      errors: ["line_incomplete"],
-    });
+    expect(inspectStoreFarmDraft(snapshot, reconcileStoreFarmDraft(snapshot)).sources?.length).toBe(
+      lineCount === 100 ? 100 : undefined,
+    );
   });
 
   it("keeps retry keys for an unchanged restock ledger and rotates only when the selected ledger changes", () => {

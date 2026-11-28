@@ -28,9 +28,8 @@ const copy = {
     createdAt: "Tạo lúc",
     deadline: "Hạn xử lý",
     csaBenefit: "Dùng điểm CSA",
-    refresh: "Tải lại đơn và nguồn",
+    refresh: "Làm mới",
     refreshList: "Làm mới",
-    allocationComplete: "Đủ {selected}/{required}",
     refundPending: "Chờ hoàn",
     reconcile: "Xử lý đối soát",
     processRefund: "Xử lý hoàn tiền",
@@ -43,9 +42,9 @@ const copy = {
     refundRequestedAt: "Khách yêu cầu hoàn lúc",
     refundRequestClosedAt: "Kết thúc yêu cầu hoàn lúc",
     refundRequestClosedReason: "Lý do kết thúc yêu cầu hoàn",
-    closeRefundReason: "Lý do xác minh không có tiền",
-    closeRefundReasonRequired: "Hãy nhập lý do xác minh không có tiền.",
-    restockPending: "Còn hàng chưa hoàn tồn",
+    closeRefundReason: "Lý do xác nhận chưa nhận tiền",
+    closeRefundReasonRequired: "Nhập lý do xác nhận chưa nhận tiền.",
+    restockPending: "Còn hàng có thể hoàn tồn kho",
     refundHint: "Hoàn tiền thủ công cho khách trước khi xác nhận tại đây.",
     staleSnapshot:
       "Dữ liệu đang hiển thị chưa được làm mới. Các thao tác tạm khóa đến khi tải lại thành công.",
@@ -59,16 +58,34 @@ const copy = {
     phone: "Số điện thoại",
     address: "Địa chỉ",
     productsTitle: "Sản phẩm",
-    productsSources: "Sản phẩm & nguồn hàng",
+    productSku: "Mã sản phẩm",
+    sellingUnit: "Đơn vị bán",
+    supplyingFarm: "Trang trại cung cấp",
+    chooseFarm: "Chọn trang trại cung cấp.",
+    chooseFarmPlaceholder: "Chọn trang trại",
+    farmStock: "Còn {count}",
+    farmIneligible: "Trang trại đã chọn không còn đáp ứng đủ số lượng. Vui lòng chọn lại.",
+    farmUnavailable: "Trang trại đã chọn không còn khả dụng. Vui lòng chọn lại.",
+    farmUnavailableOption: "Trang trại không còn khả dụng",
+    noEligibleFarm: "Không có trang trại nào đáp ứng đủ số lượng sản phẩm này.",
+    approveSourcesInvalid: "Kiểm tra trang trại cung cấp của từng sản phẩm.",
+    detailPaymentStatus: "Trạng thái thanh toán",
+    detailPaymentStatuses: {
+      not_required: "Không cần chuyển khoản",
+      unconfirmed: "Chưa xác nhận thanh toán",
+      received: "Đã nhận tiền",
+      refund_required: "Đã nhận tiền, cần hoàn tiền",
+      refunded: "Đã hoàn tiền",
+    } satisfies Record<StorePaymentStatus, string>,
+    restockedQuantity: "Đã hoàn tồn kho {count}",
+    restockableQuantity: "Có thể hoàn thêm {count}",
+    fullyRestocked: "Đã hoàn tồn kho đầy đủ",
+    restockUnavailable: "Không thể hoàn tồn kho",
+    remainingLessThanMinute: "Còn dưới 1 phút",
     paymentSummary: "Thanh toán",
-    showDetails: "Xem chi tiết",
-    hideDetails: "Thu gọn",
-    historyToggle: "Xem lịch sử",
-    allocationCheck: "Kiểm tra nguồn và số lượng trước khi duyệt.",
     quantity: "Số lượng",
     unitPrice: "Đơn giá",
     lineSubtotal: "Thành tiền",
-    specification: "Quy cách",
     quotaUsage: "Quyền lợi CSA: {quantity} sản phẩm · {units} lượt",
     cashUsage: "Tiền mặt: {quantity} sản phẩm",
     listedSubtotal: "Tiền hàng",
@@ -84,13 +101,12 @@ const copy = {
     shippingDiscount: "Lý do miễn phí giao hàng",
     transferTitle: "Thông tin chuyển khoản",
     bank: "Ngân hàng",
-    bankBin: "Mã BIN ngân hàng",
     account: "Số tài khoản",
-    accountName: "Tên tài khoản",
+    accountName: "Chủ tài khoản",
     transferContent: "Nội dung chuyển khoản",
     timelineTitle: "Lịch sử xử lý",
-    transferReportedAt: "Khách báo chuyển",
-    paymentReceivedAt: "Admin ghi nhận tiền",
+    transferReportedAt: "Khách báo đã chuyển khoản",
+    paymentReceivedAt: "Đã xác nhận nhận tiền",
     approvedAt: "Duyệt lúc",
     deliveredAt: "Giao lúc",
     cancelledAt: "Hủy lúc",
@@ -100,50 +116,27 @@ const copy = {
     refundNote: "Ghi chú hoàn tiền",
     paymentDeadline: "Hạn báo chuyển khoản",
     reviewDeadline: "Hạn duyệt đơn",
-    remainingMinutes: "Còn {count} phút",
-    expired: "Đã đến hạn; đang chờ trạng thái mới nhất từ backend.",
-    allocationTitle: "Phân bổ nguồn Farm / batch",
-    allocationHint: "Chọn nguồn và đủ số lượng cho từng sản phẩm.",
-    source: "Nguồn",
-    sourceQuantity: "Số lượng nguồn {count}",
-    addSource: "Thêm nguồn",
-    removeSource: "Xóa nguồn",
-    selectedSummary: "Đã chọn {selected}/{required} · Còn thiếu {missing}",
-    exceededSummary: "Đã chọn {selected}/{required} · Vượt {exceeded}",
-    available: "còn {count}",
-    sourceUnavailableOption: "Nguồn không còn khả dụng",
-    sourceUnavailable: "Nguồn đã chọn không còn khả dụng.",
-    sourceAvailabilityExceeded: "Nguồn chỉ còn {count}, thấp hơn số lượng đã chọn.",
-    sourceDuplicate: "Nguồn này đã được chọn cho sản phẩm.",
-    sourceQuantityInvalid: "Số lượng nguồn phải là số nguyên dương.",
-    sourceQuantityOutOfRange: "Số lượng nguồn phải từ 1 đến {max}.",
-    noSources: "Hiện không có nguồn khả dụng cho sản phẩm này.",
-    reservations: "Giữ tồn cấp sản phẩm",
-    reservationSummary: "Đơn này giữ {thisOrder} · đơn khác giữ {others}",
-    allocatedSources: "Nguồn đã phân bổ",
+    expired: "Đã hết thời hạn xử lý",
     noAllocatedSources: "Chưa có nguồn đã phân bổ.",
-    farmBatch: "Farm / batch",
     allocatedQuantity: "Đã phân bổ",
-    restockStatus: "Hoàn tồn",
-    restockLedger: "Đã hoàn {restocked} · Còn có thể hoàn {remaining}",
     actions: "Thao tác đơn hàng",
     actionLabels: {
       approve: "Duyệt đơn",
       cancel: "Hủy đơn",
-      "record-payment": "Ghi nhận đã nhận tiền",
-      "close-refund-request": "Xác minh không có tiền",
+      "record-payment": "Xác nhận đã nhận tiền",
+      "close-refund-request": "Xác nhận chưa nhận tiền",
       refund: "Xác nhận hoàn tiền",
       deliver: "Xác nhận đã giao",
-      restock: "Hoàn tồn",
+      restock: "Hoàn tồn kho",
     },
     actionTitles: {
       approve: "Duyệt toàn bộ đơn hàng",
       cancel: "Hủy đơn hàng",
-      "record-payment": "Ghi nhận tiền đã về",
-      "close-refund-request": "Kết thúc yêu cầu hoàn: không có tiền",
+      "record-payment": "Xác nhận đã nhận tiền",
+      "close-refund-request": "Xác nhận chưa nhận tiền",
       refund: "Xác nhận đã hoàn tiền ngoài hệ thống",
       deliver: "Xác nhận khách đã nhận hàng",
-      restock: "Hoàn tồn về batch",
+      restock: "Hoàn tồn kho",
     },
     cancelReason: "Lý do hủy",
     cancelReasonRequired: "Hãy nhập lý do hủy.",
@@ -155,11 +148,10 @@ const copy = {
     restockQuantityRange: "Nhập số nguyên từ 0 đến {max}.",
     refundOutside: "Tôi xác nhận đã chuyển trả tiền ngoài hệ thống.",
     deliveredConfirm: "Tôi xác nhận khách đã nhận hàng.",
-    restockQuantity: "Số lượng hoàn · {product} ({sku}) · {farm} · batch {batch}",
-    restockBatch: "Batch {batch}",
-    restockAllocation: "Đã phân bổ {allocated} · Đã hoàn {restocked} · Còn có thể hoàn {remaining}",
+    restockQuantity: "Số lượng hoàn · {product} ({sku}) · {farm} · đợt {batch}",
+    restockBatch: "Đợt cung cấp {batch}",
+    restockAllocation: "Đã phân bổ {allocated} · Đã hoàn tồn kho {restocked}",
     restockInvalid: "Số lượng hoàn phải là số nguyên và không vượt lượng còn có thể hoàn.",
-    approveAllocationInvalid: "Phải phân bổ đủ, không trùng và không vượt nguồn cho mọi sản phẩm.",
     mutationSuccess: "Đã cập nhật đơn hàng.",
     mutationUncertain:
       "Chưa xác định được kết quả. Nếu thử lại, hệ thống sẽ gửi lại đúng yêu cầu trước.",
@@ -168,7 +160,11 @@ const copy = {
     cancelButton: "Đóng",
     retryRequest: "Thử lại yêu cầu trước",
     conflict:
-      "Đơn hàng hoặc nguồn tồn đã thay đổi. Draft được giữ; hãy tải lại và kiểm tra trước khi thử lại.",
+      "Đơn hàng hoặc tồn kho đã thay đổi. Hãy làm mới và kiểm tra lựa chọn trước khi thử lại.",
+    mixedFarmConflict:
+      "Yêu cầu trước chọn nhiều trang trại cho cùng một sản phẩm. Hãy làm mới rồi chọn một trang trại cho mỗi sản phẩm.",
+    changedIntentConflict:
+      "Yêu cầu không khớp với thao tác đã gửi. Hãy tải lại đơn và kiểm tra lịch sử trước khi tiếp tục.",
     reloadAfterConflict: "Tải trạng thái mới",
     shippingDiscountReasons: {
       csa_round: "Giao hàng trong gói CSA",
@@ -224,9 +220,8 @@ const copy = {
     createdAt: "Created",
     deadline: "Deadline",
     csaBenefit: "CSA points",
-    refresh: "Reload order and sources",
+    refresh: "Refresh",
     refreshList: "Refresh",
-    allocationComplete: "Complete {selected}/{required}",
     refundPending: "Awaiting refund",
     reconcile: "Reconcile payment",
     processRefund: "Process refund",
@@ -255,16 +250,34 @@ const copy = {
     phone: "Phone number",
     address: "Address",
     productsTitle: "Products",
-    productsSources: "Products & sources",
+    productSku: "Product code",
+    sellingUnit: "Selling unit",
+    supplyingFarm: "Supplying farm",
+    chooseFarm: "Select a supplying farm.",
+    chooseFarmPlaceholder: "Select a farm",
+    farmStock: "{count} available",
+    farmIneligible: "The selected farm can no longer fulfill the quantity. Select another farm.",
+    farmUnavailable: "The selected farm is no longer available. Select another farm.",
+    farmUnavailableOption: "Farm no longer available",
+    noEligibleFarm: "No farm can fulfill the required quantity for this product.",
+    approveSourcesInvalid: "Check the supplying farm for each product.",
+    detailPaymentStatus: "Payment status",
+    detailPaymentStatuses: {
+      not_required: "No bank transfer required",
+      unconfirmed: "Payment not confirmed",
+      received: "Payment received",
+      refund_required: "Payment received, refund required",
+      refunded: "Refunded",
+    } satisfies Record<StorePaymentStatus, string>,
+    restockedQuantity: "Restocked {count}",
+    restockableQuantity: "{count} can still be restocked",
+    fullyRestocked: "Fully restocked",
+    restockUnavailable: "Cannot restock",
+    remainingLessThanMinute: "Less than 1 minute remaining",
     paymentSummary: "Payment",
-    showDetails: "View details",
-    hideDetails: "Collapse",
-    historyToggle: "View history",
-    allocationCheck: "Check sources and quantities before approving.",
     quantity: "Quantity",
     unitPrice: "Unit price",
     lineSubtotal: "Line subtotal",
-    specification: "Specification",
     quotaUsage: "CSA benefits: {quantity} items · {units} units",
     cashUsage: "Cash: {quantity} items",
     listedSubtotal: "Listed product value",
@@ -280,9 +293,8 @@ const copy = {
     shippingDiscount: "Free-delivery reason",
     transferTitle: "Bank transfer details",
     bank: "Bank",
-    bankBin: "Bank BIN",
     account: "Account number",
-    accountName: "Account name",
+    accountName: "Account holder",
     transferContent: "Transfer content",
     timelineTitle: "Order history",
     transferReportedAt: "Customer reported transfer",
@@ -296,33 +308,9 @@ const copy = {
     refundNote: "Refund note",
     paymentDeadline: "Transfer-report deadline",
     reviewDeadline: "Review deadline",
-    remainingMinutes: "{count} minutes remaining",
-    expired: "Deadline reached; waiting for the latest backend state.",
-    allocationTitle: "Farm / batch allocation",
-    allocationHint: "Select sources covering the quantity of each product.",
-    source: "Source",
-    sourceQuantity: "Source {count} quantity",
-    addSource: "Add source",
-    removeSource: "Remove source",
-    selectedSummary: "Selected {selected}/{required} · Missing {missing}",
-    exceededSummary: "Selected {selected}/{required} · Over by {exceeded}",
-    available: "{count} available",
-    sourceUnavailableOption: "Source no longer available",
-    sourceUnavailable: "The selected source is no longer available.",
-    sourceAvailabilityExceeded:
-      "Only {count} remains in this source, less than the selected quantity.",
-    sourceDuplicate: "This source is already selected for the product.",
-    sourceQuantityInvalid: "Source quantity must be a positive whole number.",
-    sourceQuantityOutOfRange: "Source quantity must be between 1 and {max}.",
-    noSources: "There are currently no available sources for this product.",
-    reservations: "Product-level reservations",
-    reservationSummary: "This order reserves {thisOrder} · other orders reserve {others}",
-    allocatedSources: "Allocated sources",
+    expired: "Processing deadline passed",
     noAllocatedSources: "No sources allocated.",
-    farmBatch: "Farm / batch",
     allocatedQuantity: "Allocated",
-    restockStatus: "Restock status",
-    restockLedger: "Restocked {restocked} · {remaining} may still be restocked",
     actions: "Order actions",
     actionLabels: {
       approve: "Approve order",
@@ -352,13 +340,10 @@ const copy = {
     restockQuantityRange: "Enter a whole number from 0 to {max}.",
     refundOutside: "I confirm the refund was transferred outside this system.",
     deliveredConfirm: "I confirm the customer received the order.",
-    restockQuantity: "Restock quantity · {product} ({sku}) · {farm} · batch {batch}",
-    restockBatch: "Batch {batch}",
-    restockAllocation:
-      "Allocated {allocated} · Restocked {restocked} · {remaining} may still be restocked",
+    restockQuantity: "Restock quantity · {product} ({sku}) · batch {batch}",
+    restockBatch: "Supply batch {batch}",
+    restockAllocation: "Allocated {allocated} · Restocked {restocked}",
     restockInvalid: "Restock quantities must be whole numbers within the remaining limit.",
-    approveAllocationInvalid:
-      "Every product must be fully allocated without duplicates or exceeding stock.",
     mutationSuccess: "Order updated.",
     mutationUncertain: "The result is unconfirmed. Retrying will send the same request.",
     mutationConfirmedReload: "The action is confirmed. Reload the order before continuing.",
@@ -367,6 +352,10 @@ const copy = {
     retryRequest: "Retry previous request",
     conflict:
       "The order or inventory sources changed. The draft was kept; reload and review before retrying.",
+    mixedFarmConflict:
+      "The previous request selected multiple farms for one product. Reload and select one farm per product.",
+    changedIntentConflict:
+      "The request differs from the submitted action. Reload the order and review its history before continuing.",
     reloadAfterConflict: "Load latest state",
     shippingDiscountReasons: {
       csa_round: "Delivery included in CSA",
@@ -407,6 +396,13 @@ const copy = {
 
 export function storeOrdersCopy(locale: AdminLocale) {
   return copy[locale];
+}
+
+export function storeOrderConflictMessage(code: string | undefined, locale: AdminLocale) {
+  const labels = storeOrdersCopy(locale);
+  if (code === "store_allocation_mixed_farm") return labels.mixedFarmConflict;
+  if (code === "store_idempotency_conflict") return labels.changedIntentConflict;
+  return labels.conflict;
 }
 
 export function storeOrderStatusLabel(
@@ -484,6 +480,24 @@ export function storeOrderDeadlineLabel(
     : storeOrdersCopy(locale).reviewDeadline;
 }
 
+export function storeOrderCountdown(remaining: number | null, locale: AdminLocale) {
+  if (remaining === null) return "";
+  const c = storeOrdersCopy(locale);
+  if (remaining <= 0) return c.expired;
+  if (remaining < 60_000) return c.remainingLessThanMinute;
+  const minutes = Math.ceil(remaining / 60_000);
+  const parts = [
+    [Math.floor(minutes / 1440), "ngày", "day"],
+    [Math.floor((minutes % 1440) / 60), "giờ", "hour"],
+    [minutes % 60, "phút", "minute"],
+  ] as const;
+  const duration = parts
+    .filter(([count]) => count > 0)
+    .map(([count, vi, en]) => `${count} ${locale === "vi" ? vi : count === 1 ? en : `${en}s`}`)
+    .join(" ");
+  return locale === "vi" ? `Còn ${duration}` : `${duration} remaining`;
+}
+
 function translatedReason(reasons: Record<string, string>, reason: string): string {
   return Object.prototype.hasOwnProperty.call(reasons, reason) ? reasons[reason] : reason;
 }
@@ -505,10 +519,10 @@ const restockReasons = {
     batch_cancelled: "Nguồn đã bị hủy, không thể hoàn tồn.",
     offer_inactive: "Nguồn cung đã được gỡ khỏi trang trại.",
     batch_historical: "Đợt cung cấp thuộc lịch sử, không thể hoàn tồn vào nguồn hiện tại.",
-    farm_inactive: "Farm đã ngừng hoạt động.",
+    farm_inactive: "Trang trại đã ngừng hoạt động.",
     fully_restocked: "Nguồn đã được hoàn tồn đầy đủ.",
     order_not_cancelled: "Chỉ hoàn tồn cho đơn đã hủy.",
-    order_not_approved: "Đơn chưa trừ tồn tại Farm.",
+    order_not_approved: "Đơn chưa trừ tồn kho tại trang trại.",
   },
   en: {
     batch_expired: "This source has expired and cannot be restocked.",
