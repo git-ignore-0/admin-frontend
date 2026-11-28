@@ -29,27 +29,30 @@ function candidate(line: StoreOrder["lines"][number], batch: string, name: strin
 }
 
 describe("Store order products and sources", () => {
-  it("uses the same four-column table for initial loading with a single announcement", () => {
-    const { container } = render(
+  it("loads in the products panel with grouped placeholders and a single announcement", () => {
+    render(
       <AdminI18nProvider initialLocale="vi">
         <StoreOrderProducts />
       </AdminI18nProvider>,
     );
-    expect(screen.getByRole("status")).toHaveTextContent("Đang tải chi tiết đơn hàng…");
-    expect(screen.queryByRole("table")).toBeNull();
-    const table = container.querySelector("[data-list-paper] table");
-    expect(table?.querySelectorAll("thead th[scope=col]")).toHaveLength(4);
-    expect(table?.querySelectorAll("tbody tr")).toHaveLength(3);
-    expect(screen.queryByRole("button")).toBeNull();
+    const panel = screen.getByRole("region", { name: "Sản phẩm" });
+    expect(within(panel).getAllByRole("heading", { name: "Sản phẩm", level: 2 })).toHaveLength(1);
+    expect(within(panel).getAllByRole("status")).toHaveLength(1);
+    expect(within(panel).getByRole("status")).toHaveTextContent("Đang tải chi tiết đơn hàng…");
+    expect(panel.querySelector("table")).toBeNull();
+    expect(panel.querySelectorAll('ul[aria-hidden="true"] > li')).toHaveLength(3);
+    expect(within(panel).queryByRole("button")).toBeNull();
   });
 
-  it("keeps product prices, CSA and read-only restock ledger in one English table", () => {
+  it("shows snapshot prices and CSA amounts in the correct product item", () => {
     const order = storeOrderFixture({ status: "cancelled" });
     const [line] = order.lines;
     const quotaLine = {
       ...line,
+      name: "Rau muống with a long product name ".repeat(8).trim(),
+      sku: "RAU-01".repeat(10),
       unit_price_vnd: "9007199254740993",
-      cash_subtotal_vnd: "40000",
+      cash_subtotal_vnd: "90071992547409930",
       quota_quantity: 2,
       quota_units: 1.5,
       cash_quantity: 1,
@@ -78,31 +81,34 @@ describe("Store order products and sources", () => {
       </AdminI18nProvider>,
     );
 
-    const table = screen.getByRole("table", { name: "Products" });
-    expect(screen.getAllByRole("table")).toHaveLength(1);
-    expect(table.closest("[data-list-paper]")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Products" })).toHaveAttribute("tabindex", "0");
+    const panel = screen.getByRole("region", { name: "Products" });
+    expect(panel).toHaveAttribute("data-list-paper");
+    expect(panel.querySelectorAll("[data-list-paper]")).toHaveLength(0);
     expect(
-      within(table)
-        .getAllByRole("columnheader")
-        .map((header) => header.textContent),
-    ).toEqual(["Products", "Quantity", "Unit price", "Line subtotal"]);
-    expect(within(table).getByText("Product code: RAU-01")).toBeVisible();
-    expect(within(table).getAllByText("Selling unit: 0.5 kg")).toHaveLength(2);
-    expect(within(table).getByText(formatStoreMoney("9007199254740993", "en"))).toBeVisible();
-    expect(within(table).getByText(formatStoreMoney("40000", "en"))).toBeVisible();
-    expect(within(table).getByText("CSA benefits: 2 items · 1.5 units")).toBeVisible();
-    expect(within(table).getByText("Cash: 1 items")).toBeVisible();
-    const rows = within(table).getAllByRole("row");
-    expect(rows[1]).toHaveTextContent("Rau muống");
-    expect(rows[2]).toHaveTextContent("Farm A");
-    expect(rows[2]).toHaveTextContent("Restocked 1");
-    expect(rows[2]).not.toHaveTextContent("can still be restocked");
-    expect(rows[2]).toHaveTextContent("This source has expired and cannot be restocked.");
-    expect(rows[3]).toHaveTextContent("Kale");
-    expect(rows[4]).toHaveTextContent("No sources allocated.");
-    expect(within(table).queryByRole("textbox")).toBeNull();
-    expect(within(table).queryByRole("combobox")).toBeNull();
+      panel.querySelector("table, .mantine-ScrollArea-root, .mantine-Table-scrollContainer"),
+    ).toBeNull();
+    const list = within(panel).getByRole("list");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    const [firstItem, secondItem] = within(list).getAllByRole("listitem");
+    const product = within(firstItem);
+    expect(product.getByText(quotaLine.name)).toBeVisible();
+    expect(product.getByText(quotaLine.sku).parentElement).toHaveTextContent(
+      `${quotaLine.sku} · 0.5 kg`,
+    );
+    expect(
+      product.getByText(`3 × ${formatStoreMoney(quotaLine.unit_price_vnd, "en")}`),
+    ).toBeVisible();
+    expect(product.getByText(formatStoreMoney(quotaLine.cash_subtotal_vnd, "en"))).toBeVisible();
+    expect(product.getByText("Cash subtotal")).toBeVisible();
+    expect(product.getByText("CSA benefits: 2 items · 1.5 units")).toBeVisible();
+    expect(product.getByText("Cash: 1 items")).toBeVisible();
+    const farm = product.getByRole("group", { name: "Supplying farm" });
+    expect(within(farm).getByText("Farm A")).toBeVisible();
+    expect(within(farm).getByText("29/10/2026 – 01/11/2026")).toBeVisible();
+    expect(farm).not.toHaveTextContent(/quantity|allocated|restock/iu);
+    expect(within(secondItem).getByText("Kale")).toBeVisible();
+    expect(within(secondItem).queryByRole("group", { name: "Supplying farm" })).toBeNull();
+    expect(within(panel).queryByRole("combobox")).toBeNull();
   });
 
   it("keeps same-name farms distinct and requests a farm change for the correct product", () => {
@@ -144,6 +150,10 @@ describe("Store order products and sources", () => {
     );
     const firstSelect = screen.getByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
     const secondSelect = screen.getByRole("combobox", { name: /Trang trại cung cấp Cà chua/ });
+    const [firstItem, secondItem] = screen.getAllByRole("listitem");
+    expect(within(firstItem).getAllByRole("combobox")).toEqual([firstSelect]);
+    expect(within(secondItem).getAllByRole("combobox")).toEqual([secondSelect]);
+    expect(firstSelect).toHaveAccessibleName("Trang trại cung cấp Rau muống RAU-01");
     expect(firstSelect).toHaveValue("Cùng tên · Còn 4");
     expect(secondSelect).toHaveValue("Cùng tên · Còn 7");
     fireEvent.click(firstSelect);
@@ -151,6 +161,40 @@ describe("Store order products and sources", () => {
     expect(change).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("option", { name: /Cùng tên.*Còn 7/ }));
     expect(change).toHaveBeenCalledExactlyOnceWith(first.id, farmB.farm_id);
+  });
+
+  it("shows an inline validation error and preserves the complete selected Farm name", () => {
+    const [line] = storeOrderFixture().lines;
+    const farm = {
+      farm_id: "farm-a",
+      farm_name: "Trang trại ".repeat(25).trim(),
+      eligible: false,
+      available_quantity: 2,
+    };
+    const order = storeOrderFixture({
+      source_inventory: {
+        refresh_required_before_approve: true,
+        candidates: [],
+        product_reservations: [],
+        lines: [sourceLineFixture(line, [farm])],
+      },
+    });
+    render(
+      <AdminI18nProvider initialLocale="vi">
+        <StoreOrderProducts
+          order={order}
+          farms={{
+            selections: inspectStoreFarmDraft(order, new Map([[line.id, farm.farm_id]])).selections,
+            onChange: vi.fn(),
+            disabled: false,
+          }}
+        />
+      </AdminI18nProvider>,
+    );
+    const select = screen.getByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
+    expect(select).toHaveValue(`${farm.farm_name} · Còn 2`);
+    expect(select).toHaveAttribute("title", `${farm.farm_name} · Còn 2`);
+    expect(select).toHaveAccessibleDescription(/không còn đáp ứng đủ số lượng/i);
   });
 
   it("uses native keyboard selection and skips a disabled farm", () => {
@@ -199,16 +243,24 @@ describe("Store order products and sources", () => {
     expect(onChange).toHaveBeenCalledExactlyOnceWith(line.id, available.farm_id);
   });
 
-  it.each(["pending_delivery", "cancelled"] as const)(
-    "keeps historical farms and only shows the restock ledger for %s when applicable",
+  it.each([
+    "pending_review",
+    "payment_pending",
+    "payment_review",
+    "pending_delivery",
+    "delivered",
+    "cancelled",
+  ] as const)(
+    "groups historical batches by Farm ID and omits restock presentation for %s",
     (status) => {
       const order = storeOrderFixture({ status });
       const [line] = order.lines;
       const allocations = ["batch-a", "batch-b", "batch-c"].map((batch, index) => ({
-        ...candidate(line, batch, index < 2 ? "Cross-Farm A" : "Cross-Farm B"),
+        ...candidate(line, batch, "Same Farm name"),
         id: batch,
         farm_id: index < 2 ? "farm-a" : "farm-b",
-        quantity: 1,
+        end_date: `2026-11-0${index + 1}`,
+        quantity: index + 1,
         restocked_quantity: index < 2 ? 0 : 1,
         restock_remaining_quantity: index < 2 ? 1 : 0,
         restock_eligible: index === 0,
@@ -219,16 +271,17 @@ describe("Store order products and sources", () => {
           <StoreOrderProducts order={{ ...order, allocations }} />
         </AdminI18nProvider>,
       );
-      expect(screen.getByText("Cross-Farm B")).toBeVisible();
-      expect(screen.getAllByText("Allocated 1")).toHaveLength(3);
-      expect(screen.queryByRole("combobox")).toBeNull();
-      if (status === "cancelled") {
-        expect(screen.getByText("1 can still be restocked")).toBeVisible();
-        expect(screen.getByText("Fully restocked")).toBeVisible();
-        expect(screen.getByText("This source has expired and cannot be restocked.")).toBeVisible();
-      } else {
-        expect(screen.queryByText(/restock/i)).toBeNull();
+      const farmSection = within(screen.getByRole("listitem")).getByRole("group", {
+        name: "Supplying farm",
+      });
+      const section = within(farmSection);
+      expect(section.getAllByText("Same Farm name")).toHaveLength(2);
+      for (let index = 1; index <= 3; index++) {
+        expect(section.getByText(`29/10/2026 – 0${index}/11/2026`)).toBeVisible();
+        expect(section.getByText(`Qty: ${index}`)).toBeVisible();
       }
+      expect(screen.queryByRole("combobox")).toBeNull();
+      expect(farmSection).not.toHaveTextContent(/restock/iu);
     },
   );
 });

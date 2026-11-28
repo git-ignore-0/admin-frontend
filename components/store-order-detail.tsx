@@ -830,7 +830,6 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
         <Grid.Col className={styles.products} miw={0}>
           <StoreOrderProducts
             order={order}
-            hideUnallocatedSources={approvalInFlight}
             farms={
               farmDraft
                 ? {

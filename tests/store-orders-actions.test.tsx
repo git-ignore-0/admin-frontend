@@ -556,9 +556,13 @@ function cancelledSources(): StoreOrder {
   };
 }
 
-it("does not offer restock when every remaining source is ineligible and explains why", async () => {
-  view(cancelledSources());
-  expect(await screen.findByText("Nguồn đã hết hạn, không thể hoàn tồn.")).toBeVisible();
+it("does not offer restock when every remaining source is ineligible", async () => {
+  const item = cancelledSources();
+  view(item);
+  await screen.findByRole("heading", { level: 1, name: item.reference_code });
+  const products = screen.getByRole("region", { name: "Sản phẩm" });
+  expect(within(products).getByText("Vườn A")).toBeVisible();
+  expect(within(products).queryByText("Nguồn đã hết hạn, không thể hoàn tồn.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Hoàn tồn kho" })).not.toBeInTheDocument();
 });
 
@@ -578,13 +582,39 @@ it.each([
   ["vi", "offer_inactive", "Nguồn cung đã được gỡ khỏi trang trại.", "Hoàn tồn kho"],
   ["en", "offer_inactive", "This source was removed from the farm.", "Restock"],
 ] as const)(
-  "shows the Backend restock reason in %s for %s without offering the action",
+  "shows the Backend restock reason in %s for %s only in the restock dialog",
   async (locale, reason, message, action) => {
     const item = cancelledSources();
-    item.allocations![0].restock_unavailable_reason = reason;
-    view(item, locale);
-    expect(await screen.findByText(message)).toBeVisible();
+    const allocation = item.allocations![0];
+    allocation.restock_unavailable_reason = reason;
+    const productsName = locale === "vi" ? "Sản phẩm" : "Products";
+    const readonly = view(item, locale);
+    await screen.findByRole("heading", { level: 1, name: item.reference_code });
+    const products = screen.getByRole("region", { name: productsName });
+    expect(within(products).getByText(allocation.farm_name)).toBeVisible();
+    expect(within(products).queryByText(message)).toBeNull();
     expect(screen.queryByRole("button", { name: action })).not.toBeInTheDocument();
+    readonly.unmount();
+
+    view(
+      {
+        ...item,
+        allocations: [
+          allocation,
+          {
+            ...allocation,
+            id: allocationB,
+            batch_id: batchB,
+            farm_name: "Vườn B",
+            restock_eligible: true,
+            restock_unavailable_reason: null,
+          },
+        ],
+      },
+      locale,
+    );
+    const dialog = await open(action);
+    expect(within(dialog).getByText(message)).toBeVisible();
   },
 );
 

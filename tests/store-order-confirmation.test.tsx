@@ -209,6 +209,8 @@ it.each(["remount-with-new-suggestion", "refresh-with-farm-removed"] as const)(
     const locale = remount ? "vi" : "en";
     const approve = remount ? "Duyệt đơn" : "Approve order";
     const retry = remount ? "Thử lại yêu cầu trước" : "Retry previous request";
+    const productPanelName = remount ? "Sản phẩm" : "Products";
+    const supplyingFarm = remount ? "Trang trại cung cấp" : "Supplying farm";
     const unknown = remount
       ? /Chưa xác định được kết quả duyệt đơn/
       : /The approval result is unconfirmed/;
@@ -293,6 +295,11 @@ it.each(["remount-with-new-suggestion", "refresh-with-farm-removed"] as const)(
     }
 
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: productPanelName })).queryByRole("group", {
+        name: supplyingFarm,
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(unknown);
     expect(timeoutMessage).toMatch(unknown);
     expect(screen.queryByText(/Farm B|select another farm|chọn lại/i)).not.toBeInTheDocument();
@@ -319,7 +326,11 @@ it.each(["remount-with-new-suggestion", "refresh-with-farm-removed"] as const)(
     expect(
       screen.getByText(remount ? "Đã giao" : "Delivered", { selector: ".mantine-Badge-label" }),
     ).toBeVisible();
-    expect(screen.getByText("Farm A")).toBeVisible();
+    const products = within(screen.getByRole("region", { name: productPanelName }));
+    const productItem = within(products.getByRole("listitem"));
+    expect(
+      within(productItem.getByRole("group", { name: supplyingFarm })).getByText("Farm A"),
+    ).toBeVisible();
     expect(screen.queryByRole("button", { name: retry })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(sent).toHaveLength(2);

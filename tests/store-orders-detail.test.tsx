@@ -123,7 +123,10 @@ describe("Store order detail", () => {
 
     expect(await screen.findByRole("heading", { name: "NFV-STORE-001" })).toBeVisible();
     expect(screen.getByText("Nguyễn An")).toBeVisible();
-    expect(screen.getByText("Mã sản phẩm: RAU-01")).toBeVisible();
+    const productPanel = screen.getByRole("region", { name: "Sản phẩm" });
+    expect(within(productPanel).getByText("RAU-01").parentElement).toHaveTextContent(
+      "RAU-01 · 0.5 kg",
+    );
     expect(screen.queryByText("Quyền lợi CSA: 0 sản phẩm · 0 lượt")).not.toBeInTheDocument();
     expect(screen.getAllByText("Rau muống")).toHaveLength(1);
     expect(screen.getByText("Tiền hàng")).toBeVisible();
@@ -242,7 +245,7 @@ describe("Store order detail", () => {
     expect(screen.getByText("Còn 5 phút")).toBeVisible();
   });
 
-  it("shows allocated Farm batches and their restock ledger from the order snapshot", async () => {
+  it("keeps allocated Farm batches in Products and restock progress in the action dialog", async () => {
     const item = detailOrder();
     vi.mocked(api).mockResolvedValue({
       ...item,
@@ -271,12 +274,17 @@ describe("Store order detail", () => {
     view();
 
     expect(await screen.findByRole("heading", { name: "NFV-STORE-001", level: 1 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Sản phẩm" })).toBeVisible();
-    expect(screen.getByText("Vườn A")).toBeVisible();
-    expect(screen.getByText("Đã hoàn tồn kho 1")).toBeVisible();
-    expect(screen.getByText("Có thể hoàn thêm 2")).toBeVisible();
+    const products = screen.getByRole("region", { name: "Sản phẩm" });
+    const source = within(products).getByRole("group", { name: "Trang trại cung cấp" });
+    expect(within(source).getByText("Vườn A")).toBeVisible();
+    expect(within(source).getByText("29/10/2026 – 01/11/2026")).toBeVisible();
+    expect(source).not.toHaveTextContent(/hoàn tồn|hoàn thêm|SL:|Đã phân bổ/iu);
     expect(screen.getByText("Còn hàng có thể hoàn tồn kho")).toBeVisible();
     expect(screen.queryByText("Cần hoàn tiền")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hoàn tồn kho" }));
+    const dialog = await screen.findByRole("dialog", { name: "Hoàn tồn kho" });
+    expect(within(dialog).getByText(/Có thể hoàn thêm 2/)).toBeVisible();
+    expect(within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/ })).toBeEnabled();
   });
 
   it("translates known cancellation codes and preserves admin-entered reasons", async () => {
@@ -530,7 +538,9 @@ it.each([
     expect(screen.getAllByText(item.reference_code)).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: detail })).toBeNull();
     expect(screen.queryByRole("link", { name: /Danh sách đơn hàng|Store orders/u })).toBeNull();
-    expect(screen.getAllByRole("table", { name: products })).toHaveLength(1);
+    const productPanel = screen.getByRole("region", { name: products });
+    expect(within(productPanel).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(productPanel).queryByRole("table")).toBeNull();
   },
 );
 
@@ -556,13 +566,15 @@ it("keeps the farm draft and DOM input while the measured content crosses 880px"
     vi.mocked(api).mockResolvedValue(detailOrder());
     view();
     const input = await screen.findByRole("combobox", { name: /Trang trại cung cấp Rau muống/ });
-    const table = screen.getByRole("table");
-    const grid = table.closest(".mantine-Grid-inner")!;
+    const products = screen.getByRole("region", { name: "Sản phẩm" });
+    const grid = products.closest(".mantine-Grid-inner")!;
     const content = screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
     const setWidth = listeners.get(content)!;
     const sidebar = screen.getByRole("complementary");
     const timeline = screen.getByRole("region", { name: "Lịch sử xử lý" });
-    expect(table.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      products.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       sidebar.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

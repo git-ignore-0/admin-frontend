@@ -118,7 +118,9 @@ it.each([false, true])(
       </AdminI18nProvider>,
     );
     await screen.findByRole("heading", { name: item.reference_code });
+    const products = within(screen.getByRole("region", { name: "Sản phẩm" }));
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(products.queryByRole("group", { name: "Trang trại cung cấp" })).not.toBeInTheDocument();
     expect(screen.queryByText(suggestedFarm.farm_name)).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Thử lại yêu cầu trước" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Thử lại yêu cầu trước" }));
@@ -132,12 +134,16 @@ it.each([false, true])(
       expect(api).toHaveBeenCalledTimes(2);
       fireEvent.click(reload);
       const selection = await screen.findByRole("combobox", { name: /Trang trại cung cấp/ });
+      expect(within(products.getByRole("listitem")).getByRole("combobox")).toBe(selection);
       expect(selection).toBeEnabled();
       expect(selection).toHaveDisplayValue(/Current suggestion/);
       expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
     } else {
       expect(await screen.findByText("Historic Farm A")).toBeVisible();
-      expect(screen.getByText("Historic Farm B")).toBeVisible();
+      const item = within(products.getByRole("listitem"));
+      const source = within(item.getByRole("group", { name: "Trang trại cung cấp" }));
+      expect(source.getByText("Historic Farm A")).toBeVisible();
+      expect(source.getByText("Historic Farm B")).toBeVisible();
     }
     expect(api).toHaveBeenCalledTimes(conflict ? 3 : 2);
     expect(vi.mocked(api).mock.calls[1]?.[0]).toBe(`admin/store-orders/${item.id}/approve`);

@@ -1,82 +1,62 @@
 "use client";
 
-import { CheckIcon, Group, Stack, Table, Text } from "@mantine/core";
-import { Fragment, useId } from "react";
+import { Box, CheckIcon, Divider, Group, Skeleton, Stack, Text, Title } from "@mantine/core";
+import { useId } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { FormSelect } from "@/components/nfv-controls";
-import { TableSkeletonRows } from "@/components/table-skeleton-rows";
 import { formatAdminDate } from "@/lib/admin-date";
 import { formatStoreMoney, type inspectStoreFarmDraft } from "@/lib/store-orders";
-import { storeOrdersCopy, storeRestockUnavailableReason } from "@/lib/store-orders-copy";
-import type { StoreOrder } from "@/lib/types";
+import { storeOrdersCopy } from "@/lib/store-orders-copy";
+import type { StoreOrder, StoreOrderAllocation } from "@/lib/types";
 import styles from "./store-order-detail.module.css";
+
+type FarmSelections = ReturnType<typeof inspectStoreFarmDraft>["selections"];
+type FarmSelection = NonNullable<ReturnType<FarmSelections["get"]>>;
 
 type StoreOrderProductsProps = {
   order?: StoreOrder;
-  hideUnallocatedSources?: boolean;
   farms?: {
-    selections: ReturnType<typeof inspectStoreFarmDraft>["selections"];
+    selections: FarmSelections;
     onChange: (lineId: string, farmId: string) => void;
     disabled: boolean;
   };
 };
 
-const numericAlignment = { fontVariantNumeric: "tabular-nums" } as const;
-const longText = { overflowWrap: "anywhere" } as const;
-
-function SourceSnapshot({ order, lineId }: { order: StoreOrder; lineId: string }) {
-  const { locale } = useAdminI18n();
-  const c = storeOrdersCopy(locale);
-  const rows = (order.allocations ?? []).filter((row) => row.line_id === lineId);
-  if (!rows.length) {
-    return (
-      <Text size="sm" c="dimmed">
-        {c.noAllocatedSources}
-      </Text>
-    );
-  }
-
-  const byFarm = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const group = byFarm.get(row.farm_id);
+function SourceSnapshot({
+  allocations,
+  quantityLabel,
+}: {
+  allocations: StoreOrderAllocation[];
+  quantityLabel: string;
+}) {
+  const byFarm = new Map<string, StoreOrderAllocation[]>();
+  for (const row of allocations) {
+    const farmId = row.farm_id.toLowerCase();
+    const group = byFarm.get(farmId);
     if (group) group.push(row);
-    else byFarm.set(row.farm_id, [row]);
+    else byFarm.set(farmId, [row]);
   }
+
   return (
-    <Stack gap="sm">
-      {Array.from(byFarm, ([farmId, allocations]) => (
-        <Stack key={farmId} gap="xs">
-          <Text fw={600}>{allocations[0].farm_name}</Text>
-          {allocations.map((row) => (
-            <Group key={row.id} justify="space-between" align="flex-start" gap="sm">
-              <Text size="sm" c="dimmed">
+    <Stack gap="xs">
+      {Array.from(byFarm, ([farmId, rows]) => (
+        <Stack key={farmId} gap={4}>
+          <Text size="md" fw={500}>
+            {rows[0].farm_name}
+          </Text>
+          {rows.map((row) => (
+            <Group key={row.id} justify="space-between" gap="xs" align="baseline">
+              <Text size="sm" c="dimmed" miw={0}>
                 {formatAdminDate(row.start_date)} – {formatAdminDate(row.end_date)}
               </Text>
-              <Stack gap={4} miw={0}>
-                <Text fw={600}>
-                  {c.allocatedQuantity} {row.quantity}
+              {allocations.length > 1 && (
+                <Text size="sm" c="dimmed" className={styles.numeric}>
+                  {quantityLabel.replace("{count}", String(row.quantity))}
                 </Text>
-                {order.status === "cancelled" && (
-                  <>
-                    <Text size="sm" c="dimmed">
-                      {c.restockedQuantity.replace("{count}", String(row.restocked_quantity))}
-                    </Text>
-                    <Text size="sm" c="dimmed">
-                      {row.restock_remaining_quantity === 0
-                        ? c.fullyRestocked
-                        : row.restock_eligible
-                          ? c.restockableQuantity.replace(
-                              "{count}",
-                              String(row.restock_remaining_quantity),
-                            )
-                          : storeRestockUnavailableReason(row.restock_unavailable_reason, locale)}
-                    </Text>
-                  </>
-                )}
-              </Stack>
+              )}
             </Group>
           ))}
         </Stack>
@@ -85,190 +65,235 @@ function SourceSnapshot({ order, lineId }: { order: StoreOrder; lineId: string }
   );
 }
 
-export function StoreOrderProducts({
-  order,
-  farms,
-  hideUnallocatedSources,
-}: StoreOrderProductsProps) {
+function SupplyingFarmSelect({
+  selection,
+  labelId,
+  labelledBy,
+  disabled,
+  onChange,
+}: {
+  selection: FarmSelection;
+  labelId: string;
+  labelledBy: string;
+  disabled: boolean;
+  onChange: (farmId: string) => void;
+}) {
+  const { locale } = useAdminI18n();
+  const c = storeOrdersCopy(locale);
+  const options = new Map(
+    selection.line.farms.map((farm) => {
+      const value = farm.farm_id.toLowerCase();
+      const stock = c.farmStock.replace("{count}", String(farm.available_quantity));
+      return [
+        value,
+        {
+          name: farm.farm_name,
+          stock,
+          data: { value, label: `${farm.farm_name} · ${stock}`, disabled: !farm.eligible },
+        },
+      ];
+    }),
+  );
+  const selected = selection.value ? options.get(selection.value) : undefined;
+
+  return (
+    <FormSelect
+      w="100%"
+      miw={0}
+      label={
+        <Text component="span" id={labelId} size="sm" c="dimmed">
+          {c.supplyingFarm}
+        </Text>
+      }
+      aria-labelledby={labelledBy}
+      placeholder={
+        selection.error === "farmUnavailable" ? c.farmUnavailableOption : c.chooseFarmPlaceholder
+      }
+      value={selected?.data.value ?? null}
+      title={selected?.data.label}
+      error={selection.error ? c[selection.error] : undefined}
+      disabled={disabled}
+      comboboxProps={{ withinPortal: true }}
+      data={Array.from(options.values(), (option) => option.data)}
+      onChange={(value) => {
+        if (value && options.get(value)?.data.disabled === false) onChange(value);
+      }}
+      renderOption={({ option, checked }) => {
+        const farm = options.get(option.value);
+        if (!farm) return option.label;
+        return (
+          <Group gap="xs" w="100%" className={styles.wrapText}>
+            {checked && <CheckIcon size="0.75em" aria-hidden />}
+            <Text size="sm" flex={1} miw={0}>
+              {farm.name}
+            </Text>
+            <Text size="sm" miw={0}>
+              {farm.stock}
+            </Text>
+          </Group>
+        );
+      }}
+    />
+  );
+}
+
+function ProductsSkeleton() {
+  return (
+    <Stack component="ul" aria-hidden gap={0} m={0} p={0} className={styles.productList}>
+      {[0, 1, 2].map((index) => (
+        <Box component="li" key={index}>
+          {index > 0 && <Divider my="xs" />}
+          <Stack gap="sm">
+            <Group justify="space-between" align="flex-start">
+              <Stack gap={4} w="45%">
+                <Skeleton height="var(--mantine-font-size-md)" width="80%" />
+                <Skeleton height="var(--mantine-font-size-sm)" width="60%" />
+              </Stack>
+              <Stack gap={4} w="25%" align="flex-end">
+                <Skeleton height="var(--mantine-font-size-md)" width="80%" />
+                <Skeleton height="var(--mantine-font-size-sm)" />
+              </Stack>
+            </Group>
+            <Stack className={styles.source} ms="xs" ps="sm" gap={4}>
+              <Skeleton height="var(--mantine-font-size-sm)" width="35%" />
+              <Skeleton height="var(--mantine-spacing-xl)" />
+            </Stack>
+          </Stack>
+        </Box>
+      ))}
+    </Stack>
+  );
+}
+
+export function StoreOrderProducts({ order, farms }: StoreOrderProductsProps) {
   const { locale, t } = useAdminI18n();
   const c = storeOrdersCopy(locale);
   const id = useId();
-  const table = (
-    <Table.ScrollContainer
-      type="native"
-      minWidth={520}
-      className={styles.productsScroll}
-      role="region"
-      aria-label={c.productsTitle}
-      aria-hidden={!order || undefined}
-      tabIndex={order ? 0 : undefined}
-    >
-      <Table aria-label={c.productsTitle} styles={{ td: { verticalAlign: "top" } }} withRowBorders>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th scope="col">{c.productsTitle}</Table.Th>
-            <Table.Th scope="col" ta="right">
-              {c.quantity}
-            </Table.Th>
-            <Table.Th scope="col" ta="right">
-              {c.unitPrice}
-            </Table.Th>
-            <Table.Th scope="col" ta="right">
-              {c.lineSubtotal}
-            </Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {order ? (
-            order.lines.map((line) => {
+  const allocationsByLine = new Map<string, StoreOrderAllocation[]>();
+  for (const row of order?.allocations ?? []) {
+    const lineId = row.line_id.toLowerCase();
+    const group = allocationsByLine.get(lineId);
+    if (group) group.push(row);
+    else allocationsByLine.set(lineId, [row]);
+  }
+
+  return (
+    <DataListPaper component="section" aria-labelledby={id} p="md">
+      <Stack gap="md">
+        <Title id={id} order={2} size="md" fw={600}>
+          {c.productsTitle}
+        </Title>
+        {order ? (
+          <Stack component="ul" role="list" gap={0} m={0} p={0} className={styles.productList}>
+            {order.lines.map((line, index) => {
               const lineId = line.id.toLowerCase();
               const productLabelId = `${id}-${lineId}`;
               const skuLabelId = `${productLabelId}-sku`;
               const farmLabelId = `${productLabelId}-farm`;
               const selection = farms?.selections.get(lineId);
-              const showSourceRow =
-                !hideUnallocatedSources ||
-                order.allocations?.some((row) => row.line_id === line.id);
-              const options = new Map(
-                selection?.line.farms.map((farm) => [farm.farm_id.toLowerCase(), farm]),
-              );
+              const allocations = allocationsByLine.get(lineId) ?? [];
               const hasQuota = line.quota_quantity > 0 || line.quota_units > 0;
+
               return (
-                <Fragment key={line.id}>
-                  <Table.Tr>
-                    <Table.Td style={longText}>
-                      <Stack gap={4}>
-                        <Text id={productLabelId} fw={600}>
-                          {line.name}
-                        </Text>
-                        <Text id={skuLabelId} size="sm" c="dimmed">
-                          {c.productSku}: {line.sku}
-                        </Text>
-                        <Text size="sm" c="dimmed">
-                          {c.sellingUnit}: {line.unit_size} {line.unit_label}
-                        </Text>
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td ta="right" style={numericAlignment}>
-                      <Stack gap={4}>
-                        <Text>{line.quantity}</Text>
-                        {hasQuota && (
+                <Box component="li" key={line.id} aria-labelledby={productLabelId} miw={0}>
+                  {index > 0 && <Divider my="xs" aria-hidden />}
+                  <Stack gap="sm">
+                    <Stack gap={4}>
+                      <Group justify="space-between" align="flex-start" gap="xs">
+                        <Stack className={styles.productIdentity} gap={4} miw={0}>
+                          <Text id={productLabelId} size="md" fw={600}>
+                            {line.name}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            <span id={skuLabelId}>{line.sku}</span> · {line.unit_size}{" "}
+                            {line.unit_label}
+                          </Text>
+                        </Stack>
+                        <Stack
+                          gap={4}
+                          miw={0}
+                          maw="100%"
+                          ms="auto"
+                          ta="end"
+                          className={styles.numeric}
+                        >
+                          <Text size="md" fw={600}>
+                            {formatStoreMoney(line.cash_subtotal_vnd, locale)}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {line.quantity} × {formatStoreMoney(line.unit_price_vnd, locale)}
+                          </Text>
+                          {hasQuota && (
+                            <Text size="sm" c="dimmed">
+                              {c.cashSubtotal}
+                            </Text>
+                          )}
+                        </Stack>
+                      </Group>
+                      {hasQuota && (
+                        <Group gap="xs">
+                          <Text size="sm" c="dimmed">
+                            {c.quotaUsage
+                              .replace("{quantity}", String(line.quota_quantity))
+                              .replace("{units}", String(line.quota_units))}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {c.cashUsage.replace("{quantity}", String(line.cash_quantity))}
+                          </Text>
+                        </Group>
+                      )}
+                    </Stack>
+                    {((farms && selection) || allocations.length > 0) && (
+                      <Stack
+                        role="group"
+                        aria-labelledby={farmLabelId}
+                        className={styles.source}
+                        ms="xs"
+                        ps="sm"
+                        gap={4}
+                        miw={0}
+                      >
+                        {farms && selection ? (
+                          <SupplyingFarmSelect
+                            selection={selection}
+                            labelId={farmLabelId}
+                            labelledBy={`${farmLabelId} ${productLabelId} ${skuLabelId}`}
+                            disabled={farms.disabled}
+                            onChange={(farmId) => farms.onChange(lineId, farmId)}
+                          />
+                        ) : (
                           <>
-                            <Text size="sm" c="dimmed">
-                              {c.quotaUsage
-                                .replace("{quantity}", String(line.quota_quantity))
-                                .replace("{units}", String(line.quota_units))}
+                            <Text id={farmLabelId} size="sm" c="dimmed">
+                              {c.supplyingFarm}
                             </Text>
-                            <Text size="sm" c="dimmed">
-                              {c.cashUsage.replace("{quantity}", String(line.cash_quantity))}
-                            </Text>
+                            <SourceSnapshot
+                              allocations={allocations}
+                              quantityLabel={c.batchQuantity}
+                            />
                           </>
                         )}
                       </Stack>
-                    </Table.Td>
-                    <Table.Td ta="right" style={numericAlignment}>
-                      {formatStoreMoney(line.unit_price_vnd, locale)}
-                    </Table.Td>
-                    <Table.Td ta="right" style={numericAlignment}>
-                      <Stack gap={4}>
-                        <Text fw={600}>{formatStoreMoney(line.cash_subtotal_vnd, locale)}</Text>
-                        {hasQuota && (
-                          <Text size="sm" c="dimmed">
-                            {c.cashSubtotal}
-                          </Text>
-                        )}
-                      </Stack>
-                    </Table.Td>
-                  </Table.Tr>
-                  {showSourceRow && (
-                    <Table.Tr>
-                      <Table.Td colSpan={4} style={longText}>
-                        {farms && selection ? (
-                          <FormSelect
-                            className={styles.farmControl}
-                            label={<span id={farmLabelId}>{c.supplyingFarm}</span>}
-                            aria-labelledby={`${farmLabelId} ${productLabelId} ${skuLabelId}`}
-                            placeholder={
-                              selection.error === "farmUnavailable"
-                                ? c.farmUnavailableOption
-                                : c.chooseFarmPlaceholder
-                            }
-                            value={
-                              selection.value && options.has(selection.value)
-                                ? selection.value
-                                : null
-                            }
-                            error={selection.error ? c[selection.error] : undefined}
-                            disabled={farms.disabled}
-                            comboboxProps={{ withinPortal: true }}
-                            data={Array.from(options, ([value, option]) => ({
-                              value,
-                              label: `${option.farm_name} · ${c.farmStock.replace("{count}", String(option.available_quantity))}`,
-                              disabled: !option.eligible,
-                            }))}
-                            onChange={(value) => {
-                              if (value && options.get(value)?.eligible)
-                                farms.onChange(lineId, value);
-                            }}
-                            renderOption={({ option, checked }) => {
-                              const farm = options.get(option.value);
-                              if (!farm) return option.label;
-                              return (
-                                <Group wrap="nowrap" gap="xs" w="100%">
-                                  {checked && <CheckIcon size="0.75em" aria-hidden />}
-                                  <Text size="sm" flex={1} style={longText}>
-                                    {farm.farm_name}
-                                  </Text>
-                                  <Text size="sm">
-                                    {c.farmStock.replace(
-                                      "{count}",
-                                      String(farm.available_quantity),
-                                    )}
-                                  </Text>
-                                </Group>
-                              );
-                            }}
-                          />
-                        ) : (
-                          <SourceSnapshot order={order} lineId={line.id} />
-                        )}
-                      </Table.Td>
-                    </Table.Tr>
-                  )}
-                </Fragment>
+                    )}
+                  </Stack>
+                </Box>
               );
-            })
-          ) : (
-            <TableSkeletonRows columns={4} alignments={[undefined, "right", "right", "right"]} />
-          )}
-        </Table.Tbody>
-      </Table>
-    </Table.ScrollContainer>
-  );
-
-  return (
-    <DataListPaper>
-      <Stack gap={4} p="md">
-        <Text component="h2" fw={600} c="var(--heading)">
-          {c.productsTitle}
-        </Text>
+            })}
+          </Stack>
+        ) : (
+          <ListState
+            embedded
+            loading
+            loadingLabel={c.detailLoading}
+            loadingPlaceholder={<ProductsSkeleton />}
+            hasData={false}
+            isEmpty={false}
+            empty=""
+            error=""
+            onRetry={() => {}}
+            retryLabel={t.common.retry}
+          />
+        )}
       </Stack>
-      {order ? (
-        table
-      ) : (
-        <ListState
-          embedded
-          loading
-          loadingLabel={c.detailLoading}
-          loadingPlaceholder={table}
-          hasData={false}
-          isEmpty={false}
-          empty=""
-          error=""
-          onRetry={() => {}}
-          retryLabel={t.common.retry}
-        />
-      )}
     </DataListPaper>
   );
 }
