@@ -67,13 +67,11 @@ function SourceSnapshot({
 
 function SupplyingFarmSelect({
   selection,
-  labelId,
   labelledBy,
   disabled,
   onChange,
 }: {
   selection: FarmSelection;
-  labelId: string;
   labelledBy: string;
   disabled: boolean;
   onChange: (farmId: string) => void;
@@ -100,11 +98,6 @@ function SupplyingFarmSelect({
     <FormSelect
       w="100%"
       miw={0}
-      label={
-        <Text component="span" id={labelId} size="sm" c="dimmed">
-          {c.supplyingFarm}
-        </Text>
-      }
       aria-labelledby={labelledBy}
       placeholder={
         selection.error === "farmUnavailable" ? c.farmUnavailableOption : c.chooseFarmPlaceholder
@@ -154,10 +147,9 @@ function ProductsSkeleton() {
                 <Skeleton height="var(--mantine-font-size-sm)" />
               </Stack>
             </Group>
-            <Stack className={styles.source} ms="xs" ps="sm" gap={4}>
-              <Skeleton height="var(--mantine-font-size-sm)" width="35%" />
+            <Box className={styles.source} ms="xs" ps="sm">
               <Skeleton height="var(--mantine-spacing-xl)" />
-            </Stack>
+            </Box>
           </Stack>
         </Box>
       ))}
@@ -244,35 +236,31 @@ export function StoreOrderProducts({ order, farms }: StoreOrderProductsProps) {
                       )}
                     </Stack>
                     {((farms && selection) || allocations.length > 0) && (
-                      <Stack
+                      <Box
                         role="group"
                         aria-labelledby={farmLabelId}
                         className={styles.source}
                         ms="xs"
                         ps="sm"
-                        gap={4}
                         miw={0}
                       >
+                        <span id={farmLabelId} hidden>
+                          {c.supplyingFarm}
+                        </span>
                         {farms && selection ? (
                           <SupplyingFarmSelect
                             selection={selection}
-                            labelId={farmLabelId}
                             labelledBy={`${farmLabelId} ${productLabelId} ${skuLabelId}`}
                             disabled={farms.disabled}
                             onChange={(farmId) => farms.onChange(lineId, farmId)}
                           />
                         ) : (
-                          <>
-                            <Text id={farmLabelId} size="sm" c="dimmed">
-                              {c.supplyingFarm}
-                            </Text>
-                            <SourceSnapshot
-                              allocations={allocations}
-                              quantityLabel={c.batchQuantity}
-                            />
-                          </>
+                          <SourceSnapshot
+                            allocations={allocations}
+                            quantityLabel={c.batchQuantity}
+                          />
                         )}
-                      </Stack>
+                      </Box>
                     )}
                   </Stack>
                 </Box>

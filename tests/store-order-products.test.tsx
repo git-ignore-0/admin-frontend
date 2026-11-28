@@ -103,6 +103,7 @@ describe("Store order products and sources", () => {
     expect(product.getByText("CSA benefits: 2 items · 1.5 units")).toBeVisible();
     expect(product.getByText("Cash: 1 items")).toBeVisible();
     const farm = product.getByRole("group", { name: "Supplying farm" });
+    expect(within(farm).getByText("Supplying farm")).not.toBeVisible();
     expect(within(farm).getByText("Farm A")).toBeVisible();
     expect(within(farm).getByText("29/10/2026 – 01/11/2026")).toBeVisible();
     expect(farm).not.toHaveTextContent(/quantity|allocated|restock/iu);
@@ -154,6 +155,7 @@ describe("Store order products and sources", () => {
     expect(within(firstItem).getAllByRole("combobox")).toEqual([firstSelect]);
     expect(within(secondItem).getAllByRole("combobox")).toEqual([secondSelect]);
     expect(firstSelect).toHaveAccessibleName("Trang trại cung cấp Rau muống RAU-01");
+    expect(within(firstItem).getByText("Trang trại cung cấp")).not.toBeVisible();
     expect(firstSelect).toHaveValue("Cùng tên · Còn 4");
     expect(secondSelect).toHaveValue("Cùng tên · Còn 7");
     fireEvent.click(firstSelect);
