@@ -9,7 +9,11 @@ import { adminDictionaries, type AdminLocale } from "@/lib/admin-i18n";
 import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { api } from "@/lib/client-api";
 import layout from "@/components/store-order-detail.module.css";
-import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
+import {
+  historicalStoreOrderFixture,
+  sourceLineFixture,
+  storeOrderFixture,
+} from "@/tests/store-orders-fixture";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 vi.mock("@/lib/use-administrative-unit-names", () => ({
@@ -108,6 +112,43 @@ function view(locale: AdminLocale = "vi") {
 }
 
 describe("Store order detail", () => {
+  it("shows a distinct historical date and record timestamp with no operational events or actions", async () => {
+    const order = historicalStoreOrderFixture();
+    vi.mocked(api).mockResolvedValue(order);
+    view();
+
+    expect(await screen.findByRole("heading", { name: order.reference_code })).toBeVisible();
+    expect(screen.getByText("Đã giao")).toBeVisible();
+    expect(screen.getByText("Đơn ghi lịch sử")).toBeVisible();
+    expect(screen.getByText("Ngày giao thực tế").nextElementSibling).toHaveTextContent(
+      "29/10/2026",
+    );
+    const history = screen.getByRole("region", { name: "Lịch sử xử lý" });
+    expect(within(history).getByText("Ghi nhận lúc").nextElementSibling).toHaveTextContent(
+      "31/10/2026 16:55",
+    );
+    expect(history.querySelectorAll("time")).toHaveLength(1);
+    expect(screen.queryByRole("group", { name: "Trang trại cung cấp" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("preserves Farm selection and approval for new orders created by Admin", async () => {
+    vi.mocked(api).mockResolvedValue({
+      ...detailOrder(),
+      workflow_version: 2,
+      payment_status: "unconfirmed",
+      payment: null,
+      creation: { origin: "admin", actor_id: farmA },
+    });
+    view();
+
+    expect(await screen.findByRole("button", { name: "Xác nhận đủ hàng" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Hủy đơn" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: /Trang trại cung cấp/ })).toBeEnabled();
+    expect(screen.queryByText("Đơn ghi lịch sử")).not.toBeInTheDocument();
+  });
+
   it("shows an initial load failure with a clear retry path", async () => {
     vi.mocked(api).mockRejectedValueOnce(new Error("network_error"));
     view();

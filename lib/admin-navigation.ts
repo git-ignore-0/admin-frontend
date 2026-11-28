@@ -62,7 +62,7 @@ export function adminNavigation(t: AdminDictionary): readonly AdminNavigationSec
           href: "/store-orders",
           label: t.common.storeOrders,
           icon: "orders",
-          childScreens: { record: t.breadcrumb.orderDetails },
+          childScreens: { new: t.breadcrumb.createStoreOrder, record: t.breadcrumb.orderDetails },
         },
         {
           href: "/store-catalog/products",

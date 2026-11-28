@@ -906,6 +906,10 @@ export type StoreOrderCouponSnapshot = {
 };
 
 export type StoreOrder = {
+  creation?: {
+    origin: "admin" | "admin_historical";
+    actor_id: string | null;
+  };
   csa?: {
     round: import("@/lib/csa-rounds").CSARound;
     selection: import("@/lib/csa-rounds").CSASelection;

@@ -158,7 +158,13 @@ function StoreRecipientSummary({ order }: { order: StoreOrder }) {
         {provinceName || address.province_code}
       </RecordDetailField>
       {!order.csa && (
-        <RecordDetailField label={c.deliveryDate}>
+        <RecordDetailField
+          label={
+            order.creation?.origin === "admin_historical"
+              ? c.historicalDeliveryDate
+              : c.deliveryDate
+          }
+        >
           {order.delivery_date ? (
             <time dateTime={order.delivery_date}>{formatStoreDeliveryDate(order)}</time>
           ) : (

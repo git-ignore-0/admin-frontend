@@ -1,4 +1,4 @@
-import { formatAdminDate } from "@/lib/admin-date";
+import { formatAdminDate, isoDateToAdminInput } from "@/lib/admin-date";
 import { requirePaginatedList } from "@/lib/api-response";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { api, apiEnvelope } from "@/lib/client-api";
@@ -82,11 +82,21 @@ function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_PATH_SEGMENT.test(value);
 }
 
+function hasStoreOrderCreation(value: unknown) {
+  return (
+    value === undefined ||
+    (isApiObject(value) &&
+      (value.origin === "admin" || value.origin === "admin_historical") &&
+      (value.actor_id === null || isUuid(value.actor_id)))
+  );
+}
+
 function hasStoreOrderSummary(order: StoreOrder) {
   return (
     isApiObject(order) &&
     typeof order.id === "string" &&
     typeof order.reference_code === "string" &&
+    hasStoreOrderCreation(order.creation) &&
     storeOrderDisplayStatuses.includes(order.status) &&
     paymentStatuses.includes(order.payment_status) &&
     typeof order.total_vnd === "string" &&
@@ -340,6 +350,36 @@ function requireStoreOrderDetail(order: StoreOrder, orderId: string): StoreOrder
     )
   )
     throw invalidApiResponse();
+  if (
+    order.creation?.origin === "admin_historical" &&
+    (order.workflow_version !== 2 ||
+      order.status !== "delivered" ||
+      order.csa !== undefined ||
+      !isoDateToAdminInput(order.delivery_date) ||
+      !isTimestamp(order.created_at) ||
+      order.payment !== null ||
+      order.expires_at !== null ||
+      order.transfer_reported_at !== null ||
+      order.payment_received_at !== null ||
+      order.approved_at !== null ||
+      order.delivered_at !== null ||
+      order.refund_requested_at !== null ||
+      order.refund_request_closed_at !== null ||
+      order.cancelled_at !== null ||
+      order.refunded_at !== null ||
+      suggestion.length > 0 ||
+      allocations.length > 0 ||
+      inventory.refresh_required_before_approve ||
+      inventory.candidates.length > 0 ||
+      inventory.product_reservations.length > 0 ||
+      inventory.lines.some(
+        (line) =>
+          line.assigned_farm_id !== null ||
+          line.suggested_farm_id !== null ||
+          line.farms.length > 0,
+      ))
+  )
+    throw invalidApiResponse();
   return order;
 }
 
@@ -463,6 +503,7 @@ export function getStoreOrderActions(
   order: StoreOrder,
   { expired = false }: { expired?: boolean } = {},
 ): StoreOrderAction[] {
+  if (order.creation?.origin === "admin_historical") return [];
   const actions: StoreOrderAction[] = [];
   const knownWorkflow = order.workflow_version === 1 || order.workflow_version === 2;
   const hasMoney = /^\d+$/u.test(order.total_vnd) && BigInt(order.total_vnd) > 0n;

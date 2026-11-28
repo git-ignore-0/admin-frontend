@@ -64,7 +64,8 @@ admin/memberships/{membership}/contract	GET	no
 admin/memberships/{membership}/contract/pdf	GET	no
 admin/csa-purchase-requests/{request}/payments/{sequence}/confirm	POST	no
 admin/csa-purchase-requests/{request}/payments/{sequence}/reject	POST	no
-admin/store-orders	GET	no
+admin/store-orders	GET,POST	no
+admin/store-orders/quote	POST	no
 admin/store-orders/{order}	GET	no
 admin/store-orders/{order}/approve	POST	no
 admin/store-orders/{order}/cancel	POST	no

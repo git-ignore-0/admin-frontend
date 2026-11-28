@@ -5,6 +5,7 @@ export type CreationReceipt = { id: string; removed: boolean };
 
 type CreationAction =
   | "create_product"
+  | "create_store_order"
   | "create_csa_configuration"
   | "create_farm_stock_batches"
   | "link_farm_products"

@@ -198,7 +198,8 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     );
   }
   if (resource === "store-orders") {
-    if (id === undefined) return path.length === 2 && normalizedMethod === "GET";
+    if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (id === "quote") return path.length === 3 && normalizedMethod === "POST";
     if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return path.length === 3 && normalizedMethod === "GET";
     return (

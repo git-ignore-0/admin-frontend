@@ -1,7 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { api, apiEnvelope } from "@/lib/client-api";
 import { getStoreOrder, mutateStoreOrder } from "@/lib/store-orders";
-import { sourceLineFixture, storeOrderFixture } from "./store-orders-fixture";
+import {
+  historicalStoreOrderFixture,
+  sourceLineFixture,
+  storeOrderFixture,
+} from "./store-orders-fixture";
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 
@@ -50,6 +54,9 @@ it.each([
   ["suggestion", { allocation_suggestion: [{ line_id: other, batch_id: other, quantity: 1 }] }],
   ["inventory", { source_inventory: { ...order.source_inventory, candidates: [null] } }],
   ["omitted admin inventory", { source_inventory: undefined }],
+  ["creation origin", { creation: { origin: "web", actor_id: null } }],
+  ["creation actor", { creation: { origin: "admin", actor_id: "bad" } }],
+  ["missing creation actor", { creation: { origin: "admin" } }],
   ["CSA", { csa: { round: {}, selection: {} } }],
 ])(
   "rejects an invalid %s while recognizing a separately valid write receipt",
@@ -61,6 +68,18 @@ it.each([
     await expect(mutateStoreOrder(order.id, "cancel", cancelPayload)).resolves.toBeNull();
   },
 );
+
+it.each([
+  ["status", { status: "pending_review" }],
+  ["delivery date", { delivery_date: "2026-02-30" }],
+  ["delivered timestamp", { delivered_at: "2026-10-29T10:00:00Z" }],
+  ["missing inventory", { source_inventory: undefined }],
+  ["active inventory", { source_inventory: order.source_inventory }],
+])("rejects a historical order with an invalid %s", async (_, override) => {
+  const projection = { ...historicalStoreOrderFixture({ id: order.id }), ...override };
+  vi.mocked(api).mockResolvedValueOnce(projection);
+  await expect(getStoreOrder(order.id)).rejects.toThrow("invalid_response");
+});
 
 it("does not recognize a write with the wrong receipt key", async () => {
   const response = cancelResponse(order);

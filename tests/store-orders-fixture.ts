@@ -19,6 +19,29 @@ export function sourceLineFixture(
   };
 }
 
+export function historicalStoreOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrder {
+  const order = storeOrderFixture({
+    workflow_version: 2,
+    status: "delivered",
+    payment_status: "received",
+    creation: { origin: "admin_historical", actor_id: null },
+    delivery_date: "2026-10-29",
+    payment: null,
+    expires_at: null,
+    transfer_reported_at: null,
+    ...overrides,
+  });
+  return {
+    ...order,
+    source_inventory: {
+      refresh_required_before_approve: false,
+      lines: order.lines.map((line) => sourceLineFixture(line)),
+      product_reservations: [],
+      candidates: [],
+    },
+  };
+}
+
 // UI fixtures queue explicit snapshots/errors on one transport spy. POSTs wrap
 // that snapshot with the successful receipt for the submitted test intent.
 export function createStoreOrderApiMock() {

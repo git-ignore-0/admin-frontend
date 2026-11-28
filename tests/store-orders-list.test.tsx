@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { StoreOrderList } from "@/components/store-order-list";
+import { adminDictionaries } from "@/lib/admin-i18n";
+import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { apiEnvelope } from "@/lib/client-api";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 
@@ -35,6 +37,38 @@ function view() {
 }
 
 describe("Store order list", () => {
+  it.each([
+    ["vi", "Đơn hàng", "Tạo đơn hàng"],
+    ["en", "Orders", "Create order"],
+  ] as const)(
+    "opens the create order route with a localized %s breadcrumb",
+    async (locale, list, create) => {
+      vi.mocked(apiEnvelope).mockResolvedValue({
+        data: [],
+        meta: { page: 1, page_size: 20, total: 0 },
+      });
+      render(
+        <AdminI18nProvider initialLocale={locale}>
+          <StoreOrderList />
+        </AdminI18nProvider>,
+      );
+
+      await screen.findByText(
+        locale === "vi" ? "Không có đơn hàng phù hợp." : "No matching Store orders.",
+      );
+      const href = screen.getByRole("link", { name: create }).getAttribute("href");
+      expect(href).toBe("/store-orders/new");
+      const dictionary = adminDictionaries[locale];
+      const orders = adminNavigation(dictionary)
+        .flatMap(({ items }) => items)
+        .find(({ href }) => href === "/store-orders");
+      expect(resolveAdminBreadcrumbs(href!, orders, dictionary)).toEqual([
+        { label: list, href: "/store-orders" },
+        { label: create },
+      ]);
+    },
+  );
+
   it("moves the status filter into the toolbar at narrow widths and preserves the selection", async () => {
     contentWidth = 360;
     vi.mocked(apiEnvelope).mockResolvedValue({

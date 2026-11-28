@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 132 canonical route shapes and 185 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(132);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(132);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(185);
+  it("covers the 133 canonical route shapes and 187 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(133);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(133);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(187);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);
@@ -121,13 +121,17 @@ describe("backend API target", () => {
     expect(buildBackendTarget(origin, base, "").pathname).toBe("/api/v1/admin/vouchers");
   });
 
-  it("allowlists only Store order reads and implemented lifecycle actions", () => {
+  it("allowlists only Store order reads, creation and implemented lifecycle actions", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = ["admin", "store-orders"];
     expect(isAllowedBackendRequest("GET", base)).toBe(true);
-    expect(isAllowedBackendRequest("POST", base)).toBe(false);
+    expect(isAllowedBackendRequest("POST", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, "quote"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, "quote"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, "quote", "extra"])).toBe(false);
     expect(isAllowedBackendRequest("GET", [...base, id])).toBe(true);
     expect(isAllowedBackendRequest("PATCH", [...base, id])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, id])).toBe(false);
     for (const action of ["approve", "cancel", "record-payment", "refund", "deliver", "restock"])
       expect(isAllowedBackendRequest("POST", [...base, id, action])).toBe(true);
     expect(isAllowedBackendRequest("GET", [...base, id, "approve"])).toBe(false);

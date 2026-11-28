@@ -347,6 +347,8 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   }
 
   const currentOrder = order;
+  const historical = currentOrder.creation?.origin === "admin_historical";
+  const recordedAtLabel = historical ? c.historicalRecordedAt : c.createdAt;
   const deadlineLabel = storeOrderDeadlineLabel(currentOrder, locale);
   const actions = getStoreOrderActions(currentOrder, { expired: remaining === 0 });
   const groupedReconciliation =
@@ -360,7 +362,9 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     : actions;
   // An unresolved request may be replayed, but is not a new permission on this snapshot.
   const recoveryAction =
-    pendingIntent && !visibleActions.includes(pendingIntent.action) ? pendingIntent.action : null;
+    !historical && pendingIntent && !visibleActions.includes(pendingIntent.action)
+      ? pendingIntent.action
+      : null;
   const replaying = pendingIntent?.orderId === orderId && pendingIntent.action === action;
   const recoveryDialog =
     action !== null && (recoveryAction === action || (action === "approve" && replaying));
@@ -412,7 +416,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     action === "refund" ||
     (action === "record-payment" && (!reconciliationDialog || reconciliationChoice !== null));
   const timeline = [
-    { label: c.createdAt, value: order.created_at },
+    { label: recordedAtLabel, value: order.created_at },
     { label: c.transferReportedAt, value: order.transfer_reported_at },
     { label: c.paymentReceivedAt, value: order.payment_received_at },
     {
@@ -432,6 +436,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   function openAction(next: StoreOrderAction) {
     if (
       !isMounted() ||
+      historical ||
       currentOrder.id.toLowerCase() !== orderId ||
       loading ||
       error ||
@@ -541,6 +546,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   async function submitAction() {
     if (
       !isMounted() ||
+      historical ||
       !action ||
       currentOrder.id.toLowerCase() !== orderId ||
       actionBusy ||
@@ -704,8 +710,9 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           <Title order={1}>{order.reference_code}</Title>
           <Group gap="sm">
             <StoreOrderStatusBadge order={order} />
+            {historical && <Text size="sm">{c.historicalOrder}</Text>}
             <Text size="sm" c="dimmed">
-              {c.createdAt}{" "}
+              {recordedAtLabel}{" "}
               <time dateTime={order.created_at}>{formatAdminDateTime(order.created_at)}</time>
             </Text>
           </Group>

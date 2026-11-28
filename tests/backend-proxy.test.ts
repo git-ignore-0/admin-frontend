@@ -494,6 +494,77 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it.each(["", "/quote"])("protects and forwards Store order creation POST%s", async (suffix) => {
+    const path = `admin/store-orders${suffix}`.split("/");
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const context = { params: Promise.resolve({ path }) };
+    const body = JSON.stringify({ kind: "new", delivery_date: "2026-11-28" });
+    const headers = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+      "content-type": "application/json",
+      authorization: "Bearer browser-supplied-token",
+    };
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const send = (query = "", overrides: Record<string, string> = {}) =>
+      POST(
+        pageRequest(`${url}${query}`, {
+          method: "POST",
+          body,
+          headers: { ...headers, ...overrides },
+        }),
+        context,
+      );
+
+    expect((await send("", { origin: "https://other.example.test" })).status).toBe(403);
+    expect((await send("", { "x-nfv-admin-request": "" })).status).toBe(403);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await send()).status).toBe(401);
+    expect((await send("", { "x-nfv-admin-session": "old" })).status).toBe(409);
+    for (const query of ["?page=1", "?locale=vi", `?creation_key=${versionId}`]) {
+      expect((await send(query)).status).toBe(404);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+
+    expect((await send()).status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    const [target, request] = upstream.mock.calls[0];
+    expect(String(target)).toBe(`https://auth.example.test/api/v1/admin/store-orders${suffix}`);
+    expect(request.method).toBe("POST");
+    expect(new TextDecoder().decode(request.body)).toBe(body);
+    expect(new Headers(request.headers).get("authorization")).toBe("Bearer access-token");
+  });
+
+  it("allows only a standalone UUID for Store order creation receipt recovery", async () => {
+    const path = ["admin", "store-orders"];
+    const url = "https://admin.example.test/api/backend/admin/store-orders";
+    const context = { params: Promise.resolve({ path }) };
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const send = (query: string, headers?: HeadersInit) =>
+      GET(pageRequest(`${url}${query}`, { headers }), context);
+    const query = `?creation_key=${versionId}`;
+    expect((await send(query, { "x-nfv-admin-session": "old" })).status).toBe(409);
+    for (const invalid of [
+      "?creation_key=",
+      "?creation_key=unknown",
+      `${query}&creation_key=${versionId}`,
+      `${query}&page=1`,
+      `${query}&sort=created_desc`,
+      `${query}&unexpected=1`,
+    ]) {
+      expect((await send(invalid)).status).toBe(404);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+
+    expect((await send(query)).status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/admin/store-orders${query}`,
+    );
+  });
+
   it("forwards close-refund-request exact body server-side and rejects method/query/segments", async () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const path = ["admin", "store-orders", id, "close-refund-request"];

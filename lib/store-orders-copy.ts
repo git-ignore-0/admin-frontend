@@ -1,4 +1,4 @@
-import type { AdminLocale } from "@/lib/admin-i18n";
+import { adminDictionaries, type AdminLocale } from "@/lib/admin-i18n";
 import type { StoreOrderDisplayStatus } from "@/lib/store-orders";
 import type {
   StoreOrder,
@@ -12,6 +12,7 @@ const copy = {
   vi: {
     title: "Đơn hàng Store",
     back: "Danh sách đơn hàng",
+    createOrder: adminDictionaries.vi.breadcrumb.createStoreOrder,
     search: "Tìm đơn hàng",
     searchPlaceholder: "Mã đơn, tên hoặc số điện thoại",
     searchButton: "Tìm kiếm",
@@ -26,6 +27,8 @@ const copy = {
     recipient: "Người nhận",
     total: "Tổng phải trả",
     createdAt: "Tạo lúc",
+    historicalOrder: "Đơn ghi lịch sử",
+    historicalRecordedAt: "Ghi nhận lúc",
     deadline: "Hạn xử lý",
     csaBenefit: "Dùng điểm CSA",
     refresh: "Làm mới",
@@ -90,6 +93,7 @@ const copy = {
     voucherCode: "Mã voucher",
     voucherDiscount: "Giảm giá voucher",
     deliveryDate: "Ngày giao",
+    historicalDeliveryDate: "Ngày giao thực tế",
     sourceRound: "Đợt CSA",
     sourceOrder: "Đơn CSA",
     shippingFee: "Phí giao hàng",
@@ -201,6 +205,7 @@ const copy = {
   en: {
     title: "Store orders",
     back: "Store orders",
+    createOrder: adminDictionaries.en.breadcrumb.createStoreOrder,
     search: "Search orders",
     searchPlaceholder: "Order code, recipient, or phone",
     searchButton: "Search",
@@ -215,6 +220,8 @@ const copy = {
     recipient: "Recipient",
     total: "Amount due",
     createdAt: "Created",
+    historicalOrder: "Historical order",
+    historicalRecordedAt: "Recorded at",
     deadline: "Deadline",
     csaBenefit: "CSA points",
     refresh: "Refresh",
@@ -279,6 +286,7 @@ const copy = {
     voucherCode: "Voucher code",
     voucherDiscount: "Voucher discount",
     deliveryDate: "Delivery date",
+    historicalDeliveryDate: "Actual delivery date",
     sourceRound: "CSA round",
     sourceOrder: "CSA order",
     shippingFee: "Delivery fee",

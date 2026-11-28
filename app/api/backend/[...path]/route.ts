@@ -90,7 +90,8 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
   const farmReceipt = isFarmReceiptPath(path);
   if (params.has("creation_key") || (farmReceipt && request.method === "GET")) {
     const collectionReceipt =
-      id === undefined && ["store-products", "csa-round-configurations"].includes(resource);
+      id === undefined &&
+      ["store-products", "csa-round-configurations", "store-orders"].includes(resource);
     return (
       request.method !== "GET" ||
       !(collectionReceipt || farmReceipt) ||
@@ -138,7 +139,7 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return hasDuplicateQuery(params, "page", "search", "status");
   }
   if (resource === "store-orders") {
-    if (id !== undefined) return params.size > 0;
+    if (request.method !== "GET" || id !== undefined) return params.size > 0;
     const allowed = new Set(["page", "page_size", "search", "status", "payment_status", "sort"]);
     const statuses = new Set([
       "payment_pending",

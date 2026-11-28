@@ -1,12 +1,14 @@
 "use client";
 import { Box, Button, Divider, SegmentedControl, Stack, Table, Text } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
+import { IconPlus } from "@tabler/icons-react";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { FormSelect } from "@/components/nfv-controls";
 import { DataListPaper } from "@/components/data-list-paper";
 import { DataListRecordLink } from "@/components/data-list-record-link";
@@ -251,6 +253,15 @@ export function StoreOrderList() {
           loading: loading && items !== null,
           disabled: initialLoading,
         }}
+        primaryAction={
+          <Button
+            component={AdminNavigationLink}
+            href="/store-orders/new"
+            leftSection={<IconPlus size={16} aria-hidden />}
+          >
+            {c.createOrder}
+          </Button>
+        }
       />
       <DataListPaper>
         {items?.length ? table : null}
