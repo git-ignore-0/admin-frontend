@@ -2,6 +2,7 @@
 
 import {
   Alert,
+  Box,
   Button,
   Fieldset,
   Group,
@@ -22,6 +23,7 @@ import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { AddressFields, useAddressFields } from "@/components/address-fields";
 import { CSACustomerAccountForm } from "@/components/csa-customer-account-form";
 import { PageHeading } from "@/components/page-heading";
+import { PhoneInput } from "@/components/phone-input";
 import { useToast } from "@/components/toast-provider";
 import { UUID_PATH_SEGMENT } from "@/lib/backend-target";
 import { api } from "@/lib/client-api";
@@ -33,7 +35,7 @@ import {
   type CreateCSACustomer,
 } from "@/lib/csa-customer-creation";
 import { csaCustomerListKey } from "@/lib/csa-customers-query";
-import { formatVietnamPhone, handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
+import { formatVietnamPhone, normalizeEditablePhone, type EditablePhone } from "@/lib/phone-number";
 import type { CSACustomer, CSACustomerPhoneLookup } from "@/lib/types";
 
 const emptyFields = {
@@ -148,29 +150,40 @@ function ManagedCustomerForm({
 }) {
   const { t } = useAdminI18n();
   const copy = t.csaCustomers;
-  const [phone, setPhone] = useState("");
-  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [phone, setPhone] = useState<EditablePhone>({ value: "", entry: "ready" });
+  const [phoneSubmitted, setPhoneSubmitted] = useState(false);
   const [fields, setFields] = useState(emptyFields);
   const [noteOpen, setNoteOpen] = useState(false);
   const [error, setError] = useState("");
+  const phoneRef = useRef<HTMLInputElement>(null);
   const lookupRequest = useRef<AbortController | null>(null);
-  const normalizedPhone = normalizeLocalPhone(phone, "contact");
+  const normalizedPhone = normalizeEditablePhone(phone);
   const checking = lookup.status === "checking";
-  const available = lookup.status === "available" && lookup.phone === normalizedPhone;
+  const available =
+    !!normalizedPhone && lookup.status === "available" && lookup.phone === normalizedPhone;
   const addressState = useAddressFields(fields.delivery, available);
   const canCreate = available && !saving && addressState.valid && !!fields.name.trim();
 
   useEffect(() => () => lookupRequest.current?.abort(), []);
 
-  function updatePhone(value: string) {
-    if (normalizeLocalPhone(value, "contact") !== normalizedPhone) {
+  function updatePhone(next: EditablePhone) {
+    const numberChanged =
+      normalizeEditablePhone({ value: next.value, entry: "ready" }) !==
+      normalizeEditablePhone({ value: phone.value, entry: "ready" });
+    if (numberChanged || next.entry !== "ready" || phone.entry !== "ready") {
       lookupRequest.current?.abort();
       onLookupChange({ status: "idle" });
+    }
+    if (numberChanged) {
       setFields(emptyFields);
       setNoteOpen(false);
       setError("");
     }
-    setPhone(value);
+    setPhone(next);
+  }
+
+  function checkCurrentPhone() {
+    if (normalizedPhone && !checking && !saving) void checkPhone(normalizedPhone);
   }
 
   async function checkPhone(number: string) {
@@ -191,7 +204,13 @@ function ManagedCustomerForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!canCreate || !normalizedPhone) return;
+    if (!normalizedPhone) {
+      setPhoneSubmitted(true);
+      phoneRef.current?.focus();
+      return;
+    }
+    if (!canCreate) return;
+    const checkedRequest = lookupRequest.current;
     setError("");
     try {
       await onCreate("admin/csa-customers", {
@@ -203,7 +222,7 @@ function ManagedCustomerForm({
       });
     } catch (caught) {
       if (isCSACustomerCreateConflict(caught)) {
-        await checkPhone(normalizedPhone);
+        if (checkedRequest && !checkedRequest.signal.aborted) await checkPhone(normalizedPhone);
         return;
       }
       setError(csaCustomerCreateError(caught, t));
@@ -218,8 +237,8 @@ function ManagedCustomerForm({
       ? copy.phoneAlreadyExists
       : lookup.status === "error"
         ? lookup.message
-        : phoneTouched && phone && !normalizedPhone
-          ? t.common.invalidVietnamPhone
+        : phoneSubmitted && !phone.value
+          ? t.phoneInput.required
           : undefined;
 
   return (
@@ -228,31 +247,26 @@ function ManagedCustomerForm({
         <Fieldset legend={t.users.contactDetails} variant="unstyled" disabled={saving} miw={0}>
           <Stack gap="md">
             <Stack gap="xs">
-              <Group align="flex-end" gap="xs">
-                <TextInput
-                  label={copy.phone}
-                  error={phoneError}
-                  errorProps={{ role: "alert" }}
-                  required
-                  autoComplete="tel"
-                  inputMode="tel"
-                  type="tel"
-                  value={phone}
-                  style={{ flex: "1 1 12rem" }}
-                  onBlur={() => setPhoneTouched(true)}
-                  onChange={(event) => updatePhone(event.currentTarget.value)}
-                  onPaste={(event) => handlePhonePaste(event, updatePhone)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    if (normalizedPhone && !checking && !saving) void checkPhone(normalizedPhone);
-                  }}
-                />
+              <Group align="flex-start" gap="xs">
+                <Box miw={0} style={{ flex: "1 1 10rem" }}>
+                  <PhoneInput
+                    ref={phoneRef}
+                    name="phone"
+                    state={phone}
+                    onChange={updatePhone}
+                    onEnter={checkCurrentPhone}
+                    error={phoneError}
+                    required
+                    disabled={saving}
+                    autoComplete="tel"
+                  />
+                </Box>
                 <Button
                   type="button"
                   variant="default"
+                  mt="calc(var(--mantine-font-size-md) * var(--mantine-line-height))"
                   disabled={!normalizedPhone || checking || saving}
-                  onClick={() => normalizedPhone && void checkPhone(normalizedPhone)}
+                  onClick={checkCurrentPhone}
                 >
                   {copy.checkPhone}
                 </Button>

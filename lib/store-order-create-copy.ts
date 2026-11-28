@@ -40,7 +40,6 @@ const copy = {
     buyerInvalid: "Kiểm tra tài khoản và thông tin người nhận trước khi tạo đơn.",
     guestRequired: "Trường này là bắt buộc.",
     guestInvalid: "Kiểm tra lại giá trị đã nhập.",
-    phoneInvalid: "Nhập số điện thoại Việt Nam hợp lệ.",
     shippingUnsupported: "Địa chỉ chưa thuộc vùng giao hàng hiện hỗ trợ.",
     memberFrozen: "Tài khoản đang trong thời gian tạm ngưng quyền mua Store.",
     creationUnknown:
@@ -109,7 +108,6 @@ const copy = {
     buyerInvalid: "Check the account and recipient details before creating the order.",
     guestRequired: "This field is required.",
     guestInvalid: "Check the value you entered.",
-    phoneInvalid: "Enter a valid Vietnamese phone number.",
     shippingUnsupported: "The address is outside the areas currently supported for delivery.",
     memberFrozen: "The account is temporarily unable to place Store orders.",
     creationUnknown: "The result is unknown. Check the result or send the same request again.",

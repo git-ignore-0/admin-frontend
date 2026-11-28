@@ -94,24 +94,31 @@ describe("create Store order draft", () => {
     expect(historical.total).toBe(68007n);
   });
 
-  it.each(["+84901234567", "84901234567", "0901234567 ", "090123456x"])(
-    "rejects a non-domestic guest phone draft %j",
-    (phone_number) => {
-      const result = validateStoreOrderDraft(
-        draft({ guest: { ...guest, phone_number } }),
-        "vi",
-        today,
-      );
+  it.each([
+    "+84901234567",
+    "84901234567",
+    "0901234567 ",
+    "090123456x",
+    "0612345678",
+    "09012345678",
+  ])("rejects a guest phone draft outside the domestic mobile format %j", (phone_number) => {
+    const result = validateStoreOrderDraft(
+      draft({ guest: { ...guest, phone_number } }),
+      "vi",
+      today,
+    );
+    expect(result.input).toBeNull();
+    expect(result.errors.guest.phone_number).toBe("invalid");
+  });
+
+  it.each(["rejected", "composing"] as const)(
+    "does not quote a previously valid guest number while its entry is %s",
+    (guestPhoneEntry) => {
+      const result = validateStoreOrderDraft(draft({ guestPhoneEntry }), "vi", today);
       expect(result.input).toBeNull();
       expect(result.errors.guest.phone_number).toBe("invalid");
     },
   );
-
-  it("does not quote a previously valid guest number after a rejected replacement", () => {
-    const result = validateStoreOrderDraft(draft({ guestPhoneRejected: true }), "vi", today);
-    expect(result.input).toBeNull();
-    expect(result.errors.guest.phone_number).toBe("invalid");
-  });
 
   it("requires an explicit historical price and enforces exact totals", () => {
     const base = draft({ kind: "historical", deliveryDate: "31/12/2026", shippingFee: "1" });

@@ -6,6 +6,7 @@ import { type FormEvent, type RefObject, useId, useLayoutEffect, useRef, useStat
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { FormField, FormInput } from "@/components/nfv-controls";
+import { PhoneInput } from "@/components/phone-input";
 import { useToast } from "@/components/toast-provider";
 import {
   accountFailure,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/admin-users";
 import { useAdminUsersMutationAccess, useRefreshAdminUsers } from "@/lib/admin-users-query";
 import { api } from "@/lib/client-api";
-import { handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
+import { normalizeEditablePhone, type EditablePhone } from "@/lib/phone-number";
 import type { AdminAccountSummary } from "@/lib/types";
 
 export type UserAccountDialogAction = "suspend" | "reset-password";
@@ -55,21 +56,21 @@ function UserAccountDialogForm({
   const copy = t.users.accountActions;
   const toast = useToast();
   const formId = useId();
+  const phoneRef = useRef<HTMLInputElement>(null);
   const pendingSubmission = useRef<symbol | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loginPhone, setLoginPhone] = useState("");
-  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [loginPhone, setLoginPhone] = useState<EditablePhone>({ value: "", entry: "ready" });
+  const [phoneSubmitted, setPhoneSubmitted] = useState(false);
   const [failure, setFailure] = useState<ReturnType<typeof accountFailure>>({
     message: "",
     fields: {},
   });
   const create = action === "create";
   const reset = action === "reset-password";
-  const canonicalPhone = normalizeLocalPhone(loginPhone, "identity");
+  const canonicalPhone = normalizeEditablePhone(loginPhone);
   const phoneError =
-    phoneTouched && loginPhone && !canonicalPhone
-      ? t.common.invalidVietnamPhone
-      : failure.fields.login_phone_number;
+    failure.fields.login_phone_number ??
+    (phoneSubmitted && !loginPhone.value ? t.phoneInput.required : undefined);
   const notice = {
     create: "",
     suspend: copy.suspendNotice,
@@ -81,6 +82,16 @@ function UserAccountDialogForm({
       pendingSubmission.current = null;
     };
   }, []);
+
+  function updateLoginPhone(next: EditablePhone) {
+    if (next.value !== loginPhone.value && failure.fields.login_phone_number) {
+      setFailure((current) => ({
+        ...current,
+        fields: { ...current.fields, login_phone_number: undefined },
+      }));
+    }
+    setLoginPhone(next);
+  }
 
   async function submit(form?: HTMLFormElement) {
     if (confirmDisabled || pendingSubmission.current || !isDialogCurrent?.()) return;
@@ -96,7 +107,8 @@ function UserAccountDialogForm({
     }
     if (create) {
       if (!canonicalPhone) {
-        setPhoneTouched(true);
+        setPhoneSubmitted(true);
+        phoneRef.current?.focus();
         return;
       }
       payload.login_phone_number = canonicalPhone;
@@ -195,20 +207,16 @@ function UserAccountDialogForm({
             {create && (
               <>
                 {field("name", copy.fullName, "text", "name")}
-                <FormField label={t.users.loginPhone} error={phoneError}>
-                  <FormInput
-                    autoComplete="tel"
-                    disabled={busy}
-                    inputMode="tel"
-                    name="login_phone_number"
-                    required
-                    type="tel"
-                    value={loginPhone}
-                    onBlur={() => setPhoneTouched(true)}
-                    onChange={(event) => setLoginPhone(event.currentTarget.value)}
-                    onPaste={(event) => handlePhonePaste(event, setLoginPhone)}
-                  />
-                </FormField>
+                <PhoneInput
+                  ref={phoneRef}
+                  state={loginPhone}
+                  onChange={updateLoginPhone}
+                  error={phoneError}
+                  autoComplete="tel"
+                  disabled={busy}
+                  name="login_phone_number"
+                  required
+                />
                 {field("email", copy.optionalEmail, "email", "email")}
               </>
             )}

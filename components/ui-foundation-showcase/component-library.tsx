@@ -49,7 +49,9 @@ import {
 } from "@tabler/icons-react";
 import { useRef, useState } from "react";
 import { AdminDateInput } from "@/components/admin-date-input";
+import { PhoneInput } from "@/components/phone-input";
 import { adminPalettes, adminSemanticColors, adminTokens } from "@/lib/admin-theme";
+import type { EditablePhone } from "@/lib/phone-number";
 
 const categories = ["Cải tạo đất", "Đa dạng sinh học", "Theo dõi sau mưa"];
 const semanticEntries = Object.entries(adminSemanticColors);
@@ -290,6 +292,30 @@ function ActionExamples() {
   );
 }
 
+const phoneExamples = [
+  { name: "Optional", value: "" },
+  { name: "Valid", value: "0912345678", required: true },
+  { name: "Invalid", value: "0612345678" },
+  { name: "Disabled", value: "0912345678", disabled: true },
+] as const;
+
+function PhoneExample({ example }: { example: (typeof phoneExamples)[number] }) {
+  const [phone, setPhone] = useState<EditablePhone>({ value: example.value, entry: "ready" });
+  return (
+    <Stack gap="xs">
+      <Text size="sm" c="dimmed">
+        {example.name}
+      </Text>
+      <PhoneInput
+        state={phone}
+        onChange={setPhone}
+        required={"required" in example}
+        disabled={"disabled" in example}
+      />
+    </Stack>
+  );
+}
+
 function FormExamples() {
   const focusExample = useRef<HTMLInputElement>(null);
   const [comparisonValue, setComparisonValue] = useState("");
@@ -345,6 +371,18 @@ function FormExamples() {
             />
             <TextInput label="Read-only code" value="NFV-001" readOnly />
             <TextInput label="Disabled field" defaultValue="Unavailable" disabled />
+          </SimpleGrid>
+        </Stack>
+      </Paper>
+      <Paper component="section" aria-labelledby="phone-input-examples" p="md">
+        <Stack gap="md">
+          <Title id="phone-input-examples" order={3}>
+            Phone input
+          </Title>
+          <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="md">
+            {phoneExamples.map((example) => (
+              <PhoneExample key={example.name} example={example} />
+            ))}
           </SimpleGrid>
         </Stack>
       </Paper>

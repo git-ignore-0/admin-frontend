@@ -728,7 +728,9 @@ describe("users and points", () => {
     const name = "Pending Member";
     const password = "Strong-Harvest-42!";
     fireEvent.change(fields.getByLabelText("Full name"), { target: { value: name } });
-    fireEvent.change(fields.getByLabelText("Login phone"), { target: { value: "0912345678" } });
+    fireEvent.change(fields.getByRole("textbox", { name: "Phone number" }), {
+      target: { value: "0912345678" },
+    });
     fireEvent.change(fields.getByLabelText("New password"), { target: { value: password } });
     fireEvent.change(fields.getByLabelText("Confirm password"), { target: { value: password } });
     const submit = fields.getByRole("button", { name: "Create account" });

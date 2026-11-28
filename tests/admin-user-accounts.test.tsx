@@ -187,7 +187,7 @@ describe("CMS account administration", () => {
       fireEvent.change(within(dialog).getByLabelText(/^Full name/i), {
         target: { value: user.name },
       });
-      fireEvent.change(within(dialog).getByLabelText(/^Login phone/i), {
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Phone number" }), {
         target: { value: "0912345678" },
       });
       const { password1, password2 } = passwords(dialog);
@@ -335,7 +335,7 @@ describe("CMS account administration", () => {
     },
   );
 
-  it("creates a phone-only account from a pasted domestic number and preserves the POST password", async () => {
+  it("creates a phone-only account from a formatted paste and preserves the POST password", async () => {
     let resolveCreate!: (response: Response) => void;
     const create = new Promise<Response>((resolve) => {
       resolveCreate = resolve;
@@ -356,12 +356,8 @@ describe("CMS account administration", () => {
     fireEvent.change(within(dialog).getByLabelText(/^Full name/i), {
       target: { value: user.name },
     });
-    const phone = within(dialog).getByLabelText(/^Login phone/i);
-    expect(fireEvent.paste(phone, { clipboardData: { getData: () => displayedLoginPhone } })).toBe(
-      true,
-    );
-    // jsdom does not insert clipboard text after an uncanceled paste.
-    fireEvent.input(phone, { target: { value: displayedLoginPhone } });
+    const phone = within(dialog).getByRole("textbox", { name: "Phone number" });
+    fireEvent.paste(phone, { clipboardData: { getData: () => "(0912) 345-678" } });
     expect(phone).toHaveValue(displayedLoginPhone);
     passwords(dialog);
     fireEvent.click(within(dialog).getByRole("button", { name: "Create account" }));
@@ -398,40 +394,83 @@ describe("CMS account administration", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("requires a phone number and restores focus when closing the create dialog", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [], meta: listMeta }));
+    vi.stubGlobal("fetch", fetcher);
+    show(<UserDirectory />);
+    const trigger = screen.getByRole("button", { name: "Create account" });
+    const dialog = within(await openCreateAccount());
+    const phone = dialog.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
+    expect(phone).toBeRequired();
+    expect(phone).toHaveAttribute("name", "login_phone_number");
+    expect(phone).toHaveAttribute("placeholder", "0912345678");
+    expect(phone).toHaveValue("");
+    expect(phone).not.toHaveAttribute("aria-invalid", "true");
+    expect(dialog.getByRole("button", { name: "Create account" })).toBeDisabled();
+
+    fireEvent.submit(phone.form!);
+    expect(phone).toHaveAccessibleDescription("Enter a phone number");
+    expect(phone).toHaveFocus();
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+
+    fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it.each([
-    "84",
-    "+84",
-    "84912345678",
-    "+84912345678",
-    "0912-345678",
-    "0912 345678",
-    "0912345678 ",
-    "0912345678\n",
-    "091234567899",
-    "0612345678",
-  ])("blocks account creation when %j is pasted over a valid number", async (value) => {
+    ["84", "84"],
+    ["+84", "84"],
+    ["84912345678", displayedLoginPhone],
+    ["+84912345678", displayedLoginPhone],
+    ["091234567899", displayedLoginPhone],
+    ["0612345678", "0612345678"],
+  ])(
+    "blocks account creation when %j is pasted over a valid number",
+    async (value, retainedPhone) => {
+      const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [], meta: listMeta }));
+      vi.stubGlobal("fetch", fetcher);
+      show(<UserDirectory />);
+      const dialog = await openCreateAccount();
+      const phone = within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
+      fireEvent.change(within(dialog).getByLabelText("Full name"), {
+        target: { value: user.name },
+      });
+      passwords(dialog);
+      fireEvent.change(phone, { target: { value: displayedLoginPhone } });
+      const create = within(dialog).getByRole("button", { name: "Create account" });
+      expect(create).toBeEnabled();
+      phone.select();
+      fireEvent.paste(phone, { clipboardData: { getData: () => value } });
+      expect(phone).toHaveValue(retainedPhone);
+      expect(phone).toHaveAttribute("aria-invalid", "true");
+      expect(phone).toHaveAccessibleDescription("Invalid phone number");
+      expect(create).toBeDisabled();
+      fireEvent.submit(phone.form!);
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+      fireEvent.change(phone, { target: { value: "" } });
+      expect(phone).toHaveValue("");
+    },
+  );
+
+  it("blocks direct account creation until phone composition has finished", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => Response.json({ data: [], meta: listMeta }));
     vi.stubGlobal("fetch", fetcher);
     show(<UserDirectory />);
     const dialog = await openCreateAccount();
-    const phone = within(dialog).getByLabelText<HTMLInputElement>("Login phone");
+    const phone = within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
     fireEvent.change(within(dialog).getByLabelText("Full name"), { target: { value: user.name } });
     passwords(dialog);
     fireEvent.change(phone, { target: { value: displayedLoginPhone } });
     const create = within(dialog).getByRole("button", { name: "Create account" });
     expect(create).toBeEnabled();
-    phone.select();
-    if (fireEvent.paste(phone, { clipboardData: { getData: () => value } })) {
-      fireEvent.input(phone, { target: { value } });
-    }
-    fireEvent.blur(phone);
-    expect(phone).toHaveValue(value === "0912345678\n" ? "0912345678 " : value);
-    expect(phone).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.compositionStart(phone);
     expect(create).toBeDisabled();
-    fireEvent.submit(dialog.querySelector("form")!);
+    fireEvent.submit(phone.form!);
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
-    fireEvent.change(phone, { target: { value: "" } });
-    expect(phone).toHaveValue("");
+
+    fireEvent.compositionEnd(phone);
+    expect(create).toBeEnabled();
   });
 
   it("keeps the current page when account creation completes after leaving Users", async () => {
@@ -443,7 +482,7 @@ describe("CMS account administration", () => {
     const view = show(<UserDirectory />);
     const dialog = await openCreateAccount();
     fireEvent.change(within(dialog).getByLabelText("Full name"), { target: { value: user.name } });
-    fireEvent.change(within(dialog).getByLabelText("Login phone"), {
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Phone number" }), {
       target: { value: "0912345678" },
     });
     passwords(dialog);
@@ -465,7 +504,7 @@ describe("CMS account administration", () => {
       locale: "vi",
       create: "Tạo tài khoản",
       name: "Họ và tên",
-      phone: "SĐT đăng nhập",
+      phone: "Số điện thoại",
       phoneError: "Số điện thoại đăng nhập này đã được sử dụng.",
       emailError: "Email này đã được sử dụng.",
     },
@@ -473,7 +512,7 @@ describe("CMS account administration", () => {
       locale: "en",
       create: "Create account",
       name: "Full name",
-      phone: "Login phone",
+      phone: "Phone number",
       phoneError: "This login phone number is already in use.",
       emailError: "This email is already in use.",
     },
@@ -497,7 +536,7 @@ describe("CMS account administration", () => {
     fireEvent.change(within(dialog).getByLabelText(copy.name), {
       target: { value: user.name },
     });
-    const phone = within(dialog).getByLabelText(copy.phone);
+    const phone = within(dialog).getByRole("textbox", { name: copy.phone });
     const email = within(dialog).getByLabelText(/^Email/i);
     fireEvent.change(phone, { target: { value: "0912345678" } });
     fireEvent.change(email, { target: { value: "member@example.com" } });
@@ -510,6 +549,10 @@ describe("CMS account administration", () => {
     expect(email).toHaveValue("member@example.com");
     expect(password1).toHaveValue(password);
     expect(push).not.toHaveBeenCalled();
+
+    fireEvent.change(phone, { target: { value: "0987654321" } });
+    expect(phone).not.toHaveAccessibleDescription(copy.phoneError);
+    expect(email).toHaveAccessibleDescription(copy.emailError);
   });
 
   it("synchronizes Users and detail after activating, confirming suspension, and reactivating", async () => {

@@ -1,5 +1,3 @@
-import type { ClipboardEvent } from "react";
-
 const countryPrefix = "+84";
 const localPrefix = "0";
 const storedPrefixes = [countryPrefix, countryPrefix.slice(1), localPrefix];
@@ -9,6 +7,33 @@ const nationalPatterns = {
   identity: /^(?:[35789][0-9]{8}|2[0-9]{9})$/,
 };
 type PhoneDomain = keyof typeof nationalPatterns;
+
+export const MAX_EDITABLE_PHONE_DIGITS = 10;
+export type EditablePhone = {
+  value: string;
+  entry: "ready" | "rejected" | "composing";
+  /** Set by a host for an unchanged stored value, including legacy numbers. */
+  untouched?: true;
+};
+
+export function sanitizeEditablePhoneDigits(value: string): string {
+  return value.replace(/[^0-9]/g, "");
+}
+
+export function normalizeEditablePhone({ value, entry }: EditablePhone): string | null {
+  // The identity domain also accepts 11-digit landlines. The editable limit
+  // narrows it to the domestic mobile prefixes without changing that contract.
+  return entry === "ready" && value.length === MAX_EDITABLE_PHONE_DIGITS
+    ? normalizeLocalPhone(value, "identity")
+    : null;
+}
+
+export function isEditablePhoneValid(phone: EditablePhone, required = false): boolean {
+  return (
+    phone.entry === "ready" &&
+    ((!required && phone.value === "") || normalizeEditablePhone(phone) !== null)
+  );
+}
 
 function nationalDigits(value: string): string {
   for (const prefix of storedPrefixes) {
@@ -21,30 +46,10 @@ function canonicalPhone(national: string, domain: PhoneDomain): string | null {
   return nationalPatterns[domain].test(national) ? countryPrefix + national : null;
 }
 
-export function isLocalPhoneDraft(value: string): boolean {
-  return !nonDigits.test(value);
-}
-
 /** Validate the raw domestic form value and return the canonical API value. */
 export function normalizeLocalPhone(value: string, domain: PhoneDomain): string | null {
-  if (!value.startsWith(localPrefix) || !isLocalPhoneDraft(value)) return null;
+  if (!value.startsWith(localPrefix) || nonDigits.test(value)) return null;
   return canonicalPhone(nationalDigits(value), domain);
-}
-
-export function handlePhonePaste(
-  event: ClipboardEvent<HTMLInputElement>,
-  updatePhone: (value: string) => void,
-) {
-  const text = event.clipboardData.getData("text/plain");
-  if (!nonDigits.test(text)) return;
-  event.preventDefault();
-  const { value, selectionStart, selectionEnd } = event.currentTarget;
-  // A single-line input can discard newlines. Keep them visible as invalid spaces.
-  updatePhone(
-    value.slice(0, selectionStart ?? value.length) +
-      text.replace(/[\r\n]/g, " ") +
-      value.slice(selectionEnd ?? value.length),
-  );
 }
 
 /** Normalize an internal CSA or Store contact value for comparison or lookup. */

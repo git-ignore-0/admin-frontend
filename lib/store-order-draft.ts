@@ -8,7 +8,7 @@ import {
   type StoreOrderKind,
   type StoreOrderQuoteInput,
 } from "@/lib/admin-store-order-api";
-import { normalizeLocalPhone } from "@/lib/phone-number";
+import { normalizeEditablePhone, type EditablePhone } from "@/lib/phone-number";
 import { parseNonNegativeBigInteger, parsePositiveInteger } from "@/lib/numeric-input";
 import type { StoreProduct } from "@/lib/types";
 
@@ -22,7 +22,7 @@ export type StoreOrderDraft<P extends DraftProduct = DraftProduct> = {
   buyerType: OrderBuyerType;
   userId: string | null;
   guest: StoreOrderGuest;
-  guestPhoneRejected: boolean;
+  guestPhoneEntry: EditablePhone["entry"];
   lines: {
     product: P;
     quantity: string;
@@ -41,7 +41,7 @@ export function blankStoreOrderDraft<P extends DraftProduct = DraftProduct>(): S
     buyerType: "user",
     userId: null,
     guest: { recipient_name: "", phone_number: "", province_code: "", ward_code: "", address: "" },
-    guestPhoneRejected: false,
+    guestPhoneEntry: "ready",
     lines: [],
     shippingFee: "0",
   };
@@ -75,25 +75,22 @@ type DraftIssues = {
 function guestPayload(
   draft: StoreOrderGuest,
   errors: GuestIssues,
-  phoneRejected: boolean,
+  phoneEntry: EditablePhone["entry"],
 ): StoreOrderGuest | null {
+  const phone = normalizeEditablePhone({ value: draft.phone_number, entry: phoneEntry });
   const guest = {
     recipient_name: draft.recipient_name.trim(),
-    phone_number: normalizeLocalPhone(draft.phone_number, "contact") ?? "",
+    phone_number: phone ?? "",
     province_code: draft.province_code,
     ward_code: draft.ward_code,
     address: draft.address.trim(),
   };
-  for (const key of [
-    "recipient_name",
-    "phone_number",
-    "province_code",
-    "ward_code",
-    "address",
-  ] as const) {
+  for (const key of ["recipient_name", "province_code", "ward_code", "address"] as const) {
     if (!draft[key].trim()) errors[key] = "required";
   }
-  if (phoneRejected || (draft.phone_number && !guest.phone_number)) errors.phone_number = "invalid";
+  if (phone === null) {
+    errors.phone_number = !draft.phone_number && phoneEntry === "ready" ? "required" : "invalid";
+  }
   if (Array.from(guest.recipient_name).length > 200) errors.recipient_name = "invalid";
   if (!/^\d{2}$/.test(guest.province_code) && guest.province_code) errors.province_code = "invalid";
   if (!/^\d{5}$/.test(guest.ward_code) && guest.ward_code) errors.ward_code = "invalid";
@@ -127,7 +124,7 @@ export function validateStoreOrderDraft(
   const historical = draft.kind === "historical";
   const guest =
     draft.buyerType === "guest"
-      ? guestPayload(draft.guest, errors.guest, draft.guestPhoneRejected)
+      ? guestPayload(draft.guest, errors.guest, draft.guestPhoneEntry)
       : null;
   const buyer = guest
     ? { guest }

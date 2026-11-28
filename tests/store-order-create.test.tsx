@@ -133,7 +133,11 @@ function readBody(init: RequestInit | undefined): unknown {
   return JSON.parse(String(init?.body));
 }
 
-function makeQuote(input: StoreOrderQuoteInput, storePrice = 45000, recipient = address) {
+function makeQuote(
+  input: StoreOrderQuoteInput,
+  storePrice = 45000,
+  recipient = input.guest ?? address,
+) {
   const lines = input.lines.map((line) => {
     const unitPrice = input.kind === "historical" ? Number(line.unit_price_vnd) : storePrice;
     return {
@@ -284,6 +288,17 @@ async function fillGuestAddress() {
 function submitDraft() {
   fireEvent.click(screen.getByRole("button", { name: "Create order" }));
 }
+
+function guestPhone() {
+  return screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
+}
+
+function replaceGuestPhoneByPaste(text: string) {
+  const input = guestPhone();
+  input.select();
+  fireEvent.paste(input, { clipboardData: { getData: () => text } });
+}
+
 async function approveQuote() {
   const dialog = await screen.findByRole("dialog", { name: "Review order details" });
   const confirm = within(dialog).getByRole("button", { name: "Confirm order" });
@@ -435,6 +450,132 @@ it("shares an in-flight area read and retires the quote when the draft changes",
   await screen.findByRole("dialog", { name: "Review order details" });
   expect(orderFetch).toHaveBeenCalledOnce();
   expect(readBody(orderFetch.mock.calls[0][1])).toMatchObject({ lines: [{ quantity: 3 }] });
+});
+
+it.each(["new", "historical"] as const)(
+  "blocks direct submission for a %s guest whose phone is outside the mobile format",
+  async (kind) => {
+    const getAreas = vi.fn(async () => Response.json({ data: supportedShippingAreas }));
+    const orderFetch = vi.fn();
+    stubOrderFetch(orderFetch, getAreas);
+    render(tree());
+    setupDraft(kind, "guest");
+    await fillGuestAddress();
+    const input = guestPhone();
+    fireEvent.change(input, { target: { value: "0612345678" } });
+    fireEvent.submit(input.form!);
+
+    expect(input).toHaveFocus();
+    expect(input).toHaveAccessibleDescription("Invalid phone number");
+    expect(getAreas).toHaveBeenCalledOnce();
+    expect(orderFetch).not.toHaveBeenCalled();
+  },
+);
+
+it("retires an active guest quote after a valid phone change or a rejected replacement", async () => {
+  const orderFetch = vi.fn(async (_path: string, init: RequestInit) =>
+    makeQuote(readBody(init) as StoreOrderQuoteInput),
+  );
+  stubOrderFetch(orderFetch);
+  render(tree());
+  setupDraft("historical", "guest");
+  await fillGuestAddress();
+  submitDraft();
+  const initialReview = await screen.findByRole("dialog", { name: "Review order details" });
+  const input = guestPhone();
+  fireEvent.change(input, { target: { value: "0987654321" } });
+  expect(initialReview).not.toBeInTheDocument();
+  submitDraft();
+  const changedReview = await screen.findByRole("dialog", { name: "Review order details" });
+  expect(readBody(orderFetch.mock.calls[1][1])).toMatchObject({
+    guest: { phone_number: "+84987654321" },
+  });
+
+  replaceGuestPhoneByPaste("09876 54321 0");
+  expect(changedReview).not.toBeInTheDocument();
+  expect(input).toHaveValue("0987654321");
+  expect(input).toBeInvalid();
+  fireEvent.submit(input.form!);
+  expect(orderFetch.mock.calls.map(([path]) => path)).toEqual([quotePath, quotePath]);
+
+  replaceGuestPhoneByPaste("(098) 765-4321");
+  expect(input).toBeValid();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  submitDraft();
+  await screen.findByRole("dialog", { name: "Review order details" });
+  expect(orderFetch.mock.calls.map(([path]) => path)).toEqual([quotePath, quotePath, quotePath]);
+});
+
+it.each([
+  ["quote", "composition"],
+  ["confirmation", "composition"],
+  ["quote", "rejected paste"],
+  ["confirmation", "rejected paste"],
+] as const)(
+  "retires pending guest area revalidation before %s when the phone edit is %s",
+  async (boundary, edit) => {
+    const pending = deferred<Response>();
+    const getAreas = vi.fn(async () => Response.json({ data: supportedShippingAreas }));
+    const orderFetch = vi.fn(async (path: string, init: RequestInit) =>
+      path === quotePath
+        ? makeQuote(readBody(init) as StoreOrderQuoteInput)
+        : created(readBody(init) as StoreOrderCreateInput, { id: orderId }),
+    );
+    stubOrderFetch(orderFetch, getAreas);
+    render(tree());
+    setupDraft("historical", "guest");
+    await fillGuestAddress();
+    if (boundary === "confirmation") {
+      submitDraft();
+      await screen.findByRole("dialog", { name: "Review order details" });
+    }
+    getAreas.mockReturnValueOnce(pending.promise);
+    if (boundary === "confirmation") await approveQuote();
+    else submitDraft();
+    expect(getAreas).toHaveBeenCalledTimes(boundary === "confirmation" ? 3 : 2);
+
+    const input = guestPhone();
+    if (edit === "composition") {
+      fireEvent.compositionStart(input);
+      fireEvent.submit(input.form!);
+      fireEvent.compositionEnd(input);
+    } else {
+      replaceGuestPhoneByPaste("+84 901 234 567");
+      fireEvent.submit(input.form!);
+      replaceGuestPhoneByPaste("0901 234 567");
+    }
+    expect(input).toHaveValue("0901234567");
+    await act(async () => pending.resolve(Response.json({ data: supportedShippingAreas })));
+    expect(orderFetch.mock.calls.map(([path]) => path)).toEqual(
+      boundary === "confirmation" ? [quotePath] : [],
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem(recoverySlot)).toBeNull();
+  },
+);
+
+it("focuses the required phone on submit and preserves a Backend guest phone error", async () => {
+  const orderFetch = vi.fn(async () =>
+    Response.json({ guest: { phone_number: ["Rejected by the server."] } }, { status: 400 }),
+  );
+  stubOrderFetch(orderFetch);
+  render(tree());
+  setupDraft("new", "guest");
+  await fillGuestAddress();
+  const input = guestPhone();
+  fireEvent.change(input, { target: { value: "" } });
+  fireEvent.submit(input.form!);
+  expect(orderFetch).not.toHaveBeenCalled();
+  expect(input).toHaveFocus();
+  expect(input).toHaveAccessibleDescription("Enter a phone number");
+
+  replaceGuestPhoneByPaste("0901 234 567");
+  submitDraft();
+  await waitFor(() => expect(input).toHaveAccessibleDescription("Check the value you entered."));
+  expect(input).toHaveFocus();
+  expect(orderFetch).toHaveBeenCalledOnce();
+  fireEvent.change(input, { target: { value: "0987654321" } });
+  expect(input).toBeValid();
 });
 
 it("revalidates once on repeated confirmation and replays an uncertain guest request unchanged", async () => {
@@ -766,7 +907,10 @@ it.each([
     submitDraft();
     expect(requests).toEqual([]);
     setupDraft(kind, buyer);
-    if (buyer === "guest") await fillGuestAddress();
+    if (buyer === "guest") {
+      await fillGuestAddress();
+      replaceGuestPhoneByPaste("(090) 123-4567");
+    }
     submitDraft();
     const dialog = await screen.findByRole("dialog", { name: "Review order details" });
     expect(within(dialog).getByText("12 Nguyen Hue, Ward, Đắk Lắk")).toBeVisible();

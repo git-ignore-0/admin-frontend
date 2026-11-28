@@ -421,7 +421,7 @@ export function StoreOrderCreate() {
     store_buyer_ineligible: copy.buyerInvalid,
     store_shipping_address_required: copy.buyerInvalid,
     store_shipping_address_invalid: copy.buyerInvalid,
-    store_phone_invalid: copy.phoneInvalid,
+    store_phone_invalid: t.phoneInput.invalid,
     store_delivery_date_invalid:
       draft.kind === "new" ? copy.dateInvalidNew : copy.dateInvalidHistorical,
     store_order_amount_out_of_range: copy.totalError,
@@ -435,22 +435,13 @@ export function StoreOrderCreate() {
     guestErrors.user ??= copy.buyerInvalid;
   }
   if (showErrors) {
-    for (const field of [
-      "recipient_name",
-      "phone_number",
-      "province_code",
-      "ward_code",
-      "address",
-    ] as const) {
+    for (const field of ["recipient_name", "province_code", "ward_code", "address"] as const) {
       const fieldIssue = preview.errors.guest[field];
       if (fieldIssue && !guestErrors[field])
-        guestErrors[field] =
-          fieldIssue === "required"
-            ? copy.guestRequired
-            : field === "phone_number"
-              ? copy.phoneInvalid
-              : copy.guestInvalid;
+        guestErrors[field] = fieldIssue === "required" ? copy.guestRequired : copy.guestInvalid;
     }
+    if (preview.errors.guest.phone_number === "required")
+      guestErrors.phone_number ??= t.phoneInput.required;
     if (preview.errors.user) guestErrors.user ??= copy.buyerRequired;
   }
   const dateError =
@@ -656,18 +647,19 @@ export function StoreOrderCreate() {
                     onUserChange={(userId) => update((previous) => ({ ...previous, userId }))}
                     guest={draft.guest}
                     guestAddress={guestAddress}
-                    onGuestChange={(guest) =>
+                    onGuestChange={(change) =>
                       update((previous) => ({
                         ...previous,
-                        guest,
-                        guestPhoneRejected:
-                          previous.guest.phone_number === guest.phone_number &&
-                          previous.guestPhoneRejected,
+                        guest: { ...previous.guest, ...change },
                       }))
                     }
-                    guestPhoneRejected={draft.guestPhoneRejected}
-                    onGuestPhoneRejectionChange={(guestPhoneRejected) =>
-                      update((previous) => ({ ...previous, guestPhoneRejected }))
+                    guestPhoneEntry={draft.guestPhoneEntry}
+                    onGuestPhoneChange={({ value, entry }) =>
+                      update((previous) => ({
+                        ...previous,
+                        guest: { ...previous.guest, phone_number: value },
+                        guestPhoneEntry: entry,
+                      }))
                     }
                     buyerType={draft.buyerType}
                     onBuyerTypeChange={(buyerType) =>

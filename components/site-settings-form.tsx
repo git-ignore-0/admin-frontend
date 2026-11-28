@@ -8,10 +8,11 @@ import { Button, Checkbox } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { PhoneInput } from "@/components/phone-input";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { requestErrorMessage } from "@/lib/client-error";
-import { formatVietnamPhone, handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
+import { formatVietnamPhone, isEditablePhoneValid, type EditablePhone } from "@/lib/phone-number";
 import type { ExternalLink, SiteSettings } from "@/lib/types";
 
 // Store is now an internal public page with its own fixed Farmbrite destinations.
@@ -24,12 +25,13 @@ export function SiteSettingsForm() {
   const { t } = useAdminI18n();
   const showToast = useToast();
   const [data, setData] = useState<SiteSettings | null>(null);
-  const [phoneDraft, setPhoneDraft] = useState<string | null>(null);
+  const [phoneDraft, setPhoneDraft] = useState<EditablePhone | null>(null);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
+  const phoneRef = useRef<HTMLInputElement>(null);
   const savingRef = useRef(false);
   const kindLabels: Record<ConfigurableLinkKind, string> = t.settings.linkLabels;
-  const invalidPhone = Boolean(phoneDraft && !normalizeLocalPhone(phoneDraft, "contact"));
+  const invalidPhone = phoneDraft !== null && !isEditablePhoneValid(phoneDraft);
   useEffect(() => {
     api<SiteSettings>("admin/site-settings")
       .then(setData)
@@ -57,7 +59,11 @@ export function SiteSettingsForm() {
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (savingRef.current || invalidPhone) return;
+    if (savingRef.current) return;
+    if (invalidPhone) {
+      phoneRef.current?.focus();
+      return;
+    }
     const currentData = data;
     if (!currentData) return;
 
@@ -95,7 +101,7 @@ export function SiteSettingsForm() {
         body: JSON.stringify({
           ...currentData,
           // The public site displays this field verbatim.
-          phone_display: phoneDraft ?? currentData.phone_display,
+          phone_display: phoneDraft?.value ?? currentData.phone_display,
           links,
         }),
       });
@@ -140,17 +146,22 @@ export function SiteSettingsForm() {
             />
           </div>
           <div className="field">
-            <label htmlFor="phone-display">{t.settings.phoneDisplay}</label>
-            <FormInput
+            <PhoneInput
+              ref={phoneRef}
               id="phone-display"
-              type="tel"
-              inputMode="tel"
+              name="phone_display"
               autoComplete="tel"
               disabled={saving}
-              error={invalidPhone ? t.common.invalidVietnamPhone : undefined}
-              value={phoneDraft ?? formatVietnamPhone(data.phone_display) ?? ""}
-              onChange={(event) => setPhoneDraft(event.currentTarget.value)}
-              onPaste={(event) => handlePhonePaste(event, setPhoneDraft)}
+              state={
+                phoneDraft ?? {
+                  value: formatVietnamPhone(data.phone_display) ?? "",
+                  entry: "ready",
+                  untouched: true,
+                }
+              }
+              onChange={(next) =>
+                setPhoneDraft(next.untouched && next.entry === "ready" ? null : next)
+              }
             />
             <Checkbox
               checked={data.is_phone_enabled}

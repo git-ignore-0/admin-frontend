@@ -15,6 +15,7 @@ import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { useAddressFields } from "@/components/address-fields";
 import { StoreOrderBuyerFields, useStoreOrderBuyer } from "@/components/store-order-create-buyer";
+import { blankStoreOrderDraft } from "@/lib/store-order-draft";
 import { selectOption } from "./select-option";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -84,14 +85,7 @@ function BuyerHarness({
 }) {
   const [buyerType, onBuyerTypeChange] = useState(type);
   const [userId, onUserChange] = useState<string | null>(null);
-  const [guestPhoneRejected, onGuestPhoneRejectionChange] = useState(false);
-  const [guest, onGuestChange] = useState({
-    recipient_name: "",
-    phone_number: "",
-    province_code: "",
-    ward_code: "",
-    address: "",
-  });
+  const [{ guest, guestPhoneEntry }, setDraft] = useState(() => blankStoreOrderDraft());
   const lookup = useStoreOrderBuyer(userId);
   const guestAddress = useAddressFields(guest, buyerType === "guest");
   return (
@@ -103,12 +97,17 @@ function BuyerHarness({
       onUserChange={onUserChange}
       guest={guest}
       guestAddress={guestAddress}
-      onGuestChange={(next) => {
-        if (next.phone_number !== guest.phone_number) onGuestPhoneRejectionChange(false);
-        onGuestChange(next);
-      }}
-      guestPhoneRejected={guestPhoneRejected}
-      onGuestPhoneRejectionChange={onGuestPhoneRejectionChange}
+      onGuestChange={(change) =>
+        setDraft((draft) => ({ ...draft, guest: { ...draft.guest, ...change } }))
+      }
+      guestPhoneEntry={guestPhoneEntry}
+      onGuestPhoneChange={({ value, entry }) =>
+        setDraft((draft) => ({
+          ...draft,
+          guest: { ...draft.guest, phone_number: value },
+          guestPhoneEntry: entry,
+        }))
+      }
       lookup={lookup}
       errors={errors}
     />
@@ -130,7 +129,8 @@ it("searches on the server, fetches only the chosen user and renders their read-
         meta: { page: 1, page_size: 30, total: 2 },
       });
     }
-    if (path.includes(primary)) return Response.json({ data: detail(primary, "Taylor One") });
+    if (path.includes(primary))
+      return Response.json({ data: detail(primary, "Taylor One", "+842412345678") });
     if (path.includes(secondary)) return Response.json({ data: detail(secondary, "Taylor Two") });
     return Response.json({ data: [] });
   });
@@ -152,6 +152,8 @@ it("searches on the server, fetches only the chosen user and renders their read-
   const address = screen.getByRole("region", { name: "Delivery address" });
   expect(within(address).getByText("Taylor One Street")).toBeVisible();
   expect(within(address).getByText("Recipient name").tagName).toBe("DT");
+  expect(within(address).getByText("02412345678")).toBeVisible();
+  expect(change).not.toHaveAttribute("aria-invalid", "true");
   expect(within(address).queryByRole("textbox")).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: "Province/City" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: "Search users" })).not.toBeInTheDocument();
@@ -341,7 +343,7 @@ it.each(["new", "historical"] as const)(
   },
 );
 
-it("labels guest address controls and validates the shipping phone with the Store phone rules", async () => {
+it("labels guest address controls and applies the shared mobile phone format", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => Response.json({ data: [] })),
@@ -349,24 +351,26 @@ it("labels guest address controls and validates the shipping phone with the Stor
   render(<BuyerHarness type="guest" />, { wrapper });
   const input = screen.getByRole("textbox", { name: "Phone number" });
   expect(input).toHaveAttribute("type", "tel");
-  expect(input).toHaveAttribute("inputmode", "tel");
+  expect(input).toHaveAttribute("inputmode", "numeric");
   expect(input).toHaveAttribute("autocomplete", "shipping tel-national");
-  expect(input).toHaveAccessibleDescription(/start with 0/);
+  expect(input).toHaveAttribute("placeholder", "0912345678");
+  expect(input).toBeRequired();
+  expect(input).toHaveValue("");
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
   expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveAttribute(
     "autocomplete",
     "shipping address-line1",
   );
   expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
 
-  fireEvent.change(input, { target: { value: "0912" } });
-  fireEvent.blur(input);
+  fireEvent.change(input, { target: { value: "0612345678" } });
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(input).toHaveAccessibleDescription(/Enter a valid phone number\./);
+  expect(input).toHaveAccessibleDescription("Invalid phone number");
   fireEvent.change(input, { target: { value: "0912345678" } });
   expect(input).not.toHaveAttribute("aria-invalid", "true");
 });
 
-it("keeps guest phone edits to ASCII digits and rejects mixed paste as a whole", async () => {
+it("pastes formatted guest phones as digits and replaces only the selection", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => Response.json({ data: [] })),
@@ -374,25 +378,15 @@ it("keeps guest phone edits to ASCII digits and rejects mixed paste as a whole",
   render(<BuyerHarness type="guest" />, { wrapper });
   expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
   const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
-  fireEvent.input(input, { target: { value: "0912" } });
-  fireEvent.input(input, { target: { value: "0912a" } });
-  expect(input).toHaveValue("0912");
-  fireEvent.input(input, { target: { value: "0912９" } });
-  expect(input).toHaveValue("0912");
-
+  fireEvent.paste(input, { clipboardData: { getData: () => "(090) 123-4567" } });
+  expect(input).toHaveValue("0901234567");
   input.setSelectionRange(2, 4);
-  for (const text of ["3abc4", "3\n4", "+8434"]) {
-    expect(fireEvent.paste(input, { clipboardData: { getData: () => text } })).toBe(false);
-    expect(input).toHaveValue("0912");
-    expect(input.selectionStart).toBe(2);
-    expect(input.selectionEnd).toBe(4);
-  }
-  expect(fireEvent.paste(input, { clipboardData: { getData: () => "345678" } })).toBe(true);
-  fireEvent.input(input, { target: { value: "09345678" } });
-  expect(input).toHaveValue("09345678");
+  fireEvent.paste(input, { clipboardData: { getData: () => "3abc\n4９" } });
+  expect(input).toHaveValue("0934234567");
+  expect(input).toBeValid();
 });
 
-it("reports a rejected phone paste until the guest phone is edited or confirmed", async () => {
+it("reports an overlong paste until the guest explicitly reenters a valid phone", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => Response.json({ data: [] })),
@@ -402,16 +396,14 @@ it("reports a rejected phone paste until the guest phone is edited or confirmed"
   const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
   fireEvent.input(input, { target: { value: "0912345678" } });
   input.select();
-  const paste = () => fireEvent.paste(input, { clipboardData: { getData: () => "0902 345 678" } });
-  expect(paste()).toBe(false);
+  fireEvent.paste(input, { clipboardData: { getData: () => "+84 912 345 678" } });
   expect(input).toHaveValue("0912345678");
-  expect(input).toHaveAccessibleDescription(/phone entry rejected/i);
-  fireEvent.click(screen.getByRole("button", { name: "Use the current number" }));
-  expect(input).toHaveFocus();
-  expect(input).not.toHaveAttribute("aria-invalid", "true");
-  expect(paste()).toBe(false);
-  fireEvent.input(input, { target: { value: "0902345678" } });
-  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveAccessibleDescription("Invalid phone number");
+  expect(screen.queryByRole("button", { name: "Use the current number" })).not.toBeInTheDocument();
+  input.select();
+  fireEvent.paste(input, { clipboardData: { getData: () => "0912 345 678" } });
+  expect(input).toHaveValue("0912345678");
+  expect(input).toBeValid();
 });
 
 it("blocks a retained guest phone after an invalid typed or autofilled replacement", async () => {
@@ -423,10 +415,10 @@ it("blocks a retained guest phone after an invalid typed or autofilled replaceme
   expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
   const input = screen.getByRole<HTMLInputElement>("textbox", { name: "Phone number" });
   fireEvent.input(input, { target: { value: "0912345678" } });
-  fireEvent.input(input, { target: { value: "0912345678a" } });
+  fireEvent.input(input, { target: { value: "0902 345 6789" } });
   expect(input).toHaveValue("0912345678");
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(screen.getByRole("alert")).toHaveTextContent(/phone entry rejected/i);
+  expect(input).toHaveAccessibleDescription("Invalid phone number");
   fireEvent.input(input, { target: { value: "0902345678" } });
   expect(input).not.toHaveAttribute("aria-invalid", "true");
 });

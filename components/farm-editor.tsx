@@ -18,7 +18,6 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  type ClipboardEvent,
   type FormEvent,
   type Ref,
   useCallback,
@@ -36,8 +35,8 @@ import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { BilingualContentFields } from "@/components/bilingual-content-fields";
 import { FarmTrackerFields, useFarmTracker } from "@/components/farm-tracker-profile-editor";
-import { FormField, FormInput } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
+import { PhoneInput } from "@/components/phone-input";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import type { AdminLocale } from "@/lib/admin-i18n";
@@ -64,17 +63,21 @@ import { deleteFarmImage, getFarm, saveFarm, uploadFarmImage } from "@/lib/farms
 import { farmsCopy } from "@/lib/farms-copy";
 import { isSupportedImageFile } from "@/lib/image-validation";
 import { mediaUrlForWidth } from "@/lib/media";
-import { handlePhonePaste, normalizeLocalPhone } from "@/lib/phone-number";
+import {
+  formatVietnamPhone,
+  isEditablePhoneValid,
+  normalizeEditablePhone,
+  normalizeVietnamPhone,
+  type EditablePhone,
+} from "@/lib/phone-number";
 import type { Farm, MediaAsset } from "@/lib/types";
-
-const MAX_CONTACT_PHONE_LENGTH = 10;
 
 type Form = {
   name_en: string;
   name_vi: string;
   location_en: string;
   location_vi: string;
-  contact_phone: string;
+  contact_phone: EditablePhone;
   description_en: string;
   description_vi: string;
   photos: MediaAsset[];
@@ -97,7 +100,7 @@ const emptyForm: Form = {
   name_vi: "",
   location_en: "",
   location_vi: "",
-  contact_phone: "",
+  contact_phone: { value: "", entry: "ready" },
   description_en: "",
   description_vi: "",
   photos: [],
@@ -108,7 +111,7 @@ function fromFarm(farm: Farm): Form {
     name_vi: farm.name_vi,
     location_en: farm.location_en,
     location_vi: farm.location_vi,
-    contact_phone: farm.contact_phone,
+    contact_phone: { value: farm.contact_phone, entry: "ready", untouched: true },
     description_en: farm.description_en,
     description_vi: farm.description_vi,
     photos: farm.photos.length ? farm.photos : farm.image ? [farm.image] : [],
@@ -149,12 +152,20 @@ const textFields = [
   "description_en",
 ] as const;
 
+function comparablePhone(value: string) {
+  // Compare stored phone representations independently of editable mobile validation.
+  const displayed = formatVietnamPhone(value) ?? "";
+  return normalizeVietnamPhone(displayed) ?? value;
+}
+
 function farmInformation(form: Form) {
-  const { photos, ...texts } = form;
+  const { contact_phone, photos, ...texts } = form;
   for (const field of textFields) texts[field] = texts[field].trim();
   return {
     ...texts,
-    contact_phone: normalizeLocalPhone(texts.contact_phone, "contact") ?? texts.contact_phone,
+    contact_phone: contact_phone.untouched
+      ? comparablePhone(contact_phone.value)
+      : (normalizeEditablePhone(contact_phone) ?? contact_phone.value),
     photo_ids: photoIds(photos),
   };
 }
@@ -287,7 +298,7 @@ function FarmEditorForm({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const [phoneInvalid, setPhoneInvalid] = useState(false);
+  const [phoneServerError, setPhoneServerError] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const [recovery, setRecovery] = useState<SaveRecovery | null>(null);
   const [checkingLatest, setCheckingLatest] = useState(false);
@@ -295,6 +306,7 @@ function FarmEditorForm({
   const translationRef = useRef(t);
   translationRef.current = t;
   const formRef = useRef<HTMLFormElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
   const pendingFocus = useRef<"name" | "location" | null>(null);
   const uploadsRef = useRef<UploadedPhotos>(new Map());
   const recoveryRequest = useRef<AbortController | null>(null);
@@ -322,6 +334,7 @@ function FarmEditorForm({
       accessRevoked.current = true;
       if (farmId) onAccessLost?.(cause);
       setForm(emptyForm);
+      setPhoneServerError(false);
       setPhotoError("");
       setError(requestErrorMessage(cause, translationRef.current));
     },
@@ -350,8 +363,16 @@ function FarmEditorForm({
   const reviewedForm =
     recovery?.kind === "edit" && recovery.latest ? fromFarm(recovery.latest) : null;
   const serverPhoneChanged = Boolean(
-    baselineForm && reviewedForm && baselineForm.contact_phone !== reviewedForm.contact_phone,
+    baselineForm &&
+    reviewedForm &&
+    comparablePhone(baselineForm.contact_phone.value) !==
+      comparablePhone(reviewedForm.contact_phone.value),
   );
+  const phone = form.contact_phone.untouched
+    ? { ...form.contact_phone, value: formatVietnamPhone(form.contact_phone.value) ?? "" }
+    : form.contact_phone;
+  const invalidPhone =
+    !(phone.untouched && phone.entry === "ready") && !isEditablePhoneValid(phone);
   const baselinePhotoIds = baselineForm && reviewedForm ? photoIds(baselineForm.photos) : null;
   const latestPhotoIds = reviewedForm ? photoIds(reviewedForm.photos) : null;
   const serverAlbumChanges =
@@ -408,7 +429,7 @@ function FarmEditorForm({
       setBaseline(farm);
     } else if (!dirty && farm.version > baseline.version) {
       setForm(fromFarm(farm));
-      setPhoneInvalid(false);
+      setPhoneServerError(false);
       setBaseline(farm);
       // This was an external Farm revision. Its Tracker may have changed too.
       void syncAfterFarmWrite(false);
@@ -610,7 +631,7 @@ function FarmEditorForm({
       if (canAct()) {
         setRecovery(null);
         setError("");
-        setPhoneInvalid(false);
+        setPhoneServerError(false);
       }
     } finally {
       release();
@@ -631,30 +652,16 @@ function FarmEditorForm({
     setForm(fromFarm(baseline));
     tracker.reset();
     setError("");
-    setPhoneInvalid(false);
+    setPhoneServerError(false);
     setPhotoError("");
   }
 
-  function updateContactPhone(value: string) {
-    if (value.length > MAX_CONTACT_PHONE_LENGTH || /[^0-9]/.test(value)) {
-      setPhoneInvalid(true);
-      return;
-    }
-    setForm((current) => ({ ...current, contact_phone: value }));
-    setPhoneInvalid(false);
-  }
-
-  function pasteContactPhone(event: ClipboardEvent<HTMLInputElement>) {
-    const input = event.currentTarget;
-    const text = event.clipboardData.getData("text/plain");
-    const selectedLength = (input.selectionEnd ?? 0) - (input.selectionStart ?? 0);
-    if (input.value.length - selectedLength + text.length > MAX_CONTACT_PHONE_LENGTH) {
-      // Reject the whole paste before native maxlength can truncate it into a different number.
-      event.preventDefault();
-      setPhoneInvalid(true);
-      return;
-    }
-    handlePhonePaste(event, updateContactPhone);
+  function changePhone(next: EditablePhone) {
+    setForm((current) => ({
+      ...current,
+      contact_phone: next.untouched ? { ...next, value: current.contact_phone.value } : next,
+    }));
+    if (next.value !== phone.value) setPhoneServerError(false);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -687,14 +694,8 @@ function FarmEditorForm({
       }
     }
 
-    if (
-      form.contact_phone &&
-      form.contact_phone !== baseline?.contact_phone &&
-      (form.contact_phone.length !== MAX_CONTACT_PHONE_LENGTH ||
-        !normalizeLocalPhone(form.contact_phone, "contact"))
-    ) {
-      setPhoneInvalid(true);
-      formRef.current?.querySelector<HTMLInputElement>('[name="contact_phone"]')?.focus();
+    if (invalidPhone) {
+      phoneRef.current?.focus();
       return;
     }
 
@@ -703,7 +704,7 @@ function FarmEditorForm({
     saveLock.current = true;
     setSaving(true);
     setError("");
-    setPhoneInvalid(false);
+    setPhoneServerError(false);
     const version = baseline?.version;
     const fields = farmInformation(form);
     const patch = information ? { ...delta, version } : { ...fields, is_active: initialActive };
@@ -780,7 +781,7 @@ function FarmEditorForm({
           (problem.field === "contact_phone" ||
             "contact_phone" in apiErrorFields(problem) ||
             "contact_phone" in (problem.payload ?? {}));
-        if (phoneRejected) setPhoneInvalid(true);
+        if (phoneRejected) setPhoneServerError(true);
         if (!phoneRejected || (problem.field && problem.field !== "contact_phone")) {
           setError(requestErrorMessage(caught, translationRef.current));
         }
@@ -893,7 +894,7 @@ function FarmEditorForm({
                         <Text size="sm">
                           {c.contactPhone}
                           {" · "}
-                          {reviewedForm.contact_phone || "—"}
+                          {reviewedForm.contact_phone.value || "—"}
                         </Text>
                       )}
                     </Stack>
@@ -1050,22 +1051,15 @@ function FarmEditorForm({
             </Grid.Col>
             <Grid.Col span={sectionSpan}>
               <Stack gap="md">
-                <FormField
-                  label={c.contactPhone}
-                  error={phoneInvalid ? c.invalidContactPhone : undefined}
-                >
-                  <FormInput
-                    type="tel"
-                    inputMode="tel"
-                    name="contact_phone"
-                    maxLength={MAX_CONTACT_PHONE_LENGTH}
-                    autoComplete="tel"
-                    disabled={fieldBusy}
-                    value={form.contact_phone}
-                    onChange={(event) => updateContactPhone(event.currentTarget.value)}
-                    onPaste={pasteContactPhone}
-                  />
-                </FormField>
+                <PhoneInput
+                  name="contact_phone"
+                  autoComplete="tel"
+                  disabled={fieldBusy}
+                  state={phone}
+                  error={phoneServerError ? c.invalidContactPhone : undefined}
+                  onChange={changePhone}
+                  ref={phoneRef}
+                />
                 <Paper component="section" aria-label={c.photos} p="md" withBorder miw={0}>
                   <Stack gap="md">
                     <Stack component="section" gap="xs">
@@ -1143,6 +1137,7 @@ function FarmEditorForm({
               disabled={
                 fieldBusy ||
                 uploading ||
+                invalidPhone ||
                 Boolean(information && (!dirty || !valid || !tracker.ready || farmSnapshotChanged))
               }
             >

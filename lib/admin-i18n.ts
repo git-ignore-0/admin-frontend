@@ -77,7 +77,6 @@ const vi = {
     forbidden: "Tài khoản không có quyền thực hiện thao tác này.",
     serverError: "Dịch vụ đang gặp sự cố. Vui lòng thử lại sau.",
     invalidField: "Dữ liệu không hợp lệ ở trường: {field}.",
-    invalidVietnamPhone: "Nhập số điện thoại Việt Nam hợp lệ bắt đầu bằng 0.",
     previous: "Trước",
     next: "Sau",
     retry: "Thử lại",
@@ -1028,6 +1027,12 @@ const vi = {
     confirmDelete: "Xóa",
     deleting: "Đang xóa…",
   },
+  phoneInput: {
+    label: "Số điện thoại",
+    placeholder: "0912345678",
+    invalid: "Số điện thoại không hợp lệ",
+    required: "Nhập số điện thoại",
+  },
   addressFields: {
     province: "Tỉnh/Thành phố",
     chooseProvince: "Chọn tỉnh/thành phố",
@@ -1602,7 +1607,6 @@ const en: AdminDictionary = {
     forbidden: "This account is not allowed to perform this action.",
     serverError: "The service is currently unavailable. Try again later.",
     invalidField: "Invalid data in field: {field}.",
-    invalidVietnamPhone: "Enter a valid Vietnamese phone number starting with 0.",
     previous: "Previous",
     next: "Next",
     retry: "Try again",
@@ -2556,6 +2560,12 @@ const en: AdminDictionary = {
     deleteBody: "Delete “{name}”? The backend will reject this if the item is in use.",
     confirmDelete: "Delete",
     deleting: "Deleting…",
+  },
+  phoneInput: {
+    label: "Phone number",
+    placeholder: "0912345678",
+    invalid: "Invalid phone number",
+    required: "Enter a phone number",
   },
   addressFields: {
     province: "Province/City",

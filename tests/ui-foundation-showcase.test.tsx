@@ -1006,6 +1006,16 @@ it("lets reviewers compare native default controls and operate the password togg
   expect(forms.getByRole("textbox", { name: "Invalid code" })).toBeInvalid();
   expect(forms.getByRole("textbox", { name: "Read-only code" })).toHaveAttribute("readonly");
   expect(forms.getByRole("textbox", { name: "Disabled field" })).toBeDisabled();
+  const phones = within(forms.getByRole("region", { name: "Phone input" }));
+  const [empty, valid, invalid, disabled] = phones.getAllByRole("textbox", {
+    name: "Phone number",
+  });
+  expect(empty).toHaveValue("");
+  expect(empty).not.toBeRequired();
+  expect(valid).toHaveValue("0912345678");
+  expect(valid).toBeRequired();
+  expect(invalid).toHaveAccessibleDescription("Invalid phone number");
+  expect(disabled).toBeDisabled();
   const input = forms.getByRole("textbox", { name: "Control comparison" });
   fireEvent.change(input, { target: { value: "NFV-001" } });
   fireEvent.click(forms.getByRole("button", { name: "Clear comparison input" }));

@@ -24,18 +24,14 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AddressFields, type useAddressFields } from "@/components/address-fields";
 import { Pagination } from "@/components/pagination";
+import { PhoneInput } from "@/components/phone-input";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import type { StoreOrderGuest, StoreOrderKind } from "@/lib/admin-store-order-api";
 import { userAccountPhone } from "@/lib/admin-users";
 import { useAdminUserDetail, useAdminUsersList } from "@/lib/admin-users-query";
 import { requestErrorMessage } from "@/lib/client-error";
-import {
-  formatVietnamPhone,
-  isLocalPhoneDraft,
-  normalizeLocalPhone,
-  normalizeVietnamPhone,
-} from "@/lib/phone-number";
+import { formatVietnamPhone, normalizeVietnamPhone, type EditablePhone } from "@/lib/phone-number";
 import type { OrderBuyerType } from "@/lib/store-order-draft";
 import { storeOrdersCopy } from "@/lib/store-orders-copy";
 import type { UserShippingAddress } from "@/lib/types";
@@ -51,9 +47,6 @@ const buyerCopy = {
     changeUser: "Đổi User",
     ineligible: "Tài khoản này không đủ điều kiện đặt hàng.",
     addressMissing: "Tài khoản chưa có địa chỉ và tên người nhận hợp lệ.",
-    phoneFormat: "Nhập 10 hoặc 11 chữ số, bắt đầu bằng 0.",
-    phoneEntryRejected: "Thay đổi số điện thoại bị từ chối. Chỉ nhập chữ số từ 0 đến 9.",
-    useCurrentPhone: "Dùng số đang hiển thị",
   },
   en: {
     buyerType: "Recipient type",
@@ -64,13 +57,11 @@ const buyerCopy = {
     changeUser: "Change user",
     ineligible: "This account is ineligible to place orders.",
     addressMissing: "This account needs a valid recipient name and shipping address.",
-    phoneFormat: "Enter 10 or 11 digits and start with 0.",
-    phoneEntryRejected: "Phone entry rejected. Enter digits 0 to 9 only.",
-    useCurrentPhone: "Use the current number",
   },
 } as const;
 
 type BuyerFieldErrors = Partial<Record<keyof StoreOrderGuest | "user", string>>;
+type GuestDetailsChange = Partial<Omit<StoreOrderGuest, "phone_number">>;
 
 export function useStoreOrderBuyer(userId: string | null) {
   const query = useAdminUserDetail(userId, 1);
@@ -113,8 +104,8 @@ export function StoreOrderBuyerFields({
   guest,
   guestAddress,
   onGuestChange,
-  guestPhoneRejected,
-  onGuestPhoneRejectionChange,
+  guestPhoneEntry,
+  onGuestPhoneChange,
   lookup,
   disabled = false,
   errors = {},
@@ -126,9 +117,9 @@ export function StoreOrderBuyerFields({
   onUserChange: (userId: string | null) => void;
   guest: StoreOrderGuest;
   guestAddress: ReturnType<typeof useAddressFields>;
-  onGuestChange: (guest: StoreOrderGuest) => void;
-  guestPhoneRejected: boolean;
-  onGuestPhoneRejectionChange: (rejected: boolean) => void;
+  onGuestChange: (change: GuestDetailsChange) => void;
+  guestPhoneEntry: EditablePhone["entry"];
+  onGuestPhoneChange: (phone: EditablePhone) => void;
   lookup: ReturnType<typeof useStoreOrderBuyer>;
   disabled?: boolean;
   errors?: BuyerFieldErrors;
@@ -172,8 +163,8 @@ export function StoreOrderBuyerFields({
           guest={guest}
           addressState={guestAddress}
           onChange={onGuestChange}
-          phoneRejected={guestPhoneRejected}
-          onPhoneRejectionChange={onGuestPhoneRejectionChange}
+          phone={{ value: guest.phone_number, entry: guestPhoneEntry }}
+          onPhoneChange={onGuestPhoneChange}
           disabled={disabled}
           errors={errors}
         />
@@ -456,30 +447,21 @@ function GuestFields({
   guest,
   addressState,
   onChange,
-  phoneRejected,
-  onPhoneRejectionChange,
+  phone,
+  onPhoneChange,
   disabled,
   errors,
 }: {
   guest: StoreOrderGuest;
   addressState: ReturnType<typeof useAddressFields>;
-  onChange: (guest: StoreOrderGuest) => void;
-  phoneRejected: boolean;
-  onPhoneRejectionChange: (rejected: boolean) => void;
+  onChange: (change: GuestDetailsChange) => void;
+  phone: EditablePhone;
+  onPhoneChange: (phone: EditablePhone) => void;
   disabled: boolean;
   errors: BuyerFieldErrors;
 }) {
-  const { locale, t } = useAdminI18n();
+  const { locale } = useAdminI18n();
   const copy = storeOrdersCopy(locale);
-  const phoneInput = useRef<HTMLInputElement>(null);
-  const [phoneTouched, setPhoneTouched] = useState(false);
-  const normalizedPhone = normalizeLocalPhone(guest.phone_number, "contact");
-  const phoneError = phoneRejected
-    ? buyerCopy[locale].phoneEntryRejected
-    : (errors.phone_number ??
-      (phoneTouched && guest.phone_number && !normalizedPhone
-        ? t.csaCustomers.invalidPhone
-        : undefined));
 
   return (
     <Stack gap="sm">
@@ -493,58 +475,24 @@ function GuestFields({
           disabled={disabled}
           error={errors.recipient_name}
           value={guest.recipient_name}
-          onChange={(event) => onChange({ ...guest, recipient_name: event.currentTarget.value })}
+          onChange={(event) => onChange({ recipient_name: event.currentTarget.value })}
         />
-        <Stack gap={4} miw={0} align="flex-start">
-          <TextInput
-            ref={phoneInput}
-            required
-            w="100%"
-            label={copy.phone}
-            description={buyerCopy[locale].phoneFormat}
-            name="phone_number"
-            type="tel"
-            inputMode="tel"
-            autoComplete="shipping tel-national"
-            maxLength={32}
-            disabled={disabled}
-            error={phoneError}
-            errorProps={phoneRejected ? { role: "alert" } : undefined}
-            value={guest.phone_number}
-            onBlur={() => setPhoneTouched(true)}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (isLocalPhoneDraft(value)) onChange({ ...guest, phone_number: value });
-              else onPhoneRejectionChange(true);
-            }}
-            onPaste={(event) => {
-              if (isLocalPhoneDraft(event.clipboardData.getData("text/plain"))) return;
-              event.preventDefault();
-              onPhoneRejectionChange(true);
-            }}
-          />
-          {phoneRejected && normalizedPhone && (
-            <Button
-              type="button"
-              variant="subtle"
-              size="compact-sm"
-              disabled={disabled}
-              onClick={() => {
-                phoneInput.current?.focus();
-                onPhoneRejectionChange(false);
-              }}
-            >
-              {buyerCopy[locale].useCurrentPhone}
-            </Button>
-          )}
-        </Stack>
+        <PhoneInput
+          state={phone}
+          onChange={onPhoneChange}
+          name="phone_number"
+          autoComplete="shipping tel-national"
+          required
+          disabled={disabled}
+          error={errors.phone_number}
+        />
       </SimpleGrid>
       <AddressFields
         value={guest}
         state={addressState}
         disabled={disabled}
         errors={errors}
-        onChange={(address) => onChange({ ...guest, ...address })}
+        onChange={onChange}
       />
     </Stack>
   );
