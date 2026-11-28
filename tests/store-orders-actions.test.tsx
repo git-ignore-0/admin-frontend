@@ -2,13 +2,18 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
+import type { AdminLocale } from "@/lib/admin-i18n";
 import { api } from "@/lib/client-api";
 import type { StoreOrder } from "@/lib/types";
-import { storeOrderFixture } from "@/tests/store-orders-fixture";
+import { sourceLineFixture, storeOrderFixture } from "@/tests/store-orders-fixture";
 
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("@/lib/client-api", async () => {
+  const { createStoreOrderApiMock } = await import("@/tests/store-orders-fixture");
+  return createStoreOrderApiMock();
+});
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: null, wardName: null }),
 }));
@@ -16,6 +21,14 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
   usePathname: () => "/store-orders/id",
 }));
+
+const batchA = "00000000-0000-4000-8000-0000000000a1";
+const batchB = "00000000-0000-4000-8000-0000000000a2";
+const farmA = "00000000-0000-4000-8000-0000000000b1";
+const allocationA = "00000000-0000-4000-8000-0000000000c1";
+const allocationB = "00000000-0000-4000-8000-0000000000c2";
+const lineB = "00000000-0000-4000-8000-0000000000d1";
+const productB = "00000000-0000-4000-8000-0000000000e1";
 
 afterEach(() => {
   cleanup();
@@ -33,17 +46,24 @@ function pending() {
   const row = storeOrderFixture();
   return {
     ...row,
-    allocation_suggestion: [{ line_id: row.lines[0].id, batch_id: "batch-a", quantity: 3 }],
+    allocation_suggestion: [{ line_id: row.lines[0].id, batch_id: batchA, quantity: 3 }],
     source_inventory: {
       refresh_required_before_approve: true,
+      lines: [
+        sourceLineFixture(
+          row.lines[0],
+          [{ farm_id: farmA, farm_name: "Vườn A", available_quantity: 3, eligible: true }],
+          farmA,
+        ),
+      ],
       product_reservations: [],
       candidates: [
         {
           line_id: row.lines[0].id,
           product_id: row.lines[0].product_id,
-          farm_id: "farm-a",
+          farm_id: farmA,
           farm_name: "Vườn A",
-          batch_id: "batch-a",
+          batch_id: batchA,
           start_date: "2026-10-30",
           end_date: "2026-11-02",
           available_quantity: 3,
@@ -53,12 +73,15 @@ function pending() {
   };
 }
 
-function view(item: StoreOrder = pending()) {
+function view(item: StoreOrder = pending(), locale: AdminLocale = "vi") {
   vi.mocked(api).mockResolvedValueOnce(item);
   return render(
-    <AdminI18nProvider initialLocale="vi">
+    <AdminI18nProvider initialLocale={locale}>
       <ToastProvider>
-        <StoreOrderDetail orderId={item.id} />
+        <AdminQueryProvider>
+          {" "}
+          <StoreOrderDetail orderId={item.id} />{" "}
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>,
   );
@@ -74,10 +97,11 @@ describe("Store order actions", () => {
     const item = pending();
     view(item);
     expect(await screen.findByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeEnabled();
     vi.mocked(api).mockResolvedValueOnce({
       ...item,
       status: "pending_delivery",
+      approved_at: "2026-10-31T10:00:00Z",
       payment_status: "received",
       payment_received_at: "2026-10-31T10:00:00Z",
       expires_at: null,
@@ -86,17 +110,17 @@ describe("Store order actions", () => {
     expect(within(approval).queryByRole("checkbox")).not.toBeInTheDocument();
     fireEvent.click(within(approval).getByRole("button", { name: "Duyệt đơn" }));
     expect(await screen.findByRole("button", { name: "Xác nhận đã giao" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Xác nhận đã nhận tiền" })).not.toBeInTheDocument();
   });
 
   it("allows a zero-total order to be approved without recording payment", async () => {
     view({ ...pending(), total_vnd: "0", payment_status: "not_required" });
     const dialog = await open("Duyệt đơn");
     expect(within(dialog).getByRole("button", { name: "Duyệt đơn" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Xác nhận đã nhận tiền" })).not.toBeInTheDocument();
   });
 
-  it("approves a paid order with allocations and one synchronous submit", async () => {
+  it("approves a paid order with sources and one synchronous submit", async () => {
     const item = { ...pending(), payment_status: "received" as const };
     let resolve!: (value: unknown) => void;
     view(item);
@@ -114,9 +138,14 @@ describe("Store order actions", () => {
     const [, init] = vi.mocked(api).mock.calls[1];
     expect(JSON.parse(String(init?.body))).toEqual({
       idempotency_key: "00000000-0000-4000-8000-000000000001",
-      allocations: item.allocation_suggestion,
+      sources: [{ line_id: item.lines[0].id, farm_id: farmA }],
     });
-    resolve({ ...item, status: "pending_delivery", payment_status: "received" });
+    resolve({
+      ...item,
+      status: "pending_delivery",
+      approved_at: "2026-10-31T10:00:00Z",
+      payment_status: "received",
+    });
   });
 
   it("requires a cancel reason and preserves the reason after a network failure with the same retry key", async () => {
@@ -150,8 +179,8 @@ describe("Store order actions", () => {
       refund_status: "pending",
       payment_received_at: "2026-10-31T10:00:00Z",
     });
-    const dialog = await open("Ghi nhận đã nhận tiền");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+    const dialog = await open("Xác nhận đã nhận tiền");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Duyệt đơn" })).not.toBeInTheDocument();
@@ -169,10 +198,11 @@ describe("Store order actions", () => {
     vi.mocked(api).mockResolvedValueOnce({
       ...item,
       payment_status: "received",
+      payment_received_at: "2026-10-31T10:02:00Z",
       server_time: "2026-10-31T10:02:00Z",
     });
-    const dialog = await open("Ghi nhận đã nhận tiền");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+    const dialog = await open("Xác nhận đã nhận tiền");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("Còn 6 phút")).toBeVisible();
@@ -231,11 +261,11 @@ describe("Store order actions", () => {
       approved_at: "x",
       allocations: [
         {
-          id: "allocation-a",
+          id: allocationA,
           line_id: pending().lines[0].id,
           product_id: pending().lines[0].product_id,
-          batch_id: "batch-a",
-          farm_id: "farm-a",
+          batch_id: batchA,
+          farm_id: farmA,
           farm_name: "Vườn A",
           start_date: "2026-10-30",
           end_date: "2026-11-02",
@@ -248,14 +278,15 @@ describe("Store order actions", () => {
       ],
     };
     view(item);
-    const dialog = await open("Hoàn tồn");
+    const dialog = await open("Hoàn tồn kho");
     const quantity = within(dialog).getByLabelText(
-      "Số lượng hoàn · Rau muống (RAU-01) · Vườn A · batch batch-a",
+      `Số lượng hoàn · Rau muống (RAU-01) · Vườn A · đợt ${batchA}`,
     );
-    const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn" });
-    expect(quantity).toHaveAttribute("max", "2");
-    expect(quantity).toHaveValue(0);
+    const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn kho" });
+    expect(quantity).toHaveAttribute("inputmode", "numeric");
+    expect(quantity).toHaveValue("0");
     fireEvent.change(quantity, { target: { value: "3" } });
+    expect(within(dialog).getByText("Nhập số nguyên từ 0 đến 2.")).toBeVisible();
     expect(confirm).toBeDisabled();
     fireEvent.change(quantity, { target: { value: "1.5" } });
     expect(confirm).toBeDisabled();
@@ -267,19 +298,19 @@ describe("Store order actions", () => {
     const base = pending();
     const secondLine = {
       ...base.lines[0],
-      id: "line-b",
-      product_id: "product-b",
+      id: lineB,
+      product_id: productB,
       sku: "CA-02",
       name: "Cà chua",
       unit_size: "1",
     };
     const allocations = [
       {
-        id: "allocation-a",
+        id: allocationA,
         line_id: base.lines[0].id,
         product_id: base.lines[0].product_id,
-        batch_id: "batch-a",
-        farm_id: "farm-a",
+        batch_id: batchA,
+        farm_id: farmA,
         farm_name: "Vườn A",
         start_date: "2026-10-30",
         end_date: "2026-11-02",
@@ -290,11 +321,11 @@ describe("Store order actions", () => {
         restock_unavailable_reason: null,
       },
       {
-        id: "allocation-b",
+        id: allocationB,
         line_id: secondLine.id,
         product_id: secondLine.product_id,
-        batch_id: "batch-b",
-        farm_id: "farm-a",
+        batch_id: batchB,
+        farm_id: farmA,
         farm_name: "Vườn A",
         start_date: "2026-10-31",
         end_date: "2026-11-03",
@@ -308,31 +339,41 @@ describe("Store order actions", () => {
     const item = {
       ...base,
       lines: [base.lines[0], secondLine],
+      source_inventory: {
+        ...base.source_inventory,
+        lines: [sourceLineFixture(base.lines[0]), sourceLineFixture(secondLine)],
+      },
       status: "cancelled" as const,
       payment_status: "refunded" as const,
       approved_at: "x",
       allocations,
     };
     view(item);
-    vi.mocked(api).mockResolvedValueOnce(item);
+    vi.mocked(api).mockResolvedValueOnce({
+      ...item,
+      allocations: [
+        { ...allocations[0], restocked_quantity: 2, restock_remaining_quantity: 1 },
+        allocations[1],
+      ],
+    });
 
-    const dialog = await open("Hoàn tồn");
+    const dialog = await open("Hoàn tồn kho");
     expect(within(dialog).getByText("Rau muống")).toBeVisible();
     expect(within(dialog).getByText("Cà chua")).toBeVisible();
     const first = within(dialog).getByLabelText(
-      "Số lượng hoàn · Rau muống (RAU-01) · Vườn A · batch batch-a",
+      `Số lượng hoàn · Rau muống (RAU-01) · Vườn A · đợt ${batchA}`,
     );
     const second = within(dialog).getByLabelText(
-      "Số lượng hoàn · Cà chua (CA-02) · Vườn A · batch batch-b",
+      `Số lượng hoàn · Cà chua (CA-02) · Vườn A · đợt ${batchB}`,
     );
     fireEvent.change(first, { target: { value: "1" } });
-    expect(second).toHaveValue(0);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
+    expect(second).toHaveValue("0");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn kho" }));
 
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
     const [, init] = vi.mocked(api).mock.calls[1];
     expect(JSON.parse(String(init?.body)).allocations).toEqual([
-      { allocation_id: "allocation-a", quantity: 1 },
+      { allocation_id: allocationA, quantity: 1 },
     ]);
   });
 
@@ -345,11 +386,11 @@ describe("Store order actions", () => {
       approved_at: "x",
       allocations: [
         {
-          id: "allocation-a",
+          id: allocationA,
           line_id: base.lines[0].id,
           product_id: base.lines[0].product_id,
-          batch_id: "batch-a",
-          farm_id: "farm-a",
+          batch_id: batchA,
+          farm_id: farmA,
           farm_name: "Vườn A",
           start_date: "2026-10-30",
           end_date: "2026-11-02",
@@ -365,13 +406,13 @@ describe("Store order actions", () => {
     vi.mocked(api).mockRejectedValueOnce(
       Object.assign(new Error("store_order_state_conflict"), { status: 409 }),
     );
-    const dialog = await open("Hoàn tồn");
-    const quantity = within(dialog).getByRole("spinbutton");
+    const dialog = await open("Hoàn tồn kho");
+    const quantity = within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u });
     fireEvent.change(quantity, { target: { value: "1" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Hoàn tồn kho" }));
 
     expect(await within(dialog).findByRole("button", { name: "Tải trạng thái mới" })).toBeVisible();
-    expect(quantity).toHaveValue(1);
+    expect(quantity).toHaveValue("1");
   });
 
   it("shows deliver only for pending delivery and reloads intentionally on a 409 conflict", async () => {
@@ -396,6 +437,63 @@ describe("Store order actions", () => {
     await waitFor(() => expect(api).toHaveBeenCalledTimes(3));
   });
 
+  it("refreshes approval after a stock coverage conflict without replaying the mutation", async () => {
+    const item = pending();
+    const [candidate] = item.source_inventory.candidates;
+    view(item);
+    vi.mocked(api)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("store_allocation_stale"), {
+          status: 409,
+          payload: {
+            errors: [
+              {
+                code: "store_allocation_stale",
+                context: { product_id: candidate.product_id, available_quantity: 1 },
+              },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce({
+        ...item,
+        allocation_suggestion: [{ ...item.allocation_suggestion[0], quantity: 1 }],
+        source_inventory: {
+          ...item.source_inventory,
+          candidates: [{ ...candidate, batch_id: batchB }],
+          lines: [
+            sourceLineFixture(
+              item.lines[0],
+              [{ farm_id: farmA, farm_name: "Vườn A", available_quantity: 1, eligible: false }],
+              null,
+              farmA,
+            ),
+          ],
+        },
+      });
+
+    const dialog = await open("Duyệt đơn");
+    const confirm = within(dialog).getByRole("button", { name: "Duyệt đơn" });
+    fireEvent.click(confirm);
+    const reload = await within(dialog).findByRole("button", { name: "Tải trạng thái mới" });
+    expect(confirm).toBeDisabled();
+    expect(api).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(reload);
+    const editor = screen.getByRole("region", { name: "Sản phẩm" });
+    await waitFor(() =>
+      expect(within(editor).getByRole("combobox")).toHaveAttribute("aria-invalid", "true"),
+    );
+    expect(screen.getByRole("button", { name: "Duyệt đơn" })).toBeDisabled();
+    expect(
+      vi.mocked(api).mock.calls.map(([path, init]) => [path, ...(init ? [init] : [])]),
+    ).toEqual([
+      [`admin/store-orders/${item.id}`, { signal: expect.any(AbortSignal) }],
+      [`admin/store-orders/${item.id}/approve`, expect.objectContaining({ method: "POST" })],
+      [`admin/store-orders/${item.id}`, { signal: expect.any(AbortSignal) }],
+    ]);
+  });
+
   it("shows a stale snapshot warning and locks mutations when conflict reload fails", async () => {
     const item = { ...pending(), payment_status: "received" as const };
     vi.mocked(api)
@@ -408,7 +506,10 @@ describe("Store order actions", () => {
     render(
       <AdminI18nProvider initialLocale="vi">
         <ToastProvider>
-          <StoreOrderDetail orderId={item.id} />
+          <AdminQueryProvider>
+            {" "}
+            <StoreOrderDetail orderId={item.id} />{" "}
+          </AdminQueryProvider>
         </ToastProvider>
       </AdminI18nProvider>,
     );
@@ -432,11 +533,11 @@ describe("Store order actions", () => {
 function cancelledSources(): StoreOrder {
   const item = pending();
   const source = {
-    id: "a",
+    id: allocationA,
     line_id: item.lines[0].id,
     product_id: item.lines[0].product_id,
-    batch_id: "batch-a",
-    farm_id: "farm-a",
+    batch_id: batchA,
+    farm_id: farmA,
     farm_name: "Vườn A",
     start_date: "2026-10-01",
     end_date: "2026-10-02",
@@ -455,36 +556,285 @@ function cancelledSources(): StoreOrder {
   };
 }
 
-it("does not offer restock when every remaining source is ineligible and explains why", async () => {
-  view(cancelledSources());
-  expect(await screen.findByText("Nguồn đã hết hạn, không thể hoàn tồn.")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Hoàn tồn" })).not.toBeInTheDocument();
+it("does not offer restock when every remaining source is ineligible", async () => {
+  const item = cancelledSources();
+  view(item);
+  await screen.findByRole("heading", { level: 1, name: item.reference_code });
+  const products = screen.getByRole("region", { name: "Sản phẩm" });
+  expect(within(products).getByText("Vườn A")).toBeVisible();
+  expect(within(products).queryByText("Nguồn đã hết hạn, không thể hoàn tồn.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Hoàn tồn kho" })).not.toBeInTheDocument();
 });
+
+it.each([
+  [
+    "vi",
+    "batch_historical",
+    "Đợt cung cấp thuộc lịch sử, không thể hoàn tồn vào nguồn hiện tại.",
+    "Hoàn tồn kho",
+  ],
+  [
+    "en",
+    "batch_historical",
+    "This is a historical batch and cannot be restocked into the current supply.",
+    "Restock",
+  ],
+  ["vi", "offer_inactive", "Nguồn cung đã được gỡ khỏi trang trại.", "Hoàn tồn kho"],
+  ["en", "offer_inactive", "This source was removed from the farm.", "Restock"],
+] as const)(
+  "shows the Backend restock reason in %s for %s only in the restock dialog",
+  async (locale, reason, message, action) => {
+    const item = cancelledSources();
+    const allocation = item.allocations![0];
+    allocation.restock_unavailable_reason = reason;
+    const productsName = locale === "vi" ? "Sản phẩm" : "Products";
+    const readonly = view(item, locale);
+    await screen.findByRole("heading", { level: 1, name: item.reference_code });
+    const products = screen.getByRole("region", { name: productsName });
+    expect(within(products).getByText(allocation.farm_name)).toBeVisible();
+    expect(within(products).queryByText(message)).toBeNull();
+    expect(screen.queryByRole("button", { name: action })).not.toBeInTheDocument();
+    readonly.unmount();
+
+    view(
+      {
+        ...item,
+        allocations: [
+          allocation,
+          {
+            ...allocation,
+            id: allocationB,
+            batch_id: batchB,
+            farm_name: "Vườn B",
+            restock_eligible: true,
+            restock_unavailable_reason: null,
+          },
+        ],
+      },
+      locale,
+    );
+    const dialog = await open(action);
+    expect(within(dialog).getByText(message)).toBeVisible();
+  },
+);
 
 it("allows only eligible allocations in a mixed-source restock", async () => {
   const item = cancelledSources();
   item.allocations!.push({
     ...item.allocations![0],
-    id: "b",
-    batch_id: "batch-b",
+    id: allocationB,
+    batch_id: batchB,
     farm_name: "Vườn B",
     restock_eligible: true,
     restock_unavailable_reason: null,
   });
   view(item);
-  const dialog = await open("Hoàn tồn");
-  const inputs = within(dialog).getAllByRole("spinbutton");
-  expect(inputs[0]).toHaveAttribute("max", "0");
+  const dialog = await open("Hoàn tồn kho");
+  const inputs = within(dialog).getAllByRole("textbox", { name: /^Số lượng hoàn/u });
   fireEvent.change(inputs[1], { target: { value: "1" } });
   fireEvent.change(inputs[0], { target: { value: "1" } });
-  const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn" });
+  expect(within(dialog).getByText("Nhập số nguyên từ 0 đến 0.")).toBeVisible();
+  const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn kho" });
   expect(confirm).toBeDisabled();
   fireEvent.change(inputs[0], { target: { value: "0" } });
   expect(confirm).toBeEnabled();
-  vi.mocked(api).mockResolvedValueOnce(item);
+  (inputs[0] as HTMLInputElement).setSelectionRange(0, 1);
+  fireEvent.paste(inputs[0], { clipboardData: { getData: () => "\n" } });
+  expect(inputs[0]).toHaveValue("");
+  expect(inputs[0]).toHaveAttribute("aria-invalid", "true");
+  expect(confirm).toBeDisabled();
+  fireEvent.keyDown(inputs[0], { key: "Delete" });
+  expect(inputs[0]).not.toHaveAttribute("aria-invalid", "true");
+  expect(confirm).toBeEnabled();
+  vi.mocked(api).mockResolvedValueOnce({
+    ...item,
+    allocations: [
+      item.allocations![0],
+      { ...item.allocations![1], restocked_quantity: 1, restock_remaining_quantity: 2 },
+    ],
+  });
   fireEvent.click(confirm);
   await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
   expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body)).allocations).toEqual([
-    { allocation_id: "b", quantity: 1 },
+    { allocation_id: allocationB, quantity: 1 },
   ]);
 });
+
+it("keeps an invalid restock replacement from submitting the previous valid number", async () => {
+  const item = cancelledSources();
+  item.allocations![0] = {
+    ...item.allocations![0],
+    quantity: 1_000_000,
+    restock_remaining_quantity: 1_000_000,
+    restock_eligible: true,
+    restock_unavailable_reason: null,
+  };
+  view(item);
+  const dialog = await open("Hoàn tồn kho");
+  const quantity = within(dialog).getByRole("textbox", { name: /^Số lượng hoàn/u });
+  const confirm = within(dialog).getByRole("button", { name: "Hoàn tồn kho" });
+  expect(quantity).toHaveAttribute("inputmode", "numeric");
+
+  for (const raw of [
+    "",
+    "0",
+    "-1",
+    "1.5",
+    "1e3",
+    "12abc",
+    " 1",
+    "١",
+    "1000000",
+    "9007199254740992",
+  ]) {
+    fireEvent.change(quantity, { target: { value: raw } });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(api).toHaveBeenCalledTimes(1);
+  }
+
+  fireEvent.change(quantity, { target: { value: "1" } });
+  expect(confirm).toBeEnabled();
+  (quantity as HTMLInputElement).setSelectionRange(0, 1);
+  fireEvent.paste(quantity, { clipboardData: { getData: () => "9\n9" } });
+  expect(quantity).toHaveAttribute("aria-invalid", "true");
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  expect(api).toHaveBeenCalledTimes(1);
+
+  fireEvent.change(quantity, { target: { value: "999999" } });
+  expect(quantity).not.toHaveAttribute("aria-invalid", "true");
+  expect(confirm).toBeEnabled();
+  vi.mocked(api).mockResolvedValueOnce({
+    ...item,
+    allocations: [
+      { ...item.allocations![0], restocked_quantity: 999999, restock_remaining_quantity: 1 },
+    ],
+  });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body)).allocations).toEqual([
+    { allocation_id: allocationA, quantity: 999999 },
+  ]);
+});
+
+it("counts Unicode code points in a cancel reason and validates the full paste before sending", async () => {
+  const item = pending();
+  view(item);
+  const dialog = await open("Hủy đơn");
+  const reason = within(dialog).getByRole("textbox", { name: "Lý do hủy" });
+  const confirm = within(dialog).getByRole("button", { name: "Hủy đơn" });
+  fireEvent.change(reason, { target: { value: " \n\t " } });
+  expect(confirm).toBeDisabled();
+  const atLimit = `Hủy 31/10 ${"🌱".repeat(990)}`;
+  fireEvent.change(reason, { target: { value: ` \n${atLimit}  ` } });
+  expect(Array.from(atLimit)).toHaveLength(1000);
+  expect(confirm).toBeEnabled();
+
+  fireEvent.change(reason, { target: { value: `${atLimit}!` } });
+  expect(reason).toHaveValue(`${atLimit}!`);
+  expect(reason).toHaveAttribute("aria-invalid", "true");
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  expect(api).toHaveBeenCalledTimes(1);
+
+  fireEvent.change(reason, { target: { value: `  ${atLimit}\n` } });
+  expect(reason).not.toHaveAttribute("aria-invalid", "true");
+  vi.mocked(api).mockResolvedValueOnce({ ...item, status: "cancelled" });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(String(vi.mocked(api).mock.calls[1][1]?.body))).toMatchObject({
+    reason: atLimit,
+  });
+});
+
+it.each([
+  {
+    label: "Hủy đơn",
+    field: "Ghi chú đối soát",
+    route: "cancel",
+    key: "reconciliation_note",
+    max: 2000,
+    order: pending(),
+    prerequisite: "Lý do hủy",
+    optional: true,
+  },
+  {
+    label: "Xác nhận đã nhận tiền",
+    field: "Ghi chú đối soát",
+    route: "record-payment",
+    key: "note",
+    max: 2000,
+    order: pending(),
+    optional: true,
+  },
+  {
+    label: "Xác nhận chưa nhận tiền",
+    field: "Lý do xác nhận chưa nhận tiền",
+    route: "close-refund-request",
+    key: "reason",
+    max: 1000,
+    order: { ...pending(), status: "cancelled", refund_status: "pending" } as StoreOrder,
+    optional: false,
+  },
+  {
+    label: "Xác nhận hoàn tiền",
+    field: "Ghi chú hoàn tiền",
+    route: "refund",
+    key: "note",
+    max: 2000,
+    order: {
+      ...pending(),
+      status: "cancelled",
+      payment_status: "refund_required",
+      refund_status: "pending",
+      payment_received_at: "2026-10-31T10:00:00Z",
+    } as StoreOrder,
+    checkbox: "Tôi xác nhận đã chuyển trả tiền ngoài hệ thống.",
+    optional: false,
+  },
+])(
+  "enforces the $route text contract and submits its trimmed field only",
+  async ({ label, field, route, key, max, order, prerequisite, checkbox, optional }) => {
+    view(order);
+    const dialog = await open(label);
+    if (prerequisite) {
+      fireEvent.change(within(dialog).getByLabelText(prerequisite), {
+        target: { value: "Hết hàng" },
+      });
+    }
+    if (checkbox) fireEvent.click(within(dialog).getByLabelText(checkbox));
+    const input = within(dialog).getByRole("textbox", { name: field });
+    const confirm = within(dialog).getByRole("button", { name: label });
+    fireEvent.change(input, { target: { value: " \n\t " } });
+    if (optional) expect(confirm).toBeEnabled();
+    else expect(confirm).toBeDisabled();
+
+    const prefix = "Đã đối soát 31/10. ";
+    const text = prefix + "🌱".repeat(max - Array.from(prefix).length);
+    fireEvent.input(input, { target: { value: text + "." }, inputType: "insertFromPaste" });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveValue(text + ".");
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(api).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(input, { target: { value: `  ${text} \n` } });
+    expect(input).not.toHaveAttribute("aria-invalid", "true");
+    expect(confirm).toBeEnabled();
+    vi.mocked(api).mockRejectedValueOnce(
+      Object.assign(new Error("validation_error"), { status: 400 }),
+    );
+    fireEvent.click(confirm);
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api).mock.lastCall?.[0]).toBe(`admin/store-orders/${order.id}/${route}`);
+    const payload = JSON.parse(String(vi.mocked(api).mock.lastCall?.[1]?.body));
+    const expected = {
+      idempotency_key: expect.any(String),
+      [key]: text,
+      ...(prerequisite ? { reason: "Hết hàng" } : {}),
+      ...(route === "refund" ? { amount_vnd: order.total_vnd } : {}),
+    };
+    expect(payload).toEqual(expected);
+  },
+);

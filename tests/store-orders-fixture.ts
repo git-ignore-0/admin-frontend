@@ -1,7 +1,67 @@
-import type { StoreOrder } from "@/lib/types";
+import { vi } from "vitest";
+
+import type { api as clientApi } from "@/lib/client-api";
+import type { StoreOrder, StoreSourceFarm } from "@/lib/types";
+
+export function sourceLineFixture(
+  line: StoreOrder["lines"][number],
+  farms: StoreSourceFarm[] = [],
+  suggested: string | null = null,
+  assigned: string | null = suggested,
+) {
+  return {
+    line_id: line.id,
+    product_id: line.product_id,
+    required_quantity: line.quantity,
+    assigned_farm_id: assigned,
+    suggested_farm_id: suggested,
+    farms,
+  };
+}
+
+export function historicalStoreOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrder {
+  const order = storeOrderFixture({
+    workflow_version: 2,
+    status: "delivered",
+    payment_status: "received",
+    creation: { origin: "admin_historical", actor_id: null },
+    delivery_date: "2026-10-29",
+    payment: null,
+    expires_at: null,
+    transfer_reported_at: null,
+    ...overrides,
+  });
+  return {
+    ...order,
+    source_inventory: {
+      refresh_required_before_approve: false,
+      lines: order.lines.map((line) => sourceLineFixture(line)),
+      product_reservations: [],
+      candidates: [],
+    },
+  };
+}
+
+// UI fixtures queue explicit snapshots/errors on one transport spy. POSTs wrap
+// that snapshot with the successful receipt for the submitted test intent.
+export function createStoreOrderApiMock() {
+  const api = vi.fn<(...args: Parameters<typeof clientApi>) => Promise<unknown>>();
+  const apiEnvelope = async (...args: Parameters<typeof clientApi>) => {
+    const [path, init] = args;
+    const match = /^admin\/store-orders\/([^/]+)\/([^/]+)$/.exec(path);
+    if (!match || init?.method !== "POST") throw new Error(`Unexpected request: ${path}`);
+    const [, order_id, action] = match;
+    const { idempotency_key } = JSON.parse(String(init.body));
+    return {
+      data: await api(...args),
+      meta: { action_receipt: { order_id, action: action.replaceAll("-", "_"), idempotency_key } },
+    };
+  };
+  return { api, apiEnvelope };
+}
 
 export function storeOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrder {
-  return {
+  const item: StoreOrder = {
     id: "11111111-1111-4111-8111-111111111111",
     reference_code: "NFV-STORE-001",
     workflow_version: 1,
@@ -85,10 +145,31 @@ export function storeOrderFixture(overrides: Partial<StoreOrder> = {}): StoreOrd
     allocation_suggestion: [],
     source_inventory: {
       refresh_required_before_approve: true,
+      lines: [],
       product_reservations: [],
       candidates: [],
     },
     allocations: [],
     ...overrides,
   };
+  if (item.source_inventory && !Object.hasOwn(overrides, "source_inventory"))
+    item.source_inventory.lines = item.lines.map((line) => {
+      const farmId = "77777777-7777-4777-8777-777777777777";
+      const eligible =
+        item.status === "pending_review" &&
+        (!item.csa || ["locked", "confirmed"].includes(item.csa.selection.state));
+      return sourceLineFixture(
+        line,
+        [
+          {
+            farm_id: farmId,
+            farm_name: "Trang trại A",
+            available_quantity: line.quantity,
+            eligible,
+          },
+        ],
+        eligible ? farmId : null,
+      );
+    });
+  return item;
 }

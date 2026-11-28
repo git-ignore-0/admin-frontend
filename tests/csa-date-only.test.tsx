@@ -1,11 +1,27 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider, useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSARoundEditor } from "@/components/csa-round-editor";
 import { CSAReopenDialog } from "@/components/csa-reopen-dialog";
 import { CSACompanionDelivery } from "@/components/csa-companion-delivery";
-import { api } from "@/lib/client-api";
+import { api, apiEnvelope } from "@/lib/client-api";
 import { validateReopenDeadline, validateRoundDates } from "@/lib/csa-rounds";
+import type { CSASelection } from "@/lib/csa-rounds";
+import { storeOrderFixture } from "@/tests/store-orders-fixture";
+
+function render(ui: ReactElement) {
+  return renderView(ui, { wrapper: AdminQueryProvider });
+}
 
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 const push = vi.hoisted(() => vi.fn());
@@ -20,6 +36,7 @@ afterEach(() => {
 });
 const round = {
   id: "r",
+  version: 3,
   sequence: 1,
   name: "Round",
   status: "closed" as const,
@@ -29,11 +46,53 @@ const round = {
   server_time: "2026-12-31T18:00:00+07:00",
 };
 
+const orderId = storeOrderFixture().id;
+const selectionId = "2aa5ab34-2dce-4cac-8fc4-91e55f03e95f";
+const nextOrderId = "2b8b1b30-3e07-4a4d-839b-3e3883250c31";
+const nextSelectionId = "f50a5630-f50c-4ba8-8f53-8ab7a65928a9";
+
+function reopenOrder(overrides: Partial<CSASelection> = {}, id = orderId) {
+  const roundId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+  return storeOrderFixture({
+    id,
+    server_time: round.server_time,
+    csa: {
+      round: { ...round, id: roundId },
+      selection: {
+        id: selectionId,
+        order_id: id,
+        round_id: roundId,
+        membership_id: "38703641-2dce-4cac-8fc4-91e55f03e95f",
+        state: "locked",
+        revision: 4,
+        reopen_until: null,
+        server_time: round.server_time,
+        lines: [],
+        ...overrides,
+      },
+    },
+  });
+}
+
 it("saves an actual date without a fabricated delivery time", async () => {
-  vi.mocked(api).mockResolvedValue({ id: "r" });
+  vi.mocked(apiEnvelope).mockImplementation(
+    async (_path, init) =>
+      ({
+        data: { ...round, id: selectionId },
+        meta: {
+          action_receipt: {
+            resource_id: selectionId,
+            action: "create_csa_configuration",
+            idempotency_key: JSON.parse(String(init?.body)).idempotency_key,
+          },
+        },
+      }) as never,
+  );
   render(
     <AdminI18nProvider initialLocale="en">
-      <CSARoundEditor />
+      <AdminQueryProvider>
+        <CSARoundEditor />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
   fireEvent.change(await screen.findByRole("textbox", { name: "Configuration name" }), {
@@ -49,18 +108,18 @@ it("saves an actual date without a fabricated delivery time", async () => {
   expect(date).toHaveAttribute("type", "date");
   fireEvent.change(date, { target: { value: "2027-01-01" } });
   fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-  await waitFor(() =>
-    expect(api).toHaveBeenCalledWith("admin/csa-round-configurations", {
-      method: "POST",
-      body: JSON.stringify({
-        name: "Year end",
-        opens_at: round.opens_at,
-        closes_at: round.closes_at,
-        delivery_date: "2027-01-01",
-        recurrence_mode: null,
-      }),
-    }),
-  );
+  await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(1));
+  const [path, init] = vi.mocked(apiEnvelope).mock.calls[0];
+  expect(path).toBe("admin/csa-round-configurations");
+  expect(init?.method).toBe("POST");
+  expect(JSON.parse(String(init?.body))).toEqual({
+    name: "Year end",
+    opens_at: round.opens_at,
+    closes_at: round.closes_at,
+    delivery_date: "2027-01-01",
+    recurrence_mode: null,
+    idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+  });
 });
 
 it("validates closes before the Vietnam delivery day rather than UTC date", () => {
@@ -81,6 +140,7 @@ it.each(["2027-01-01", "2027-03-01", "2028-03-01"])(
 
 it("bounds companion cutoff to previous 23:59 and closes after cutoff", async () => {
   const configured = {
+    version: 3,
     companion_delivery_enabled: true,
     companion_delivery_cutoff: "2026-12-31T20:00:00+07:00",
   };
@@ -111,24 +171,19 @@ it("bounds companion cutoff to previous 23:59 and closes after cutoff", async ()
   await waitFor(() =>
     expect(api).toHaveBeenLastCalledWith("admin/csa-rounds/r/companion-delivery", {
       method: "PATCH",
-      body: '{"companion_delivery_enabled":false}',
+      body: '{"version":3,"companion_delivery_enabled":false}',
     }),
   );
 });
 
 it("reopen follows server elapsed time and requires a valid date before enabling", async () => {
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2099-01-01T00:00:00Z"));
-  vi.mocked(api).mockResolvedValue({
-    status: "pending_review",
-    approved_at: null,
-    server_time: round.server_time,
-    csa: { round, selection: { id: "s", state: "locked", revision: 4, reopen_until: null } },
-  });
+  vi.mocked(api).mockResolvedValue(reopenOrder());
   render(
     <AdminI18nProvider initialLocale="en">
       <CSAReopenDialog
-        selectionId="s"
-        orderId="o"
+        selectionId={selectionId}
+        orderId={orderId}
         deliveryDate={round.delivery_date}
         onClose={vi.fn()}
         onSaved={vi.fn()}
@@ -158,14 +213,18 @@ it("ignores an old round save after navigating to another round", async () => {
     .mockResolvedValueOnce({ ...round, id: "new", name: "New round", can_edit: true });
   const result = render(
     <AdminI18nProvider initialLocale="en">
-      <CSARoundEditor roundId="r" />
+      <AdminQueryProvider>
+        <CSARoundEditor roundId="r" />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   result.rerender(
     <AdminI18nProvider initialLocale="en">
-      <CSARoundEditor roundId="new" />
+      <AdminQueryProvider>
+        <CSARoundEditor roundId="new" />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
   await screen.findByDisplayValue("New round");
@@ -186,7 +245,9 @@ it("ignores a round save after unmount", async () => {
     );
   const result = render(
     <AdminI18nProvider initialLocale="en">
-      <CSARoundEditor roundId="r" />
+      <AdminQueryProvider>
+        <CSARoundEditor roundId="r" />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
@@ -196,12 +257,7 @@ it("ignores a round save after unmount", async () => {
 });
 
 it("keeps a reopen deadline draft across locale change while request remains single", async () => {
-  vi.mocked(api).mockResolvedValue({
-    status: "pending_review",
-    approved_at: null,
-    server_time: round.server_time,
-    csa: { round, selection: { id: "s", state: "locked", revision: 4, reopen_until: null } },
-  });
+  vi.mocked(api).mockResolvedValue(reopenOrder());
   function Switch() {
     const { setLocale } = useAdminI18n();
     return <button onClick={() => setLocale("vi")}>VI</button>;
@@ -210,8 +266,8 @@ it("keeps a reopen deadline draft across locale change while request remains sin
     <AdminI18nProvider initialLocale="en">
       <Switch />
       <CSAReopenDialog
-        selectionId="s"
-        orderId="o"
+        selectionId={selectionId}
+        orderId={orderId}
         deliveryDate={round.delivery_date}
         onClose={vi.fn()}
         onSaved={vi.fn()}
@@ -228,29 +284,20 @@ it("keeps a reopen deadline draft across locale change while request remains sin
 it("ignores an old reopen result after changing orders and releases the mutation lock", async () => {
   let finish!: (value: unknown) => void;
   const onSaved = vi.fn();
-  const data = {
-    status: "pending_review",
-    approved_at: null,
-    server_time: round.server_time,
-    csa: { round, selection: { id: "s", state: "locked", revision: 4, reopen_until: null } },
-  };
   vi.mocked(api)
-    .mockResolvedValueOnce(data)
+    .mockResolvedValueOnce(reopenOrder())
     .mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;
         }),
     )
-    .mockResolvedValueOnce({
-      ...data,
-      csa: { round, selection: { ...data.csa.selection, id: "new" } },
-    });
+    .mockResolvedValueOnce(reopenOrder({ id: nextSelectionId }, nextOrderId));
   const result = render(
     <AdminI18nProvider initialLocale="en">
       <CSAReopenDialog
-        selectionId="s"
-        orderId="o"
+        selectionId={selectionId}
+        orderId={orderId}
         deliveryDate={round.delivery_date}
         onClose={vi.fn()}
         onSaved={onSaved}
@@ -261,11 +308,13 @@ it("ignores an old reopen result after changing orders and releases the mutation
     target: { value: "2026-12-31T23:59" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+  const oldOptions = vi.mocked(api).mock.calls[1][2];
+  expect(oldOptions?.shouldRedirectToLogin?.()).toBe(true);
   result.rerender(
     <AdminI18nProvider initialLocale="en">
       <CSAReopenDialog
-        selectionId="new"
-        orderId="new"
+        selectionId={nextSelectionId}
+        orderId={nextOrderId}
         deliveryDate={round.delivery_date}
         onClose={vi.fn()}
         onSaved={onSaved}
@@ -273,6 +322,7 @@ it("ignores an old reopen result after changing orders and releases the mutation
     </AdminI18nProvider>,
   );
   await screen.findByLabelText("Selection deadline");
+  expect(oldOptions?.shouldRedirectToLogin?.()).toBe(false);
   await act(async () => finish({}));
   expect(onSaved).not.toHaveBeenCalled();
   fireEvent.change(screen.getByLabelText("Selection deadline"), {
@@ -296,8 +346,8 @@ it("retries a failed reopen read inside the dialog without automatically posting
   render(
     <AdminI18nProvider initialLocale="en">
       <CSAReopenDialog
-        selectionId="s"
-        orderId="o"
+        selectionId={selectionId}
+        orderId={orderId}
         deliveryDate={round.delivery_date}
         onClose={vi.fn()}
         onSaved={onSaved}
@@ -310,14 +360,7 @@ it("retries a failed reopen read inside the dialog without automatically posting
   fireEvent.click(within(modal).getByRole("button", { name: "Refresh" }));
   expect(within(modal).getByRole("status")).toBeVisible();
   expect(within(modal).getByRole("button", { name: "Confirm" })).toBeDisabled();
-  await act(async () =>
-    finish({
-      status: "pending_review",
-      approved_at: null,
-      server_time: round.server_time,
-      csa: { round, selection: { id: "s", state: "locked", revision: 7, reopen_until: null } },
-    }),
-  );
+  await act(async () => finish(reopenOrder({ revision: 7 })));
   expect(api).toHaveBeenCalledTimes(2);
   expect(vi.mocked(api).mock.calls.every(([, init]) => !init?.method)).toBe(true);
   expect(onSaved).not.toHaveBeenCalled();
@@ -326,8 +369,53 @@ it("retries a failed reopen read inside the dialog without automatically posting
   });
   fireEvent.click(within(modal).getByRole("button", { name: "Confirm" }));
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
-  expect(api).toHaveBeenLastCalledWith("admin/csa-selections/s/reopen", {
-    method: "POST",
-    body: JSON.stringify({ deadline: "2026-12-31T23:59:00+07:00", expected_revision: 7 }),
-  });
+  expect(api).toHaveBeenLastCalledWith(
+    `admin/csa-selections/${selectionId}/reopen`,
+    {
+      method: "POST",
+      body: JSON.stringify({ deadline: "2026-12-31T23:59:00+07:00", expected_revision: 7 }),
+    },
+    { shouldRedirectToLogin: expect.any(Function) },
+  );
 });
+
+it.each([
+  [
+    "locked",
+    null,
+    /Reopening releases the existing stock holds.*cannot select discontinued products/,
+  ],
+  [
+    "reselecting",
+    "2026-12-31T23:10:00+07:00",
+    /Extending the deadline preserves the current selection and effective holds/,
+  ],
+] as const)(
+  "shows the stock-hold consequence for a %s selection",
+  async (state, reopenUntil, warning) => {
+    vi.mocked(api).mockResolvedValue(reopenOrder({ state, reopen_until: reopenUntil }));
+    render(
+      <AdminI18nProvider initialLocale="en">
+        <CSAReopenDialog
+          selectionId={selectionId}
+          orderId={orderId}
+          deliveryDate={round.delivery_date}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />
+      </AdminI18nProvider>,
+    );
+    const explanation = await screen.findByRole("note");
+    expect(explanation).toBeVisible();
+    expect(explanation).toHaveTextContent(warning);
+    expect(within(screen.getByRole("dialog")).getByLabelText(/deadline/i)).toHaveAttribute(
+      "type",
+      "datetime-local",
+    );
+    expect(
+      screen.queryByText(
+        state === "locked" ? /Extending the deadline preserves/ : /Reopening releases/,
+      ),
+    ).not.toBeInTheDocument();
+  },
+);

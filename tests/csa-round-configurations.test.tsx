@@ -69,6 +69,7 @@ const soloId = "829ffdf2-2314-455e-9f74-dd09a6d2e8ae";
 const groupedPath = `/csa-rounds/configurations/${rootId}`;
 const dateTime = "2026-11-20T08:00:00+07:00";
 const configuration = {
+  version: 1,
   id: rootId,
   name: "Friday harvest",
   opens_at: dateTime,
@@ -454,10 +455,14 @@ it("retains occurrences and navigation context when stopping a weekly schedule",
   expect(api).toHaveBeenCalledTimes(1);
   await act(async () => fireEvent.click(dialog.getByRole("button", { name: "Cancel recurrence" })));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(api).toHaveBeenLastCalledWith(`admin/csa-round-configurations/${rootId}/stop`, {
-    method: "POST",
-    body: "{}",
-  });
+  expect(api).toHaveBeenLastCalledWith(
+    `admin/csa-round-configurations/${rootId}/stop`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version: 1 }),
+    },
+    { shouldRedirectToLogin: expect.any(Function) },
+  );
   expect(screen.getByRole("link", { name: roundTitle })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Cancel recurrence" })).not.toBeInTheDocument();
 });
@@ -515,11 +520,54 @@ it("confirms draft deletion and returns to the filtered configuration list", asy
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/csa-rounds?status=draft&type=weekly"));
   expect(api).toHaveBeenCalledWith(
     `admin/csa-round-configurations/${rootId}`,
-    { method: "DELETE" },
-    { response: "no-content" },
+    { method: "DELETE", body: JSON.stringify({ version: 1 }) },
+    { response: "no-content", shouldRedirectToLogin: expect.any(Function) },
   );
   expect(apiEnvelope).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["Publish", "POST", "publish", "draft"],
+  ["Delete draft", "DELETE", "", "draft"],
+  ["Cancel recurrence", "POST", "stop", "published"],
+] as const)(
+  "limits the %s session redirect to the submitting route",
+  async (label, method, action, status) => {
+    window.history.replaceState(null, "", groupedPath);
+    const write = Promise.withResolvers<unknown>();
+    vi.mocked(api).mockImplementation(async (_path, init) =>
+      init?.method === method
+        ? write.promise
+        : { ...configuration, status, published_at: status === "draft" ? null : dateTime },
+    );
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [],
+      meta: { page: 1, page_size: 20, total: 0 },
+    });
+    const view = render(
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <CSAOccurrenceList configurationId={rootId} />
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    const button = await screen.findByRole("button", { name: label });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: label }));
+    const path = `admin/csa-round-configurations/${rootId}${action ? `/${action}` : ""}`;
+    const actionCall = vi
+      .mocked(api)
+      .mock.calls.find(([endpoint, init]) => endpoint === path && init?.method === method);
+    expect(actionCall?.[2]?.shouldRedirectToLogin?.()).toBe(true);
+    view.rerender(<div>Different route</div>);
+    expect(actionCall?.[2]?.shouldRedirectToLogin?.()).toBe(false);
+    await act(async () =>
+      write.reject(Object.assign(new Error("session_expired"), { status: 401 })),
+    );
+    expect(replace).not.toHaveBeenCalled();
+  },
+);
 
 it("shows published rounds when deleting a stale draft conflicts with publication", async () => {
   window.history.replaceState(null, "", groupedPath);

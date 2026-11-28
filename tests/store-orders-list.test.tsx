@@ -4,12 +4,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
 import { StoreOrderList } from "@/components/store-order-list";
+import { adminDictionaries } from "@/lib/admin-i18n";
+import { adminNavigation, resolveAdminBreadcrumbs } from "@/lib/admin-navigation";
 import { apiEnvelope } from "@/lib/client-api";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+let contentWidth = 1024;
 
 vi.mock("@/lib/client-api", () => ({ apiEnvelope: vi.fn(), api: vi.fn() }));
+vi.mock("@mantine/hooks", async (original) => ({
+  ...(await original<typeof import("@mantine/hooks")>()),
+  useElementSize: () => ({ ref: { current: null }, width: contentWidth, height: 0 }),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => navigation,
   usePathname: () => "/store-orders",
@@ -17,6 +24,7 @@ vi.mock("next/navigation", () => ({
 
 afterEach(() => {
   cleanup();
+  contentWidth = 1024;
   vi.clearAllMocks();
 });
 
@@ -29,6 +37,67 @@ function view() {
 }
 
 describe("Store order list", () => {
+  it.each([
+    ["vi", "Đơn hàng", "Tạo đơn hàng"],
+    ["en", "Orders", "Create order"],
+  ] as const)(
+    "opens the create order route with a localized %s breadcrumb",
+    async (locale, list, create) => {
+      vi.mocked(apiEnvelope).mockResolvedValue({
+        data: [],
+        meta: { page: 1, page_size: 20, total: 0 },
+      });
+      render(
+        <AdminI18nProvider initialLocale={locale}>
+          <StoreOrderList />
+        </AdminI18nProvider>,
+      );
+
+      await screen.findByText(
+        locale === "vi" ? "Không có đơn hàng phù hợp." : "No matching Store orders.",
+      );
+      const href = screen.getByRole("link", { name: create }).getAttribute("href");
+      expect(href).toBe("/store-orders/new");
+      const dictionary = adminDictionaries[locale];
+      const orders = adminNavigation(dictionary)
+        .flatMap(({ items }) => items)
+        .find(({ href }) => href === "/store-orders");
+      expect(resolveAdminBreadcrumbs(href!, orders, dictionary)).toEqual([
+        { label: list, href: "/store-orders" },
+        { label: create },
+      ]);
+    },
+  );
+
+  it("moves the status filter into the toolbar at narrow widths and preserves the selection", async () => {
+    contentWidth = 360;
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [storeOrderFixture()],
+      meta: { page: 1, page_size: 20, total: 21 },
+    });
+    const { rerender } = view();
+    await screen.findByText("NFV-STORE-001");
+    expect(screen.queryByRole("radiogroup", { name: "Trạng thái" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
+    selectOption(screen.getByRole("combobox", { name: "Trạng thái" }), "cancelled");
+    await waitFor(() =>
+      expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toContain(
+        "page=1&page_size=20&status=cancelled",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Bộ lọc (1)" })).toBeVisible();
+
+    contentWidth = 1024;
+    rerender(
+      <AdminI18nProvider initialLocale="vi">
+        <StoreOrderList />
+      </AdminI18nProvider>,
+    );
+    const statuses = screen.getByRole("radiogroup", { name: "Trạng thái" });
+    expect(within(statuses).getByRole("radio", { name: "Đã hủy" })).toBeChecked();
+    expect(screen.queryByRole("combobox", { name: "Trạng thái" })).not.toBeInTheDocument();
+  });
+
   it.each([
     { data: [] },
     { data: {}, meta: { page: 1, page_size: 20, total: 0 } },
@@ -113,6 +182,23 @@ describe("Store order list", () => {
     expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
 
+  it("never restores a previously cached tab after a later tab denies access", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [storeOrderFixture({ reference_code: "PRIVATE-ORDER" })],
+        meta: { page: 1, page_size: 20, total: 21 },
+      })
+      .mockRejectedValue(Object.assign(new Error("forbidden"), { status: 403 }));
+    view();
+    expect(await screen.findByText("PRIVATE-ORDER")).toBeVisible();
+    const tabs = within(screen.getByRole("radiogroup", { name: "Trạng thái" }));
+    fireEvent.click(tabs.getByRole("radio", { name: "Đã giao" }));
+    await screen.findByRole("alert");
+    fireEvent.click(tabs.getByRole("radio", { name: "Tất cả" }));
+    expect(screen.queryByText("PRIVATE-ORDER")).not.toBeInTheDocument();
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps payment-status filters distinct while cancelled includes every refund claim", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
       data: [
@@ -140,6 +226,7 @@ describe("Store order list", () => {
     });
     view();
     await screen.findByText("REFUNDED");
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
     const money = screen.getByRole("combobox", { name: "Trạng thái tiền" });
     fireEvent.click(money);
     expect(screen.getByRole("option", { name: "Đã nhận tiền, cần hoàn" })).toBeVisible();
@@ -161,6 +248,86 @@ describe("Store order list", () => {
     expect(screen.getByText("NEEDS-REFUND")).toBeVisible();
     expect(screen.getByText("UNVERIFIED-CLAIM")).toBeVisible();
     expect(apiEnvelope).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the same order rows and footer while only the refresh button shows loading", async () => {
+    let resolve!: (value: {
+      data: ReturnType<typeof storeOrderFixture>[];
+      meta: { page: number; page_size: number; total: number };
+    }) => void;
+    const reply = new Promise<Parameters<typeof resolve>[0]>((done) => {
+      resolve = done;
+    });
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [storeOrderFixture()],
+        meta: { page: 1, page_size: 20, total: 21 },
+      })
+      .mockReturnValue(reply);
+    view();
+    const announcement = screen.getByRole("status");
+    const loadingList = announcement.closest("[data-list-paper]")!;
+    const loadingScroll = loadingList.querySelector<HTMLElement>(
+      '[role="region"][aria-hidden="true"]',
+    );
+    expect(loadingScroll).not.toHaveAttribute("tabindex");
+    const loadingWidth = loadingScroll?.style.getPropertyValue("--table-min-width");
+    expect(loadingWidth).toBe("calc(45rem * var(--mantine-scale))");
+    expect(loadingScroll?.querySelectorAll("th")).toHaveLength(4);
+    expect(loadingScroll?.querySelector("tbody tr")?.children).toHaveLength(4);
+    expect(loadingScroll?.querySelector("tbody tr > :nth-child(3)")).toHaveStyle({
+      textAlign: "right",
+    });
+    expect(loadingScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
+    expect(loadingList.querySelectorAll("table")).toHaveLength(1);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    await screen.findByText("NFV-STORE-001");
+
+    const scroll = screen.getByRole("region", { name: "Đơn hàng Store" });
+    const paper = scroll.closest("[data-list-paper]")!;
+    expect(paper).toBe(loadingList);
+    expect(scroll.style.getPropertyValue("--table-min-width")).toBe(loadingWidth);
+    expect(paper.querySelectorAll("table")).toHaveLength(1);
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(within(scroll).getAllByRole("columnheader")).toHaveLength(4);
+    const next = within(paper as HTMLElement).getByRole("button", { name: "Sau" });
+    expect(next.closest("footer")).not.toBeNull();
+    expect(scroll).not.toContainElement(next);
+
+    const refresh = screen.getByRole("button", { name: "Làm mới" });
+    fireEvent.click(refresh);
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(next).toBeDisabled();
+    expect(within(scroll).getByText("NFV-STORE-001")).toBeVisible();
+    expect(within(paper as HTMLElement).queryByRole("status")).not.toBeInTheDocument();
+    expect(paper.querySelectorAll("table")).toHaveLength(1);
+    await act(async () =>
+      resolve({
+        data: [storeOrderFixture({ reference_code: "REFRESHED" })],
+        meta: { page: 1, page_size: 20, total: 21 },
+      }),
+    );
+    expect(await screen.findByText("REFRESHED")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Đơn hàng Store" })).toBe(scroll);
+    expect(next).toBeEnabled();
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an empty result and its footer visible while refreshing", async () => {
+    const empty = { data: [], meta: { page: 1, page_size: 20, total: 0 } };
+    const pending = Promise.withResolvers<typeof empty>();
+    vi.mocked(apiEnvelope).mockResolvedValueOnce(empty).mockReturnValueOnce(pending.promise);
+    view();
+    const message = await screen.findByText("Không có đơn hàng phù hợp.");
+    const count = screen.getByText("0 kết quả");
+    const refresh = screen.getByRole("button", { name: "Làm mới" });
+    fireEvent.click(refresh);
+    expect(message).toBeVisible();
+    expect(count).toBeVisible();
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    await act(async () => pending.resolve(empty));
+    expect(refresh).toBeEnabled();
+    expect(apiEnvelope).toHaveBeenCalledTimes(2);
   });
 
   it("invalidates every cached tab with the dedicated refresh button", async () => {
@@ -287,6 +454,7 @@ describe("Store order list", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Dùng điểm CSA")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
     expect(screen.getByRole("combobox", { name: "Trạng thái tiền" })).toBeVisible();
     const zeroOrder = screen.getByRole("link", { name: /NFV-STORE-002/u });
     expect(zeroOrder.tagName).toBe("A");
@@ -312,7 +480,7 @@ describe("Store order list", () => {
     for (const select of screen.getAllByRole("combobox")) {
       expect(select).toHaveClass("mantine-Select-input");
     }
-    expect(screen.getByRole("button", { name: "Tìm kiếm" })).toHaveClass("mantine-Button-root");
+    expect(screen.getByRole("button", { name: "Tìm kiếm" })).toHaveClass("mantine-ActionIcon-root");
     expect(
       screen.getAllByText("Chờ duyệt", { selector: ".store-order-status .mantine-Badge-label" })[0],
     ).toBeVisible();
@@ -382,9 +550,10 @@ describe("Store order list", () => {
         name: "Đã hủy",
       }),
     );
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Trạng thái tiền" })).toBeEnabled(),
-    );
+    const filters = screen.getByRole("button", { name: "Bộ lọc" });
+    await waitFor(() => expect(filters).toBeEnabled());
+    fireEvent.click(filters);
+    expect(screen.getByRole("combobox", { name: "Trạng thái tiền" })).toBeEnabled();
     selectOption(screen.getByRole("combobox", { name: "Trạng thái tiền" }), "refund_required");
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Sắp xếp" })).toBeEnabled());
     selectOption(screen.getByRole("combobox", { name: "Sắp xếp" }), "total_desc");
@@ -469,7 +638,7 @@ it("shows saved retail delivery dates and a blank legacy date in secondary text"
     meta: { page: 1, page_size: 20, total: 2 },
   });
   view();
-  expect(await screen.findByText("Ngày giao: 20/11/2026")).toHaveClass("table-secondary");
+  expect(await screen.findByText("Ngày giao: 20/11/2026")).toHaveClass("mantine-Text-root");
   expect(screen.getByText("Ngày giao: —")).toBeVisible();
 });
 

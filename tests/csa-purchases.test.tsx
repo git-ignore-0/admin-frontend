@@ -9,6 +9,7 @@ import {
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSAPurchaseRequestDetail } from "@/components/csa-purchase-request-detail";
 import { CSAPurchaseRequestList } from "@/components/csa-purchase-request-list";
 import { MembershipPaymentSettingsForm } from "@/components/membership-payment-settings-form";
@@ -166,7 +167,9 @@ function renderWithProviders(node: React.ReactNode, locale: "vi" | "en" = "vi") 
   return render(
     <RouterContext.Provider value={navigation as unknown as NextRouter}>
       <AdminI18nProvider initialLocale={locale}>
-        <ToastProvider>{node}</ToastProvider>
+        <AdminQueryProvider>
+          <ToastProvider>{node}</ToastProvider>
+        </AdminQueryProvider>
       </AdminI18nProvider>
     </RouterContext.Provider>,
   );
@@ -267,13 +270,15 @@ describe("CSA purchase request admin", () => {
     expect(rows[0]).toHaveTextContent("Đã đối soát");
     expect(rows[1]).toHaveTextContent("Đã báo thanh toán");
     expect(rows[2]).toHaveTextContent("Quá hạn");
-    expect(rows[1].querySelector("td[data-label='Hạn thanh toán']")).toHaveTextContent(
-      "02/11/2026 01:00",
-    );
+    expect(within(rows[1]).getAllByRole("cell")[3]).toHaveTextContent("02/11/2026 01:00");
     expect(within(rows[0] as HTMLElement).queryByRole("button")).toBeNull();
     expect(within(rows[1] as HTMLElement).getAllByRole("button")).toHaveLength(2);
     expect(within(rows[2] as HTMLElement).queryByRole("button")).toBeNull();
-    expect(screen.getByRole("region", { name: "Lịch thanh toán" })).toContainElement(schedule);
+    const scroll = screen.getByRole("region", { name: "Lịch thanh toán" });
+    expect(scroll).toContainElement(schedule);
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(scroll.style.getPropertyValue("--table-min-width")).not.toBe("0rem");
+    expect(within(schedule).getAllByRole("columnheader")).toHaveLength(7);
   });
 
   it("confirms only a reported approved payment, prevents duplicate submit and reloads detail", async () => {
@@ -562,6 +567,41 @@ describe("CSA purchase request admin", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh CSA purchase requests" }));
     await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(2));
     expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("search=ABC&status=approved");
+  });
+
+  it("keeps the loaded request page on a recoverable refresh error and clears it after access loss", async () => {
+    let rejectRefresh!: (cause: Error) => void;
+    const refreshResponse = new Promise<never>((_, reject) => {
+      rejectRefresh = reject;
+    });
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [request], meta: { page: 1, page_size: 30, total: 31 } })
+      .mockReturnValueOnce(refreshResponse)
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    renderWithProviders(<CSAPurchaseRequestList />, "en");
+
+    const link = await screen.findByRole("link", {
+      name: `${request.request_code}: ${request.name}`,
+    });
+    const list = link.closest("[data-list-paper]") as HTMLElement;
+    const refresh = screen.getByRole("button", { name: "Refresh CSA purchase requests" });
+    fireEvent.click(refresh);
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(link).toBeVisible();
+    expect(within(list).queryByRole("status")).not.toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "Next" })).toBeDisabled();
+
+    await act(async () => rejectRefresh(new Error("network_error")));
+    const alert = await within(list).findByRole("alert");
+    expect(list).toContainElement(link);
+    expect(within(list).getByText("31 results")).toBeVisible();
+    expect(refresh).toBeEnabled();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(link).not.toBeInTheDocument());
+    expect(within(list).queryByText("31 results")).not.toBeInTheDocument();
+    expect(within(list).getByRole("alert")).toBeVisible();
+    expect(apiEnvelope).toHaveBeenCalledTimes(3);
   });
 
   it("renders the request code once and spaces the available detail actions", async () => {

@@ -1,0 +1,5 @@
+@media (max-width: 28rem) {
+  .summary {
+    flex-basis: 100%;
+  }
+}

@@ -25,9 +25,12 @@ import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { AdminDateInput } from "@/components/admin-date-input";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { CSAPurchaseStatusBadge } from "@/components/csa-purchase-request-list";
 import { DetailPageHeading } from "@/components/detail-page-heading";
+import { DataListPaper } from "@/components/data-list-paper";
+import { ListState } from "@/components/list-state";
 import { DataState, Section, Status } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
@@ -40,7 +43,13 @@ import {
   isoDateToAdminInput,
 } from "@/lib/admin-date";
 import { api } from "@/lib/client-api";
-import { apiErrorContext, requestErrorMessage } from "@/lib/client-error";
+import { requireResponseEntity } from "@/lib/api-response";
+import {
+  apiErrorContext,
+  isProtectedDataError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import { formatVietnamPhone } from "@/lib/phone-number";
 import type {
@@ -61,7 +70,12 @@ export function CSAPurchaseRequestDetail({
   requestId: string;
   backHref?: string;
 }) {
+  return <PurchaseRequestRecord key={requestId} requestId={requestId} backHref={backHref} />;
+}
+
+function PurchaseRequestRecord({ requestId, backHref }: { requestId: string; backHref: string }) {
   const { locale, t } = useAdminI18n();
+  const scope = useAdminRecordScope(requestId);
   const search = useSearchParams()?.toString();
   const copy = t.csaPurchases;
   const breadcrumbs = useMemo(
@@ -113,17 +127,46 @@ export function CSAPurchaseRequestDetail({
       : "";
   const displayedStartDateError = fieldError || clientStartDateError;
 
+  const retire = useCallback(
+    (caught: unknown) => {
+      if (!isProtectedDataError(caught) && (caught as ClientApiError | null)?.status !== 404)
+        return false;
+      scope.retire();
+      setItem(null);
+      setAction(null);
+      setResolutionContext(null);
+      setPaymentAction(null);
+      setPaymentAmount("");
+      setPaymentNote("");
+      setPaymentReason("");
+      savingRef.current = false;
+      paymentSavingRef.current = false;
+      setSaving(false);
+      setPaymentSaving(false);
+      setLoading(false);
+      setLoadError(requestErrorMessage(caught, t));
+      return true;
+    },
+    [scope, t],
+  );
+
   const load = useCallback(async () => {
+    const { signal, current } = scope.beginRead();
     setLoading(true);
     try {
-      setItem(await api<CSAPurchaseRequest>(`admin/csa-purchase-requests/${requestId}`));
+      const latest = requireResponseEntity(
+        await api<CSAPurchaseRequest>(`admin/csa-purchase-requests/${requestId}`, { signal }),
+        requestId,
+      );
+      if (!current()) return;
+      setItem(latest);
       setLoadError("");
     } catch (caught) {
-      setLoadError(requestErrorMessage(caught, t));
+      if (current() && !retire(caught)) setLoadError(requestErrorMessage(caught, t));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [requestId, t]);
+  }, [requestId, retire, scope, t]);
 
   useEffect(() => {
     void load();
@@ -151,7 +194,8 @@ export function CSAPurchaseRequestDetail({
   }
 
   async function confirmAction() {
-    if (!item || !action || savingRef.current) return;
+    const current = scope.capture();
+    if (!current() || !item || !action || savingRef.current) return;
     if (
       action === "mark-refunded" &&
       (item.status !== "rejected" || item.refund_status !== "pending")
@@ -194,7 +238,8 @@ export function CSAPurchaseRequestDetail({
         `admin/csa-purchase-requests/${item.id}/${action}`,
         { method: "POST", body: JSON.stringify(payload) },
       );
-      setItem(saved);
+      if (!current()) return;
+      setItem(requireResponseEntity(saved, requestId));
       setAction(null);
       setResolutionContext(null);
       setRefundFeedback("");
@@ -207,6 +252,7 @@ export function CSAPurchaseRequestDetail({
       );
       if (action === "mark-refunded") await load();
     } catch (caught) {
+      if (!current() || retire(caught)) return;
       const code = caught instanceof Error ? caught.message : "";
       if (action === "mark-refunded") {
         if (
@@ -255,8 +301,10 @@ export function CSAPurchaseRequestDetail({
         setActionError(requestErrorMessage(caught, t));
       }
     } finally {
-      savingRef.current = false;
-      setSaving(false);
+      if (current()) {
+        savingRef.current = false;
+        setSaving(false);
+      }
     }
   }
 
@@ -272,7 +320,8 @@ export function CSAPurchaseRequestDetail({
   }
 
   async function submitPaymentAction() {
-    if (!item || !paymentAction || paymentSavingRef.current) return;
+    const current = scope.capture();
+    if (!current() || !item || !paymentAction || paymentSavingRef.current) return;
     const payment = item.payments?.find(
       (entry) => entry.installment_sequence === paymentAction.sequence,
     );
@@ -305,11 +354,14 @@ export function CSAPurchaseRequestDetail({
         `admin/csa-purchase-requests/${item.id}/payments/${payment.installment_sequence}/${paymentAction.kind}`,
         { method: "POST", body: JSON.stringify(payload) },
       );
-      setItem(updated);
+      if (!current()) return;
+      setItem(requireResponseEntity(updated, requestId));
       setPaymentAction(null);
       await load();
-      toast(paymentAction.kind === "confirm" ? labels.confirmSuccess : labels.rejectSuccess);
+      if (current())
+        toast(paymentAction.kind === "confirm" ? labels.confirmSuccess : labels.rejectSuccess);
     } catch (caught) {
+      if (!current() || retire(caught)) return;
       const code = caught instanceof Error ? caught.message : "";
       if (code === "csa_payment_state_conflict" || code === "csa_payment_unavailable") {
         setPaymentAction(null);
@@ -321,8 +373,10 @@ export function CSAPurchaseRequestDetail({
         setPaymentActionError(labels.actionError);
       }
     } finally {
-      paymentSavingRef.current = false;
-      setPaymentSaving(false);
+      if (current()) {
+        paymentSavingRef.current = false;
+        setPaymentSaving(false);
+      }
     }
   }
 
@@ -500,121 +554,126 @@ export function CSAPurchaseRequestDetail({
               </RecordDetailField>
             </RecordDetailFields>
           )}
-          {orderedPayments.length ? (
-            <Table.ScrollContainer
-              aria-label={installmentCopy.schedule}
-              className={styles.installmentScroll}
-              minWidth={0}
-              role="region"
-              tabIndex={0}
-              type="native"
-            >
-              <Table
+          <DataListPaper>
+            {orderedPayments.length ? (
+              <Table.ScrollContainer
                 aria-label={installmentCopy.schedule}
-                className={styles.installmentTable}
-                role="table"
-                withRowBorders
+                minWidth={showInstallmentActions ? "55rem" : "43rem"}
+                role="region"
+                tabIndex={0}
+                type="native"
               >
-                <Table.Thead role="rowgroup">
-                  <Table.Tr role="row">
-                    {installmentColumns.map((label) => (
-                      <Table.Th key={label} role="columnheader" scope="col">
-                        {label}
-                      </Table.Th>
-                    ))}
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody role="rowgroup">
-                  {orderedPayments.map((payment) => {
-                    const paymentDetails = [
-                      [
-                        installmentCopy.confirmedAt,
-                        payment.confirmed_at && formatAdminDateTime(payment.confirmed_at),
-                      ],
-                      [installmentCopy.confirmedBy, payment.confirmed_by?.name],
-                      [
-                        installmentCopy.rejectedAt,
-                        payment.rejected_at && formatAdminDateTime(payment.rejected_at),
-                      ],
-                      [installmentCopy.rejectedBy, payment.rejected_by?.name],
-                      [installmentCopy.rejectionReason, payment.rejection_reason],
-                      [installmentCopy.note, payment.note],
-                    ] as const;
-                    return (
-                      <Table.Tr role="row" key={payment.id}>
-                        <Table.Th role="rowheader" scope="row">
-                          {installmentCopy.installmentNumber.replace(
-                            "{count}",
-                            String(payment.installment_sequence),
-                          )}
+                <Table
+                  aria-label={installmentCopy.schedule}
+                  className={styles.installmentTable}
+
+                  withRowBorders
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      {installmentColumns.map((label) => (
+                        <Table.Th key={label} scope="col">
+                          {label}
                         </Table.Th>
-                        <Table.Td role="cell" data-label={installmentCopy.dueAmount}>
-                          {formatMembershipMoney(payment.amount_due, locale)}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.paidAmount}>
-                          {payment.amount_paid
-                            ? formatMembershipMoney(payment.amount_paid, locale)
-                            : "—"}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.cycles}>
-                          {payment.cycle_count}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.dueAt}>
-                          {formatAdminDateTime(payment.due_at)}
-                        </Table.Td>
-                        <Table.Td role="cell" data-label={installmentCopy.paymentStatus}>
-                          <Stack gap={4} align="flex-start">
-                            <Status
-                              domain="installment"
-                              status={payment.status}
-                              label={installmentCopy.statuses[payment.status]}
-                            />
-                            {paymentDetails.map(
-                              ([label, value]) =>
-                                value && (
-                                  <Text key={label} component="span" size="xs" c="dimmed">
-                                    {label}: {value}
-                                  </Text>
-                                ),
+                      ))}
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {orderedPayments.map((payment) => {
+                      const paymentDetails = [
+                        [
+                          installmentCopy.confirmedAt,
+                          payment.confirmed_at && formatAdminDateTime(payment.confirmed_at),
+                        ],
+                        [installmentCopy.confirmedBy, payment.confirmed_by?.name],
+                        [
+                          installmentCopy.rejectedAt,
+                          payment.rejected_at && formatAdminDateTime(payment.rejected_at),
+                        ],
+                        [installmentCopy.rejectedBy, payment.rejected_by?.name],
+                        [installmentCopy.rejectionReason, payment.rejection_reason],
+                        [installmentCopy.note, payment.note],
+                      ] as const;
+                      return (
+                        <Table.Tr key={payment.id}>
+                          <Table.Th scope="row">
+                            {installmentCopy.installmentNumber.replace(
+                              "{count}",
+                              String(payment.installment_sequence),
                             )}
-                          </Stack>
-                        </Table.Td>
-                        {showInstallmentActions && (
-                          <Table.Td role="cell">
-                            {payment.status === "reported" && (
-                              <Group gap="xs">
-                                <Button
-                                  variant="default"
-                                  size="xs"
-                                  disabled={paymentSaving}
-                                  onClick={() => openPaymentAction(payment, "confirm")}
-                                  type="button"
-                                >
-                                  {installmentCopy.confirm}
-                                </Button>
-                                <Button
-                                  color="red"
-                                  variant="light"
-                                  size="xs"
-                                  disabled={paymentSaving}
-                                  onClick={() => openPaymentAction(payment, "reject")}
-                                  type="button"
-                                >
-                                  {installmentCopy.reject}
-                                </Button>
-                              </Group>
-                            )}
+                          </Table.Th>
+                          <Table.Td>{formatMembershipMoney(payment.amount_due, locale)}</Table.Td>
+                          <Table.Td>
+                            {payment.amount_paid
+                              ? formatMembershipMoney(payment.amount_paid, locale)
+                              : "—"}
                           </Table.Td>
-                        )}
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          ) : (
-            <DataState kind="empty" title={installmentCopy.noSchedule} compact />
-          )}
+                          <Table.Td>{payment.cycle_count}</Table.Td>
+                          <Table.Td>{formatAdminDateTime(payment.due_at)}</Table.Td>
+                          <Table.Td>
+                            <Stack gap={4} align="flex-start">
+                              <Status
+                                domain="installment"
+                                status={payment.status}
+                                label={installmentCopy.statuses[payment.status]}
+                              />
+                              {paymentDetails.map(
+                                ([label, value]) =>
+                                  value && (
+                                    <Text key={label} component="span" size="xs" c="dimmed">
+                                      {label}: {value}
+                                    </Text>
+                                  ),
+                              )}
+                            </Stack>
+                          </Table.Td>
+                          {showInstallmentActions && (
+                            <Table.Td>
+                              {payment.status === "reported" && (
+                                <Group gap="xs">
+                                  <Button
+                                    variant="default"
+                                    size="xs"
+                                    disabled={paymentSaving}
+                                    onClick={() => openPaymentAction(payment, "confirm")}
+                                    type="button"
+                                  >
+                                    {installmentCopy.confirm}
+                                  </Button>
+                                  <Button
+                                    color="red"
+                                    variant="light"
+                                    size="xs"
+                                    disabled={paymentSaving}
+                                    onClick={() => openPaymentAction(payment, "reject")}
+                                    type="button"
+                                  >
+                                    {installmentCopy.reject}
+                                  </Button>
+                                </Group>
+                              )}
+                            </Table.Td>
+                          )}
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            ) : (
+              <ListState
+                embedded
+                empty={installmentCopy.noSchedule}
+                error=""
+                hasData
+                isEmpty
+                loading={false}
+                loadingLabel={copy.loadingDetail}
+                onRetry={() => undefined}
+                retryLabel={t.common.retry}
+              />
+            )}
+          </DataListPaper>
         </Section>
 
         <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">

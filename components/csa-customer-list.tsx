@@ -1,34 +1,25 @@
 "use client";
 
-import {
-  Anchor,
-  Box,
-  Button,
-  Divider,
-  Paper,
-  Select,
-  Skeleton,
-  Stack,
-  Table,
-  Text,
-} from "@mantine/core";
+import { Box, Button, Divider, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { IconPlus } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { Pagination } from "@/components/pagination";
 import { openRecordFromRow } from "@/components/record-row-navigation";
-import { requirePaginatedList, requireResponseEntity } from "@/lib/api-response";
+import { requirePaginatedList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
 import {
   csaCustomerHref,
   csaCustomerLinks,
@@ -36,6 +27,8 @@ import {
   csaCustomerPath,
   csaMembershipStatuses,
   readCsaCustomerListContext,
+  requireCSACustomer,
+  retireCSACustomers,
 } from "@/lib/csa-customers-query";
 import { formatVietnamPhone } from "@/lib/phone-number";
 import type { CSACustomer, PaginationMeta } from "@/lib/types";
@@ -50,6 +43,7 @@ function findCustomerLink(root: HTMLElement | null, id: string) {
 
 export function CSACustomerList() {
   const { t } = useAdminI18n();
+  const client = useQueryClient();
   const copy = t.csaCustomers;
   const pathname = usePathname();
   const params = useSearchParams();
@@ -65,8 +59,9 @@ export function CSACustomerList() {
   const root = useRef<HTMLDivElement>(null);
   const opener = useRef<{ element: HTMLElement; x: number; y: number } | null>(null);
   const restoredOpener = useRef<HTMLElement | null>(null);
+  const listKey = [...csaCustomerListKey, context];
   const list = useQuery({
-    queryKey: [...csaCustomerListKey, context],
+    queryKey: listKey,
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         page: String(page),
@@ -75,15 +70,20 @@ export function CSACustomerList() {
       });
       if (search) query.set("search", search);
       if (status) query.set("membership_status", status);
-      return requirePaginatedList(
-        await apiEnvelope<CSACustomer[], PaginationMeta>(`admin/csa-customers?${query}`, {
-          signal,
-        }),
-        requireResponseEntity,
-      );
+      try {
+        const payload = await apiEnvelope<CSACustomer[], PaginationMeta>(
+          `admin/csa-customers?${query}`,
+          { signal },
+        );
+        signal.throwIfAborted();
+        return requirePaginatedList(payload, requireCSACustomer, page);
+      } catch (caught) {
+        if (!signal.aborted && isProtectedDataError(caught)) retireCSACustomers(client, listKey);
+        throw caught;
+      }
     },
   });
-  const { data: items, meta } = list.error ? {} : (list.data ?? {});
+  const { data: items, meta } = isProtectedDataError(list.error) ? {} : (list.data ?? {});
   const initialLoading = !items && list.isPending && !list.error;
   const loading = list.isFetching;
 
@@ -158,7 +158,6 @@ export function CSACustomerList() {
       aria-label={copy.title}
       aria-hidden={initialLoading || undefined}
       tabIndex={initialLoading ? undefined : 0}
-      style={{ outlineOffset: -2 }}
     >
       <Table aria-label={copy.title} aria-busy={loading || undefined} withRowBorders>
         <Table.Thead>
@@ -195,13 +194,11 @@ export function CSACustomerList() {
                   >
                     <Table.Td>
                       <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
-                        <Anchor
+                        <DataListRecordLink
                           component={AdminNavigationLink}
                           aria-current={selected ? "page" : undefined}
                           aria-label={`${copy.view}: ${item.name}`}
-                          c="inherit"
                           data-record-link
-                          fw={600}
                           href={csaCustomerHref(context, item.id)}
                           onNavigate={() => {
                             const element = findCustomerLink(root.current, item.id);
@@ -210,10 +207,9 @@ export function CSACustomerList() {
                           }}
                           data-csa-customer-id={item.id}
                           scroll={false}
-                          underline="never"
                         >
                           {item.name}
-                        </Anchor>
+                        </DataListRecordLink>
                         <Text size="sm" c="dimmed">
                           {formatVietnamPhone(item.phone) || "—"}
                         </Text>
@@ -321,7 +317,12 @@ export function CSACustomerList() {
             </>
           ),
         }}
-        refresh={{ label: copy.refresh, onRefresh: refresh }}
+        refresh={{
+          label: copy.refresh,
+          onRefresh: refresh,
+          loading: loading && items !== undefined,
+          disabled: initialLoading,
+        }}
         primaryAction={
           // A document navigation lets the static creation route bypass the [id] interception.
           <Button
@@ -333,7 +334,7 @@ export function CSACustomerList() {
           </Button>
         }
       />
-      <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+      <DataListPaper component="section">
         {Boolean(items?.length) && table}
         <Box p={list.error ? "md" : undefined}>
           <ListState
@@ -353,7 +354,7 @@ export function CSACustomerList() {
         {meta && (
           <>
             <Divider />
-            <Box px="md" py="sm">
+            <Box component="footer" px="md" py="sm">
               <Pagination
                 disabled={loading}
                 nextLabel={t.common.next}
@@ -369,7 +370,7 @@ export function CSACustomerList() {
             </Box>
           </>
         )}
-      </Paper>
+      </DataListPaper>
     </Stack>
   );
 }

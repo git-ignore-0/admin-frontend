@@ -7,6 +7,7 @@ import {
   useContext,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -20,6 +21,48 @@ export function useIsAdminQueryScopeCurrent() {
   const isCurrent = useContext(QueryScopeCurrent);
   if (!isCurrent) throw new Error("Admin query scope is unavailable");
   return isCurrent;
+}
+
+/** Capture the record and access revision before awaiting a request or a UI side effect. */
+export function useAdminRecordScope(id: string) {
+  const sessionCurrent = useIsAdminQueryScopeCurrent();
+  const mounted = useRef(false);
+  const revision = useRef(0);
+  const read = useRef<AbortController | null>(null);
+  const retire = useCallback(() => {
+    revision.current += 1;
+    read.current?.abort();
+    read.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      retire();
+    };
+  }, [id, retire]);
+
+  return useMemo(() => {
+    const capture = () => {
+      const current = revision.current;
+      return () => mounted.current && sessionCurrent() && current === revision.current;
+    };
+    return {
+      capture,
+      retire,
+      beginRead() {
+        read.current?.abort();
+        const controller = new AbortController();
+        read.current = controller;
+        const current = capture();
+        return {
+          signal: controller.signal,
+          current: () => !controller.signal.aborted && current(),
+        };
+      },
+    };
+  }, [retire, sessionCurrent]);
 }
 
 function createQueryClient() {

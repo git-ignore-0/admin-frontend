@@ -22,6 +22,7 @@ describe("foundation contextual navigation", () => {
     ["/membership-catalog/products/a/edit", "/membership-catalog/products", "csa"],
     ["/csa-rounds/a/edit", "/csa-rounds", "csa"],
     ["/csa-coupons/a", "/csa-coupons", "promotions"],
+    ["/farms/farm-1/products/product-1", "/farms", "farms"],
   ])("maps %s to exactly one owning item", (path, href, group) => {
     const active = sections
       .flatMap((section) => section.items)
@@ -69,6 +70,13 @@ describe("foundation breadcrumbs", () => {
       { label: "Users", href: "/users" },
       { label: "Points", href: "/points" },
       { label: "Point details" },
+    ]);
+  });
+
+  it("keeps the real list ancestor while the direct source route loads", () => {
+    expect(breadcrumbs("/farms/farm-1/products/product-1", "vi")).toEqual([
+      { label: "Danh sách trang trại", href: "/farms" },
+      { label: "Chi tiết sản phẩm" },
     ]);
   });
 

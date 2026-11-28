@@ -3,7 +3,11 @@
   min-inline-size: 0;
 }
 
-.search,
+.search {
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
 .legacySearch {
   flex: 1 1 100%;
   min-inline-size: 0;
@@ -19,8 +23,22 @@
 }
 
 .actions {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-inline-size: 0;
+}
+
+.container[data-has-primary-action] .actions {
+  flex: 1 1 auto;
+}
+
+@container list-toolbar (width < 38rem) {
+  .container[data-has-primary-action] .row {
+    flex-wrap: wrap;
+  }
+
+  .container[data-has-primary-action] .search {
+    flex-basis: 100%;
+  }
 }
 
 .primaryAction {
@@ -64,7 +82,7 @@
 
 /* The shell sidebar and a narrow preview both change the available toolbar width. */
 @container list-toolbar (min-width: 38rem) {
-  .search {
+  .container:not([data-grow-search]) .search {
     flex: 0 1 clamp(15rem, 42cqi, 24rem);
   }
 
@@ -75,6 +93,18 @@
 
 /* Retain room for a refresh and a longer primary action beside an active filter. */
 @container list-toolbar (max-width: 26rem) {
+  .container[data-wrap-primary-action] .actions {
+    flex-wrap: wrap;
+  }
+
+  .container[data-wrap-primary-action] .primaryAction {
+    flex-basis: 100%;
+  }
+
+  .container[data-wrap-primary-action] .primaryAction :global(.mantine-Button-label) {
+    white-space: normal;
+  }
+
   .filterTrigger {
     max-inline-size: none;
   }

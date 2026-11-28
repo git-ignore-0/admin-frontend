@@ -21,9 +21,13 @@ function canonicalPhone(national: string, domain: PhoneDomain): string | null {
   return nationalPatterns[domain].test(national) ? countryPrefix + national : null;
 }
 
+export function isLocalPhoneDraft(value: string): boolean {
+  return !nonDigits.test(value);
+}
+
 /** Validate the raw domestic form value and return the canonical API value. */
 export function normalizeLocalPhone(value: string, domain: PhoneDomain): string | null {
-  if (!value.startsWith(localPrefix) || nonDigits.test(value)) return null;
+  if (!value.startsWith(localPrefix) || !isLocalPhoneDraft(value)) return null;
   return canonicalPhone(nationalDigits(value), domain);
 }
 

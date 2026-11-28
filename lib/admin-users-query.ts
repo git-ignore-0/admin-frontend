@@ -15,7 +15,7 @@ import {
 } from "@/lib/admin-users";
 import { requirePaginatedList, requireResponseList } from "@/lib/api-response";
 import { apiEnvelope } from "@/lib/client-api";
-import type { ClientApiError } from "@/lib/client-error";
+import { isProtectedDataError } from "@/lib/client-error";
 import type {
   AdminUserDetail,
   AdminUserListItem,
@@ -35,7 +35,7 @@ type ListContext = { search: string; status: AdminUserStatus; page: number };
 type SearchReader = Pick<URLSearchParams, "get">;
 const usersKey = ["users"] as const;
 const listKey = [...usersKey, "list"] as const;
-const userKey = (id: string) => [...usersKey, "detail", id] as const;
+const userKey = (id: string | null) => [...usersKey, "detail", id] as const;
 const accessKey = ["users-access"] as const;
 type UsersAccess = { status: "granted" | "denied"; revision: number };
 type UsersSnapshot<T> = { payload: T; accessRevision: number };
@@ -75,13 +75,8 @@ export async function fetchAdminUsers(
   return requirePaginatedList(
     await apiEnvelope<AdminUserListItem[], PaginationMeta>(`admin/users?${params}`, { signal }),
     requireAdminUserRecord,
+    page,
   );
-}
-
-function isAccessDenied(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const { status } = error as ClientApiError;
-  return status === 403 || status === 401 || error.message === "session_changed";
 }
 
 function useAdminUsersAccess() {
@@ -107,7 +102,7 @@ export function useAdminUsersMutationAccess() {
 
 function useAdminUsersRead<T>(
   key: readonly unknown[],
-  read: (signal: AbortSignal) => Promise<T>,
+  read: ((signal: AbortSignal) => Promise<T>) | null,
   retain?: (snapshot: UsersSnapshot<T>) => void,
 ) {
   const client = useQueryClient();
@@ -116,35 +111,40 @@ function useAdminUsersRead<T>(
   const accessRevision = access?.revision ?? 0;
   const query = useQuery<UsersCache<T>>({
     queryKey: key,
-    queryFn: async ({ signal }) => {
-      const revision = client.getQueryData<UsersAccess>(accessKey)?.revision ?? 0;
-      const current = () =>
-        !signal.aborted &&
-        isCurrent() &&
-        (client.getQueryData<UsersAccess>(accessKey)?.revision ?? 0) === revision;
-      try {
-        const payload = await read(signal);
-        if (!current()) throw new CancelledError();
-        if (client.getQueryData<UsersAccess>(accessKey)?.status !== "granted") {
-          client.setQueryData<UsersAccess>(accessKey, { status: "granted", revision });
-        }
-        const snapshot = { payload, accessRevision: revision };
-        retain?.(snapshot);
-        return snapshot;
-      } catch (error) {
-        if (!isAccessDenied(error) || !current()) throw error;
+    queryFn: read
+      ? async ({ signal }) => {
+          const revision = client.getQueryData<UsersAccess>(accessKey)?.revision ?? 0;
+          const current = () =>
+            !signal.aborted &&
+            isCurrent() &&
+            (client.getQueryData<UsersAccess>(accessKey)?.revision ?? 0) === revision;
+          try {
+            const payload = await read(signal);
+            if (!current()) throw new CancelledError();
+            if (client.getQueryData<UsersAccess>(accessKey)?.status !== "granted") {
+              client.setQueryData<UsersAccess>(accessKey, { status: "granted", revision });
+            }
+            const snapshot = { payload, accessRevision: revision };
+            retain?.(snapshot);
+            return snapshot;
+          } catch (error) {
+            if (!isProtectedDataError(error) || !current()) throw error;
 
-        // The Core admin permission is shared by all Users list and detail reads.
-        client.setQueryData<UsersAccess>(accessKey, { status: "denied", revision: revision + 1 });
-        const currentHash = hashKey(key);
-        void client.cancelQueries({
-          queryKey: usersKey,
-          predicate: (candidate) => candidate.queryHash !== currentHash,
-        });
-        client.setQueriesData({ queryKey: usersKey }, denied);
-        return denied;
-      }
-    },
+            // The Core admin permission is shared by all Users list and detail reads.
+            client.setQueryData<UsersAccess>(accessKey, {
+              status: "denied",
+              revision: revision + 1,
+            });
+            const currentHash = hashKey(key);
+            void client.cancelQueries({
+              queryKey: usersKey,
+              predicate: (candidate) => candidate.queryHash !== currentHash,
+            });
+            client.setQueriesData({ queryKey: usersKey }, denied);
+            return denied;
+          }
+        }
+      : skipToken,
   });
   const accessDenied =
     !isCurrent() ||
@@ -168,8 +168,11 @@ function useAdminUsersRead<T>(
   };
 }
 
-export function useAdminUsersList(context: ListContext) {
-  return useAdminUsersRead([...listKey, context], (signal) => fetchAdminUsers(context, signal));
+export function useAdminUsersList(context: ListContext, enabled = true) {
+  return useAdminUsersRead(
+    [...listKey, context],
+    enabled ? (signal) => fetchAdminUsers(context, signal) : null,
+  );
 }
 
 type UserDetailSummary = {
@@ -177,7 +180,7 @@ type UserDetailSummary = {
   meta: { invited: PaginationMeta } | undefined;
 };
 
-export function useAdminUserDetail(userId: string, invitedPage: number) {
+export function useAdminUserDetail(userId: string | null, invitedPage: number) {
   const client = useQueryClient();
   const summaryKey = [...userKey(userId), "summary"];
   const summary = useQuery<UsersCache<UserDetailSummary>>({
@@ -186,18 +189,20 @@ export function useAdminUserDetail(userId: string, invitedPage: number) {
   }).data;
   const query = useAdminUsersRead(
     [...userKey(userId), invitedPage],
-    async (signal) => {
-      const result = await apiEnvelope<AdminUserDetail, { invited: PaginationMeta }>(
-        `admin/users/${encodeURIComponent(userId)}?invited_page=${invitedPage}`,
-        { signal },
-      );
-      requireAdminUserDetail(result.data, userId);
-      requireResponseList(result.data.invited_users, requireInvitedUserRecord);
-      if (result.meta?.invited !== undefined) {
-        requirePaginatedList({ data: result.data.invited_users, meta: result.meta.invited });
-      }
-      return result;
-    },
+    userId
+      ? async (signal) => {
+          const result = await apiEnvelope<AdminUserDetail, { invited: PaginationMeta }>(
+            `admin/users/${encodeURIComponent(userId)}?invited_page=${invitedPage}`,
+            { signal },
+          );
+          requireAdminUserDetail(result.data, userId);
+          requireResponseList(result.data.invited_users, requireInvitedUserRecord);
+          if (result.meta?.invited !== undefined) {
+            requirePaginatedList({ data: result.data.invited_users, meta: result.meta.invited });
+          }
+          return result;
+        }
+      : null,
     ({ payload, accessRevision }) => {
       const data: Omit<AdminUserDetail, "invited_users"> & { invited_users?: unknown } = {
         ...payload.data,
@@ -222,6 +227,7 @@ export function useAdminUserDetail(userId: string, invitedPage: number) {
     applyShippingAddress(saved: UserShippingAddress, expectedVersion: string | null) {
       const latest = client.getQueryData<UsersCache<UserDetailSummary>>(summaryKey);
       if (
+        !userId ||
         !latest ||
         !("payload" in latest) ||
         latest.accessRevision !== query.accessRevision ||

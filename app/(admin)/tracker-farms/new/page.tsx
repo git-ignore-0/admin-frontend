@@ -1,5 +1,10 @@
-import { FarmTrackerProfileEditor } from "@/components/farm-tracker-profile-editor";
+import { redirect } from "next/navigation";
+import { legacyTrackerHref, type FarmRouteSearch } from "@/lib/farm-navigation";
 
-export default async function NewTrackerFarmPage() {
-  return <FarmTrackerProfileEditor />;
+export default async function NewTrackerFarmPage({
+  searchParams,
+}: {
+  searchParams: Promise<FarmRouteSearch>;
+}) {
+  redirect(legacyTrackerHref(await searchParams));
 }

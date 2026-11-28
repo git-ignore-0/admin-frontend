@@ -1,0 +1,44 @@
+.layout .desktopGrid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: auto 1fr;
+  row-gap: var(--grid-gutter);
+  margin-block: 0;
+}
+
+.desktopGrid > .desktopColumn {
+  padding-block: 0;
+}
+
+.desktopGrid > .products {
+  grid-area: 1 / 1 / 2 / 9;
+}
+
+.desktopGrid > .information {
+  grid-area: 1 / 9 / 3 / 13;
+}
+
+.desktopGrid > .history {
+  grid-area: 2 / 1 / 3 / 9;
+}
+
+.productList {
+  list-style: none;
+}
+
+.productList,
+.wrapText {
+  overflow-wrap: anywhere;
+}
+
+.productIdentity {
+  flex: 1 1 12ch;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.source {
+  border-inline-start: 1px solid var(--border);
+}

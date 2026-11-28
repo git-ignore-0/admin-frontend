@@ -2,7 +2,6 @@
 
 import {
   Alert,
-  Anchor,
   Box,
   Button,
   Divider,
@@ -20,6 +19,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -64,7 +64,7 @@ function UserRow({
     >
       <Table.Td>
         <Stack gap="calc(var(--mantine-spacing-xs) / 2)" style={{ overflowWrap: "anywhere" }}>
-          <Anchor
+          <DataListRecordLink
             ref={link}
             component={AdminNavigationLink}
             href={href}
@@ -73,15 +73,12 @@ function UserRow({
             data-user-id={user.id}
             aria-current={selected ? "page" : undefined}
             aria-label={`${t.users.view}: ${user.name}`}
-            c="inherit"
-            fw={600}
-            underline="never"
             onNavigate={() => {
               if (link.current) onOpen(link.current);
             }}
           >
             {user.name}
-          </Anchor>
+          </DataListRecordLink>
           <UserEmail user={user} />
         </Stack>
       </Table.Td>

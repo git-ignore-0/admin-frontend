@@ -3,13 +3,17 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildBackendTarget,
   isAllowedBackendRequest,
+  isFarmReceiptPath,
+  MAX_ORDER_LINES,
   PROVINCE_CODE,
   UUID_PATH_SEGMENT,
 } from "@/lib/backend-target";
+import { validSupplyQuery } from "@/lib/farm-supply-request-contract";
 import { adminOrigin, authOrigin } from "@/lib/config";
 import { ADMIN_PAGE_SESSION_HEADER, isTrustedAdminRequest } from "@/lib/csrf";
 import { AuthServiceUnavailableError, refreshAccessToken } from "@/lib/oauth";
 import { adminSessionBinding, clearSession, readSession, writeSession } from "@/lib/session";
+import { farmBatchScopes, farmSupplyFilters, stockBatchStatuses } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +42,42 @@ function hasDuplicateQuery(params: URLSearchParams, ...keys: string[]) {
   return keys.some((key) => params.getAll(key).length > 1);
 }
 
+function invalidFarmQuery(method: string, path: string[], params: URLSearchParams) {
+  if (params.size === 0) return false;
+  if (method !== "GET") return true;
+
+  const [, , farm, collection, product, sourceAction] = path;
+  let allowed: string[] = [];
+  if (farm === undefined) {
+    allowed = ["page", "search", "is_active"];
+  } else if (collection === "available-products") {
+    allowed = ["page", "search"];
+  } else if (collection === "products" && product === undefined) {
+    allowed = ["page", "search", "supply_status", "product_status"];
+  } else if (sourceAction === "batches" && path.length === 6) {
+    allowed = ["page", "scope", "status"];
+  } else if (sourceAction === "history") {
+    allowed = ["page"];
+  }
+
+  const page = params.get("page");
+  const supplyStatus = params.get("supply_status");
+  const productStatus = params.get("product_status");
+  const scope = params.get("scope");
+  const status = params.get("status");
+  const activity = params.get("is_active");
+  return (
+    [...params.keys()].some((key) => !allowed.includes(key) || params.getAll(key).length !== 1) ||
+    (page !== null && (!/^[1-9]\d*$/u.test(page) || Number(page) > 10_000)) ||
+    Array.from(params.get("search") ?? "").length > 200 ||
+    (activity !== null && activity !== "true" && activity !== "false") ||
+    (supplyStatus !== null && !farmSupplyFilters.some((value) => value === supplyStatus)) ||
+    (productStatus !== null && !["draft", "active", "discontinued"].includes(productStatus)) ||
+    (scope !== null && !farmBatchScopes.some((value) => value === scope)) ||
+    (status !== null && !stockBatchStatuses.some((value) => value === status))
+  );
+}
+
 function invalidBackendQuery(request: NextRequest, path: string[]) {
   const params = request.nextUrl.searchParams;
   if (path[0] === "public" && path[1] === "shipping-areas") {
@@ -48,6 +88,24 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return codes.length !== 1 || !PROVINCE_CODE.test(codes[0]);
   }
   const [, resource, id, action, extra] = path;
+  const farmReceipt = isFarmReceiptPath(path);
+  if (params.has("creation_key") || (farmReceipt && request.method === "GET")) {
+    const collectionReceipt =
+      id === undefined &&
+      ["store-products", "csa-round-configurations", "store-orders"].includes(resource);
+    return (
+      request.method !== "GET" ||
+      !(collectionReceipt || farmReceipt) ||
+      params.size !== 1 ||
+      !UUID_PATH_SEGMENT.test(params.get("creation_key") ?? "")
+    );
+  }
+  if (resource === "farm-supply-requests") {
+    return id !== undefined
+      ? params.size > 0
+      : !validSupplyQuery(params, ["page", "search", "status", "farm_id"]);
+  }
+  if (resource === "farms") return invalidFarmQuery(request.method, path, params);
   if (resource === "csa-round-configurations") {
     const isCollection = id === undefined;
     if (request.method !== "GET" || (!isCollection && action !== "rounds")) return params.size > 0;
@@ -82,7 +140,7 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
     return hasDuplicateQuery(params, "page", "search", "status");
   }
   if (resource === "store-orders") {
-    if (id !== undefined) return params.size > 0;
+    if (request.method !== "GET" || id !== undefined) return params.size > 0;
     const allowed = new Set(["page", "page_size", "search", "status", "payment_status", "sort"]);
     const statuses = new Set([
       "payment_pending",
@@ -136,6 +194,45 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
   if (resource === "membership-price-options" && action === "payment-plans") {
     return params.size > 0;
   }
+  if (resource === "store-products") {
+    if (action === "transition") return params.size > 0;
+    const hasOrderFilter = params.has("order_kind") || params.has("product_ids");
+    if (hasOrderFilter && (request.method !== "GET" || id !== undefined)) return true;
+    if (request.method === "GET" && id === undefined) {
+      const keys = [
+        "page",
+        "category_id",
+        "status",
+        "search",
+        "csa_eligible",
+        "is_active",
+        "is_published",
+        "order_kind",
+        "product_ids",
+      ];
+      const orderKind = params.get("order_kind");
+      const productIds = params.get("product_ids")?.split(",");
+      const page = params.get("page");
+      return (
+        hasDuplicateQuery(params, ...keys) ||
+        (hasOrderFilter &&
+          ([...params.keys()].some((key) => !keys.includes(key)) ||
+            (page !== null && (!/^[1-9]\d*$/u.test(page) || Number(page) > 10_000)) ||
+            Array.from((params.get("search") ?? "").trim()).length > 200)) ||
+        (orderKind !== null && orderKind !== "new" && orderKind !== "historical") ||
+        (productIds !== undefined &&
+          (orderKind === null ||
+            productIds.length > MAX_ORDER_LINES ||
+            productIds.some((productId) => !UUID_PATH_SEGMENT.test(productId)) ||
+            new Set(productIds.map((productId) => productId.toLowerCase())).size !==
+              productIds.length)) ||
+        (params.has("status") &&
+          (!["draft", "active", "discontinued"].includes(params.get("status") ?? "") ||
+            params.has("is_active") ||
+            params.has("is_published")))
+      );
+    }
+  }
   if (request.method === "GET") {
     if (resource === "csa-rounds" && id === undefined) {
       return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size", "status");
@@ -145,9 +242,6 @@ function invalidBackendQuery(request: NextRequest, path: string[]) {
       (resource === "csa-selections" && action === "events")
     ) {
       return invalidLocale(params) || hasDuplicateQuery(params, "page", "page_size");
-    }
-    if (id === undefined && resource === "store-products") {
-      return hasDuplicateQuery(params, "page", "category_id");
     }
     if (id === undefined && resource === "testimonials") {
       return hasDuplicateQuery(params, "page", "page_size", "search", "status", "type");

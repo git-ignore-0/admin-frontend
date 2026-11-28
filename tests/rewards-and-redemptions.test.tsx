@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { RedemptionDetailView } from "@/components/redemption-detail";
 import { RedemptionList } from "@/components/redemption-list";
@@ -30,7 +31,9 @@ afterEach(() => {
 function providers(children: React.ReactNode) {
   return render(
     <AdminI18nProvider initialLocale="en">
-      <ToastProvider>{children}</ToastProvider>
+      <AdminQueryProvider>
+        <ToastProvider>{children}</ToastProvider>
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
 }
@@ -172,7 +175,7 @@ describe("rewards", () => {
     expect(screen.queryByText(/out of stock/i)).not.toBeInTheDocument();
   });
 
-  it("keeps the current rewards visible and disables controls during a pending page load", async () => {
+  it("hides the previous reward page while loading another page", async () => {
     let resolvePage!: (value: { data: Reward[]; meta: PaginationMeta }) => void;
     vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
       if (path.endsWith("page=2")) {
@@ -189,21 +192,19 @@ describe("rewards", () => {
 
     const detailLink = await screen.findByRole("link", { name: "Edit: Seasonal vegetables" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(apiEnvelope).toHaveBeenLastCalledWith("admin/rewards?page=2"));
-    expect(detailLink).toBeVisible();
-    expect(detailLink.closest("section")).toHaveAttribute("aria-busy", "true");
+    await waitFor(() =>
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        "admin/rewards?page=2",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+    expect(detailLink).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Loading rewards…");
     expect(
-      screen.getByRole("button", { name: "Drag to reorder Seasonal vegetables" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move Seasonal vegetables down" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByRole("navigation", { name: "Page 1/2" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
-    expect(screen.getByText("31 results")).toBeVisible();
+      screen.queryByRole("button", { name: "Move Seasonal vegetables down" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Page 1/2" })).not.toBeInTheDocument();
+    expect(screen.queryByText("31 results")).not.toBeInTheDocument();
 
     await act(async () =>
       resolvePage({
@@ -263,7 +264,7 @@ describe("rewards", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("link", { name: "Edit: Seasonal vegetables" })).toBeVisible();
     expect(screen.getByText("1 result")).toBeVisible();
-    expect(apiEnvelope).toHaveBeenNthCalledWith(2, "admin/rewards?page=1");
+    expect(apiEnvelope).toHaveBeenNthCalledWith(2, "admin/rewards?page=1", expect.anything());
   });
 
   it("uploads an image and creates a bilingual reward only once on rapid submit", async () => {
@@ -478,6 +479,20 @@ describe("rewards", () => {
     expect(screen.getAllByRole("row")[2]).toHaveTextContent("Seed box");
   });
 
+  it("retires reward data after a reorder is denied instead of rolling it back", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({
+        data: [reward, secondReward],
+        meta: { page: 1, page_size: 30, total: 2 },
+      })
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    providers(<RewardList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Move Seasonal vegetables down" }));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.queryByText("Seasonal vegetables")).not.toBeInTheDocument();
+    expect(screen.queryByText("Seed box")).not.toBeInTheDocument();
+  });
+
   it("does not overwrite unsaved reward fields when the admin locale changes", async () => {
     vi.mocked(api).mockResolvedValue(reward);
     providers(
@@ -559,7 +574,10 @@ describe("redemptions", () => {
     expect(await screen.findByText("31 results")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/redemptions?page=2&search=&status="),
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        "admin/redemptions?page=2&search=&status=",
+        expect.anything(),
+      ),
     );
     await waitFor(() => expect(screen.getByRole("searchbox")).toBeEnabled());
 
@@ -570,6 +588,7 @@ describe("redemptions", () => {
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith(
         "admin/redemptions?page=1&search=green%40example.com&status=",
+        expect.anything(),
       ),
     );
     await waitFor(() => expect(screen.getByLabelText("Filter by status")).toBeEnabled());
@@ -577,20 +596,24 @@ describe("redemptions", () => {
     await waitFor(() =>
       expect(apiEnvelope).toHaveBeenLastCalledWith(
         "admin/redemptions?page=1&search=green%40example.com&status=pending",
+        expect.anything(),
       ),
     );
     expect(await screen.findByText("1 result")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     await waitFor(() =>
-      expect(apiEnvelope).toHaveBeenLastCalledWith("admin/redemptions?page=1&search=&status="),
+      expect(apiEnvelope).toHaveBeenLastCalledWith(
+        "admin/redemptions?page=1&search=&status=",
+        expect.anything(),
+      ),
     );
     expect(screen.getByRole("searchbox")).toHaveValue("");
     expect(screen.getByLabelText("Filter by status")).toHaveValue("All statuses");
     expect(await screen.findByText("31 results")).toBeVisible();
   });
 
-  it("keeps old requests visible and disables accessible controls while a filter is pending", async () => {
+  it("hides the unfiltered requests and disables controls while applying a filter", async () => {
     let resolveFiltered!: (value: { data: RedemptionListItem[]; meta: PaginationMeta }) => void;
     vi.mocked(apiEnvelope).mockImplementation(async (path: string) => {
       if (path.includes("status=contacted")) {
@@ -612,19 +635,13 @@ describe("redemptions", () => {
     selectOption(statusFilter, "contacted");
 
     await waitFor(() => expect(statusFilter).toBeDisabled());
-    expect(detailLink).toBeVisible();
+    expect(detailLink).not.toBeInTheDocument();
     expect(searchbox).toBeDisabled();
     expect(screen.getByRole("button", { name: "Searching…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clear filters" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByRole("navigation", { name: "Page 1/2" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
-    expect(detailLink.closest("section")).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("navigation", { name: "Page 1/2" })).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Loading redemptions…");
-    expect(screen.getByText("31 results")).toBeVisible();
+    expect(screen.queryByText("31 results")).not.toBeInTheDocument();
 
     await act(async () =>
       resolveFiltered({
@@ -706,7 +723,11 @@ describe("redemptions", () => {
     expect(
       await screen.findByRole("link", { name: `View details: ${redemption.user.name}` }),
     ).toBeVisible();
-    expect(apiEnvelope).toHaveBeenNthCalledWith(2, "admin/redemptions?page=1&search=&status=");
+    expect(apiEnvelope).toHaveBeenNthCalledWith(
+      2,
+      "admin/redemptions?page=1&search=&status=",
+      expect.anything(),
+    );
   });
 
   it("marks a request as contacted without sending point or status fields", async () => {
@@ -746,7 +767,7 @@ describe("redemptions", () => {
       resolveReject = resolve;
     });
     vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
-      if (!init) return redemption;
+      if (!init?.method) return redemption;
       if (path.endsWith("/reject")) return rejectPromise;
       throw new Error("unexpected_request");
     });
@@ -825,6 +846,22 @@ describe("redemptions", () => {
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Confirm completion" })).toBeDisabled();
     expect(api).toHaveBeenCalledTimes(3);
+  });
+
+  it("retires private redemption detail and its dialog when conflict recovery returns 403", async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce(redemption)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("redemption_transition_conflict"), { status: 409 }),
+      )
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+    providers(<RedemptionDetailView redemptionId={redemption.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm completion" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm completion" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByText("0912345678")).not.toBeInTheDocument();
   });
 
   it("locks stale actions when the refresh after a 409 also fails", async () => {

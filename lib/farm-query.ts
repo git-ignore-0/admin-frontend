@@ -1,0 +1,336 @@
+import {
+  notifyManager,
+  skipToken,
+  useQuery,
+  useMutationState,
+  type MutationFilters,
+  type QueryClient,
+} from "@tanstack/react-query";
+import {
+  isApiObject,
+  isNativeRequestTimeout,
+  isProtectedDataError,
+  type ClientApiError,
+} from "@/lib/client-error";
+import { isUncertainFarmSupplyWrite } from "@/lib/farm-stock";
+import type { Farm } from "@/lib/types";
+
+const farmsKey = ["farms"] as const;
+const supplyKey = ["farm-supply"] as const;
+const accessKey = ["farm-access"] as const;
+const initialAccess = { revision: 0, error: null };
+type FarmAccess = { revision: number; error: Error | null };
+
+export const farmSupplyRequestsKey = [...farmsKey, "supply-requests"] as const;
+export const farmSupplyRequestDetailKey = (id: string) =>
+  [...farmSupplyRequestsKey, "detail", id.toLowerCase()] as const;
+export const farmSupplyRequestListKey = [...farmSupplyRequestsKey, "list"] as const;
+export const farmFarmerLinkIntentKey = ["admin-mutation-intent", "farm-farmer-link"] as const;
+const farmFarmerLinkKey = (farmId: string) =>
+  [...farmFarmerLinkIntentKey, farmId.toLowerCase()] as const;
+
+function isUnsettledLinkIntent(intent: unknown) {
+  return isApiObject(intent) && (intent.phase === "pending" || intent.phase === "unknown");
+}
+
+export function farmFarmerLinkBlocksDelete(client: QueryClient, farmId: string) {
+  return isUnsettledLinkIntent(client.getQueryData(farmFarmerLinkKey(farmId)));
+}
+
+export function useFarmFarmerLinkBlocksDelete(farmId: string) {
+  return (
+    useQuery({
+      queryKey: farmFarmerLinkKey(farmId),
+      queryFn: skipToken,
+      select: isUnsettledLinkIntent,
+    }).data ?? false
+  );
+}
+
+export const farmDecisionIntentKey = ["admin-mutation-intent", "farm-supply-decision"] as const;
+export const farmListKey = [...farmsKey, "list"] as const;
+export const farmDetailPrefix = [...farmsKey, "detail"] as const;
+export const farmDetailKey = (farmId: string) =>
+  [...farmDetailPrefix, farmId.toLowerCase()] as const;
+export const farmSupplyKey = (farmId: string) => [...supplyKey, farmId.toLowerCase()] as const;
+export const farmSupplyWriteKey = (farmId: string) => [...farmSupplyKey(farmId), "write"] as const;
+export const farmBulkWriteKey = (farmId: string) =>
+  [...farmSupplyWriteKey(farmId), "bulk"] as const;
+export const farmSupplyDecisionWriteKey = (farmId: string, requestId: string) =>
+  [...farmSupplyWriteKey(farmId), "decision", requestId] as const;
+export const farmProductLinkWriteKey = (farmId: string, productId?: string) =>
+  [...farmSupplyWriteKey(farmId), "link", ...(productId ? [productId.toLowerCase()] : [])] as const;
+export const farmProductBulkRemoveWriteKey = (farmId: string) =>
+  [...farmSupplyWriteKey(farmId), "bulk-remove"] as const;
+export const farmBulkDraftKey = (farmId: string) =>
+  [...farmSupplyKey(farmId), "bulk-draft"] as const;
+const farmDeleteMutationKey = (farmId: string) =>
+  [...farmsKey, "delete", farmId.toLowerCase()] as const;
+const farmDetailWriteKey = (farmId: string) =>
+  [...farmsKey, "write", farmId.toLowerCase()] as const;
+export const farmDetailWriteFilters = (farmId: string) => ({
+  mutationKey: farmDetailWriteKey(farmId),
+  exact: true,
+});
+
+export const farmDeleteFilters = (farmId: string) => ({
+  mutationKey: farmDeleteMutationKey(farmId),
+  exact: true,
+});
+
+export function farmDeleteBlocksWrite(client: QueryClient, farmId: string) {
+  return (
+    isFarmGone(client, farmId) ||
+    client.getMutationCache().findAll(farmDeleteFilters(farmId)).some(deleteBlocksWrite)
+  );
+}
+
+function deleteBlocksWrite({ state }: { state: { status: string; data: unknown } }) {
+  if (state.status === "pending") return true;
+  return (
+    isApiObject(state.data) &&
+    isApiObject(state.data.issue) &&
+    state.data.issue.kind === "uncertain"
+  );
+}
+
+export function useFarmDeleteBlocksWrite(farmId: string) {
+  return useMutationState({
+    filters: farmDeleteFilters(farmId),
+    select: deleteBlocksWrite,
+  }).some(Boolean);
+}
+
+export function farmDetailWritePending(client: QueryClient, farmId: string) {
+  return client.isMutating(farmDetailWriteFilters(farmId)) > 0;
+}
+
+export function farmNotFound(cause: unknown) {
+  if (!(cause instanceof Error)) return false;
+  const { status, message, payload } = cause as ClientApiError;
+  const body: unknown = payload;
+  return (
+    status === 404 &&
+    (message === "not_found" ||
+      (message === "request_failed" &&
+        isApiObject(body) &&
+        typeof body.detail === "string" &&
+        Boolean(body.detail.trim())))
+  );
+}
+
+export function holdFarmDetailWrite(client: QueryClient, farmId: string) {
+  // The existing Farm editor and header share a lease across route instances.
+  let release!: () => void;
+  const operation = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cache = client.getMutationCache();
+  const entry = cache.build(client, {
+    mutationKey: farmDetailWriteKey(farmId),
+    mutationFn: () => operation,
+  });
+  void entry.execute(undefined);
+  return () => {
+    release();
+    cache.remove(entry);
+  };
+}
+
+export function isFarmGone(client: QueryClient, farmId: string) {
+  return client.getQueryData<Farm | null>(farmDetailKey(farmId)) === null;
+}
+
+export function confirmFarmGone(client: QueryClient, farmId: string) {
+  const key = farmDetailKey(farmId);
+  if (isFarmGone(client, farmId)) return;
+  void client.cancelQueries({ queryKey: key, exact: true });
+  client.setQueryData(key, null);
+  retireFarmSupply(client, farmId);
+  retireFarmSupplyRequests(client, farmId);
+  removeFarmMutations(client, farmDeleteMutationKey(farmId));
+  void client.invalidateQueries({ queryKey: farmListKey });
+}
+
+export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
+  const mutationKey = farmSupplyWriteKey(farmId);
+  return {
+    mutationKey,
+    exact: false,
+    predicate: ({ options, state }) => {
+      const { variables, status, error } = state;
+      const writer = options.mutationKey?.[mutationKey.length];
+      if (writer === "bulk" || writer === "link" || writer === "bulk-remove")
+        return receiptWriteUnsettled({ state });
+      if (writer === "decision") return status === "pending" || state.data === "unknown";
+      const action =
+        isApiObject(variables) && isApiObject(variables.action) ? variables.action.kind : undefined;
+      return (
+        status === "pending" ||
+        (action === "remove" &&
+          status === "error" &&
+          !farmAccessDenied(error) &&
+          isUncertainFarmSupplyWrite(error))
+      );
+    },
+  };
+}
+
+function receiptWriteUnsettled({ state }: { state: { status: string; data: unknown } }) {
+  return (
+    state.status === "pending" ||
+    (isApiObject(state.data) &&
+      isApiObject(state.data.failure) &&
+      state.data.failure.kind === "unknown")
+  );
+}
+
+const farmBulkWriteFilters = (farmId: string): MutationFilters => ({
+  mutationKey: farmBulkWriteKey(farmId),
+  exact: true,
+  predicate: receiptWriteUnsettled,
+});
+
+export function farmBulkBlocksWrite(client: QueryClient, farmId: string) {
+  return Boolean(client.getMutationCache().find(farmBulkWriteFilters(farmId)));
+}
+
+export function useFarmBulkBlocksWrite(farmId: string) {
+  return useMutationState({ filters: farmBulkWriteFilters(farmId), select: () => true }).length > 0;
+}
+
+const farmProductLinkWriteFilters = (farmId: string): MutationFilters => ({
+  mutationKey: farmProductLinkWriteKey(farmId),
+  predicate: receiptWriteUnsettled,
+});
+
+export function farmProductLinkBlocksWrite(client: QueryClient, farmId: string) {
+  return Boolean(client.getMutationCache().find(farmProductLinkWriteFilters(farmId)));
+}
+
+export function useFarmProductLinkBlocksWrite(farmId: string) {
+  return (
+    useMutationState({ filters: farmProductLinkWriteFilters(farmId), select: () => true }).length >
+    0
+  );
+}
+
+const farmProductBulkRemoveWriteFilters = (farmId: string): MutationFilters => ({
+  mutationKey: farmProductBulkRemoveWriteKey(farmId),
+  exact: true,
+  predicate: receiptWriteUnsettled,
+});
+
+export function farmProductBulkRemoveBlocksWrite(client: QueryClient, farmId: string) {
+  return Boolean(client.getMutationCache().find(farmProductBulkRemoveWriteFilters(farmId)));
+}
+
+export function useFarmProductBulkRemoveBlocksWrite(farmId: string) {
+  return (
+    useMutationState({ filters: farmProductBulkRemoveWriteFilters(farmId), select: () => true })
+      .length > 0
+  );
+}
+
+export function farmAccessDenied(cause: unknown): cause is Error {
+  // The BFF can reject a write's CSRF marker without revoking website-admin reads.
+  return cause instanceof Error && isProtectedDataError(cause);
+}
+
+/** Only a transient read failure may keep an already verified page visible. */
+export function farmListCanShowData(cause: unknown) {
+  if (cause == null) return true;
+  if (!(cause instanceof Error) || isProtectedDataError(cause)) return false;
+  const { status, message } = cause as ClientApiError;
+  return (
+    status !== 404 &&
+    status !== 410 &&
+    (isNativeRequestTimeout(cause) ||
+      status === 408 ||
+      message === "network_error" ||
+      message === "request_timeout" ||
+      message === "upstream_timeout")
+  );
+}
+
+export function farmAccess(client: QueryClient) {
+  return client.getQueryData<FarmAccess>(accessKey) ?? initialAccess;
+}
+
+export function useFarmAccess() {
+  return (
+    useQuery<FarmAccess>({
+      queryKey: accessKey,
+      queryFn: skipToken,
+      gcTime: Infinity,
+    }).data ?? initialAccess
+  );
+}
+
+export function retryFarmAccess(client: QueryClient) {
+  const { revision, error } = farmAccess(client);
+  if (error) client.setQueryData<FarmAccess>(accessKey, { revision, error: null });
+}
+
+// All Farm endpoints use the same website-admin permission. Keep this denial
+// within the Farm domain and the current QueryClient, including across routes.
+export function retireFarmAccess(client: QueryClient, error: Error) {
+  const previous = farmAccess(client);
+  if (previous.error === error) return;
+  notifyManager.batch(() => {
+    client.setQueryData<FarmAccess>(accessKey, { revision: previous.revision + 1, error });
+    for (const queryKey of [farmsKey, supplyKey, farmDecisionIntentKey, farmFarmerLinkIntentKey]) {
+      const entries = client.getQueryCache().findAll({ queryKey });
+      for (const query of entries) {
+        if (query.getObserversCount()) query.reset();
+        else client.getQueryCache().remove(query);
+      }
+    }
+    removeFarmMutations(client, supplyKey);
+    removeFarmMutations(client, farmsKey);
+  });
+}
+
+function removeFarmMutations(client: QueryClient, mutationKey: readonly string[]) {
+  const mutations = client.getMutationCache();
+  for (const mutation of mutations.findAll({ mutationKey })) mutations.remove(mutation);
+}
+
+export function retireFarmQueries(client: QueryClient, farmId: string) {
+  if (!isFarmGone(client, farmId)) client.removeQueries({ queryKey: farmDetailKey(farmId) });
+  retireFarmSupply(client, farmId);
+}
+
+function retireFarmSupply(client: QueryClient, farmId: string) {
+  const scope = farmSupplyKey(farmId);
+  const link = client.getQueryCache().find({ queryKey: farmFarmerLinkKey(farmId), exact: true });
+  if (link?.getObserversCount()) link.reset();
+  else if (link) client.getQueryCache().remove(link);
+  client.removeQueries({ queryKey: scope });
+  removeFarmMutations(client, scope);
+}
+
+function retireFarmSupplyRequests(client: QueryClient, farmId: string) {
+  const id = farmId.toLowerCase();
+  const belongsToFarm = (record: unknown) =>
+    isApiObject(record) && isApiObject(record.farm) && record.farm.id === id;
+  const cache = client.getQueryCache();
+  for (const query of cache.findAll({ queryKey: farmSupplyRequestsKey })) {
+    const { data } = query.state;
+    const filter = query.queryKey[farmSupplyRequestListKey.length];
+    if (
+      belongsToFarm(data) ||
+      (isApiObject(filter) && filter.farm_id === id) ||
+      (isApiObject(data) && Array.isArray(data.data) && data.data.some(belongsToFarm))
+    ) {
+      // Reset active readers so their observers drop the old snapshot immediately.
+      if (query.getObserversCount()) query.reset();
+      else cache.remove(query);
+    }
+  }
+  client.removeQueries({
+    queryKey: farmDecisionIntentKey,
+    predicate: ({ state: { data } }) =>
+      isApiObject(data) && isApiObject(data.payload) && data.payload.farmId === id,
+  });
+}

@@ -1,6 +1,6 @@
 "use client";
 import { Anchor, Button, Group, Stack, Text, Textarea } from "@mantine/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   roundRecordHref,
   type RoundNavigationContext,
@@ -20,8 +20,9 @@ import { DataState, Section, Status } from "@/components/nfv-controls";
 import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
+import { requireResponseEntity } from "@/lib/api-response";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   cancelRound,
   getRound,
@@ -74,6 +75,23 @@ export function CSARoundDetail({
     null,
   );
   const activeRead = useRef<AbortController | null>(null);
+  const accessRevision = useRef(0);
+  const retire = useCallback((caught: unknown) => {
+    if (!isProtectedDataError(caught) && (caught as ClientApiError | null)?.status !== 404)
+      return false;
+    accessRevision.current += 1;
+    activeRead.current?.abort();
+    roundSnapshot.current = null;
+    setRound(null);
+    setParticipants(null);
+    setAction(null);
+    setReopen(null);
+    setReason("");
+    setLoading(false);
+    setBusy(false);
+    setError(caught);
+    return true;
+  }, []);
   const load = useCallback(
     async (refreshRound = true) => {
       if (refreshRound) {
@@ -97,20 +115,26 @@ export function CSARoundDetail({
         : getRound(roundId, signal)
             .then((item) => {
               if (!isCurrent()) return;
+              requireResponseEntity(item, roundId);
               const receivedAt = performance.now();
               roundSnapshot.current = { round: item, page, receivedAt };
               roundReceivedAt.current = receivedAt;
               setRound(item);
             })
             .catch((caught: unknown) => {
-              if (isCurrent()) setError(caught);
+              if (isCurrent() && !retire(caught)) setError(caught);
             });
       const participantsRead = getRoundParticipants(roundId, page, 20, locale, signal)
         .then((data) => {
-          if (isCurrent()) setParticipants({ roundId, data });
+          if (!isCurrent()) return;
+          const lastPage = Math.max(1, Math.ceil(data.meta.total / data.meta.page_size));
+          if (page > lastPage) {
+            setParticipants(null);
+            setPage(lastPage);
+          } else setParticipants({ roundId, data });
         })
         .catch((caught: unknown) => {
-          if (isCurrent()) setParticipantError(caught);
+          if (isCurrent() && !retire(caught)) setParticipantError(caught);
         });
 
       await Promise.all([roundRead, participantsRead]);
@@ -119,7 +143,7 @@ export function CSARoundDetail({
         setLoading(false);
       }
     },
-    [roundId, page, locale],
+    [roundId, page, locale, retire],
   );
   const loadRef = useRef(load);
   useEffect(() => {
@@ -130,10 +154,11 @@ export function CSARoundDetail({
     void load(false);
     return () => currentRead.current?.abort();
   }, [load]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      activeRead.current?.abort();
     };
   }, []);
   useEffect(() => {
@@ -143,24 +168,40 @@ export function CSARoundDetail({
     setReopen(null);
   }, [roundId]);
   async function mutate() {
-    if (lock.current || !round || !action || loading) return;
+    if (lock.current || !round || round.id !== roundId || !action || loading || error) return;
     if (action === "cancel" && !reason.trim()) {
       setActionError("reasonRequired");
       return;
     }
     const identity = round.id;
+    const revision = accessRevision.current;
+    const current = () =>
+      mounted.current && identity === currentRoundId.current && accessRevision.current === revision;
     lock.current = true;
     requests.current += 1;
     setBusy(true);
     setActionError(null);
     try {
-      if (action === "cancel") await cancelRound(round.id, reason);
-      else await api(`admin/csa-rounds/${round.id}/publish`, { method: "POST", body: "{}" });
-      if (!mounted.current || identity !== currentRoundId.current) return;
+      const updated =
+        action === "cancel"
+          ? await cancelRound(round.id, reason, round.version)
+          : await api<AdminCSARound>(`admin/csa-rounds/${round.id}/publish`, {
+              method: "POST",
+              body: JSON.stringify({ version: round.version }),
+            });
+      if (!current()) return;
+      requireResponseEntity(updated, identity);
       setAction(null);
       await loadRef.current();
     } catch (e) {
-      if (mounted.current && identity === currentRoundId.current) setActionError(e);
+      if (current() && !retire(e)) {
+        setActionError(e);
+        if (e instanceof Error && e.message === "version_conflict") {
+          setAction(null);
+          await loadRef.current();
+          if (current()) setError(e);
+        }
+      }
     } finally {
       lock.current = false;
       if (mounted.current) setBusy(false);
@@ -183,7 +224,7 @@ export function CSARoundDetail({
         <PageHeading title={t.breadcrumb.roundDetails} visuallyHiddenTitle />
         {error ? (
           <RecoveryAlert
-            message={requestErrorMessage(error, t)}
+            message={csaRoundError(error, locale, requestErrorMessage(error, t))}
             retryLabel={t.common.retry}
             onRetry={() => void load()}
           />
@@ -216,20 +257,17 @@ export function CSARoundDetail({
   );
   const matchingResult = participants?.roundId === roundId ? participants.data : null;
   const currentPage = matchingResult?.meta.page === page ? matchingResult : null;
-  const participantRecovery = Boolean(participantError) && (
-    <RecoveryAlert
-      message={requestErrorMessage(participantError, t)}
-      retryLabel={t.common.retry}
-      onRetry={() => void load(false)}
-    />
-  );
+  const participantMessage = participantError ? requestErrorMessage(participantError, t) : "";
+  function retryParticipants() {
+    void load(false);
+  }
   return (
     <Stack gap="md" miw={0} style={{ overflowWrap: "anywhere" }}>
       {breadcrumbs}
       <PageHeading title={t.breadcrumb.roundDetails} visuallyHiddenTitle />
       {Boolean(error) && (
         <RecoveryAlert
-          message={requestErrorMessage(error, t)}
+          message={csaRoundError(error, locale, requestErrorMessage(error, t))}
           retryLabel={t.common.retry}
           onRetry={() => void load()}
         />
@@ -288,36 +326,42 @@ export function CSARoundDetail({
         status={round.status}
         participants={
           <Stack gap="sm" ref={membersResults} role="group" aria-label={c.membersTab} tabIndex={-1}>
-            {participantRecovery}
-            {currentPage ? (
-              <CSARoundParticipants
-                key={`${round.id}:${page}`}
-                round={round}
-                result={currentPage}
-                disabled={disabled || Boolean(participantError)}
-                refreshKey={companionRefresh}
-                onPage={(next) => {
-                  membersResults.current?.focus({ preventScroll: true });
-                  setPage(next);
-                }}
-                onRefresh={refreshRound}
-                onReopen={setReopen}
-                reopenOpen={Boolean(reopen)}
-              />
-            ) : loading ? (
-              <DataState kind="loading" title={c.loading} />
-            ) : null}
+            <CSARoundParticipants
+              key={`${round.id}:${page}`}
+              round={round}
+              result={currentPage}
+              loading={loading}
+              error={participantMessage}
+              onRetry={retryParticipants}
+              disabled={disabled || Boolean(participantError)}
+              refreshKey={companionRefresh}
+              onPage={(next) => {
+                membersResults.current?.focus({ preventScroll: true });
+                setPage(next);
+              }}
+              onRefresh={refreshRound}
+              onReopen={setReopen}
+              reopenOpen={Boolean(reopen)}
+            />
           </Stack>
         }
         demand={
-          <Stack gap="sm">
-            {refreshToolbar}
-            {participantRecovery}
-            {matchingResult ? (
-              <CSARoundDemand demand={matchingResult.demand} />
-            ) : loading ? (
-              <DataState kind="loading" title={c.loading} />
-            ) : null}
+          <Stack gap="md">
+            <ListToolbar
+              busy={loading || busy || companionBusy}
+              refresh={{
+                label: c.refresh,
+                onRefresh: refreshRound,
+                loading: loading && matchingResult !== null,
+                disabled: loading && matchingResult === null,
+              }}
+            />
+            <CSARoundDemand
+              demand={matchingResult?.demand}
+              loading={loading}
+              error={participantMessage}
+              onRetry={retryParticipants}
+            />
           </Stack>
         }
         settings={
@@ -431,6 +475,7 @@ export function CSARoundDetail({
           orderId={reopen.order_id}
           deliveryDate={round.delivery_date}
           onClose={() => setReopen(null)}
+          onAccessDenied={retire}
           onSaved={() => {
             setReopen(null);
             void loadRef.current();

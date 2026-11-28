@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StoreCategoryEditor } from "@/components/store-category-editor";
 import { StoreCategoryDetail } from "@/components/store-category-detail";
 import { StoreCategoryList } from "@/components/store-category-list";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { adminDictionaries } from "@/lib/admin-i18n";
 
 const mocks = vi.hoisted(() => ({
@@ -62,13 +63,59 @@ afterEach(cleanup);
 describe("store category administration", () => {
   it("renders an unordered response as a labelled three-level list", async () => {
     render(<StoreCategoryList />);
+    const loadingList = screen.getByRole("status").closest("[data-list-paper]")!;
+    const loadingScroll = loadingList.querySelector<HTMLElement>(
+      '[role="region"][aria-hidden="true"]',
+    );
+    const loadingWidth = loadingScroll?.style.getPropertyValue("--table-min-width");
+    expect(loadingWidth).toBe("calc(30rem * var(--mantine-scale))");
+    expect(loadingScroll?.querySelectorAll("th")).toHaveLength(4);
+    expect(loadingScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
     expect(await screen.findByRole("link", { name: "leaf" })).toBeVisible();
     expect(screen.getByText("Cấp 3")).toBeVisible();
+    const table = screen.getByRole("table", { name: "Danh mục" });
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
+    const scroller = screen.getByRole("region", { name: "Danh mục" });
+    expect(scroller).toHaveAttribute("tabindex", "0");
+    expect(scroller).toContainElement(table);
+    expect(scroller.style.getPropertyValue("--table-min-width")).toBe(loadingWidth);
+    expect(scroller.closest("[data-list-paper]")).toBe(loadingList);
+    expect(scroller.closest("[data-list-paper]")?.querySelector("footer")).toBeVisible();
+    expect(scroller.querySelector("footer")).toBeNull();
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "root",
       "child",
       "leaf",
     ]);
+  });
+
+  it("loads the applied status without showing rows from the previous filter", async () => {
+    let resolve!: (rows: []) => void;
+    const pending = new Promise<[]>((done) => {
+      resolve = done;
+    });
+    mocks.list
+      .mockResolvedValueOnce([category("active-only", null, 1)])
+      .mockReturnValueOnce(pending);
+
+    render(<StoreCategoryList />);
+    expect(await screen.findByRole("link", { name: "active-only" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
+    selectOption(screen.getByRole("combobox", { name: "Trạng thái" }), "false");
+    expect(screen.queryByRole("link", { name: "active-only" })).not.toBeInTheDocument();
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Đang tải dữ liệu");
+    expect(status.closest("[data-list-paper]")?.querySelector("[aria-hidden] table")).toBeTruthy();
+    expect(mocks.list.mock.calls.at(-1)?.[0]).toEqual({ search: "", is_active: false });
+
+    resolve([]);
+    expect(await screen.findByText("Không có danh mục khớp bộ lọc.")).toBeVisible();
+    const refresh = screen.getByRole("button", { name: "Làm mới danh sách" });
+    mocks.list.mockResolvedValueOnce([category("refreshed", null, 1)]);
+    fireEvent.click(refresh);
+    expect(await screen.findByRole("link", { name: "refreshed" })).toBeVisible();
+    expect(mocks.list).toHaveBeenCalledTimes(3);
+    expect(mocks.list.mock.calls.at(-1)?.[0]).toEqual({ search: "", is_active: false });
   });
 
   it("excludes descendants as parents and saves an incomplete inactive draft", async () => {
@@ -105,7 +152,11 @@ describe("store category administration", () => {
     mocks.get.mockResolvedValue(category("root", null, 1));
     mocks.remove.mockRejectedValue({ status: 409 });
     mocks.save.mockResolvedValue({ ...category("root", null, 1), is_active: false });
-    render(<StoreCategoryDetail categoryId="root" />);
+    render(
+      <AdminQueryProvider>
+        <StoreCategoryDetail categoryId="root" />
+      </AdminQueryProvider>,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "Xóa" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Xóa" }));
     expect(await screen.findByText(/đang được sử dụng/)).toBeVisible();
@@ -122,7 +173,11 @@ describe("store category administration", () => {
     mocks.get
       .mockRejectedValueOnce(new Error("network_error"))
       .mockResolvedValueOnce(category("root", null, 1));
-    render(<StoreCategoryDetail categoryId="root" />);
+    render(
+      <AdminQueryProvider>
+        <StoreCategoryDetail categoryId="root" />
+      </AdminQueryProvider>,
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "Thử lại" }));
 

@@ -18,7 +18,10 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AdminBreadcrumbForRoute } from "@/components/admin-breadcrumb-context";
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
-import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import {
+  useAdminRecordScope,
+  useIsAdminQueryScopeCurrent,
+} from "@/components/admin-query-provider";
 import { CustomerMembershipCard } from "@/components/customer-membership-card";
 import { LinkCustomerUserDialog } from "@/components/link-customer-user-dialog";
 import { DataState, Section, Status } from "@/components/nfv-controls";
@@ -27,7 +30,7 @@ import { recordDetailDrawer } from "@/components/record-detail-drawer";
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
-import { requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   csaCustomerAssignmentHref,
   csaCustomerDetailKey,
@@ -35,6 +38,8 @@ import {
   csaCustomerListKey,
   csaCustomerPath,
   readCsaCustomerListContext,
+  requireCSACustomer,
+  retireCSACustomers,
 } from "@/lib/csa-customers-query";
 import { formatVietnamPhone } from "@/lib/phone-number";
 import type { CSACustomer } from "@/lib/types";
@@ -65,6 +70,7 @@ function CustomerDetailView({
   const toast = useToast();
   const client = useQueryClient();
   const isQueryScopeCurrent = useIsAdminQueryScopeCurrent();
+  const recordScope = useAdminRecordScope(customerId);
   const router = useRouter();
   const params = useSearchParams();
   const listContext = readCsaCustomerListContext(params ?? new URLSearchParams());
@@ -77,20 +83,28 @@ function CustomerDetailView({
   const linkButtonRef = useRef<HTMLButtonElement>(null);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const detailKey = csaCustomerDetailKey(customerId);
-  const detail = useQuery<CSACustomer, ClientApiError>({
+  const detail = useQuery<CSACustomer | null, ClientApiError>({
     queryKey: detailKey,
-    queryFn: ({ signal }) =>
-      api<CSACustomer>(`admin/csa-customers/${encodeURIComponent(customerId)}`, { signal }),
+    queryFn: async ({ signal }) => {
+      try {
+        const row = await api<CSACustomer>(
+          `admin/csa-customers/${encodeURIComponent(customerId)}`,
+          { signal },
+        );
+        signal.throwIfAborted();
+        return requireCSACustomer(row, customerId);
+      } catch (caught) {
+        if (!signal.aborted && isQueryScopeCurrent() && isProtectedDataError(caught)) {
+          retireCSACustomers(client, detailKey);
+        }
+        throw caught;
+      }
+    },
   });
   const detailUnavailable = Boolean(
-    detail.error &&
-    (detail.error.status === 401 ||
-      detail.error.status === 403 ||
-      detail.error.status === 404 ||
-      detail.error.message === "forbidden" ||
-      detail.error.message === "csrf_rejected"),
+    isProtectedDataError(detail.error) || detail.error?.status === 404,
   );
-  const item = detailUnavailable ? undefined : detail.data;
+  const item = detailUnavailable ? undefined : (detail.data ?? undefined);
   const linkDialogActive = linkDialogOpen && item !== undefined && !item.user;
   const { provinceName, wardName } = useAdministrativeUnitNames(
     item?.province_code ?? null,
@@ -263,10 +277,12 @@ function CustomerDetailView({
           onCancel={() => setLinkDialogOpen(false)}
           onConflict={() => detail.refetch()}
           onLinked={async (customer) => {
-            if (!isQueryScopeCurrent()) return;
+            const current = recordScope.capture();
+            if (!current() || !client.getQueryData(detailKey)) return;
             // A detail refresh started before the link can still return a managed customer.
             await client.cancelQueries({ queryKey: detailKey, exact: true });
-            if (!isQueryScopeCurrent()) return;
+            if (!current() || !client.getQueryData(detailKey)) return;
+            requireCSACustomer(customer, customerId);
             client.setQueryData<CSACustomer>(detailKey, (record) => ({
               ...customer,
               memberships: customer.memberships ?? record?.memberships,

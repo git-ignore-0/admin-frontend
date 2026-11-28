@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import PreviewError from "@/app/(admin)/dev/ui-foundation/navigation/route-preview/error";
 import NavigationPreviewPage from "@/app/(admin)/dev/ui-foundation/navigation/route-preview/page";
 import AdminRouteError from "@/app/(admin)/error";
+import SupplyRequestsRouteLoading from "@/app/(admin)/farm-supply-requests/loading";
 import AdminRouteLoading from "@/app/(admin)/loading";
 import AdminUsersLoading from "@/app/(admin)/users/loading";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
@@ -20,6 +21,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("uses the shared page fallback while opening supply requests", () => {
+  expect(SupplyRequestsRouteLoading).toBe(AdminRouteLoading);
 });
 
 it("keeps the shared route skeleton outside Users without requesting data in either fallback", () => {

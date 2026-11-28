@@ -6,7 +6,7 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 
 const uuid = "24803641-2dce-4cac-8fc4-91e55f03e95f";
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"];
-// Canonical path and method columns from the Phase 3.0.3 audit, with Django URLconf slash rules.
+// Canonical path and method columns, with Django URLconf slash rules.
 const auditedRoutes = readFileSync(
   new NodeURL("./fixtures/bff-endpoints.tsv", import.meta.url),
   "utf8",
@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 125 canonical route shapes and 176 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(125);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(125);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(176);
+  it("covers the 134 canonical route shapes and 188 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(134);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(134);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(188);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);
@@ -121,13 +121,17 @@ describe("backend API target", () => {
     expect(buildBackendTarget(origin, base, "").pathname).toBe("/api/v1/admin/vouchers");
   });
 
-  it("allowlists only Store order reads and implemented lifecycle actions", () => {
+  it("allowlists only Store order reads, creation and implemented lifecycle actions", () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = ["admin", "store-orders"];
     expect(isAllowedBackendRequest("GET", base)).toBe(true);
-    expect(isAllowedBackendRequest("POST", base)).toBe(false);
+    expect(isAllowedBackendRequest("POST", base)).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, "quote"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...base, "quote"])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, "quote", "extra"])).toBe(false);
     expect(isAllowedBackendRequest("GET", [...base, id])).toBe(true);
     expect(isAllowedBackendRequest("PATCH", [...base, id])).toBe(false);
+    expect(isAllowedBackendRequest("POST", [...base, id])).toBe(false);
     for (const action of ["approve", "cancel", "record-payment", "refund", "deliver", "restock"])
       expect(isAllowedBackendRequest("POST", [...base, id, action])).toBe(true);
     expect(isAllowedBackendRequest("GET", [...base, id, "approve"])).toBe(false);
@@ -150,9 +154,18 @@ describe("backend API target", () => {
     expect(isAllowedBackendRequest("GET", [...base, farm, "products"])).toBe(true);
     expect(isAllowedBackendRequest("GET", [...base, farm, "available-products"])).toBe(true);
     expect(isAllowedBackendRequest("POST", [...base, farm, "available-products"])).toBe(false);
-    expect(isAllowedBackendRequest("POST", [...base, farm, "products"])).toBe(true);
-    expect(isAllowedBackendRequest("PATCH", [...base, farm, "products", product])).toBe(true);
-    expect(isAllowedBackendRequest("DELETE", [...base, farm, "products", product])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...base, farm, "products"])).toBe(false);
+    const source = [...base, farm, "products", product];
+    expect(isAllowedBackendRequest("GET", source)).toBe(true);
+    expect(isAllowedBackendRequest("PATCH", source)).toBe(false);
+    expect(isAllowedBackendRequest("DELETE", source)).toBe(false);
+    expect(isAllowedBackendRequest("GET", [...source, "history"])).toBe(true);
+    expect(isAllowedBackendRequest("POST", [...source, "remove"])).toBe(true);
+    expect(isAllowedBackendRequest("GET", [...source, "remove"])).toBe(false);
+    for (const method of ["GET", "POST"]) {
+      expect(isAllowedBackendRequest(method, [...source, "re-add"])).toBe(true);
+      expect(isAllowedBackendRequest(method, [...base, farm, "products", "bulk"])).toBe(true);
+    }
     const batch = "22222222-2222-4222-8222-222222222222";
     expect(isAllowedBackendRequest("GET", [...base, farm, "products", product, "batches"])).toBe(
       true,
@@ -524,4 +537,15 @@ describe("backend API target", () => {
       "http://127.0.0.1:8000/api/v1/admin/tracker-farms/reorder",
     );
   });
+});
+
+it("allows only GET and POST on the exact Farm bulk stock path", () => {
+  const bulk = ["admin", "farms", uuid, "stock-batches", "bulk"];
+  for (const method of methods) {
+    expect(isAllowedBackendRequest(method, bulk)).toBe(["GET", "POST"].includes(method));
+  }
+  expect(
+    isAllowedBackendRequest("POST", ["admin", "farms", "bad-id", "stock-batches", "bulk"]),
+  ).toBe(false);
+  expect(isAllowedBackendRequest("GET", [...bulk, "extra"])).toBe(false);
 });

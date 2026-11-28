@@ -61,9 +61,11 @@ type RefreshOptions = {
 type ToolbarProps = {
   busy?: boolean;
   search?: SearchOptions;
+  growSearch?: boolean;
   filterPopover?: FilterOptions;
   refresh?: RefreshOptions;
   primaryAction?: ReactNode;
+  wrapPrimaryAction?: boolean;
 };
 
 type LegacyToolbarProps = {
@@ -88,17 +90,30 @@ type LegacyToolbarProps = {
 export function ListToolbar(props: ToolbarProps | LegacyToolbarProps) {
   if ("query" in props) return <LegacyToolbar {...props} />;
 
-  const { busy = false, search, filterPopover, refresh, primaryAction } = props;
+  const {
+    busy = false,
+    search,
+    growSearch,
+    filterPopover,
+    refresh,
+    primaryAction,
+    wrapPrimaryAction,
+  } = props;
   if (!search && !filterPopover && !refresh && !primaryAction) return null;
 
   return (
-    <div className={styles.container}>
-      <Flex gap="xs" align="flex-start" wrap="wrap">
+    <div
+      className={styles.container}
+      data-grow-search={growSearch || undefined}
+      data-has-primary-action={Boolean(primaryAction) || undefined}
+      data-wrap-primary-action={wrapPrimaryAction || undefined}
+    >
+      <Flex gap="xs" align="flex-start" className={styles.row}>
         {search && <ToolbarSearch search={search} busy={busy} />}
         {(filterPopover || refresh || primaryAction) && (
-          <Group gap="sm" className={styles.actions}>
+          <Group gap="sm" wrap="nowrap" className={styles.actions}>
             {(filterPopover || refresh) && (
-              <Group gap="xs" miw={0}>
+              <Group gap="xs" wrap="nowrap" miw={0}>
                 {filterPopover && <ToolbarFilter filter={filterPopover} busy={busy} />}
                 {refresh && <ToolbarRefresh refresh={refresh} busy={busy} />}
               </Group>

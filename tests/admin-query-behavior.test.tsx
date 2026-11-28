@@ -278,7 +278,7 @@ it("isolates a new key from existing data and a late response for the previous k
 
   await act(async () => {
     oldRefresh.resolve(Response.json({ data: "Obsolete refresh" }));
-    await queryFirst.mock.results[1].value;
+    await expect(queryFirst.mock.results[1].value).rejects.toMatchObject({ name: "AbortError" });
   });
   expect(screen.getByText("Second record")).toBeVisible();
   expect(client.getQueryData(recordKey)).toBe("First record");

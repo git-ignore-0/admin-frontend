@@ -133,6 +133,46 @@ const user = {
   points_balance: 50,
 };
 
+function pointWrites() {
+  return vi.mocked(apiEnvelope).mock.calls.filter(([, init]) => init?.method === "POST");
+}
+
+function pointResponses(balance: number, beforeWrite?: () => void) {
+  vi.mocked(apiEnvelope).mockImplementation(async (path, init) => {
+    if (init?.method !== "POST") {
+      return {
+        data: [],
+        meta: { page: 1, page_size: 30, total: 0, balance, can_adjust_points: true },
+      };
+    }
+    expect(path).toBe(`admin/users/${user.id}/points`);
+    beforeWrite?.();
+    const { direction, amount, message, idempotency_key } = JSON.parse(String(init.body));
+    const transaction_id = "0eb05ea3-2160-49f4-9e6f-d7099a1f6afa";
+    return {
+      data: {
+        transaction: {
+          id: transaction_id,
+          direction,
+          amount,
+          message,
+          actor: null,
+          created_at: "2026-07-20T02:00:00Z",
+        },
+        balance: balance + amount,
+      },
+      meta: {
+        action_receipt: {
+          action: "adjust_points",
+          user_id: user.id,
+          transaction_id,
+          idempotency_key,
+        },
+      },
+    };
+  });
+}
+
 describe("users and points", () => {
   it("uses the user name as the only localized detail link for Users and Points", async () => {
     vi.mocked(apiEnvelope).mockResolvedValue({
@@ -148,20 +188,20 @@ describe("users and points", () => {
     expect(scrollArea).toHaveAttribute("tabindex", "0");
     expect(screen.getByText("20/07/2026")).toBeInTheDocument();
     expect(within(table).queryByText("20/07/2026 09:00")).toBeNull();
-    expect(screen.getByRole("link", { name: `View details: ${user.name}` })).toHaveAttribute(
-      "href",
-      `/users/${user.id}`,
-    );
+    const userLink = screen.getByRole("link", { name: `View details: ${user.name}` });
+    expect(userLink).toHaveAttribute("href", `/users/${user.id}`);
+    expect(userLink).toHaveStyle({ color: "var(--primary)" });
+    expect(userLink).toHaveAttribute("data-underline", "never");
     expect(screen.getAllByRole("link", { name: `View details: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View details" })).toBeNull();
 
     usersView.unmount();
     window.history.replaceState(null, "", "/points");
     providers(<PointsManager />);
-    expect(await screen.findByRole("link", { name: `View points: ${user.name}` })).toHaveAttribute(
-      "href",
-      `/points/${user.id}`,
-    );
+    const pointsLink = await screen.findByRole("link", { name: `View points: ${user.name}` });
+    expect(pointsLink).toHaveAttribute("href", `/points/${user.id}`);
+    expect(pointsLink).toHaveStyle({ color: "var(--primary)" });
+    expect(pointsLink).toHaveAttribute("data-underline", "never");
     expect(screen.getAllByRole("link", { name: `View points: ${user.name}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "View points" })).toBeNull();
     const pointsRow = screen.getByRole("row", { name: /Green Member/ });
@@ -903,21 +943,7 @@ describe("users and points", () => {
   );
 
   it("confirms a manual transaction and blocks an insufficient debit before submission", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0, balance: 50, can_adjust_points: true },
-    });
-    vi.mocked(api).mockResolvedValue({
-      transaction: {
-        id: "transaction-id",
-        direction: "credit",
-        amount: 100,
-        message: "Referral purchase confirmed",
-        actor: null,
-        created_at: "2026-07-20T02:00:00Z",
-      },
-      balance: 150,
-    });
+    pointResponses(50);
     providers(<PointLedger userId={user.id} userName={user.name} />);
     await screen.findByText("Transaction history");
     selectOption(screen.getByLabelText("Direction"), "debit");
@@ -929,36 +955,49 @@ describe("users and points", () => {
     expect(
       await screen.findByText("The current balance is too low for this debit."),
     ).toBeInTheDocument();
-    expect(api).not.toHaveBeenCalled();
+    expect(pointWrites()).toHaveLength(0);
 
     selectOption(screen.getByLabelText("Direction"), "credit");
     fireEvent.click(screen.getByRole("button", { name: "Create transaction" }));
     expect(await screen.findByRole("dialog", { name: "Confirm transaction" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
-      expect(api).toHaveBeenCalledWith(
+      expect(apiEnvelope).toHaveBeenCalledWith(
         `admin/users/${user.id}/points`,
         expect.objectContaining({ method: "POST" }),
+        expect.objectContaining({ allowMissingData: true }),
       ),
     );
   });
 
+  it("retries a lost point adjustment after remount with the original payload and key", async () => {
+    let attempts = 0;
+    pointResponses(50, () => {
+      if (++attempts === 1) throw new Error("request_timeout");
+    });
+    const ledger = <PointLedger userId={user.id} userName={user.name} />;
+    const view = render(scene(ledger));
+    fireEvent.change(await screen.findByLabelText("Message *"), {
+      target: { value: "Verified adjustment" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create transaction" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(
+      /could not be confirmed/i,
+    );
+    view.rerender(scene(null));
+    view.rerender(scene(ledger));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry saved transaction" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const writes = pointWrites();
+    expect(writes).toHaveLength(2);
+    expect(writes[0][1]?.body).toBe(writes[1][1]?.body);
+    expect(JSON.parse(String(writes[0][1]?.body)).idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   it("sanitizes point input, validates it inline, and submits a numeric amount", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0, balance: 500, can_adjust_points: true },
-    });
-    vi.mocked(api).mockResolvedValue({
-      transaction: {
-        id: "transaction-id",
-        direction: "credit",
-        amount: 42,
-        message: "Manual adjustment",
-        actor: null,
-        created_at: "2026-07-20T02:00:00Z",
-      },
-      balance: 542,
-    });
+    pointResponses(500);
     providers(<PointLedger userId={user.id} userName={user.name} />);
     await screen.findByText("Transaction history");
 
@@ -988,14 +1027,14 @@ describe("users and points", () => {
     fireEvent.change(amount, { target: { value: "999999999999" } });
     fireEvent.click(screen.getByRole("button", { name: "Create transaction" }));
     expect(screen.getByText(/must not exceed/i)).toBeVisible();
-    expect(api).not.toHaveBeenCalled();
+    expect(pointWrites()).toHaveLength(0);
 
     fireEvent.change(amount, { target: { value: "00042" } });
     expect(amount).toHaveValue("00042");
     fireEvent.click(screen.getByRole("button", { name: "Create transaction" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
-    const payload = JSON.parse(String(vi.mocked(api).mock.calls[0][1]?.body));
+    await waitFor(() => expect(pointWrites()).toHaveLength(1));
+    const payload = JSON.parse(String(pointWrites()[0][1]?.body));
     expect(payload.amount).toBe(42);
     expect(typeof payload.amount).toBe("number");
   });
@@ -1043,13 +1082,9 @@ describe("users and points", () => {
   });
 
   it("removes adjustment controls when the target becomes protected before confirmation", async () => {
-    vi.mocked(apiEnvelope).mockResolvedValue({
-      data: [],
-      meta: { page: 1, page_size: 30, total: 0, balance: 50, can_adjust_points: true },
+    pointResponses(50, () => {
+      throw Object.assign(new Error("account_target_protected"), { status: 409 });
     });
-    vi.mocked(api).mockRejectedValueOnce(
-      Object.assign(new Error("account_target_protected"), { status: 409 }),
-    );
     providers(<PointLedger userId={user.id} userName={user.name} />);
     const message = await screen.findByLabelText("Message *");
     fireEvent.change(message, { target: { value: "Manual adjustment" } });

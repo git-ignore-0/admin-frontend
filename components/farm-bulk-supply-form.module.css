@@ -1,0 +1,43 @@
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.quantityHeading {
+  white-space: nowrap;
+}
+
+.summaryList {
+  list-style: none;
+}
+
+.summary:not([data-wide]) {
+  padding-bottom: calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px));
+}
+
+.summaryDetails {
+  max-height: clamp(6rem, 36dvh, 18rem);
+  overflow-y: auto;
+}
+
+.summary[data-wide] .summaryDetails {
+  max-height: clamp(6rem, 45dvh, 26rem);
+}
+
+/* Dock only when the form layout and available viewport height permit it. */
+@media (min-height: 32em) {
+  .summary[data-wide] {
+    position: sticky;
+    top: var(--mantine-spacing-md);
+  }
+
+  .summaryColumn[data-docked] {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+  }
+
+  /* Release the dock while an editor may have opened the software keyboard. */
+  .layout:has(.entry input:focus) .summaryColumn[data-docked] {
+    position: static;
+  }
+}

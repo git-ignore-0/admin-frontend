@@ -1,567 +1,371 @@
 "use client";
-import { DataState } from "@/components/nfv-controls";
-import { Stack, Alert, ActionIcon, Button, Menu } from "@mantine/core";
 
-import { IconDots } from "@tabler/icons-react";
-
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Box, Button, Checkbox, Divider, Group, Stack, Table, Text } from "@mantine/core";
+import { useQuery } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { FarmStockBatches } from "@/components/farm-stock-batches";
-import { FormInput, FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
+import { FarmProductBulkRemoveDialog } from "@/components/farm-product-bulk-remove-dialog";
+import { FarmProductPicker } from "@/components/farm-product-picker";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
+import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
+import { ListToolbar } from "@/components/list-toolbar";
 import { Pagination } from "@/components/pagination";
-import { StockBatchFields } from "@/components/stock-batch-fields";
-import { requestErrorMessage } from "@/lib/client-error";
-import { getStoreProduct } from "@/lib/commerce-api";
-import {
-  addFarmProduct,
-  listAvailableFarmProducts,
-  listFarmProducts,
-  removeFarmProduct,
-  setFarmProductActive,
-} from "@/lib/farms-api";
+import { ProductLifecycleStatus } from "@/components/product-lifecycle-status";
+import { useToast } from "@/components/toast-provider";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
+import { farmHref, normalizeFarmSupplySearch, readFarmSupplyContext } from "@/lib/farm-navigation";
+import { farmListCanShowData, farmSupplyKey, useFarmAccess } from "@/lib/farm-query";
+import { listFarmProducts } from "@/lib/farms-api";
 import { farmsCopy } from "@/lib/farms-copy";
-import {
-  stockBatchRangeForPreset,
-  validateStockBatchInput,
-  type StockBatchDraft,
-  type StockBatchFieldErrors,
-  type StockBatchPreset,
-} from "@/lib/farm-stock";
 import { formatDecimalInput } from "@/lib/numeric-input";
-import type { AvailableFarmProduct, FarmProduct, PaginationMeta, StoreProduct } from "@/lib/types";
+import type { Farm, FarmProduct } from "@/lib/types";
+import { useFarmProductBulkRemove } from "@/lib/use-farm-product-bulk-remove";
+import { useFarmProductLinkWrite } from "@/lib/use-farm-product-link-write";
 
-function firstBatchDraft(): StockBatchDraft {
-  return { ...stockBatchRangeForPreset("week"), quantity: "" };
+type Props = {
+  farm: Farm;
+  canAddSupply?: boolean;
+  onRefreshFarm?: () => void | Promise<void>;
+  isTabActive?: boolean;
+  onAccessLost?: (cause: unknown) => void;
+};
+type SupplyContext = ReturnType<typeof readFarmSupplyContext>;
+type RemovalSelection = { scope: string; products: readonly FarmProduct[] };
+
+function sameSource(a: FarmProduct, b: FarmProduct) {
+  return a.id === b.id && a.product_id === b.product_id && a.version === b.version;
 }
 
-type FarmProductsProps = {
-  farmId: string;
-  inStockCount?: number;
-  outOfStockCount?: number;
-  onInventoryChanged?: () => void;
-};
-
 export function FarmProducts({
-  farmId,
-  inStockCount = 0,
-  outOfStockCount = 0,
-  onInventoryChanged,
-}: FarmProductsProps) {
+  farm,
+  canAddSupply,
+  onRefreshFarm,
+  isTabActive = true,
+  onAccessLost,
+}: Props) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
-  const [links, setLinks] = useState<FarmProduct[] | null>(null);
-  const [linksMeta, setLinksMeta] = useState<PaginationMeta>({ page: 1, page_size: 20, total: 0 });
-  const [linksPage, setLinksPage] = useState(1);
-  const [linkedSearch, setLinkedSearch] = useState("");
-  const [catalog, setCatalog] = useState<AvailableFarmProduct[]>([]);
-  const [catalogMeta, setCatalogMeta] = useState<PaginationMeta>({
-    page: 1,
-    page_size: 30,
-    total: 0,
+  const quantity = new Intl.NumberFormat(locale);
+  const toast = useToast();
+  const router = useRouter();
+  const params = useSearchParams();
+  const currentSession = useIsAdminQueryScopeCurrent();
+  const access = useFarmAccess();
+  const context = readFarmSupplyContext(params);
+  const { search, page } = context;
+  const [draft, setDraft] = useState(search);
+  const [addOpen, setAddOpen] = useState<boolean>();
+  const [selection, setSelection] = useState<RemovalSelection>();
+  const [confirmation, setConfirmation] = useState<RemovalSelection>();
+  const [dismissedIntent, setDismissedIntent] = useState<string>();
+  const addButton = useRef<HTMLButtonElement>(null);
+  const removeButton = useRef<HTMLButtonElement>(null);
+  const query = useQuery({
+    queryKey: [...farmSupplyKey(farm.id), "list", "supplying", search, page],
+    enabled: isTabActive && !access.error,
+    queryFn: ({ signal }) =>
+      listFarmProducts(farm.id, { search, supplyStatus: "supplying", page }, signal),
   });
-  const [catalogPage, setCatalogPage] = useState(1);
-  const [query, setQuery] = useState("");
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState("");
-  const [openProduct, setOpenProduct] = useState("");
-  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
-  const [selectedDetail, setSelectedDetail] = useState<StoreProduct | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [batchPreset, setBatchPreset] = useState<StockBatchPreset>("week");
-  const [batchDraft, setBatchDraft] = useState<StockBatchDraft>(firstBatchDraft);
-  const [batchErrors, setBatchErrors] = useState<StockBatchFieldErrors>({});
-  const [addOpen, setAddOpen] = useState(false);
-  const [linkedQuery, setLinkedQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [catalogLoading, setCatalogLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [catalogError, setCatalogError] = useState("");
-  const [detailError, setDetailError] = useState("");
-  const [actionError, setActionError] = useState("");
-  const [removeTarget, setRemoveTarget] = useState<FarmProduct | null>(null);
-  const [removeError, setRemoveError] = useState("");
-  const [retry, setRetry] = useState(0);
-  const productButtonRefs = useRef(new Map<string, HTMLButtonElement>());
-  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
-  const restoreProductFocusRef = useRef(false);
+  const accessLost = isProtectedDataError(query.error);
+  const data = !access.error && farmListCanShowData(query.error) ? query.data : undefined;
+  const initialLoading = !data && (query.isPending || query.isFetching);
+  const showingError = Boolean(query.error && !query.isFetching);
+  const lastPage = data ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size)) : page;
+  const linkWrite = useFarmProductLinkWrite(farm.id, undefined, onAccessLost);
+  const removeWrite = useFarmProductBulkRemove(farm.id, onAccessLost);
+  const { confirmedId, acknowledgeSuccess } = removeWrite;
+  const supplyHref = (supply: SupplyContext) =>
+    farmHref(params, { id: farm.id, tab: "products", supply });
+  const lastHref =
+    isTabActive && page > lastPage ? supplyHref({ ...context, page: lastPage }) : null;
+  const rows = data?.data ?? [];
+  const scope = JSON.stringify([farm.id, access.revision, search, page]);
+  const selected =
+    selection?.scope === scope
+      ? selection.products.filter((product) => rows.some((row) => sameSource(row, product)))
+      : [];
+  // Prune stale snapshots before rendering so returning to a prior page or version cannot revive them.
+  if (selection && selected.length !== selection.products.length)
+    setSelection(selected.length > 0 ? { scope, products: selected } : undefined);
+  if (confirmation && (confirmation.scope !== scope || access.error || accessLost))
+    setConfirmation(undefined);
 
-  const loadLinks = useCallback(
-    () => listFarmProducts(farmId, { page: linksPage, search: linkedSearch }),
-    [farmId, linksPage, linkedSearch],
+  const intentKey = removeWrite.intent?.payload.idempotency_key;
+  const intentProducts =
+    intentKey && intentKey !== dismissedIntent ? removeWrite.intent?.products : undefined;
+  const dialogProducts =
+    intentProducts ?? (confirmation?.scope === scope ? confirmation.products : undefined);
+  const allSelected = rows.length > 0 && selected.length === rows.length;
+  const removalLocked =
+    removeWrite.blocked || removeWrite.unresolved || Boolean(removeWrite.failure);
+  const selectionLocked =
+    removalLocked || !query.isSuccess || query.isFetching || Boolean(lastHref);
+  const confirmationStale = Boolean(
+    confirmation?.products.some((product) => !rows.some((row) => sameSource(row, product))),
   );
 
+  useEffect(() => setDraft(search), [search]);
   useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setError("");
-    loadLinks()
-      .then((result) => {
-        if (!live) return;
-        setLinks(result.data);
-        setOpenProduct((current) =>
-          result.data.some((row) => row.product_id === current)
-            ? current
-            : (result.data[0]?.product_id ?? ""),
-        );
-        setLinksMeta(result.meta ?? { page: linksPage, page_size: 20, total: result.data.length });
-      })
-      .catch((caught) => live && setError(requestErrorMessage(caught, t)))
-      .finally(() => live && setLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [loadLinks, linksPage, retry, t]);
-
+    if (lastHref) router.replace(lastHref, { scroll: false });
+  }, [lastHref, router]);
   useEffect(() => {
-    if (mobileDetailOpen) {
-      detailHeadingRef.current?.focus();
-    } else if (restoreProductFocusRef.current) {
-      productButtonRefs.current.get(openProduct)?.focus();
-      restoreProductFocusRef.current = false;
-    }
-  }, [mobileDetailOpen, openProduct]);
-
+    if (accessLost) onAccessLost?.(query.error);
+  }, [accessLost, onAccessLost, query.error]);
   useEffect(() => {
-    if (!addOpen) return;
-    let live = true;
-    setCatalogLoading(true);
-    setCatalogError("");
-    listAvailableFarmProducts(farmId, { page: catalogPage, search })
-      .then((result) => {
-        if (!live) return;
-        setCatalog(result.data);
-        setCatalogMeta(
-          result.meta ?? { page: catalogPage, page_size: 30, total: result.data.length },
-        );
-        setSelected((current) =>
-          result.data.some((product) => product.id === current)
-            ? current
-            : (result.data[0]?.id ?? ""),
-        );
-      })
-      .catch((caught) => live && setCatalogError(requestErrorMessage(caught, t)))
-      .finally(() => live && setCatalogLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [addOpen, catalogPage, farmId, search, retry, t]);
+    if (!isTabActive || accessLost || !confirmedId) return;
+    const count = acknowledgeSuccess(confirmedId);
+    if (count === undefined) return;
+    setConfirmation(undefined);
+    setSelection(undefined);
+    toast(
+      count === 1
+        ? c.removedOneProduct
+        : c.removedProducts.replace("{count}", new Intl.NumberFormat(locale).format(count)),
+    );
+  }, [isTabActive, accessLost, confirmedId, acknowledgeSuccess, c, locale, toast]);
 
-  const selectedProduct = catalog.some((product) => product.id === selected)
-    ? selected
-    : (catalog[0]?.id ?? "");
-
-  useEffect(() => {
-    if (!addOpen || !selectedProduct) {
-      setSelectedDetail(null);
-      return;
-    }
-    let live = true;
-    setDetailLoading(true);
-    setDetailError("");
-    setSelectedDetail(null);
-    getStoreProduct(selectedProduct)
-      .then((detail) => live && setSelectedDetail(detail))
-      .catch(() => live && setDetailError(c.productDetailUnavailable))
-      .finally(() => live && setDetailLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [addOpen, c.productDetailUnavailable, retry, selectedProduct]);
-
-  function searchProducts(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setCatalogPage(1);
-    setSearch(query.trim());
-    if (search === query.trim() && catalogPage === 1) setRetry((n) => n + 1);
+  function change(change: Partial<SupplyContext>) {
+    router.push(supplyHref({ ...context, page: 1, ...change }), { scroll: false });
   }
 
-  async function add() {
-    const validated = validateStockBatchInput(batchDraft);
-    setBatchErrors(validated.errors);
-    if (!selectedProduct || !selectedDetail || !validated.value || busy) return;
-    setBusy(true);
-    setActionError("");
-    try {
-      await addFarmProduct(farmId, selectedProduct, validated.value);
-      setRetry((n) => n + 1);
-      onInventoryChanged?.();
-      setAddOpen(false);
-      setQuery("");
-      setSearch("");
-      setCatalogPage(1);
-      setBatchDraft(firstBatchDraft());
-      setBatchErrors({});
-    } catch (caught) {
-      setActionError(
-        (caught as Error).message === "product_already_linked"
-          ? c.alreadyLinked
-          : (caught as Error).message === "product_inactive"
-            ? c.productDeactivated
-            : requestErrorMessage(caught, t),
-      );
-    } finally {
-      setBusy(false);
+  function selectProducts(products: readonly FarmProduct[]) {
+    if (!selectionLocked) setSelection(products.length > 0 ? { scope, products } : undefined);
+  }
+
+  function openRemoval() {
+    if (removeWrite.unresolved || removeWrite.failure) {
+      setDismissedIntent(undefined);
+    } else if (!selectionLocked && selected.length > 0) {
+      setConfirmation({ scope, products: selected });
     }
   }
-  async function toggle(row: FarmProduct) {
-    if (busy) return;
-    setBusy(true);
-    setActionError("");
-    try {
-      const updated = await setFarmProductActive(farmId, row.product_id, !row.is_active);
-      setLinks((current) => current?.map((item) => (item.id === row.id ? updated : item)) ?? null);
-      onInventoryChanged?.();
-    } catch (caught) {
-      setActionError(requestErrorMessage(caught, t));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function remove(row: FarmProduct) {
-    if (busy) return;
-    setBusy(true);
-    setRemoveError("");
-    try {
-      await removeFarmProduct(farmId, row.product_id);
-      if (links?.length === 1 && linksPage > 1) setLinksPage((page) => page - 1);
-      else setRetry((n) => n + 1);
-      onInventoryChanged?.();
-      setRemoveTarget(null);
-    } catch (caught) {
-      let message = requestErrorMessage(caught, t);
-      if (caught instanceof Error && caught.message === "farm_product_has_supply") {
-        message = c.protectedLink;
-      } else if (caught instanceof Error && caught.message === "farm_product_changed") {
-        message = c.changedLink;
-      }
-      setRemoveError(message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  function searchLinks(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLinksPage(1);
-    setLinkedSearch(linkedQuery.trim());
-    if (linkedSearch === linkedQuery.trim() && linksPage === 1) setRetry((n) => n + 1);
+
+  function closeRemoval() {
+    if (removeWrite.pending) return;
+    if (intentKey) setDismissedIntent(intentKey);
+    if ((removeWrite.failure && !removeWrite.unresolved) || confirmationStale)
+      setSelection(undefined);
+    setConfirmation(undefined);
+    removeWrite.clearFailure();
   }
 
-  const visibleLinks = links ?? [];
-  const selectedLink = links?.find((row) => row.product_id === openProduct);
+  if (!currentSession() || access.error || accessLost) return null;
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={520}
+      role="region"
+      aria-label={c.productsAndSupply}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={c.productsAndSupply} aria-busy={query.isFetching || undefined}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col" w={44}>
+              {!initialLoading && (
+                <Checkbox
+                  aria-label={c.selectPageProducts}
+                  checked={allSelected}
+                  indeterminate={!allSelected && selected.length > 0}
+                  disabled={selectionLocked || rows.length === 0}
+                  onChange={(event) => selectProducts(event.currentTarget.checked ? rows : [])}
+                />
+              )}
+            </Table.Th>
+            <Table.Th scope="col">{c.productColumn}</Table.Th>
+            <Table.Th scope="col">{c.saleUnit}</Table.Th>
+            <Table.Th scope="col">{c.currentStock}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={4} height={36} />
+          ) : (
+            rows.map((row) => {
+              const name = locale === "vi" ? row.name_vi : row.name_en;
+              const picked = selected.some((product) => sameSource(row, product));
+              return (
+                <Table.Tr key={row.id} data-selected={picked || undefined}>
+                  <Table.Td>
+                    <Checkbox
+                      aria-label={c.selectProduct.replace("{name}", name).replace("{sku}", row.sku)}
+                      checked={picked}
+                      disabled={selectionLocked}
+                      onChange={(event) =>
+                        selectProducts(
+                          event.currentTarget.checked
+                            ? [...selected, row]
+                            : selected.filter((product) => !sameSource(row, product)),
+                        )
+                      }
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
+                      <DataListRecordLink
+                        component={AdminNavigationLink}
+                        href={farmHref(params, { id: farm.id, productId: row.product_id })}
+                      >
+                        {name}
+                      </DataListRecordLink>
+                      <Text c="dimmed" size="sm">
+                        {row.sku}
+                      </Text>
+                      {row.product_status !== "active" && (
+                        <ProductLifecycleStatus status={row.product_status} />
+                      )}
+                    </Stack>
+                  </Table.Td>
+                  <Table.Td>
+                    {formatDecimalInput(row.unit_size)}{" "}
+                    {locale === "vi" ? row.unit_label_vi : row.unit_label_en}
+                  </Table.Td>
+                  <Table.Td>{quantity.format(row.available_quantity)}</Table.Td>
+                </Table.Tr>
+              );
+            })
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
+  );
 
   return (
-    <section
-      className={`farm-products${mobileDetailOpen ? " mobile-detail-open" : ""}`}
-      aria-busy={loading}
-    >
-      <div className="farm-stock-summary" aria-label={c.currentStock}>
-        <span>{c.inStockProducts.replace("{count}", String(inStockCount))}</span>
-        <span>{c.outOfStockProducts.replace("{count}", String(outOfStockCount))}</span>
-      </div>
-      <div className="farm-products-heading">
-        <div>
-          <h2>{c.products}</h2>
-          <p>{c.selectProductHint}</p>
-        </div>
-        <Button
-          disabled={loading}
-          onClick={() => {
-            setActionError("");
-            setBatchPreset("week");
-            setBatchDraft(firstBatchDraft());
-            setBatchErrors({});
-            setAddOpen(true);
-          }}
-        >
-          {c.addProduct}
-        </Button>
-      </div>
-      <div className="farm-products-layout">
-        <div className="farm-product-list-pane">
-          <form
-            className="farm-product-picker farm-linked-search"
-            role="search"
-            onSubmit={searchLinks}
-          >
-            <FormField label={c.searchLinked} className="nfv-field">
-              <FormInput
-                type="search"
-                placeholder={c.searchLinked}
-                value={linkedQuery}
-                onChange={(event) => setLinkedQuery(event.target.value)}
-              />
-            </FormField>
-            <Button variant="default" type="submit" disabled={loading}>
-              {c.searchButton}
+    <Stack gap="md" miw={0}>
+      <ListToolbar
+        busy={initialLoading}
+        search={{
+          label: c.searchLinked,
+          submitLabel: c.searchButton,
+          placeholder: c.productPlaceholder,
+          value: draft,
+          appliedValue: search,
+          formatAppliedValue: (value) => t.users.appliedSearch.replace("{query}", value),
+          onChange: setDraft,
+          onSubmit: (value) => {
+            const trimmed = normalizeFarmSupplySearch(value);
+            if (page === 1 && trimmed === search) void query.refetch({ cancelRefetch: false });
+            else change({ search: trimmed });
+          },
+          clearLabel: t.common.clearFilters,
+          onClear: () => change({ search: "" }),
+        }}
+        refresh={{
+          label: c.refreshSupply,
+          onRefresh: async () => {
+            await Promise.all([query.refetch({ cancelRefetch: false }), onRefreshFarm?.()]);
+          },
+          loading: query.isFetching && Boolean(data),
+          disabled: initialLoading,
+        }}
+        wrapPrimaryAction
+        primaryAction={
+          <Group gap="xs" wrap="wrap" justify="flex-end">
+            <Button
+              ref={addButton}
+              variant="default"
+              onClick={() => setAddOpen(true)}
+              disabled={
+                removeWrite.unresolved ||
+                linkWrite.pending ||
+                (!linkWrite.unresolved && (linkWrite.blocked || !query.isSuccess))
+              }
+            >
+              {c.addProduct}
             </Button>
-          </form>
-          {error && (
-            <Alert color="red" role="alert">
-              <Stack gap="sm" align="flex-start">
-                {error}
-                <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
-                  {t.common.retry}
-                </Button>
-              </Stack>
-            </Alert>
-          )}
-          {loading && <DataState kind="loading" title={c.loading} />}
-          {!loading && !error && links?.length === 0 && (
-            <DataState kind="empty" title={linkedSearch ? c.noLinkedMatch : c.linkedEmpty} />
-          )}
-          {!loading && !error && visibleLinks.length > 0 && (
-            <div className="farm-product-options">
-              {visibleLinks.map((row) => {
-                const name = locale === "vi" ? row.name_vi : row.name_en;
-                const unit = `${formatDecimalInput(row.unit_size)} ${locale === "vi" ? row.unit_label_vi : row.unit_label_en}`;
-                const stockLabel = !row.is_active
-                  ? c.productInactive
-                  : row.available_quantity > 0
-                    ? c.remainingUnits.replace("{count}", String(row.available_quantity))
-                    : c.outOfStock;
-                return (
-                  <Button
-                    ref={(node) => {
-                      if (node) productButtonRefs.current.set(row.product_id, node);
-                      else productButtonRefs.current.delete(row.product_id);
-                    }}
-                    className="farm-product-option"
-                    variant="default"
-                    fullWidth
-                    h="auto"
-                    styles={{
-                      inner: { width: "100%" },
-                      label: {
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: "7px 12px",
-                        width: "100%",
-                        textAlign: "left",
-                        whiteSpace: "normal",
-                      },
-                    }}
-                    type="button"
-                    key={row.id}
-                    aria-label={`${name}, ${stockLabel}`}
-                    aria-pressed={openProduct === row.product_id}
-                    onClick={() => {
-                      setActionError("");
-                      setOpenProduct(row.product_id);
-                      setMobileDetailOpen(true);
-                    }}
-                  >
-                    <span style={{ display: "grid", minWidth: 0, gap: 3 }}>
-                      <strong>{name}</strong>
-                      <small>{row.sku}</small>
-                    </span>
-                    <small style={{ gridColumn: 1 }}>{unit}</small>
-                    <Status
-                      domain="farm-stock"
-                      status={
-                        !row.is_active
-                          ? "inactive"
-                          : row.available_quantity > 0
-                            ? "active"
-                            : "expired"
-                      }
-                      label={stockLabel}
-                    />
-                  </Button>
-                );
-              })}
-            </div>
-          )}
-          {!loading && !error && linksMeta.total > linksMeta.page_size && (
-            <Pagination
-              page={linksPage}
-              total={linksMeta.total}
-              pageSize={linksMeta.page_size}
-              onPage={setLinksPage}
-              disabled={loading}
-              previousLabel={t.common.previous}
-              nextLabel={t.common.next}
-              summary={t.common.pagination}
-            />
-          )}
-        </div>
-        <div className="farm-product-detail-pane">
-          {actionError && !addOpen && (
-            <Alert color="red" role="alert">
-              {actionError}
-            </Alert>
-          )}
-          {selectedLink ? (
-            <FarmStockBatches
-              key={selectedLink.product_id}
-              farmId={farmId}
-              product={selectedLink}
-              detailHeadingRef={detailHeadingRef}
-              onBack={() => {
-                restoreProductFocusRef.current = true;
-                setMobileDetailOpen(false);
-              }}
-              onSummaryChanged={() => {
-                setRetry((value) => value + 1);
-                onInventoryChanged?.();
-              }}
-              actions={
-                <Menu position="bottom-end" returnFocus>
-                  <Menu.Target>
-                    <ActionIcon
-                      variant="default"
-                      disabled={busy}
-                      aria-label={`${c.moreActions}: ${locale === "vi" ? selectedLink.name_vi : selectedLink.name_en}`}
-                    >
-                      <IconDots aria-hidden="true" size={18} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    <Menu.Item disabled={busy} onClick={() => void toggle(selectedLink)}>
-                      {selectedLink.is_active ? c.stopSupply : c.resumeSupply}
-                    </Menu.Item>
-                    {!selectedLink.has_supply_history ? (
-                      <Menu.Item
-                        color="red"
-                        disabled={busy}
-                        onClick={() => {
-                          setRemoveTarget(selectedLink);
-                          setRemoveError("");
-                        }}
-                      >
-                        {c.removeLink}
-                      </Menu.Item>
-                    ) : null}
-                  </Menu.Dropdown>
-                </Menu>
+            <Button
+              ref={removeButton}
+              variant="light"
+              color="danger"
+              onClick={openRemoval}
+              disabled={
+                removeWrite.pending || (!intentKey && (selectionLocked || selected.length === 0))
               }
-            />
-          ) : !loading ? (
-            <DataState kind="empty" title={c.linkedEmpty} />
-          ) : null}
-        </div>
-      </div>
-      {addOpen && (
-        <ConfirmationDialog
-          title={c.addFromCatalog}
-          busy={busy}
-          busyLabel={c.saving}
-          cancelLabel={c.cancel}
-          confirmLabel={c.addProduct}
-          confirmDisabled={
-            !selectedProduct ||
-            !selectedDetail ||
-            catalogLoading ||
-            detailLoading ||
-            Boolean(catalogError) ||
-            Boolean(detailError)
-          }
-          error={actionError}
-          onCancel={() => {
-            if (!busy) {
-              setAddOpen(false);
-              setActionError("");
-            }
-          }}
-          onConfirm={() => void add()}
-        >
-          <p className="nfv-field-hint">{c.addFromCatalogHint}</p>
-          <form className="farm-product-picker" onSubmit={searchProducts} role="search">
-            <FormField label={c.productSearch}>
-              <FormInput
-                type="search"
-                placeholder={c.productPlaceholder}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </FormField>
-            <Button variant="default" type="submit" disabled={catalogLoading}>
-              {c.searchButton}
+            >
+              {selected.length > 0
+                ? `${c.removeProducts} (${quantity.format(selected.length)})`
+                : c.removeProducts}
             </Button>
-          </form>
-          {catalogError && (
-            <Alert color="red" role="alert">
-              <Stack gap="sm" align="flex-start">
-                {catalogError}{" "}
-                <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
-                  {t.common.retry}
-                </Button>
-              </Stack>
-            </Alert>
-          )}
-          {detailError && (
-            <Alert color="red" role="alert">
-              <Stack gap="sm" align="flex-start">
-                {detailError}{" "}
-                <Button variant="default" onClick={() => setRetry((n) => n + 1)}>
-                  {t.common.retry}
-                </Button>
-              </Stack>
-            </Alert>
-          )}
-          <FormField label={c.productColumn}>
-            <FormSelect
-              value={selectedProduct}
-              onChange={(value) => setSelected(value ?? "")}
-              disabled={catalogLoading || !catalog.length}
-              data={
-                catalog.length
-                  ? catalog.map((product) => ({
-                      value: product.id,
-                      label: `${locale === "vi" ? product.name_vi : product.name_en} · ${product.sku}`,
-                    }))
-                  : [{ value: "", label: catalogLoading ? c.loading : c.noCatalogMatch }]
-              }
-            />
-          </FormField>
-          {selectedDetail ? (
-            <StockBatchFields
-              draft={batchDraft}
-              errors={batchErrors}
-              labels={c}
-              preset={batchPreset}
-              unitSize={selectedDetail.unit_size}
-              unitLabel={
-                locale === "vi" ? selectedDetail.unit_label_vi : selectedDetail.unit_label_en
-              }
-              onChange={(value) => {
-                setBatchDraft(value);
-                setBatchErrors({});
-              }}
-              onPresetChange={setBatchPreset}
-            />
-          ) : detailLoading ? (
-            <DataState kind="loading" title={c.loading} />
-          ) : null}
-          <Pagination
-            page={catalogPage}
-            total={catalogMeta.total}
-            pageSize={catalogMeta.page_size}
-            onPage={setCatalogPage}
-            disabled={catalogLoading || busy}
-            previousLabel={t.common.previous}
-            nextLabel={t.common.next}
-            summary={t.common.pagination}
+            {canAddSupply &&
+            !removeWrite.unresolved &&
+            !linkWrite.blocked &&
+            !linkWrite.unresolved ? (
+              <Button
+                component={AdminNavigationLink}
+                href={farmHref(params, { id: farm.id, bulk: true })}
+              >
+                {c.addSupply}
+              </Button>
+            ) : (
+              <Button disabled>{c.addSupply}</Button>
+            )}
+          </Group>
+        }
+      />
+      <DataListPaper>
+        {Boolean(data?.data.length) && table}
+        <Box p={showingError ? "md" : undefined}>
+          <ListState
+            embedded
+            loadingPlaceholder={table}
+            empty={c.linkedEmpty}
+            noResults={search ? c.noLinkedMatch : undefined}
+            loading={initialLoading}
+            loadingLabel={c.loadingSupply}
+            hasData={Boolean(data)}
+            isEmpty={data?.data.length === 0}
+            error={showingError ? requestErrorMessage(query.error, t) : ""}
+            onRetry={() => void query.refetch({ cancelRefetch: false })}
+            retryLabel={t.common.retry}
           />
-        </ConfirmationDialog>
+        </Box>
+        {data && (
+          <>
+            <Divider />
+            <Box component="footer" px="md" py="sm">
+              <Pagination
+                page={page}
+                pageSize={data.meta.page_size}
+                total={data.meta.total}
+                disabled={query.isFetching || Boolean(lastHref)}
+                onPage={(next) => change({ page: next })}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+                resultCountLabel={t.common.resultCount}
+                resultCountSingularLabel={t.common.resultCountSingular}
+              />
+            </Box>
+          </>
+        )}
+      </DataListPaper>
+      {isTabActive && (addOpen ?? linkWrite.unresolved) && (
+        <FarmProductPicker
+          farmId={farm.id}
+          write={linkWrite}
+          onAccessLost={onAccessLost}
+          onClose={() => setAddOpen(false)}
+          returnFocusRef={addButton}
+        />
       )}
-      {removeTarget && (
-        <ConfirmationDialog
-          title={c.removeLink}
-          busy={busy}
-          busyLabel={c.saving}
-          cancelLabel={c.cancel}
-          confirmLabel={c.removeLink}
-          danger
-          error={removeError}
-          onCancel={() => !busy && setRemoveTarget(null)}
-          onConfirm={() => void remove(removeTarget)}
-        >
-          <p>{c.productRemovePrompt.replace("{sku}", removeTarget.sku)}</p>
-        </ConfirmationDialog>
+      {isTabActive && dialogProducts && (
+        <FarmProductBulkRemoveDialog
+          products={dialogProducts}
+          write={removeWrite}
+          stale={confirmationStale}
+          confirmDisabled={selectionLocked}
+          onCancel={closeRemoval}
+          returnFocusRef={removeButton}
+          fallbackFocusRef={addButton}
+        />
       )}
-    </section>
+    </Stack>
   );
 }

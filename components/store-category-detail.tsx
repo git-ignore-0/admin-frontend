@@ -9,19 +9,25 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useAdminRecordScope } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailPageHeading } from "@/components/detail-page-heading";
 import { useToast } from "@/components/toast-provider";
 import { deleteStoreCategory, getStoreCategory, saveStoreCategory } from "@/lib/commerce-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import { categoryName } from "@/lib/store-categories";
 import type { StoreCategory } from "@/lib/types";
 
 export function StoreCategoryDetail({ categoryId }: { categoryId: string }) {
+  return <StoreCategoryRecord key={categoryId} categoryId={categoryId} />;
+}
+
+function StoreCategoryRecord({ categoryId }: { categoryId: string }) {
   const { locale, t } = useAdminI18n();
   const copy = t.storeCatalog;
   const router = useRouter();
   const toast = useToast();
+  const scope = useAdminRecordScope(categoryId);
   const [item, setItem] = useState<StoreCategory | null>(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState(false);
@@ -30,42 +36,63 @@ export function StoreCategoryDetail({ categoryId }: { categoryId: string }) {
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
+    const { current, signal } = scope.beginRead();
     setError("");
-    getStoreCategory(categoryId)
+    getStoreCategory(categoryId, signal)
       .then((result) => {
-        if (!cancelled) {
+        if (current()) {
           setItem(result);
           setError("");
         }
       })
       .catch((caught) => {
-        if (!cancelled) setError(requestErrorMessage(caught, t));
+        if (!current()) return;
+        if (isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404) {
+          scope.retire();
+          setItem(null);
+          setDialog(false);
+          setBusy(false);
+        }
+        setError(requestErrorMessage(caught, t));
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [categoryId, retry, t]);
+  }, [categoryId, retry, scope, t]);
+
+  function reportActionError(caught: unknown, message: string) {
+    if (isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404) {
+      scope.retire();
+      setItem(null);
+      setDialog(false);
+      setBusy(false);
+      setError(message);
+    } else setDialogError(message);
+  }
 
   async function remove() {
+    const current = scope.capture();
+    if (!item || busy || !current()) return;
     setBusy(true);
     setDialogError("");
     try {
       await deleteStoreCategory(categoryId);
+      if (!current()) return;
       toast(copy.deleted);
       router.replace("/store-catalog/categories");
     } catch (caught) {
-      const failure = caught as { status?: number };
-      setDialogError(
-        failure.status === 409 ? copy.protectedDelete : requestErrorMessage(caught, t),
+      if (!current()) return;
+      reportActionError(
+        caught,
+        (caught as ClientApiError | null)?.status === 409
+          ? copy.protectedDelete
+          : requestErrorMessage(caught, t),
       );
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   }
 
   async function deactivate() {
-    if (!item) return;
+    const current = scope.capture();
+    if (!item || busy || !current()) return;
     setBusy(true);
     try {
       const updated = await saveStoreCategory(
@@ -78,13 +105,14 @@ export function StoreCategoryDetail({ categoryId }: { categoryId: string }) {
         },
         item.id,
       );
+      if (!current()) return;
       setItem(updated);
       setDialog(false);
       toast(copy.success);
     } catch (caught) {
-      setDialogError(requestErrorMessage(caught, t));
+      if (current()) reportActionError(caught, requestErrorMessage(caught, t));
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   }
 

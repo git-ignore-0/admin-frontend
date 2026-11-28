@@ -1,13 +1,28 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { storeOrderFixture } from "@/tests/store-orders-fixture";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type { ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AdminBreadcrumbProvider,
   useAdminBreadcrumbs,
 } from "@/components/admin-breadcrumb-context";
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { readRoundNavigationContext } from "@/app/(admin)/csa-rounds/round-navigation";
 import { CSARoundDetail } from "@/components/csa-round-detail";
 import { api, apiEnvelope } from "@/lib/client-api";
+
+function render(ui: ReactElement) {
+  return renderView(ui, { wrapper: AdminQueryProvider });
+}
 vi.mock("@/components/csa-companion-delivery", () => ({ CSACompanionDelivery: () => null }));
 vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -22,6 +37,7 @@ afterEach(() => {
 const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
 const round = {
   id,
+  version: 3,
   sequence: 1,
   name: "Week 1",
   status: "draft",
@@ -33,6 +49,52 @@ const round = {
   recurrence: null,
 };
 const rootId = "3894c718-0ed1-414f-9dfe-c6d880fd871b";
+
+it("uses the native member and demand table layouts while waiting for a round's selections", async () => {
+  const pending = Promise.withResolvers<Awaited<ReturnType<typeof apiEnvelope>>>();
+  vi.mocked(api).mockResolvedValue({ ...round, status: "open" });
+  vi.mocked(apiEnvelope).mockReturnValue(pending.promise);
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundDetail roundId={id} />
+    </AdminI18nProvider>,
+  );
+  await screen.findByRole("tab", { name: "Members", selected: true });
+  const members = screen.getByRole("tabpanel", { name: "Members" });
+  const memberScroll = members.querySelector<HTMLElement>('[role="region"][aria-hidden="true"]');
+  expect(memberScroll?.style.getPropertyValue("--table-min-width")).toBe("30rem");
+  expect(memberScroll?.querySelectorAll("th")).toHaveLength(4);
+  expect(memberScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
+  expect(within(members).getByRole("status")).toHaveTextContent("Loading CSA round…");
+  expect(within(members).queryByRole("table")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("tab", { name: "Product demand" }));
+  const demand = screen.getByRole("tabpanel", { name: "Product demand" });
+  const demandScroll = demand.querySelector<HTMLElement>('[role="region"][aria-hidden="true"]');
+  expect(demandScroll?.style.getPropertyValue("--table-min-width")).toBe(
+    "calc(22.5rem * var(--mantine-scale))",
+  );
+  expect(demandScroll?.querySelectorAll("th")).toHaveLength(2);
+  expect(demandScroll?.querySelector("tbody td:nth-child(2)")).toHaveStyle({ textAlign: "right" });
+  expect(within(demand).getByRole("status")).toHaveTextContent("Loading CSA round…");
+  expect(within(demand).queryByRole("table")).not.toBeInTheDocument();
+
+  await act(async () =>
+    pending.resolve({
+      data: [],
+      meta: { page: 1, page_size: 20, total: 0 },
+      demand: [{ product_id: id, name: "Tomato", quantity: 2, unit_size: "500", unit_label: "g" }],
+    } as never),
+  );
+  expect(within(demand).getByRole("table")).toHaveTextContent("Tomato");
+  expect(demand.querySelectorAll("table")).toHaveLength(1);
+  const loadedDemand = within(demand).getByRole("region");
+  expect(loadedDemand.style.getPropertyValue("--table-min-width")).toBe(
+    demandScroll?.style.getPropertyValue("--table-min-width"),
+  );
+  expect(loadedDemand).toHaveAttribute("tabindex", "0");
+  expect(within(demand).queryByRole("status")).not.toBeInTheDocument();
+});
 
 it.each([
   [rootId, "active"],
@@ -133,7 +195,7 @@ it("cancels only the chosen occurrence of an active configuration", async () => 
   await act(async () => finishReload(cancelled));
   expect(await screen.findByText("Flood")).toBeVisible();
   expect(vi.mocked(api).mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([
-    [`admin/csa-rounds/${id}/cancel`, { method: "POST", body: '{"reason":"Flood"}' }],
+    [`admin/csa-rounds/${id}/cancel`, { method: "POST", body: '{"reason":"Flood","version":3}' }],
   ]);
 });
 it("publishes only after confirmation and reloads the round", async () => {
@@ -155,11 +217,31 @@ it("publishes only after confirmation and reloads the round", async () => {
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith(`admin/csa-rounds/${id}/publish`, {
       method: "POST",
-      body: "{}",
+      body: '{"version":3}',
     }),
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(apiEnvelope).toHaveBeenCalledTimes(2);
+});
+it("retires the round and closes confirmation when publishing loses access", async () => {
+  vi.mocked(api)
+    .mockResolvedValueOnce(round)
+    .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+  vi.mocked(apiEnvelope).mockResolvedValue({
+    data: [],
+    meta: { page: 1, page_size: 20, total: 0 },
+    demand: [],
+  } as never);
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundDetail roundId={id} />
+    </AdminI18nProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Publish round" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(screen.queryByText(round.name)).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toBeVisible();
 });
 it("requires a reason for cancellation and keeps it after a rejected cancellation", async () => {
   vi.mocked(api)
@@ -291,11 +373,13 @@ it("shows demand, member selections, history and the existing order link", async
   expect(await screen.findByText("The reselection deadline expired.")).toBeVisible();
   expect(apiEnvelope).toHaveBeenLastCalledWith(
     `admin/csa-selections/${id}/events?page=1&page_size=20`,
+    { signal: expect.any(AbortSignal) },
   );
   fireEvent.click(within(history).getByRole("button", { name: "Next" }));
   await waitFor(() =>
     expect(apiEnvelope).toHaveBeenLastCalledWith(
       `admin/csa-selections/${id}/events?page=2&page_size=20`,
+      { signal: expect.any(AbortSignal) },
     ),
   );
   fireEvent.click(drawer.getByRole("button", { name: "Close" }));
@@ -359,12 +443,26 @@ it.each([
 it("checks the latest order only when a member drawer is opened and gates reopening accordingly", async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.startsWith("admin/store-orders/")
-      ? {
+      ? storeOrderFixture({
+          id,
           status: "pending_delivery",
           approved_at: round.server_time,
           server_time: round.server_time,
-          csa: { selection: { id, state: "locked" }, round },
-        }
+          csa: {
+            selection: {
+              id,
+              state: "locked",
+              round_id: id,
+              membership_id: rootId,
+              order_id: id,
+              revision: 1,
+              server_time: round.server_time,
+              reopen_until: null,
+              lines: [],
+            },
+            round: { ...round, status: "closed" },
+          },
+        })
       : { ...round, status: "closed" },
   );
   vi.mocked(apiEnvelope).mockResolvedValue({
@@ -388,8 +486,8 @@ it("checks the latest order only when a member drawer is opened and gates reopen
   expect(screen.queryByRole("button", { name: "Reopen selection" })).not.toBeInTheDocument();
 });
 
-it.each(["Escape", "save"])(
-  "keeps the member drawer focused after reopening ends by %s",
+it.each(["Escape", "save", "permission_denied", "csrf_rejected"])(
+  "keeps the member drawer consistent when reopening ends by %s",
   async (ending) => {
     const membershipId = "1c2a3445-e248-4649-a9e3-a2d02e9a8c7f";
     const person = {
@@ -397,25 +495,31 @@ it.each(["Escape", "save"])(
       round_id: id,
       membership_id: membershipId,
       customer_name: "Member A",
-      state: "locked",
+      state: "locked" as const,
       order_id: id,
       reopen_until: null,
       revision: 1,
       server_time: round.server_time,
       lines: [],
     };
-    const closedRound = { ...round, status: "closed" };
+    const closedRound = { ...round, status: "closed" as const };
     vi.mocked(api).mockImplementation(async (path) => {
-      if (path === `admin/csa-selections/${id}/reopen`) return {};
+      if (path === `admin/csa-selections/${id}/reopen`) {
+        if (ending === "permission_denied" || ending === "csrf_rejected") {
+          throw Object.assign(new Error(ending), { status: 403 });
+        }
+        return {};
+      }
       if (path === `admin/memberships/${membershipId}?locale=en`)
         return { id: membershipId, status: "active" };
       if (path === `admin/store-orders/${id}`) {
-        return {
+        return storeOrderFixture({
+          id,
           status: "pending_review",
           approved_at: null,
           server_time: round.server_time,
           csa: { selection: person, round: closedRound },
-        };
+        });
       }
       return closedRound;
     });
@@ -460,14 +564,31 @@ it.each(["Escape", "save"])(
     } else {
       fireEvent.change(input, { target: { value: "2026-11-21T20:00" } });
       fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm" }));
+      if (ending === "permission_denied") {
+        await waitFor(() => expect(member).not.toBeInTheDocument());
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(apiEnvelope).toHaveBeenCalledTimes(1);
+        return;
+      }
+      if (ending === "csrf_rejected") {
+        await within(confirmation).findByRole("alert");
+        expect(member).toBeInTheDocument();
+        expect(input).toHaveValue("2026-11-21T20:00");
+        expect(apiEnvelope).toHaveBeenCalledTimes(1);
+        return;
+      }
       const close = await within(
         await screen.findByRole("dialog", { name: "Member A" }),
       ).findByRole("button", { name: "Close" });
       await waitFor(() => expect(close).toHaveFocus());
-      expect(api).toHaveBeenCalledWith(`admin/csa-selections/${id}/reopen`, {
-        method: "POST",
-        body: JSON.stringify({ deadline, expected_revision: 1 }),
-      });
+      expect(api).toHaveBeenCalledWith(
+        `admin/csa-selections/${id}/reopen`,
+        {
+          method: "POST",
+          body: JSON.stringify({ deadline, expected_revision: 1 }),
+        },
+        { shouldRedirectToLogin: expect.any(Function) },
+      );
       await act(async () => releaseRefresh());
       expect(within(drawer).getByText("Awaiting reselection")).toBeVisible();
       expect(within(drawer).getByText("21/11/2026 20:00")).toHaveAttribute("datetime", deadline);
@@ -486,12 +607,26 @@ it.each(["active", "revoked"])(
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === membershipPath) return { id: membershipId, status: membershipStatus };
       if (path.startsWith("admin/store-orders/")) {
-        return {
+        return storeOrderFixture({
+          id,
           status: "pending_review",
           approved_at: null,
           server_time: round.server_time,
-          csa: { selection: { id, membership_id: membershipId, state: "locked" }, round },
-        };
+          csa: {
+            selection: {
+              id,
+              membership_id: membershipId,
+              state: "locked",
+              round_id: id,
+              order_id: id,
+              revision: 1,
+              server_time: round.server_time,
+              reopen_until: null,
+              lines: [],
+            },
+            round: { ...round, status: "closed" },
+          },
+        });
       }
       return { ...round, status: "closed" };
     });
@@ -595,6 +730,32 @@ it("pages participants without fetching history or losing full demand labels", a
     { signal: expect.any(AbortSignal) },
   );
   expect(apiEnvelope).toHaveBeenCalledTimes(2);
+});
+
+it("returns to the last participants page when a refresh invalidates the current page", async () => {
+  vi.mocked(api).mockResolvedValue({ ...round, status: "closed" });
+  const page = (number: number, total: number) =>
+    ({
+      data: [],
+      meta: { page: number, page_size: 20, total },
+      demand: [],
+    }) as never;
+  vi.mocked(apiEnvelope)
+    .mockResolvedValueOnce(page(1, 21))
+    .mockResolvedValueOnce(page(2, 21))
+    .mockResolvedValueOnce(page(2, 20))
+    .mockResolvedValueOnce(page(1, 20));
+  render(
+    <AdminI18nProvider initialLocale="en">
+      <CSARoundDetail roundId={id} />
+    </AdminI18nProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+  await screen.findByRole("navigation", { name: "Page 2/2" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(4));
+  expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("selections?page=1&");
+  expect(screen.queryByRole("navigation", { name: "Page 2/2" })).not.toBeInTheDocument();
 });
 
 it.each([false, true])(

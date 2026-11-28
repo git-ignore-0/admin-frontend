@@ -2,13 +2,17 @@ import { selectOption } from "@/tests/select-option";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AdminI18nProvider, useAdminI18n } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { StoreOrderDetail } from "@/components/store-order-detail";
 import { ToastProvider } from "@/components/toast-provider";
 import { api } from "@/lib/client-api";
 import { isAllowedBackendRequest } from "@/lib/backend-target";
 import type { StoreOrder } from "@/lib/types";
 import { storeOrderFixture } from "@/tests/store-orders-fixture";
-vi.mock("@/lib/client-api", () => ({ api: vi.fn(), apiEnvelope: vi.fn() }));
+vi.mock("@/lib/client-api", async () => {
+  const { createStoreOrderApiMock } = await import("@/tests/store-orders-fixture");
+  return createStoreOrderApiMock();
+});
 vi.mock("@/lib/use-administrative-unit-names", () => ({
   useAdministrativeUnitNames: () => ({ provinceName: null, wardName: null }),
 }));
@@ -37,7 +41,10 @@ function tree(id: string) {
     <AdminI18nProvider initialLocale="vi">
       <ToastProvider>
         {localeControl()}
-        <StoreOrderDetail orderId={id} />
+        <AdminQueryProvider>
+          {" "}
+          <StoreOrderDetail orderId={id} />{" "}
+        </AdminQueryProvider>
       </ToastProvider>
     </AdminI18nProvider>
   );
@@ -78,24 +85,28 @@ it.each([false, true])(
             finish = resolve;
           }),
       )
-      .mockResolvedValueOnce({ ...next, payment_status: "refund_required" });
+      .mockResolvedValueOnce({
+        ...next,
+        payment_status: "refund_required",
+        payment_received_at: "2026-10-31T10:01:00Z",
+      });
     render(tree(item.id));
     await act(async () => {});
-    const modal = await dialog("Ghi nhận đã nhận tiền");
+    const modal = await dialog("Xác nhận đã nhận tiền");
     fireEvent.change(within(modal).getByRole("textbox"), { target: { value: "receipt ref 123" } });
     if (unknown) {
-      fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+      fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
       await act(async () => {});
     }
     await act(async () => {
       elapsed = 60_000;
       vi.advanceTimersByTime(60_000);
     });
-    expect(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeDisabled();
     expect(within(modal).getAllByRole("alert")[0]).toBeVisible();
     fireEvent.click(within(modal).getByRole("button", { name: "Thử lại" }));
     expect(within(modal).getByRole("status")).toBeVisible();
-    expect(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeDisabled();
     await act(async () => finish(next));
     expect(screen.getByRole("dialog")).toBe(modal);
     expect(within(modal).getByRole("textbox")).toHaveValue("receipt ref 123");
@@ -133,9 +144,9 @@ it("buyer cancellation before v2 goods approval offers no receipt or refund acti
     });
   render(tree(item.id));
   await screen.findByRole("button", { name: "Xác nhận đủ hàng" });
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" });
-  for (const name of ["Ghi nhận đã nhận tiền", "Xác nhận hoàn tiền", "Xác minh không có tiền"])
+  for (const name of ["Xác nhận đã nhận tiền", "Xác nhận hoàn tiền", "Xác nhận chưa nhận tiền"])
     expect(screen.queryByRole("button", { name })).toBeNull();
   expect(screen.queryByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeNull();
   expect(api).toHaveBeenCalledTimes(2);
@@ -214,7 +225,7 @@ it("renders payment history from top-level fields even when payment is null", as
   });
   vi.mocked(api).mockResolvedValueOnce(item);
   render(tree(item.id));
-  expect(await screen.findByText("Admin ghi nhận tiền")).toBeVisible();
+  expect(await screen.findByText("Đã xác nhận nhận tiền")).toBeVisible();
   expect(screen.getByText("Mở đối soát lúc")).toBeVisible();
   expect(screen.getByText("Hoàn tiền lúc")).toBeVisible();
   expect(screen.getByText("Đã chuyển hoàn")).toBeVisible();
@@ -238,15 +249,21 @@ it("late receipt after elapsed payment deadline renders cancelled plus refund wi
     Promise.resolve(options?.method === "POST" ? cancelled : item),
   );
   render(tree(item.id));
-  const modal = await dialog("Ghi nhận đã nhận tiền");
-  const confirm = within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" });
-  // An already elapsed deadline also refreshes the snapshot in the background.
-  await waitFor(() => expect(confirm).toBeEnabled());
+  // The elapsed deadline refresh must settle before the receipt action opens.
+  const trigger = await screen.findByRole("button", { name: "Xác nhận đã nhận tiền" });
+  await waitFor(() => {
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(trigger).toBeEnabled();
+  });
+  fireEvent.click(trigger);
+  const modal = screen.getByRole("dialog");
+  const confirm = within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" });
+  expect(confirm).toBeEnabled();
   fireEvent.click(confirm);
   expect(await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(screen.getByText("Chờ hoàn", { selector: ".mantine-Badge-label" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Xác nhận đã giao" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Xác minh không có tiền" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Xác nhận chưa nhận tiền" })).toBeNull();
 });
 
 it("unknown receipt keeps exact intent despite edit, locale and retry", async () => {
@@ -258,12 +275,13 @@ it("unknown receipt keeps exact intent despite edit, locale and retry", async ()
       ...item,
       status: "pending_delivery",
       payment_status: "received",
+      payment_received_at: "2026-10-31T10:03:00Z",
       expires_at: null,
     });
   render(tree(item.id));
-  const modal = await dialog("Ghi nhận đã nhận tiền");
+  const modal = await dialog("Xác nhận đã nhận tiền");
   fireEvent.change(within(modal).getByRole("textbox"), { target: { value: "Bank checked" } });
-  fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+  fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
   await within(modal).findByRole("alert");
   expect(within(modal).getByRole("textbox")).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "English" }));
@@ -295,11 +313,19 @@ it("late mutation from previous order never overwrites the next order", async ()
     )
     .mockResolvedValueOnce(second);
   const view = render(tree(first.id));
-  const modal = await dialog("Ghi nhận đã nhận tiền");
-  fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+  const modal = await dialog("Xác nhận đã nhận tiền");
+  fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
   view.rerender(tree(second.id));
   await screen.findByRole("heading", { name: "NEXT-ORDER" });
-  await act(async () => finish({ ...first, status: "pending_delivery", expires_at: null }));
+  await act(async () =>
+    finish({
+      ...first,
+      status: "pending_delivery",
+      payment_status: "received",
+      payment_received_at: "2026-10-31T10:01:00Z",
+      expires_at: null,
+    }),
+  );
   expect(screen.getByRole("heading", { name: "NEXT-ORDER" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: first.reference_code })).toBeNull();
 });
@@ -400,7 +426,7 @@ it("separates terminal recovery from order actions and replays the exact unresol
     .mockResolvedValueOnce(cancelled)
     .mockRejectedValueOnce(Object.assign(new Error("store_order_state_conflict"), { status: 409 }))
     .mockResolvedValueOnce(cancelled);
-  const view = render(tree(item.id));
+  render(tree(item.id));
   const modal = await dialog("Hủy đơn");
   fireEvent.change(within(modal).getByLabelText("Lý do hủy"), {
     target: { value: "Không đủ hàng" },
@@ -408,9 +434,9 @@ it("separates terminal recovery from order actions and replays the exact unresol
   fireEvent.click(within(modal).getByRole("button", { name: "Hủy đơn" }));
   await within(modal).findByRole("alert");
   fireEvent.click(within(modal).getByRole("button", { name: "Đóng" }));
-  fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
+  fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
   await screen.findByText("Đã hủy", { selector: ".mantine-Badge-label" });
-  expect(view.container.querySelector(".store-order-actions")).toBeNull();
+  expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Hủy đơn" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Thử lại yêu cầu trước" }));
   const retry = screen.getByRole("dialog");
@@ -422,7 +448,7 @@ it("separates terminal recovery from order actions and replays the exact unresol
   fireEvent.click(within(retry).getByRole("button", { name: "Tải trạng thái mới" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("button", { name: "Thử lại yêu cầu trước" })).toBeNull();
-  expect(view.container.querySelector(".store-order-actions")).toBeNull();
+  expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
 });
 
 it("keeps delivery actions when an inactive historical deadline has elapsed", async () => {
@@ -449,11 +475,9 @@ it("orders admin history by timestamp across goods approval and money confirmati
     payment_received_at: "2026-10-31T08:30:00Z",
   });
   vi.mocked(api).mockResolvedValue(item);
-  const view = render(tree(item.id));
-  await screen.findByText("Admin ghi nhận tiền");
-  const times = [...view.container.querySelectorAll(".store-order-history dd")].map(
-    (node) => node.textContent,
-  );
+  render(tree(item.id));
+  const history = await screen.findByRole("region", { name: "Lịch sử xử lý" });
+  const times = [...history.querySelectorAll("dd")].map((node) => node.textContent);
   expect(times).toEqual([
     "31/10/2026 15:00",
     "31/10/2026 15:10",
@@ -479,8 +503,8 @@ it.each([null, "2026-10-31T09:59:00Z"])(
     vi.mocked(api).mockResolvedValueOnce(item).mockResolvedValueOnce(received);
     render(tree(item.id));
     const modal = await dialog("Xử lý đối soát");
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Xác minh không có tiền" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Xác nhận chưa nhận tiền" })).toBeNull();
     expect(screen.getByText("Chờ đối soát", { selector: ".mantine-Badge-label" })).toBeVisible();
     const confirm = within(modal).getByRole("button", { name: "Xác nhận đối soát" });
     expect(confirm).toBeDisabled();
@@ -515,8 +539,8 @@ it("keeps closed no-money reconciliation final on approved v2 orders", async () 
   for (const name of [
     "Xử lý đối soát",
     "Xử lý hoàn tiền",
-    "Ghi nhận đã nhận tiền",
-    "Xác minh không có tiền",
+    "Xác nhận đã nhận tiền",
+    "Xác nhận chưa nhận tiền",
   ])
     expect(screen.queryByRole("button", { name })).toBeNull();
 });
@@ -534,7 +558,7 @@ it.each(["record-payment", "close-refund-request"] as const)(
         Object.assign(new Error("store_order_state_conflict"), { status: 409 }),
       )
       .mockResolvedValueOnce(next);
-    const view = render(tree(item.id));
+    render(tree(item.id));
     let modal = await dialog("Xử lý đối soát");
     selectOption(within(modal).getByRole("combobox"), choice);
     fireEvent.change(within(modal).getByRole("textbox"), { target: { value: "Đã kiểm tra" } });
@@ -545,11 +569,9 @@ it.each(["record-payment", "close-refund-request"] as const)(
     const original = vi.mocked(api).mock.calls[1];
     expect(original[0]).toBe(`admin/store-orders/${item.id}/${choice}`);
     fireEvent.click(within(modal).getByRole("button", { name: "Đóng" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tải lại đơn và nguồn" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Tải lại đơn và nguồn" })).toBeEnabled(),
-    );
-    expect(view.container.querySelector(".store-order-actions")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled());
+    expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
     modal = await dialog("Thử lại yêu cầu trước");
     expect(within(modal).getByRole("combobox")).toHaveValue(
       choice === "record-payment" ? "Đã nhận tiền" : "Không nhận tiền",
@@ -563,7 +585,7 @@ it.each(["record-payment", "close-refund-request"] as const)(
     fireEvent.click(within(modal).getByRole("button", { name: "Tải trạng thái mới" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByRole("button", { name: "Thử lại yêu cầu trước" })).toBeNull();
-    expect(view.container.querySelector(".store-order-actions")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Thao tác đơn hàng" })).toBeNull();
   },
 );
 
@@ -581,13 +603,13 @@ it.each(["payment_pending", "payment_review"] as const)(
         expires_at: null,
       });
     render(tree(item.id));
-    const modal = await dialog("Ghi nhận đã nhận tiền");
-    fireEvent.click(within(modal).getByRole("button", { name: "Ghi nhận đã nhận tiền" }));
+    const modal = await dialog("Xác nhận đã nhận tiền");
+    fireEvent.click(within(modal).getByRole("button", { name: "Xác nhận đã nhận tiền" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(vi.mocked(api).mock.calls[1][0]).toBe(`admin/store-orders/${item.id}/record-payment`);
     expect(screen.getByText("Chờ giao", { selector: ".mantine-Badge-label" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Xác nhận đã giao" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Ghi nhận đã nhận tiền" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeNull();
   },
 );
 
@@ -600,6 +622,7 @@ it.each(["payment_pending", "payment_review"] as const)(
       .mockResolvedValueOnce({
         ...item,
         status: "cancelled",
+        cancelled_at: "2026-10-31T10:03:00Z",
         refund_status: "pending",
         refund_requested_at: "2026-10-31T10:03:00Z",
         expires_at: null,
@@ -634,7 +657,12 @@ it("cancels unapproved v2 goods with only a cancellation reason and no reconcili
   const item = row({ payment: null, approved_at: null, expires_at: null });
   vi.mocked(api)
     .mockResolvedValueOnce(item)
-    .mockResolvedValueOnce({ ...item, status: "cancelled", refund_status: null });
+    .mockResolvedValueOnce({
+      ...item,
+      status: "cancelled",
+      cancelled_at: "2026-10-31T10:03:00Z",
+      refund_status: null,
+    });
   render(tree(item.id));
   const modal = await dialog("Hủy đơn");
   expect(within(modal).queryByLabelText("Ghi chú đối soát")).toBeNull();

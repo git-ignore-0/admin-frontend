@@ -1,86 +1,173 @@
 "use client";
-import { Alert, Group } from "@mantine/core";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Checkbox,
+  Grid,
+  Group,
+  List,
+  Paper,
+  Skeleton,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+  Title,
+  Tooltip,
+  VisuallyHidden,
+} from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
+import { IconRefresh } from "@tabler/icons-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { CSAOrderPanel } from "@/components/csa-order-panel";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DetailPageHeading } from "@/components/detail-page-heading";
-import {
-  Button,
-  DataState,
-  FormCheckbox,
-  FormField,
-  FormInput,
-  FormSelect,
-  FormTextarea,
-  Section,
-} from "@/components/nfv-controls";
-import { StoreOrderAllocationEditor } from "@/components/store-order-allocation-editor";
+import { FormSelect } from "@/components/nfv-controls";
+import { RecordDetailField, RecordDetailFields } from "@/components/record-detail-fields";
+import { RecoveryAlert } from "@/components/recovery-alert";
 import { StoreOrderProducts } from "@/components/store-order-products";
 import { StoreOrderStatusBadge } from "@/components/store-order-status";
-import { StoreOrderTotals, StoreRecipientSummary } from "@/components/store-order-summary";
+import { StoreOrderSummary } from "@/components/store-order-summary";
 import { useToast } from "@/components/toast-provider";
+import { useAcknowledgeStoreOrderCreation } from "@/lib/use-store-order-creation";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
-import { requestErrorMessage } from "@/lib/client-error";
+import { useAdminMutationIntent } from "@/lib/admin-mutation-intent";
+import {
+  isProtectedDataError,
+  isUncertainMutationError,
+  requestErrorMessage,
+} from "@/lib/client-error";
 import {
   formatStoreMoney,
   getStoreOrder,
   getStoreOrderActions,
   getStoreOrderPrimaryAction,
   IdempotencyKeyStore,
+  inspectStoreFarmDraft,
+  MAX_STORE_QUANTITY,
   mutateStoreOrder,
+  parseStoreQuantity,
+  reconcileStoreFarmDraft,
+  reflectsStoreOrderAction,
   storeDeadlineRemainingMs,
   storeOrderHasDeadline,
-  validateStoreAllocations,
+  storeQuantityDisplayValue,
+  storeQuantityInputValue,
+  storeQuantityPasteReplacement,
+  type StoreFarmDraft,
+  type StoreOrderConfirmation,
 } from "@/lib/store-orders";
 import {
   storeCancellationReason,
   storeOrderActionLabel,
   storeOrderActionTitle,
+  storeOrderConflictMessage,
   storeOrderDeadlineLabel,
+  storeOrderCountdown,
   storeOrdersCopy,
   storeRefundStatusLabel,
   storeRestockUnavailableReason,
 } from "@/lib/store-orders-copy";
-import type { StoreOrder, StoreOrderAction, StoreOrderAllocationDraft } from "@/lib/types";
+import type {
+  StoreApprovalSource,
+  StoreOrder,
+  StoreOrderAction,
+  StoreOrderAllocationDraft,
+} from "@/lib/types";
+import styles from "./store-order-detail.module.css";
 
-function TimelineRow({ label, value }: { label: string; value: string | null | undefined }) {
-  if (!value) return null;
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{formatAdminDateTime(value)}</dd>
-    </div>
-  );
+type StoreRestockAllocation = { allocation_id: string; quantity: number };
+
+type StoreOrderActionPayload = {
+  reason?: string;
+  note?: string;
+  reconciliation_note?: string;
+  amount_vnd?: string;
+  sources?: StoreApprovalSource[];
+  // Previously submitted approvals may still contain the ordered legacy allocations.
+  allocations?: StoreOrderAllocationDraft[] | StoreRestockAllocation[];
+};
+
+type StoreOrderIntent = {
+  orderId: string;
+  action: StoreOrderAction;
+  payload: StoreOrderActionPayload & { idempotency_key: string };
+  confirmation: StoreOrderConfirmation;
+};
+
+const STORE_REASON_MAX_LENGTH = 1000;
+const STORE_NOTE_MAX_LENGTH = 2000;
+
+function trimActionText(value: string) {
+  // Keep the existing UI trim and account for whitespace stripped by DRF.
+  return value
+    .trim()
+    .replace(/^[\p{White_Space}\u001c-\u001f]+|[\p{White_Space}\u001c-\u001f]+$/gu, "");
+}
+
+function actionTextError(
+  value: string,
+  max: number,
+  copy: ReturnType<typeof storeOrdersCopy>,
+  requiredMessage?: string,
+) {
+  const text = trimActionText(value);
+  if (text.includes("\0") || /\p{Cs}/u.test(text)) return copy.actionTextInvalid;
+  if (!text) return requiredMessage;
+  if (Array.from(text).length > max) {
+    return copy.actionTextTooLong.replace("{max}", String(max));
+  }
+}
+
+function restockMaximum(row: NonNullable<StoreOrder["allocations"]>[number]) {
+  return row.restock_eligible ? Math.min(MAX_STORE_QUANTITY, row.restock_remaining_quantity) : 0;
+}
+
+function parseRestockQuantity(raw: string, max: number) {
+  return raw === "" ? 0 : parseStoreQuantity(raw, 0, max);
 }
 
 export function StoreOrderDetail({ orderId }: { orderId: string }) {
-  return <StoreOrderDetailContent key={orderId} orderId={orderId} />;
+  const routeId = orderId.toLowerCase();
+  return <StoreOrderDetailContent key={routeId} orderId={routeId} />;
 }
 
 function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const { locale, t } = useAdminI18n();
   const toast = useToast();
   const c = storeOrdersCopy(locale);
-  const latestCopy = useRef({ t, c });
-  latestCopy.current = { t, c };
+  const { ref: layoutRef, width: contentWidth } = useElementSize();
+  const historyHeading = useId();
+  const isSessionCurrent = useIsAdminQueryScopeCurrent();
+  const latestCopy = useRef({ t, c, locale });
+  latestCopy.current = { t, c, locale };
   const mounted = useRef(false);
-  const pendingIntent = useRef<{
-    action: StoreOrderAction;
-    payload: Record<string, unknown>;
-  } | null>(null);
-  const [unresolved, setUnresolved] = useState(false);
+  const isMounted = useCallback(() => mounted.current && isSessionCurrent(), [isSessionCurrent]);
+  const { intent: savedIntent, controls } = useAdminMutationIntent<
+    StoreOrderIntent,
+    StoreOrderConfirmation
+  >("store-order", orderId);
+  const pendingIntent = savedIntent?.phase === "unknown" ? savedIntent.payload : null;
+  const unresolved = pendingIntent !== null;
+  const approvalInFlight =
+    (savedIntent?.phase === "pending" || savedIntent?.phase === "unknown") &&
+    savedIntent.payload.action === "approve";
   const [order, setOrder] = useState<StoreOrder | null>(null);
+  useAcknowledgeStoreOrderCreation(order?.id);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [draft, setDraft] = useState<StoreOrderAllocationDraft[]>([]);
+  const [draft, setDraft] = useState<StoreFarmDraft>(() => new Map());
   const [tick, setTick] = useState(0);
-  const draftInitialized = useRef(false);
   const csaRevision = useRef<string | null>(null);
   const receivedAt = useRef(performance.now());
   const requestId = useRef(0);
+  const readController = useRef<AbortController | null>(null);
+  const refreshControl = useRef<HTMLButtonElement>(null);
+  const initialRead = useRef(false);
   const expiryReloaded = useRef<string | null>(null);
   const submitting = useRef(false);
   const idempotencyKeys = useRef(new IdempotencyKeyStore());
@@ -94,49 +181,99 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionConflict, setActionConflict] = useState(false);
-  const [reloadRequired, setReloadRequired] = useState(false);
-  const [actionBusy, setActionBusy] = useState(false);
-  const [restock, setRestock] = useState<Record<string, number>>({});
+  const [reloadConflictGate, setReloadConflictGate] = useState(false);
+  const confirmedAction = savedIntent?.phase === "confirmed" ? savedIntent.receipt : null;
+  const intentRetired = savedIntent?.phase === "retired";
+  const reloadRequired = reloadConflictGate || confirmedAction !== null || intentRetired;
+  const actionBusy = savedIntent?.phase === "pending";
+  const [restock, setRestock] = useState<Record<string, string>>({});
   const restockLedgerAtOpen = useRef<Record<string, number>>({});
 
+  const applyOrder = useCallback((next: StoreOrder) => {
+    const selection = next.csa?.selection;
+    const revision = selection ? `${selection.id}:${selection.revision}:${selection.state}` : null;
+    const preserveDraft = revision === csaRevision.current;
+    csaRevision.current = revision;
+    receivedAt.current = performance.now();
+    setOrder(next);
+    setDraft((previous) => reconcileStoreFarmDraft(next, preserveDraft ? previous : undefined));
+  }, []);
+
+  const retireOrder = useCallback(
+    (discardIntent: boolean) => {
+      setOrder(null);
+      setDraft(new Map());
+      csaRevision.current = null;
+      expiryReloaded.current = null;
+      setAction(null);
+      setActionError("");
+      setActionConflict(false);
+      setReconciliationDialog(false);
+      setReconciliationChoice(null);
+      setConfirmed(false);
+      setReason("");
+      setNote("");
+      setRestock({});
+      restockLedgerAtOpen.current = {};
+      idempotencyKeys.current = new IdempotencyKeyStore();
+      if (discardIntent) {
+        controls.retire();
+      }
+      setReloadConflictGate(true);
+    },
+    [controls],
+  );
+
   const load = useCallback(async () => {
-    if (submitting.current) return;
+    const latestIntent = controls.read();
+    if (!isMounted() || submitting.current || latestIntent?.phase === "pending") return;
+    const confirmation = latestIntent?.phase === "confirmed" ? latestIntent.receipt : null;
     const current = ++requestId.current;
+    readController.current?.abort();
+    const controller = new AbortController();
+    readController.current = controller;
+    const isCurrent = () =>
+      isMounted() && !controller.signal.aborted && current === requestId.current;
     setLoading(true);
     try {
-      const next = await getStoreOrder(orderId);
-      if (current !== requestId.current) return;
-      receivedAt.current = performance.now();
-      setOrder(next);
+      const next = await getStoreOrder(orderId, controller.signal, {
+        shouldRedirectToLogin: isCurrent,
+      });
+      if (!isCurrent()) return;
+      if (confirmation && !reflectsStoreOrderAction(next, confirmation)) {
+        setError("");
+        return;
+      }
+      applyOrder(next);
       setError("");
-      setReloadRequired(false);
-      const nextCSARevision = next.csa
-        ? `${next.csa.selection.revision}:${next.csa.selection.state}`
-        : null;
-      if (nextCSARevision !== csaRevision.current) {
-        draftInitialized.current = false;
-        csaRevision.current = nextCSARevision;
-      }
-      if (!draftInitialized.current) {
-        setDraft(next.allocation_suggestion ?? []);
-        draftInitialized.current = true;
-      }
+      setReloadConflictGate(false);
+      if (confirmation) controls.clear();
     } catch (caught) {
-      if (current === requestId.current)
-        setError(requestErrorMessage(caught, latestCopy.current.t));
+      if (!isCurrent()) return;
+      const { message, status } = (caught ?? {}) as { message?: string; status?: number };
+      if (isProtectedDataError(caught) || status === 404) retireOrder(true);
+      else if (message === "invalid_response") retireOrder(false);
+      setError(requestErrorMessage(caught, latestCopy.current.t));
     } finally {
-      if (current === requestId.current) setLoading(false);
+      if (readController.current === controller) readController.current = null;
+      if (isCurrent()) setLoading(false);
     }
-  }, [orderId]);
+  }, [applyOrder, controls, isMounted, orderId, retireOrder]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
-    void load();
     return () => {
       mounted.current = false;
       requestId.current += 1;
+      readController.current?.abort();
+      initialRead.current = false;
     };
-  }, [load]);
+  }, []);
+  useEffect(() => {
+    if (actionBusy || initialRead.current) return;
+    initialRead.current = true;
+    void load();
+  }, [actionBusy, load]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 60_000);
@@ -153,26 +290,68 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       !storeOrderHasDeadline(order) ||
       remaining !== 0 ||
       submitting.current ||
+      reloadRequired ||
       expiryReloaded.current === order.expires_at
     )
       return;
     expiryReloaded.current = order.expires_at;
     void load();
-  }, [load, order, remaining, tick]);
+  }, [load, order, reloadRequired, remaining, tick]);
+
+  const refreshOrder = () => {
+    if (!loading && !actionBusy && !readController.current) void load();
+  };
 
   if (!order) {
     return (
-      <DataState
-        kind={error ? "error" : "loading"}
-        title={error || c.detailLoading}
-        action={error ? { label: t.common.retry, onClick: () => void load() } : undefined}
-      />
+      <Stack gap="md" miw={0} ref={layoutRef}>
+        <VisuallyHidden component="h1">{t.breadcrumb.orderDetails}</VisuallyHidden>
+        {loading ? (
+          <>
+            <Stack gap="xs" aria-hidden>
+              <Skeleton height="var(--mantine-h1-font-size)" width="12rem" maw="100%" />
+              <Skeleton height="var(--mantine-font-size-sm)" width="8rem" maw="100%" />
+            </Stack>
+            <Grid
+              gutter="md"
+              className={styles.layout}
+              classNames={
+                contentWidth >= 880
+                  ? { inner: styles.desktopGrid, col: styles.desktopColumn }
+                  : undefined
+              }
+            >
+              <Grid.Col className={styles.products} miw={0}>
+                <StoreOrderProducts />
+              </Grid.Col>
+              {contentWidth >= 880 && (
+                <Grid.Col className={styles.information} miw={0}>
+                  <Paper p="md" aria-hidden>
+                    <Stack gap="sm">
+                      <Skeleton height="var(--mantine-font-size-md)" width="7rem" />
+                      <Skeleton height="var(--mantine-font-size-sm)" />
+                      <Skeleton height="var(--mantine-font-size-sm)" />
+                    </Stack>
+                  </Paper>
+                </Grid.Col>
+              )}
+            </Grid>
+          </>
+        ) : (
+          <RecoveryAlert
+            message={confirmedAction ? c.mutationConfirmedReload : error}
+            retryLabel={t.common.retry}
+            onRetry={refreshOrder}
+          />
+        )}
+      </Stack>
     );
   }
 
   const currentOrder = order;
+  const historical = currentOrder.creation?.origin === "admin_historical";
+  const recordedAtLabel = historical ? c.historicalRecordedAt : c.createdAt;
   const deadlineLabel = storeOrderDeadlineLabel(currentOrder, locale);
-  const remainingMinutes = remaining === null ? null : Math.ceil(remaining / 60_000);
   const actions = getStoreOrderActions(currentOrder, { expired: remaining === 0 });
   const groupedReconciliation =
     currentOrder.workflow_version === 2 &&
@@ -185,16 +364,61 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     : actions;
   // An unresolved request may be replayed, but is not a new permission on this snapshot.
   const recoveryAction =
-    unresolved && pendingIntent.current && !visibleActions.includes(pendingIntent.current.action)
-      ? pendingIntent.current.action
+    !historical && pendingIntent && !visibleActions.includes(pendingIntent.action)
+      ? pendingIntent.action
       : null;
-  const replaying = unresolved && pendingIntent.current?.action === action;
+  const replaying = pendingIntent?.orderId === orderId && pendingIntent.action === action;
+  const recoveryDialog =
+    action !== null && (recoveryAction === action || (action === "approve" && replaying));
   const primaryAction = getStoreOrderPrimaryAction(actions);
-  visibleActions.sort((a, b) => Number(b === primaryAction) - Number(a === primaryAction));
-  const allocationsValid =
-    currentOrder.status !== "pending_review" || validateStoreAllocations(currentOrder, draft).valid;
+  visibleActions.sort((a, b) => Number(a === primaryAction) - Number(b === primaryAction));
+  const farmDraft =
+    !approvalInFlight && actions.includes("approve")
+      ? inspectStoreFarmDraft(currentOrder, draft)
+      : null;
+  const actionLocked = loading || Boolean(error) || reloadRequired || actionBusy;
+  const fieldsLocked = actionLocked || unresolved;
+  const showCancelNote =
+    action === "cancel" && (currentOrder.workflow_version !== 2 || Boolean(currentOrder.csa));
+  const reasonRequired =
+    action === "cancel"
+      ? c.cancelReasonRequired
+      : action === "close-refund-request"
+        ? c.closeRefundReasonRequired
+        : undefined;
+  const reasonError = reasonRequired
+    ? actionTextError(reason, STORE_REASON_MAX_LENGTH, c, reasonRequired)
+    : undefined;
+  const noteError =
+    action === "refund" || action === "record-payment" || showCancelNote
+      ? actionTextError(
+          note,
+          STORE_NOTE_MAX_LENGTH,
+          c,
+          action === "refund" ? c.refundNoteRequired : undefined,
+        )
+      : undefined;
+  const orderAllocations = action === "restock" ? (currentOrder.allocations ?? []) : [];
+  const allocationsById = new Map(orderAllocations.map((row) => [row.id, row]));
+  const restockLines = new Map(
+    (action === "restock" ? order.lines : []).map((line) => [line.id, line]),
+  );
+  const restockAllocationPayload =
+    action === "restock" && !replaying ? parseRestockAllocations() : null;
+  const restockRows =
+    action === "restock"
+      ? orderAllocations.filter((row) => row.restock_remaining_quantity > 0)
+      : [];
+  const restockProductHeaders = new Map<string, string>();
+  for (const row of restockRows) {
+    if (!restockProductHeaders.has(row.line_id)) restockProductHeaders.set(row.line_id, row.id);
+  }
+  const showNote =
+    showCancelNote ||
+    action === "refund" ||
+    (action === "record-payment" && (!reconciliationDialog || reconciliationChoice !== null));
   const timeline = [
-    { label: c.createdAt, value: order.created_at },
+    { label: recordedAtLabel, value: order.created_at },
     { label: c.transferReportedAt, value: order.transfer_reported_at },
     { label: c.paymentReceivedAt, value: order.payment_received_at },
     {
@@ -212,11 +436,41 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     .sort((a, b) => Date.parse(a.value!) - Date.parse(b.value!));
 
   function openAction(next: StoreOrderAction) {
-    if (error || reloadRequired || submitting.current) return;
-    if (pendingIntent.current) {
-      if (pendingIntent.current.action === next) setAction(next);
+    if (
+      !isMounted() ||
+      historical ||
+      currentOrder.id.toLowerCase() !== orderId ||
+      loading ||
+      error ||
+      reloadRequired ||
+      actionBusy ||
+      submitting.current
+    )
+      return;
+    if (pendingIntent) {
+      if (pendingIntent.orderId !== orderId || pendingIntent.action !== next) return;
+      const {
+        reason: sentReason,
+        note: sentNote,
+        reconciliation_note,
+        allocations,
+      } = pendingIntent.payload;
+      setReason(sentReason ?? "");
+      setNote(sentNote ?? reconciliation_note ?? "");
+      if (next === "restock") {
+        setRestock(
+          Object.fromEntries(
+            (allocations ?? []).flatMap((row) =>
+              "allocation_id" in row ? [[row.allocation_id, String(row.quantity)]] : [],
+            ),
+          ),
+        );
+      }
+      setAction(next);
+      setActionError(next === "approve" ? c.approvalUncertain : c.mutationUncertain);
       return;
     }
+    if (!actions.includes(next) || (next === "approve" && !farmDraft?.sources)) return;
     setAction(next);
     setReconciliationDialog(groupedReconciliation && next === "record-payment");
     setReconciliationChoice(null);
@@ -232,162 +486,203 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
       Object.fromEntries(
         (currentOrder.allocations ?? [])
           .filter((row) => row.restock_remaining_quantity > 0)
-          .map((row) => [row.id, 0]),
+          .map((row) => [row.id, "0"]),
       ),
     );
   }
 
-  function actionPayload() {
+  function actionPayload(): StoreOrderActionPayload | null {
     if (!action) return null;
-    if (action === "approve") return { allocations: draft };
+    if (action === "approve") return farmDraft?.sources ? { sources: farmDraft.sources } : null;
     if (action === "cancel")
       return currentOrder.workflow_version === 2 && !currentOrder.csa
-        ? { reason: reason.trim() }
-        : { reason: reason.trim(), reconciliation_note: note.trim() };
-    if (action === "close-refund-request") return { reason: reason.trim() };
-    if (action === "record-payment") return { note: note.trim() };
-    if (action === "refund") return { amount_vnd: currentOrder.total_vnd, note: note.trim() };
+        ? { reason: trimActionText(reason) }
+        : { reason: trimActionText(reason), reconciliation_note: trimActionText(note) };
+    if (action === "close-refund-request") return { reason: trimActionText(reason) };
+    if (action === "record-payment") return { note: trimActionText(note) };
+    if (action === "refund")
+      return { amount_vnd: currentOrder.total_vnd, note: trimActionText(note) };
     if (action === "restock")
-      return {
-        allocations: Object.entries(restock)
-          .filter(([, quantity]) => quantity > 0)
-          .map(([allocation_id, quantity]) => ({ allocation_id, quantity })),
-      };
+      return restockAllocationPayload ? { allocations: restockAllocationPayload } : null;
     return {};
   }
 
-  function restockIsValid() {
-    const limits = new Map(
-      (currentOrder.allocations ?? []).map((row) => [
-        row.id,
-        row.restock_eligible ? row.restock_remaining_quantity : 0,
-      ]),
-    );
-    const entries = Object.entries(restock);
-    return (
-      entries.some(([, quantity]) => quantity > 0) &&
-      entries.every(
-        ([id, quantity]) =>
-          Number.isSafeInteger(quantity) && quantity >= 0 && quantity <= (limits.get(id) ?? -1),
-      )
-    );
+  function parseRestockAllocations(): StoreRestockAllocation[] | null {
+    const allocations: StoreRestockAllocation[] = [];
+    // The draft is keyed by allocation ID, so one ID cannot produce multiple rows.
+    for (const [allocation_id, raw] of Object.entries(restock)) {
+      const row = allocationsById.get(allocation_id);
+      if (!row) return null;
+      const quantity = parseRestockQuantity(raw, restockMaximum(row));
+      if (quantity === null) return null;
+      if (quantity > 0) allocations.push({ allocation_id, quantity });
+    }
+    return allocations.length ? allocations : null;
+  }
+
+  function validateActionInput() {
+    if (replaying) return undefined;
+    if (reasonError || noteError) return reasonError ?? noteError;
+    if (action === "approve" && !farmDraft?.sources) return c.approveSourcesInvalid;
+    if (action === "restock" && !restockAllocationPayload) return c.restockInvalid;
   }
 
   function actionDisabled() {
     if (!action || loading || error || reloadRequired || (!actions.includes(action) && !replaying))
       return true;
-    if (unresolved && pendingIntent.current?.action === action) return false;
-    if (reconciliationDialog && !reconciliationChoice) return true;
-    if (action === "approve") return !allocationsValid;
-    if (action === "cancel" || action === "close-refund-request") return !reason.trim();
-    if (action === "refund") return !note.trim() || !confirmed;
-    if (action === "deliver") return !confirmed;
-    if (action === "restock") return !restockIsValid();
-    return false;
+    if (replaying) return false;
+    return Boolean(
+      (reconciliationDialog && !reconciliationChoice) ||
+      ((action === "refund" || action === "deliver") && !confirmed) ||
+      validateActionInput(),
+    );
   }
 
   function discardPendingReads() {
     // Mutation results (including conflicts) supersede every older GET response.
     requestId.current += 1;
+    readController.current?.abort();
     setLoading(false);
   }
 
   async function submitAction() {
     if (
+      !isMounted() ||
+      historical ||
       !action ||
+      currentOrder.id.toLowerCase() !== orderId ||
+      actionBusy ||
       submitting.current ||
       loading ||
       error ||
       reloadRequired ||
-      (!actions.includes(action) && !replaying)
+      (pendingIntent ? !replaying : !actions.includes(action))
     )
       return;
     const expiredNow =
       storeOrderHasDeadline(currentOrder) &&
       storeDeadlineRemainingMs(currentOrder, receivedAt.current, performance.now()) === 0;
     if (
-      !pendingIntent.current &&
+      !pendingIntent &&
       !getStoreOrderActions(currentOrder, { expired: expiredNow }).includes(action)
     ) {
       expiryReloaded.current = currentOrder.expires_at;
       void load();
       return;
     }
-    if ((action === "cancel" || action === "close-refund-request") && !reason.trim()) {
-      setActionError(action === "cancel" ? c.cancelReasonRequired : c.closeRefundReasonRequired);
-      return;
-    }
-    if (action === "refund" && !note.trim()) {
-      setActionError(c.refundNoteRequired);
-      return;
-    }
-    if (!unresolved && action === "approve" && !allocationsValid) {
-      setActionError(c.approveAllocationInvalid);
-      return;
-    }
-    if (!unresolved && action === "restock" && !restockIsValid()) {
-      setActionError(c.restockInvalid);
+    const inputError = validateActionInput();
+    if (inputError) {
+      setActionError(inputError);
       return;
     }
     if (actionDisabled()) return;
-    const payload = actionPayload();
+    const payload = pendingIntent?.payload ?? actionPayload();
     if (!payload) return;
     // Compare the ledger captured when opening this intent, not a background refresh.
     // Reopening after a confirmed restock creates a new key; retries retain their key.
-    const restockRevision =
-      action === "restock"
-        ? Object.fromEntries(
-            (currentOrder.allocations ?? [])
-              .filter((row) => (restock[row.id] ?? 0) > 0)
-              .map((row) => [row.id, restockLedgerAtOpen.current[row.id]]),
-          )
-        : undefined;
-    const key =
-      pendingIntent.current?.payload.idempotency_key ??
-      idempotencyKeys.current.forPayload(action, payload, restockRevision);
-    const intent = pendingIntent.current ?? {
+    const newRestockAllocations = pendingIntent ? null : restockAllocationPayload;
+    const restockRevision = newRestockAllocations
+      ? Object.fromEntries(
+          newRestockAllocations.map(({ allocation_id }) => [
+            allocation_id,
+            restockLedgerAtOpen.current[allocation_id],
+          ]),
+        )
+      : undefined;
+    const intent = pendingIntent ?? {
+      orderId,
       action,
-      payload: { idempotency_key: key, ...payload },
+      payload: {
+        idempotency_key: idempotencyKeys.current.forPayload(action, payload, restockRevision),
+        ...payload,
+      },
+      confirmation: {
+        action,
+        refundRequestedAt:
+          action === "close-refund-request" && currentOrder.workflow_version === 1
+            ? currentOrder.refund_requested_at
+            : undefined,
+        minimumRestocked: newRestockAllocations
+          ? Object.fromEntries(
+              newRestockAllocations.map(({ allocation_id, quantity }) => [
+                allocation_id,
+                allocationsById.get(allocation_id)!.restocked_quantity + quantity,
+              ]),
+            )
+          : undefined,
+      },
     };
-    pendingIntent.current = intent;
+    const attempt = controls.begin(intent);
+    if (!attempt) return;
     discardPendingReads();
     submitting.current = true;
-    setActionBusy(true);
     setActionError("");
     setActionConflict(false);
     try {
-      const updated = await mutateStoreOrder(currentOrder.id, intent.action, intent.payload);
-      if (!mounted.current) return;
+      const sent = attempt.payload;
+      const updated = await mutateStoreOrder(sent.orderId, sent.action, sent.payload, {
+        shouldRedirectToLogin: isMounted,
+      });
+      const usable = updated && reflectsStoreOrderAction(updated, sent.confirmation);
+      if (
+        !isSessionCurrent() ||
+        !controls.settle(
+          attempt,
+          usable && isMounted()
+            ? null
+            : {
+                phase: "confirmed",
+                receipt: sent.confirmation,
+              },
+        ) ||
+        !isMounted()
+      )
+        return;
       discardPendingReads();
-      receivedAt.current = performance.now();
-      setOrder(updated);
-      setError("");
-      setReloadRequired(false);
       idempotencyKeys.current.clear(action);
-      pendingIntent.current = null;
-      setUnresolved(false);
       setAction(null);
-      toast(latestCopy.current.c.mutationSuccess);
+      setError("");
+      if (updated && usable) {
+        applyOrder(updated);
+        setReloadConflictGate(false);
+        toast(latestCopy.current.c.mutationSuccess);
+      }
     } catch (caught) {
-      if (!mounted.current) return;
-      discardPendingReads();
-      const status = (caught as { status?: number }).status;
+      const { message, status } = (caught ?? {}) as { message?: string; status?: number };
+      const denied =
+        (message !== "csrf_rejected" && isProtectedDataError(caught)) || status === 404;
       const unknownResult =
-        status === undefined ||
-        status >= 500 ||
-        (caught instanceof Error && caught.message === "invalid_response");
-      setUnresolved(unknownResult);
-      if (!unknownResult) pendingIntent.current = null;
-      if (status === 409) {
-        setReloadRequired(true);
+        !denied && (isUncertainMutationError(caught) || (replaying && message === "csrf_rejected"));
+      if (
+        !isSessionCurrent() ||
+        !controls.settle(
+          attempt,
+          denied ? { phase: "retired" } : unknownResult ? { ...attempt, phase: "unknown" } : null,
+        ) ||
+        !isMounted()
+      )
+        return;
+      discardPendingReads();
+      if (denied) {
+        retireOrder(true);
+        setError(requestErrorMessage(caught, latestCopy.current.t));
+        return;
+      }
+      if (!unknownResult && status === 409) {
+        setReloadConflictGate(true);
         setActionConflict(true);
-        setActionError(latestCopy.current.c.conflict);
+        setActionError(storeOrderConflictMessage(message, latestCopy.current.locale));
       } else {
-        setActionError(requestErrorMessage(caught, latestCopy.current.t));
+        const { t: dictionary, c: copy } = latestCopy.current;
+        const feedback =
+          status === 408
+            ? dictionary.common.requestTimeout
+            : requestErrorMessage(caught, dictionary);
+        const uncertain = action === "approve" ? copy.approvalUncertain : copy.mutationUncertain;
+        setActionError(unknownResult ? `${feedback} ${uncertain}` : feedback);
       }
     } finally {
       submitting.current = false;
-      if (mounted.current) setActionBusy(false);
     }
   }
 
@@ -399,189 +694,198 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
     await load();
   }
 
+  const feedback = confirmedAction
+    ? c.mutationConfirmedReload
+    : intentRetired
+      ? c.mutationUncertain
+      : error
+        ? `${error} ${c.staleSnapshot}`
+        : c.conflictReloadRequired;
+  const hasPendingWork =
+    order.status === "cancelled" &&
+    (order.refund_status === "pending" || actions.includes("restock"));
+
   return (
-    <div className="store-order-detail-page">
-      <DetailPageHeading
-        bottomSpacing={0}
-        backHref="/store-orders"
-        backLabel={c.back}
-        title={order.reference_code}
-      />
-      <header className="store-order-detail-header">
-        <div className="store-order-state-line">
-          <StoreOrderStatusBadge order={order} />
-          {order.expires_at && storeOrderHasDeadline(order) ? (
-            <div className="store-order-deadline">
-              <div>
-                <span>{deadlineLabel}</span>
-                <span>{formatAdminDateTime(order.expires_at)}</span>
-              </div>
-              <strong className="store-order-countdown">
-                {remainingMinutes
-                  ? c.remainingMinutes.replace("{count}", String(remainingMinutes))
-                  : c.expired}
-              </strong>
-            </div>
-          ) : null}
-        </div>
-        <Button
-          variant="outline"
-          disabled={loading || actionBusy}
-          onClick={() => void load()}
-          type="button"
-        >
-          {c.refresh}
-        </Button>
-      </header>
-      {error || reloadRequired ? (
-        <Alert color="red" role="alert">
-          <Group gap="sm" justify="space-between">
-            <span>{error ? `${error} ${c.staleSnapshot}` : c.conflictReloadRequired}</span>
+    <Stack gap="md" miw={0} ref={layoutRef}>
+      <Group component="header" justify="space-between" align="flex-start" gap="md">
+        <Stack gap="xs" miw={0} style={{ overflowWrap: "anywhere" }}>
+          <Title order={1}>{order.reference_code}</Title>
+          <Group gap="sm">
+            <StoreOrderStatusBadge order={order} />
+            {historical && <Text size="sm">{c.historicalOrder}</Text>}
+            <Text size="sm" c="dimmed">
+              {recordedAtLabel}{" "}
+              <time dateTime={order.created_at}>{formatAdminDateTime(order.created_at)}</time>
+            </Text>
+          </Group>
+          {order.expires_at && storeOrderHasDeadline(order) && (
+            <Group gap="sm">
+              <Text size="sm" c="dimmed">
+                {deadlineLabel}{" "}
+                <time dateTime={order.expires_at}>{formatAdminDateTime(order.expires_at)}</time>
+              </Text>
+              <Text size="sm" fw={600}>
+                {storeOrderCountdown(remaining, locale)}
+              </Text>
+            </Group>
+          )}
+        </Stack>
+        <Group gap="sm" align="center">
+          <Tooltip label={c.refresh}>
+            <ActionIcon
+              ref={refreshControl}
+              variant="default"
+              type="button"
+              aria-label={c.refresh}
+              aria-busy={loading}
+              loading={loading}
+              disabled={actionBusy}
+              onClick={refreshOrder}
+            >
+              <IconRefresh size={17} aria-hidden />
+            </ActionIcon>
+          </Tooltip>
+          {recoveryAction && (
             <Button
-              variant="outline"
-              disabled={loading || actionBusy}
-              onClick={() => void load()}
+              variant="default"
+              disabled={actionLocked}
+              onClick={() => openAction(recoveryAction)}
               type="button"
             >
-              {t.common.retry}
+              {c.retryRequest}
             </Button>
-          </Group>
+          )}
+          {visibleActions.length > 0 && (
+            <Group role="group" aria-label={c.actions} gap="sm">
+              {visibleActions.map((item) => (
+                <Button
+                  variant={
+                    item === primaryAction ? "filled" : item === "cancel" ? "outline" : "default"
+                  }
+                  color={item === "cancel" || item === "refund" ? "danger" : undefined}
+                  disabled={
+                    actionLocked ||
+                    (pendingIntent !== null && pendingIntent.action !== item) ||
+                    (!unresolved && item === "approve" && !farmDraft?.sources)
+                  }
+                  key={item}
+                  onClick={() => openAction(item)}
+                  type="button"
+                >
+                  {item === "approve" && pendingIntent?.action === "approve"
+                    ? c.retryRequest
+                    : storeOrderActionLabel(order, item, locale)}
+                </Button>
+              ))}
+            </Group>
+          )}
+        </Group>
+      </Group>
+      {!action &&
+        (error || (reloadRequired && !loading)) &&
+        (loading ? (
+          <Alert color="danger" role="alert">
+            {feedback}
+          </Alert>
+        ) : (
+          <RecoveryAlert message={feedback} retryLabel={t.common.retry} onRetry={refreshOrder} />
+        ))}
+      {order.cancellation_reason && (
+        <Alert color="neutral" role="note" title={c.cancellationReason}>
+          <Text size="sm" style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+            {storeCancellationReason(order.cancellation_reason, locale)}
+          </Text>
         </Alert>
-      ) : null}
-      {order.cancellation_reason ? (
-        <p className="store-order-cancellation-reason">
-          <strong>{c.cancellationReason}:</strong>{" "}
-          {storeCancellationReason(order.cancellation_reason, locale)}
-        </p>
-      ) : null}
-      {order.status === "cancelled" &&
-      (order.refund_status === "pending" || actions.includes("restock")) ? (
-        <ul className="store-order-pending-work">
-          {order.refund_status === "pending" ? (
-            <li>{storeRefundStatusLabel(order.refund_status, locale, order)}</li>
-          ) : null}
-          {actions.includes("restock") ? <li>{c.restockPending}</li> : null}
-        </ul>
-      ) : null}
+      )}
+      {hasPendingWork && (
+        <Alert color="warning" role="note">
+          <List size="sm">
+            {order.refund_status === "pending" && (
+              <List.Item>{storeRefundStatusLabel(order.refund_status, locale, order)}</List.Item>
+            )}
+            {actions.includes("restock") && <List.Item>{c.restockPending}</List.Item>}
+          </List>
+        </Alert>
+      )}
+      {unresolved && !action && (
+        <Alert color="warning">
+          {approvalInFlight ? c.approvalUncertain : c.mutationUncertain}
+        </Alert>
+      )}
       <CSAOrderPanel
         order={order}
-        disabled={loading || Boolean(error) || reloadRequired || actionBusy || unresolved}
-        onReload={() => void load()}
+        disabled={fieldsLocked}
+        onReload={() => {
+          // The reopen result supersedes any GET started before it completed.
+          void load();
+        }}
+        onAccessDenied={(caught) => {
+          requestId.current += 1;
+          readController.current?.abort();
+          retireOrder(true);
+          setLoading(false);
+          setError(requestErrorMessage(caught, t));
+        }}
       />
-      <div className="store-order-workspace">
-        <div className="store-order-main">
-          {order.status === "pending_review" && order.csa?.selection.state !== "reselecting" ? (
-            <StoreOrderAllocationEditor
-              order={order}
-              value={draft}
-              onChange={setDraft}
-              disabled={loading || Boolean(error) || reloadRequired || actionBusy || unresolved}
-            />
-          ) : (
-            <StoreOrderProducts order={order} />
-          )}
-          <Section title={c.recipientTitle}>
-            <StoreRecipientSummary order={order} />
-          </Section>
-          <Section title={c.timelineTitle} className="store-order-history">
-            <dl className="detail-list">
-              {timeline.map((event) => (
-                <TimelineRow key={event.label} label={event.label} value={event.value} />
-              ))}
-              {order.reconciliation_note ? (
-                <div>
-                  <dt>{c.reconciliationNote}</dt>
-                  <dd>{order.reconciliation_note}</dd>
-                </div>
-              ) : null}
-              {order.refund_request_closed_reason ? (
-                <div>
-                  <dt>{c.refundRequestClosedReason}</dt>
-                  <dd>{order.refund_request_closed_reason}</dd>
-                </div>
-              ) : null}
-              {order.refund_note ? (
-                <div>
-                  <dt>{c.refundNote}</dt>
-                  <dd>{order.refund_note}</dd>
-                </div>
-              ) : null}
-            </dl>
-          </Section>
-        </div>
-        <aside className="store-order-sidebar" aria-label={c.paymentSummary}>
-          <Section title={c.paymentSummary} className="store-order-payment">
-            <StoreOrderTotals order={order} />
-            {order.payment ? (
-              <div className="store-order-bank-disclosure">
-                <h3>{c.transferTitle}</h3>
-                <div className="store-order-bank-details">
-                  <dl className="detail-list">
-                    <div>
-                      <dt>{c.bank}</dt>
-                      <dd>
-                        {order.payment.bank_name} ({order.payment.bank_bin})
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{c.account}</dt>
-                      <dd>{order.payment.account_number}</dd>
-                    </div>
-                    <div>
-                      <dt>{c.accountName}</dt>
-                      <dd>{order.payment.account_name}</dd>
-                    </div>
-                    <div>
-                      <dt>{c.transferContent}</dt>
-                      <dd>{order.payment.transfer_content}</dd>
-                    </div>
-                  </dl>
-                </div>
-              </div>
-            ) : null}
-          </Section>
-          {recoveryAction ? (
-            <div className="detail-actions">
-              <Button
-                variant="outline"
-                disabled={actionBusy || loading || Boolean(error) || reloadRequired}
-                onClick={() => openAction(recoveryAction)}
-                type="button"
-              >
-                {c.retryRequest}
-              </Button>
-            </div>
-          ) : null}
-          {visibleActions.length ? (
-            <Section title={c.actions} className="store-order-actions">
-              {order.status === "pending_review" && !allocationsValid ? (
-                <p className="allocation-invalid store-order-action-hint">{c.allocationCheck}</p>
-              ) : null}
-              <div className="detail-actions">
-                {visibleActions.map((item) => (
-                  <Button
-                    variant={item === primaryAction ? "primary" : "outline"}
-                    disabled={
-                      actionBusy ||
-                      loading ||
-                      Boolean(error) ||
-                      reloadRequired ||
-                      (unresolved && pendingIntent.current?.action !== item) ||
-                      (!unresolved && item === "approve" && !allocationsValid)
-                    }
-                    className={item === "cancel" ? "store-order-cancel" : undefined}
-                    key={item}
-                    onClick={() => openAction(item)}
-                    type="button"
-                  >
-                    {storeOrderActionLabel(order, item, locale)}
-                  </Button>
+      <Grid
+        columns={12}
+        gutter="md"
+        align="start"
+        className={styles.layout}
+        classNames={
+          contentWidth >= 880 ? { inner: styles.desktopGrid, col: styles.desktopColumn } : undefined
+        }
+      >
+        <Grid.Col className={styles.products} miw={0}>
+          <StoreOrderProducts
+            order={order}
+            farms={
+              farmDraft
+                ? {
+                    selections: farmDraft.selections,
+                    onChange: (lineId, farmId) => {
+                      if (fieldsLocked) return;
+                      setDraft((previous) => new Map(previous).set(lineId, farmId));
+                    },
+                    disabled: fieldsLocked,
+                  }
+                : undefined
+            }
+          />
+        </Grid.Col>
+        <Grid.Col className={styles.information} miw={0}>
+          <StoreOrderSummary order={order} />
+        </Grid.Col>
+        <Grid.Col className={styles.history} miw={0}>
+          <Paper component="section" aria-labelledby={historyHeading} p="md">
+            <Stack gap="md">
+              <Title id={historyHeading} order={2} size="md" fw={600}>
+                {c.timelineTitle}
+              </Title>
+              <RecordDetailFields>
+                {timeline.map((event) => (
+                  <RecordDetailField key={event.label} label={event.label}>
+                    <time dateTime={event.value!}>{formatAdminDateTime(event.value!)}</time>
+                  </RecordDetailField>
                 ))}
-              </div>
-            </Section>
-          ) : null}
-        </aside>
-      </div>
+                {[
+                  [c.reconciliationNote, order.reconciliation_note],
+                  [c.refundRequestClosedReason, order.refund_request_closed_reason],
+                  [c.refundNote, order.refund_note],
+                ].map(([label, value]) =>
+                  value ? (
+                    <RecordDetailField key={label} label={label!}>
+                      <Text component="span" style={{ whiteSpace: "pre-wrap" }}>
+                        {value}
+                      </Text>
+                    </RecordDetailField>
+                  ) : null,
+                )}
+              </RecordDetailFields>
+            </Stack>
+          </Paper>
+        </Grid.Col>
+      </Grid>
 
       {action ? (
         <ConfirmationDialog
@@ -590,7 +894,7 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           cancelLabel={c.cancelButton}
           confirmDisabled={actionDisabled()}
           confirmLabel={
-            recoveryAction === action
+            recoveryDialog
               ? c.retryRequest
               : reconciliationDialog
                 ? c.confirmReconciliation
@@ -598,210 +902,210 @@ function StoreOrderDetailContent({ orderId }: { orderId: string }) {
           }
           danger={action === "cancel" || action === "refund"}
           error={actionError}
+          fallbackFocusRef={refreshControl}
           alternateLabel={actionConflict ? c.reloadAfterConflict : undefined}
           onAlternate={actionConflict ? () => void reloadConflict() : undefined}
           onCancel={() => !actionBusy && setAction(null)}
           onConfirm={() => void submitAction()}
           title={
-            recoveryAction === action
-              ? c.retryRequest
-              : reconciliationDialog
-                ? c.reconcile
-                : storeOrderActionTitle(order, action, locale)
+            action === "approve" && actionBusy
+              ? c.approvalSubmitting
+              : recoveryDialog
+                ? c.retryRequest
+                : reconciliationDialog
+                  ? c.reconcile
+                  : storeOrderActionTitle(order, action, locale)
           }
         >
-          {loading || error ? (
-            <DataState
-              kind={loading ? "loading" : "error"}
-              title={loading ? c.detailLoading : error}
-              action={
-                !loading && error
-                  ? { label: t.common.retry, onClick: () => void load() }
-                  : undefined
-              }
-            />
+          {loading ? (
+            <Text size="sm" c="dimmed" role="status">
+              {c.detailLoading}
+            </Text>
+          ) : error ? (
+            <RecoveryAlert message={error} retryLabel={t.common.retry} onRetry={refreshOrder} />
           ) : null}
-          <dl className="detail-list store-order-confirm-summary">
-            <div>
-              <dt>{c.reference}</dt>
-              <dd>{order.reference_code}</dd>
-            </div>
+          <RecordDetailFields>
+            <RecordDetailField label={c.reference}>{order.reference_code}</RecordDetailField>
             {action === "restock" || action === "deliver" ? (
-              <div>
-                <dt>{c.quantity}</dt>
-                <dd>
-                  {action === "restock"
-                    ? Object.values(restock)
-                        .filter((quantity) => Number.isSafeInteger(quantity) && quantity > 0)
-                        .reduce((total, quantity) => total + quantity, 0)
-                    : order.lines.reduce((total, line) => total + line.quantity, 0)}
-                </dd>
-              </div>
+              <RecordDetailField label={c.quantity}>
+                {String(
+                  action === "restock"
+                    ? Object.values(restock).reduce(
+                        (total, raw) =>
+                          total + (parseRestockQuantity(raw, MAX_STORE_QUANTITY) ?? 0),
+                        0,
+                      )
+                    : order.lines.reduce((total, line) => total + line.quantity, 0),
+                )}
+              </RecordDetailField>
             ) : (
-              <div>
-                <dt>{action === "refund" ? c.refundAmount : c.total}</dt>
-                <dd>{formatStoreMoney(order.total_vnd, locale)}</dd>
-              </div>
+              <RecordDetailField label={action === "refund" ? c.refundAmount : c.total}>
+                {formatStoreMoney(order.total_vnd, locale)}
+              </RecordDetailField>
             )}
-          </dl>
-          {reconciliationDialog ? (
-            <FormField label={c.reconciliationDecision}>
-              <FormSelect
-                aria-label={c.reconciliationDecision}
-                disabled={actionBusy || unresolved || reloadRequired}
-                value={reconciliationChoice ?? ""}
-                onChange={(choice) => {
-                  if (actionBusy || unresolved || reloadRequired) return;
-                  if (choice === "record-payment" || choice === "close-refund-request") {
-                    setReconciliationChoice(choice);
-                    setAction(choice);
-                  } else {
-                    setReconciliationChoice(null);
-                    setAction("record-payment");
+          </RecordDetailFields>
+          {reconciliationDialog && (
+            <FormSelect
+              label={c.reconciliationDecision}
+              disabled={fieldsLocked}
+              value={reconciliationChoice ?? ""}
+              onChange={(choice) => {
+                if (fieldsLocked) return;
+                if (choice === "record-payment" || choice === "close-refund-request") {
+                  setReconciliationChoice(choice);
+                  setAction(choice);
+                } else {
+                  setReconciliationChoice(null);
+                  setAction("record-payment");
+                }
+                setActionError("");
+              }}
+              data={[
+                { value: "", label: c.reconciliationUnknown },
+                { value: "record-payment", label: c.paymentReceived },
+                { value: "close-refund-request", label: c.paymentNotReceived },
+              ]}
+            />
+          )}
+          {action === "approve" && !approvalInFlight && !farmDraft?.sources && (
+            <Text size="sm">{c.approveSourcesInvalid}</Text>
+          )}
+          {reasonRequired && (
+            <Textarea
+              label={action === "cancel" ? c.cancelReason : c.closeRefundReason}
+              required
+              withAsterisk={false}
+              disabled={fieldsLocked}
+              error={replaying ? undefined : reasonError}
+              value={reason}
+              onChange={(event) => {
+                setReason(event.currentTarget.value);
+                setActionError("");
+              }}
+            />
+          )}
+          {action === "refund" && <Text size="sm">{c.refundHint}</Text>}
+          {showNote && (
+            <Textarea
+              label={action === "refund" ? c.refundNote : c.note}
+              required={action === "refund"}
+              withAsterisk={false}
+              disabled={fieldsLocked}
+              error={replaying ? undefined : noteError}
+              value={note}
+              onChange={(event) => {
+                setNote(event.currentTarget.value);
+                setActionError("");
+              }}
+            />
+          )}
+          {(action === "refund" || action === "deliver") && (
+            <Checkbox
+              label={action === "refund" ? c.refundOutside : c.deliveredConfirm}
+              checked={confirmed}
+              disabled={fieldsLocked}
+              onChange={(event) => setConfirmed(event.currentTarget.checked)}
+            />
+          )}
+          {restockRows.map((row) => {
+            const line = restockLines.get(row.line_id);
+            const product = line?.name ?? row.product_id;
+            const sku = line?.sku ?? row.product_id;
+            const label = c.restockQuantity
+              .replace("{product}", product)
+              .replace("{sku}", sku)
+              .replace("{farm}", row.farm_name)
+              .replace("{batch}", row.batch_id);
+            const max = restockMaximum(row);
+            const raw = restock[row.id] ?? "0";
+            const invalidQuantity = parseRestockQuantity(raw, max) === null;
+            const updateQuantity = (quantity: string) => {
+              setRestock((current) => ({ ...current, [row.id]: quantity }));
+              setActionError("");
+            };
+            return (
+              <Stack gap="xs" key={row.id} miw={0} style={{ overflowWrap: "anywhere" }}>
+                {restockProductHeaders.get(row.line_id) === row.id && (
+                  <Text fw={600}>{product}</Text>
+                )}
+                <Text size="sm" c="dimmed">
+                  {sku}
+                  {line ? ` · ${line.unit_size} ${line.unit_label}` : ""}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {row.farm_name} · {formatAdminDate(row.start_date)} –{" "}
+                  {formatAdminDate(row.end_date)}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {c.restockBatch.replace("{batch}", row.batch_id)}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {c.restockAllocation
+                    .replace("{allocated}", String(row.quantity))
+                    .replace("{restocked}", String(row.restocked_quantity))}
+                  {" · "}
+                  {row.restock_eligible && row.restock_remaining_quantity > 0
+                    ? c.restockableQuantity.replace(
+                        "{count}",
+                        String(row.restock_remaining_quantity),
+                      )
+                    : row.restock_remaining_quantity === 0
+                      ? c.fullyRestocked
+                      : c.restockUnavailable}
+                </Text>
+                {!row.restock_eligible && (
+                  <Text size="sm" c="danger">
+                    {storeRestockUnavailableReason(row.restock_unavailable_reason, locale)}
+                  </Text>
+                )}
+                <TextInput
+                  label={label}
+                  type="text"
+                  inputMode="numeric"
+                  disabled={fieldsLocked}
+                  error={
+                    !replaying && invalidQuantity
+                      ? c.restockQuantityRange.replace("{max}", String(max))
+                      : undefined
                   }
-                  setActionError("");
-                }}
-                data={[
-                  { value: "", label: c.reconciliationUnknown },
-                  { value: "record-payment", label: c.paymentReceived },
-                  { value: "close-refund-request", label: c.paymentNotReceived },
-                ]}
-              />
-            </FormField>
-          ) : null}
-          {action === "approve" ? <p>{c.approveAllocationInvalid}</p> : null}
-          {action === "cancel" || action === "close-refund-request" ? (
-            <>
-              <FormField label={action === "cancel" ? c.cancelReason : c.closeRefundReason}>
-                <FormTextarea
-                  aria-label={action === "cancel" ? c.cancelReason : c.closeRefundReason}
-                  disabled={actionBusy || unresolved || reloadRequired}
-                  maxLength={1000}
-                  value={reason}
+                  value={storeQuantityDisplayValue(raw)}
+                  onInput={(event) =>
+                    updateQuantity(storeQuantityInputValue(event.currentTarget, event.nativeEvent))
+                  }
                   onChange={(event) => {
-                    setReason(event.target.value);
-                    setActionError("");
+                    if (event.nativeEvent.type !== "input") {
+                      updateQuantity(
+                        storeQuantityInputValue(event.currentTarget, event.nativeEvent),
+                      );
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      raw &&
+                      !event.currentTarget.value &&
+                      !event.nativeEvent.isComposing &&
+                      (event.key === "Backspace" || event.key === "Delete")
+                    ) {
+                      updateQuantity("");
+                    }
+                  }}
+                  onPaste={(event) => {
+                    const replacement = storeQuantityPasteReplacement(
+                      event.currentTarget,
+                      event.clipboardData.getData("text/plain"),
+                      raw,
+                    );
+                    if (replacement !== null) {
+                      event.preventDefault();
+                      updateQuantity(replacement);
+                    }
                   }}
                 />
-              </FormField>
-              {action === "cancel" && (currentOrder.workflow_version !== 2 || currentOrder.csa) ? (
-                <FormField label={c.note}>
-                  <FormTextarea
-                    aria-label={c.note}
-                    disabled={actionBusy || unresolved || reloadRequired}
-                    maxLength={2000}
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                  />
-                </FormField>
-              ) : null}
-            </>
-          ) : null}
-          {action === "record-payment" && (!reconciliationDialog || reconciliationChoice) ? (
-            <FormField label={c.note}>
-              <FormTextarea
-                aria-label={c.note}
-                disabled={actionBusy || unresolved || reloadRequired}
-                maxLength={2000}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-              />
-            </FormField>
-          ) : null}
-          {action === "refund" ? (
-            <>
-              <p>{c.refundHint}</p>
-              <FormField label={c.refundNote}>
-                <FormTextarea
-                  aria-label={c.refundNote}
-                  disabled={actionBusy || unresolved || reloadRequired}
-                  maxLength={2000}
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                />
-              </FormField>
-              <FormCheckbox
-                label={c.refundOutside}
-                checked={confirmed}
-                disabled={actionBusy || unresolved || reloadRequired}
-                onChange={(event) => setConfirmed(event.target.checked)}
-              />
-            </>
-          ) : null}
-          {action === "deliver" ? (
-            <FormCheckbox
-              label={c.deliveredConfirm}
-              checked={confirmed}
-              disabled={actionBusy || unresolved || reloadRequired}
-              onChange={(event) => setConfirmed(event.target.checked)}
-            />
-          ) : null}
-          {action === "restock" ? (
-            <div className="form-grid one">
-              {(order.allocations ?? [])
-                .filter((row) => row.restock_remaining_quantity > 0)
-                .map((row) => {
-                  const line = order.lines.find((item) => item.id === row.line_id);
-                  const product = line?.name ?? row.product_id;
-                  const sku = line?.sku ?? row.product_id;
-                  const firstForLine =
-                    (order.allocations ?? []).find(
-                      (item) => item.line_id === row.line_id && item.restock_remaining_quantity > 0,
-                    )?.id === row.id;
-                  const label = c.restockQuantity
-                    .replace("{product}", product)
-                    .replace("{sku}", sku)
-                    .replace("{farm}", row.farm_name)
-                    .replace("{batch}", row.batch_id);
-                  return (
-                    <FormField label={label} className="store-restock-row" key={row.id}>
-                      {firstForLine ? <strong>{product}</strong> : null}
-                      <span className="table-secondary">
-                        {sku}
-                        {line ? ` · ${line.unit_size} ${line.unit_label}` : ""}
-                      </span>
-                      <span className="table-secondary">
-                        {row.farm_name} · {formatAdminDate(row.start_date)} –{" "}
-                        {formatAdminDate(row.end_date)}
-                      </span>
-                      <span className="table-secondary">
-                        {c.restockBatch.replace("{batch}", row.batch_id)}
-                      </span>
-                      <span className="table-secondary">
-                        {c.restockAllocation
-                          .replace("{allocated}", String(row.quantity))
-                          .replace("{restocked}", String(row.restocked_quantity))
-                          .replace("{remaining}", String(row.restock_remaining_quantity))}
-                      </span>
-                      {!row.restock_eligible ? (
-                        <span className="nfv-field-error">
-                          {storeRestockUnavailableReason(row.restock_unavailable_reason, locale)}
-                        </span>
-                      ) : null}
-                      <FormInput
-                        aria-invalid={
-                          !row.restock_eligible && (restock[row.id] ?? 0) > 0 ? "true" : undefined
-                        }
-                        aria-label={label}
-                        disabled={actionBusy || unresolved || reloadRequired}
-                        max={row.restock_eligible ? row.restock_remaining_quantity : 0}
-                        min={0}
-                        type="number"
-                        value={restock[row.id] ?? 0}
-                        onChange={(event) =>
-                          setRestock((current) => ({
-                            ...current,
-                            [row.id]: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </FormField>
-                  );
-                })}
-            </div>
-          ) : null}
+              </Stack>
+            );
+          })}
         </ConfirmationDialog>
       ) : null}
-    </div>
+    </Stack>
   );
 }

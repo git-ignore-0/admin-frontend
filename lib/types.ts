@@ -30,6 +30,32 @@ export type StoreCategory = {
   updated_at: string;
 };
 
+export type ProductStatus = "draft" | "active" | "discontinued";
+
+export type ProductLockReason = {
+  code:
+    | "stock_batch"
+    | "legacy_supply"
+    | "store_order"
+    | "csa_hold"
+    | "farm_link"
+    | "csa_history"
+    | "store_reservation";
+  id?: string;
+  farm_id?: string;
+  farm_name_vi?: string;
+  farm_name_en?: string;
+  label?: string;
+};
+
+type ProductCapability = { allowed: boolean; reasons: ProductLockReason[] };
+
+export type ProductCapabilities = {
+  edit_identity: ProductCapability;
+  edit_csa: ProductCapability;
+  delete: ProductCapability;
+};
+
 export type StoreProduct = {
   id: string;
   category_id: string;
@@ -45,13 +71,18 @@ export type StoreProduct = {
   csa_quota_cost: number;
   primary_image_id: string | null;
   primary_image: MediaAsset | null;
-  is_active: boolean;
-  is_published: boolean;
+  status: ProductStatus;
+  capabilities?: ProductCapabilities;
   translations: Array<
     StoreTranslation & { short_description: string; description_document?: TiptapDocument | null }
   >;
   created_at: string;
   updated_at: string;
+};
+
+export type StoreProductDetail = StoreProduct & {
+  capabilities: ProductCapabilities;
+  version: number;
 };
 
 export type MembershipStatus = "scheduled" | "active" | "frozen" | "ended" | "revoked";
@@ -642,12 +673,25 @@ export type TrackerFarm = {
   updated_at: string;
 };
 
+export type FarmDeleteReason =
+  | {
+      code: "supplying_product" | "legacy_supply";
+      id: string;
+      label: string;
+      name_vi: string;
+      name_en: string;
+    }
+  | { code: "store_order" | "farm_supply_request"; id: string; label: string };
+
+export type FarmDeleteCapability = { allowed: boolean; reasons: FarmDeleteReason[] };
+
 export type Farm = {
   id: string;
   name_en: string;
   name_vi: string;
   location_en: string;
   location_vi: string;
+  contact_phone: string;
   description_en: string;
   description_vi: string;
   image: MediaAsset | null;
@@ -655,10 +699,16 @@ export type Farm = {
   is_active: boolean;
   in_stock_product_count: number;
   out_of_stock_product_count: number;
+  capabilities?: { delete?: FarmDeleteCapability; can_add_supply?: boolean };
   version: number;
   created_at: string;
   updated_at: string;
 };
+
+export const farmSupplyStatuses = ["supplying", "removed"] as const;
+export type FarmSupplyStatus = (typeof farmSupplyStatuses)[number];
+export const farmSupplyFilters = [...farmSupplyStatuses, "all"] as const;
+export type FarmSupplyFilter = (typeof farmSupplyFilters)[number];
 
 export type FarmProduct = {
   id: string;
@@ -671,6 +721,11 @@ export type FarmProduct = {
   unit_label_vi: string;
   unit_label_en: string;
   is_active: boolean;
+  product_status: ProductStatus;
+  supply_status: FarmSupplyStatus;
+  removed_at: string | null;
+  version: number;
+  supply_generation: number;
   initial_quantity: number;
   net_sold_quantity: number;
   available_quantity: number;
@@ -680,11 +735,65 @@ export type FarmProduct = {
   next_expiry_date: string | null;
 };
 
-export type AvailableFarmProduct = Pick<FarmProduct, "sku" | "name_vi" | "name_en"> & {
-  id: string;
+export type AvailableFarmProduct = Pick<
+  FarmProduct,
+  "id" | "sku" | "name_vi" | "name_en" | "unit_size" | "unit_label_vi" | "unit_label_en"
+>;
+
+export type LinkableFarmProduct = AvailableFarmProduct &
+  (
+    | { link_state: "unlinked"; removed_source: null }
+    | {
+        link_state: "removed";
+        removed_source: Pick<FarmProduct, "id" | "version" | "supply_generation">;
+      }
+  );
+
+export type FarmSourceBlocker = {
+  code: string;
+  context?:
+    | { orders: Array<{ id: string; reference_code: string }>; has_more: boolean }
+    | { required_units: number; remaining_units: number; shortfall_units: number }
+    | { source_id: string; version: number };
 };
 
-export type StockBatchStatus = "upcoming" | "active" | "expired" | "cancelled";
+export type FarmSourceCapabilities = {
+  can_remove: boolean;
+  can_readd: boolean;
+  can_create_batch: boolean;
+  blockers: Partial<Record<"remove" | "readd" | "create_batch", FarmSourceBlocker>>;
+};
+
+export type FarmProductDetail = FarmProduct & { capabilities: FarmSourceCapabilities };
+export const farmProductHistoryActions = [
+  "farm.product.add",
+  "farm.product.remove",
+  "farm.product.readd",
+  "farm.product.lifecycle_backfill",
+  "farm.product.update",
+  "farm.product.delete",
+] as const;
+
+export type FarmProductHistoryEntry = {
+  id: string;
+  action: (typeof farmProductHistoryActions)[number];
+  created_at: string;
+  actor: { id: string; name: string } | null;
+  context: {
+    farm_id?: string;
+    product_id?: string;
+    stock_batch_id?: string;
+    supply_generation?: number;
+    is_active?: boolean;
+    provenance?: "legacy_disabled_link";
+    classified_at?: string;
+  };
+};
+
+export const farmBatchScopes = ["current", "history", "all"] as const;
+export type FarmBatchScope = (typeof farmBatchScopes)[number];
+export const stockBatchStatuses = ["upcoming", "active", "expired", "cancelled"] as const;
+export type StockBatchStatus = (typeof stockBatchStatuses)[number];
 
 export type FarmStockBatch = {
   id: string;
@@ -697,6 +806,9 @@ export type FarmStockBatch = {
   available_quantity: number;
   status: StockBatchStatus;
   version: number;
+  source_version: number;
+  supply_generation: number;
+  is_historical: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -744,6 +856,24 @@ export type StoreSourceCandidate = {
   available_quantity: number;
 };
 
+export type StoreApprovalSource = { line_id: string; farm_id: string };
+
+export type StoreSourceFarm = {
+  farm_id: string;
+  farm_name: string;
+  available_quantity: number;
+  eligible: boolean;
+};
+
+export type StoreSourceLine = {
+  line_id: string;
+  product_id: string;
+  required_quantity: number;
+  assigned_farm_id: string | null;
+  suggested_farm_id: string | null;
+  farms: StoreSourceFarm[];
+};
+
 export type StoreOrderAllocationDraft = {
   line_id: string;
   batch_id: string;
@@ -776,6 +906,10 @@ export type StoreOrderCouponSnapshot = {
 };
 
 export type StoreOrder = {
+  creation?: {
+    origin: "admin" | "admin_historical";
+    actor_id: string | null;
+  };
   csa?: {
     round: import("@/lib/csa-rounds").CSARound;
     selection: import("@/lib/csa-rounds").CSASelection;
@@ -858,6 +992,7 @@ export type StoreOrder = {
   allocation_suggestion?: StoreOrderAllocationDraft[];
   source_inventory?: {
     refresh_required_before_approve: boolean;
+    lines: StoreSourceLine[];
     product_reservations: Array<{
       product_id: string;
       reserved_quantity: number;

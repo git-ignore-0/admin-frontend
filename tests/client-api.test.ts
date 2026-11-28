@@ -298,11 +298,29 @@ it("preserves RequestInit and header semantics and gives security headers preced
   expect(new Headers(upload.headers).has("content-type")).toBe(false);
 });
 
+it("accepts an independent receipt through an explicit envelope opt-in", async () => {
+  const envelope = { meta: { action_receipt: { action: "create_product" } } };
+  mockFetch().mockResolvedValueOnce(Response.json(envelope));
+  await expect(
+    apiEnvelope("admin/store-products", undefined, { allowMissingData: true }),
+  ).resolves.toEqual(envelope);
+});
+
+it.each(["", "<html>login</html>"])("rejects non-PDF bodies with PDF MIME type", async (body) => {
+  mockFetch().mockResolvedValue(
+    new Response(body, { headers: { "Content-Type": "application/pdf" } }),
+  );
+  await expect(apiFile(pdfPath)).rejects.toMatchObject({
+    message: "csa_contract_pdf_unavailable",
+    status: 502,
+  });
+});
+
 it("retains PDF blob, filename, no-store policy, and content-type validation", async () => {
   const signal = new AbortController().signal;
   const fetcher = mockFetch()
     .mockResolvedValueOnce(
-      new Response("test pdf", {
+      new Response("%PDF-1.7\ntest pdf", {
         headers: {
           "Content-Type": "Application/PDF; charset=binary",
           "Content-Disposition": 'attachment; filename="sample.pdf"',
@@ -314,7 +332,7 @@ it("retains PDF blob, filename, no-store policy, and content-type validation", a
     );
   const file = await apiFile(pdfPath, { signal });
   expect(file.filename).toBe("sample.pdf");
-  expect(await file.blob.text()).toBe("test pdf");
+  expect(await file.blob.text()).toBe("%PDF-1.7\ntest pdf");
   expect(fetcher).toHaveBeenCalledWith(
     `/api/backend/${pdfPath}`,
     expect.objectContaining({ signal, cache: "no-store" }),
@@ -471,7 +489,7 @@ it("enforces observed 401 and session_changed responses even if the UI canceled 
     await expect(
       api("admin/users", { signal: expired.signal }, { shouldRedirectToLogin }),
     ).rejects.toThrow("session_expired");
-    expect(shouldRedirectToLogin).toHaveBeenCalledOnce();
+    expect(shouldRedirectToLogin).not.toHaveBeenCalled();
     expect(listener).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ detail: "rendered-session" }),
     );

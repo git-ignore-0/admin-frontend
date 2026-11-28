@@ -23,9 +23,25 @@ const CRUD_COLLECTION = new Set(["GET", "POST"]);
 const CRUD_DETAIL = new Set(["GET", "PATCH", "DELETE"]);
 const BACKEND_SEGMENT = /^[A-Za-z0-9-]+$/u;
 export const PROVINCE_CODE = /^[0-9]{2}$/u;
+export const MAX_ORDER_LINES = 50;
 // Django's uuid converter requires lowercase hyphenated hex in the upstream URL.
 // The converter and model UUID fields impose no version or variant constraint.
 export const UUID_PATH_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isFarmReceiptPath(path: string[]) {
+  const [scope, resource, farm, collection, item, action] = path;
+  return (
+    scope === "admin" &&
+    resource === "farms" &&
+    UUID_PATH_SEGMENT.test(farm ?? "") &&
+    ((path.length === 5 && ["products", "stock-batches"].includes(collection) && item === "bulk") ||
+      (path.length === 5 && collection === "products" && item === "bulk-remove") ||
+      (path.length === 6 &&
+        collection === "products" &&
+        UUID_PATH_SEGMENT.test(item) &&
+        action === "re-add"))
+  );
+}
 
 export function isAllowedBackendRequest(method: string, path: string[]) {
   // Next passes decoded segments. Every allowed literal and identifier uses this alphabet.
@@ -75,6 +91,14 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
         (action === "events" && normalizedMethod === "GET"))
     );
   }
+  if (resource === "farm-supply-requests") {
+    if (id === undefined) return path.length === 2 && normalizedMethod === "GET";
+    if (!UUID_PATH_SEGMENT.test(id)) return false;
+    return (
+      (path.length === 3 && normalizedMethod === "GET") ||
+      (path.length === 4 && ["approve", "reject"].includes(action) && normalizedMethod === "POST")
+    );
+  }
   if (resource === "farms") {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
     if (id === "media") {
@@ -85,12 +109,21 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     if (action === undefined) return path.length === 3 && CRUD_DETAIL.has(normalizedMethod);
     if (action === "growth-tracker")
       return path.length === 4 && new Set(["GET", "POST", "PATCH", "DELETE"]).has(normalizedMethod);
+    if (action === "farmer-link")
+      return (
+        (path.length === 4 && ["GET", "POST"].includes(normalizedMethod)) ||
+        (path.length === 5 && extra === "rotate" && normalizedMethod === "POST")
+      );
     if (action === "available-products") return path.length === 4 && normalizedMethod === "GET";
+    if (isFarmReceiptPath(path)) return normalizedMethod === "GET" || normalizedMethod === "POST";
     if (action !== "products") return false;
-    if (extra === undefined) return path.length === 4 && CRUD_COLLECTION.has(normalizedMethod);
+    if (extra === undefined) return path.length === 4 && READ.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(extra)) return false;
-    if (path.length === 5) return new Set(["PATCH", "DELETE"]).has(normalizedMethod);
-    if (path[5] !== "batches") return false;
+    if (path.length === 5) return normalizedMethod === "GET";
+    const sourceAction = path[5];
+    if (sourceAction === "history") return path.length === 6 && normalizedMethod === "GET";
+    if (sourceAction === "remove") return path.length === 6 && normalizedMethod === "POST";
+    if (sourceAction !== "batches") return false;
     if (path.length === 6) return CRUD_COLLECTION.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(path[6] ?? "")) return false;
     if (path.length === 7) return normalizedMethod === "PATCH";
@@ -98,6 +131,9 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
   }
   if (["store-categories", "store-products"].includes(resource)) {
     if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (resource === "store-products" && action === "transition") {
+      return path.length === 4 && UUID_PATH_SEGMENT.test(id) && normalizedMethod === "POST";
+    }
     if (resource === "store-products" && id === "media") {
       if (action === undefined) return path.length === 3 && normalizedMethod === "POST";
       return path.length === 4 && normalizedMethod === "DELETE" && UUID_PATH_SEGMENT.test(action);
@@ -163,7 +199,9 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
     );
   }
   if (resource === "store-orders") {
-    if (id === undefined) return path.length === 2 && normalizedMethod === "GET";
+    if (id === undefined) return path.length === 2 && CRUD_COLLECTION.has(normalizedMethod);
+    if (id === "quote" || id === "close-creation")
+      return path.length === 3 && normalizedMethod === "POST";
     if (!UUID_PATH_SEGMENT.test(id)) return false;
     if (action === undefined) return path.length === 3 && normalizedMethod === "GET";
     return (

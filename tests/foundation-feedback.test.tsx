@@ -15,6 +15,28 @@ const labels = {
 afterEach(cleanup);
 
 describe("foundation feedback contracts", () => {
+  it("replaces confirmation with the single close action in the same dialog", async () => {
+    const onCancel = vi.fn();
+    const view = render(
+      <ConfirmationDialog {...labels} danger onCancel={onCancel} onConfirm={vi.fn()}>
+        <p>Ready</p>
+      </ConfirmationDialog>,
+    );
+    const dialog = screen.getByRole("dialog", { name: labels.title });
+    within(dialog).getByRole("button", { name: labels.confirmLabel }).focus();
+    view.rerender(
+      <ConfirmationDialog title={labels.title} cancelLabel="Close" busy={false} onCancel={onCancel}>
+        <p>Blocked</p>
+      </ConfirmationDialog>,
+    );
+    expect(screen.getByRole("dialog", { name: labels.title })).toBe(dialog);
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    expect(within(dialog).getAllByRole("button")).toEqual([close]);
+    await waitFor(() => expect(close).toHaveFocus());
+    fireEvent.click(close);
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it("keeps the dialog form outside a containing page form and submits by formId", () => {
     const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
     render(

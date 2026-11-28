@@ -45,6 +45,87 @@ describe("admin backend proxy", () => {
   const membershipId = "87703641-2dce-4cac-8fc4-91e55f03e95f";
   const versionId = "77777777-7777-4777-8777-777777777777";
 
+  it.each([50, 51])("checks the BFF limit for order product selections of %i", async (count) => {
+    const path = ["admin", "store-products"];
+    const ids = Array.from(
+      { length: count },
+      (_, index) => `77777777-7777-4777-8777-${String(index).padStart(12, "0")}`,
+    );
+    const search = `?order_kind=new&product_ids=${ids.join("%2C")}`;
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    vi.stubGlobal("fetch", upstream);
+    const result = await GET(
+      pageRequest(`https://admin.example.test/api/backend/admin/store-products${search}`),
+      {
+        params: Promise.resolve({ path }),
+      },
+    );
+    if (count === 50) {
+      expect(result.status).toBe(200);
+      expect(String(upstream.mock.calls[0][0])).toBe(
+        `https://auth.example.test/api/v1/admin/store-products${search}`,
+      );
+    } else {
+      expect(result.status).toBe(404);
+      expect(upstream).not.toHaveBeenCalled();
+    }
+  });
+
+  it("binds product transition to the page session and same-origin CSRF checks", async () => {
+    const path = ["admin", "store-products", membershipId, "transition"];
+    const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+    const context = { params: Promise.resolve({ path }) };
+    const body = JSON.stringify({ expected_status: "draft", target_status: "active" });
+    const verifiedHeaders = {
+      origin: "https://admin.example.test",
+      "x-nfv-admin-request": "1",
+      "content-type": "application/json",
+      authorization: "Bearer browser-token",
+    };
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: { status: "active" } }));
+    vi.stubGlobal("fetch", upstream);
+    expect((await POST(pageRequest(url, { method: "POST", body }), context)).status).toBe(403);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect(
+      (await POST(pageRequest(url, { method: "POST", body, headers: verifiedHeaders }), context))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await POST(
+          pageRequest(url, {
+            method: "POST",
+            body,
+            headers: { ...verifiedHeaders, "x-nfv-admin-session": "obsolete-page" },
+          }),
+          context,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await POST(
+          pageRequest(`${url}?status=active`, { method: "POST", body, headers: verifiedHeaders }),
+          context,
+        )
+      ).status,
+    ).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const response = await POST(
+      pageRequest(url, { method: "POST", body, headers: verifiedHeaders }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/${path.join("/")}`,
+    );
+    expect(new Headers(upstream.mock.calls[0][1].headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+  });
+
   describe("CMS user accounts", () => {
     const userId = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const base = "https://admin.example.test/api/backend/admin/users";
@@ -439,6 +520,80 @@ describe("admin backend proxy", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it.each(["", "/quote", "/close-creation"])(
+    "protects and forwards Store order creation POST%s",
+    async (suffix) => {
+      const path = `admin/store-orders${suffix}`.split("/");
+      const url = `https://admin.example.test/api/backend/${path.join("/")}`;
+      const context = { params: Promise.resolve({ path }) };
+      const body = JSON.stringify({ kind: "new", delivery_date: "2026-11-28" });
+      const headers = {
+        origin: "https://admin.example.test",
+        "x-nfv-admin-request": "1",
+        "content-type": "application/json",
+        authorization: "Bearer browser-supplied-token",
+      };
+      const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+      vi.stubGlobal("fetch", upstream);
+      const send = (query = "", overrides: Record<string, string> = {}) =>
+        POST(
+          pageRequest(`${url}${query}`, {
+            method: "POST",
+            body,
+            headers: { ...headers, ...overrides },
+          }),
+          context,
+        );
+
+      expect((await send("", { origin: "https://other.example.test" })).status).toBe(403);
+      expect((await send("", { "x-nfv-admin-request": "" })).status).toBe(403);
+      vi.mocked(readSession).mockResolvedValueOnce(null);
+      expect((await send()).status).toBe(401);
+      expect((await send("", { "x-nfv-admin-session": "old" })).status).toBe(409);
+      for (const query of ["?page=1", "?locale=vi", `?creation_key=${versionId}`]) {
+        expect((await send(query)).status).toBe(404);
+      }
+      expect(upstream).not.toHaveBeenCalled();
+
+      expect((await send()).status).toBe(200);
+      expect(upstream).toHaveBeenCalledTimes(1);
+      const [target, request] = upstream.mock.calls[0];
+      expect(String(target)).toBe(`https://auth.example.test/api/v1/admin/store-orders${suffix}`);
+      expect(request.method).toBe("POST");
+      expect(new TextDecoder().decode(request.body)).toBe(body);
+      expect(new Headers(request.headers).get("authorization")).toBe("Bearer access-token");
+    },
+  );
+
+  it("allows only a standalone UUID for Store order creation receipt recovery", async () => {
+    const path = ["admin", "store-orders"];
+    const url = "https://admin.example.test/api/backend/admin/store-orders";
+    const context = { params: Promise.resolve({ path }) };
+    const upstream = vi.fn().mockResolvedValue(Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const send = (query: string, headers?: HeadersInit) =>
+      GET(pageRequest(`${url}${query}`, { headers }), context);
+    const query = `?creation_key=${versionId}`;
+    expect((await send(query, { "x-nfv-admin-session": "old" })).status).toBe(409);
+    for (const invalid of [
+      "?creation_key=",
+      "?creation_key=unknown",
+      `${query}&creation_key=${versionId}`,
+      `${query}&page=1`,
+      `${query}&sort=created_desc`,
+      `${query}&unexpected=1`,
+    ]) {
+      expect((await send(invalid)).status).toBe(404);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+
+    expect((await send(query)).status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0][0])).toBe(
+      `https://auth.example.test/api/v1/admin/store-orders${query}`,
+    );
+  });
+
   it("forwards close-refund-request exact body server-side and rejects method/query/segments", async () => {
     const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const path = ["admin", "store-orders", id, "close-refund-request"];
@@ -496,6 +651,63 @@ describe("admin backend proxy", () => {
     ).toBe(404);
     expect(upstream).not.toHaveBeenCalled();
   });
+
+  it.each(["sources", "allocations"] as const)(
+    "forwards Store approval %s bytes and preserves the upstream status and receipt",
+    async (shape) => {
+      const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+      const key = "77777777-7777-4777-8777-777777777777";
+      const line = "11111111-1111-4111-8111-111111111111";
+      const farmOrBatch = "22222222-2222-4222-8222-222222222222";
+      const path = ["admin", "store-orders", id, "approve"];
+      const request = (body: string) =>
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}`, {
+          method: "POST",
+          headers: {
+            origin: "https://admin.example.test",
+            "x-nfv-admin-request": "1",
+            "content-type": "application/json",
+          },
+          body,
+        });
+      const payload = JSON.stringify({
+        idempotency_key: key,
+        ...(shape === "sources"
+          ? { sources: [{ line_id: line, farm_id: farmOrBatch }] }
+          : { allocations: [{ line_id: line, batch_id: farmOrBatch, quantity: 3 }] }),
+      });
+      const receipt = { order_id: id, action: "approve", idempotency_key: key };
+      const success = { data: { id }, meta: { action_receipt: receipt } };
+      const conflict = {
+        errors: [
+          { code: "store_allocation_stale", context: { line_id: line, available_quantity: 2 } },
+        ],
+      };
+      const upstream = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json(success))
+        .mockResolvedValueOnce(Response.json(conflict, { status: 409 }));
+      vi.stubGlobal("fetch", upstream);
+      const options = { params: Promise.resolve({ path }) };
+      for (const [status, data] of [
+        [200, success],
+        [409, conflict],
+      ] as const) {
+        const response = await POST(request(payload), options);
+        expect(response.status).toBe(status);
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        expect(await response.json()).toEqual(data);
+      }
+      expect(upstream).toHaveBeenCalledTimes(2);
+      for (const [target, init] of upstream.mock.calls) {
+        expect(String(target)).toBe(
+          `https://auth.example.test/api/v1/admin/store-orders/${id}/approve`,
+        );
+        expect(init.method).toBe("POST");
+        expect(new TextDecoder().decode(init.body)).toBe(payload);
+      }
+    },
+  );
 
   it("keeps Store order authorization server-side and preserves permission denials", async () => {
     const path = ["admin", "store-orders"];
@@ -837,6 +1049,7 @@ describe("admin backend proxy", () => {
 
   it.each([
     { suffix: [], search: "?type=weekly&status=published&page=2&page_size=20" },
+    { suffix: [], search: `?creation_key=${membershipId}` },
     { suffix: [membershipId], search: "" },
     { suffix: [membershipId, "rounds"], search: "?status=draft&page=2&page_size=100" },
     {
@@ -945,6 +1158,24 @@ describe("admin backend proxy", () => {
       path: ["admin", "store-products"],
       search: `?category_id=${membershipId}&category_id=${versionId}`,
     },
+    { path: ["admin", "store-products"], search: "?status=all" },
+    { path: ["admin", "store-products"], search: "?order_kind=new&order_kind=historical" },
+    { path: ["admin", "store-products"], search: "?order_kind=all" },
+    { path: ["admin", "store-products"], search: `?product_ids=${membershipId}` },
+    { path: ["admin", "store-products"], search: "?order_kind=new&product_ids=bad" },
+    {
+      path: ["admin", "store-products"],
+      search: `?order_kind=new&product_ids=${membershipId}%2C${membershipId.toUpperCase()}`,
+    },
+    {
+      path: ["admin", "store-products"],
+      search: `?order_kind=new&product_ids=${membershipId}&product_ids=${versionId}`,
+    },
+    { path: ["admin", "store-products"], search: "?order_kind=historical&page=10001" },
+    { path: ["admin", "store-products"], search: "?order_kind=historical&unknown=true" },
+    { path: ["admin", "store-products"], search: "?status=active&status=draft" },
+    { path: ["admin", "store-products"], search: "?search=rau&search=qua" },
+    { path: ["admin", "store-products"], search: "?csa_eligible=true&csa_eligible=false" },
     { path: ["admin", "testimonials"], search: "?type=farmer&type=customer" },
   ])("rejects an ambiguous or malformed query at $path with $search", async ({ path, search }) => {
     const upstream = vi.fn().mockResolvedValue(Response.json({ data: [] }));
@@ -1235,6 +1466,258 @@ describe("admin backend proxy", () => {
     expect((upstream.mock.calls[3][1] as RequestInit).method).toBe("DELETE");
   });
 
+  it("forwards only valid Farm lifecycle queries and methods", async () => {
+    const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
+    const product = "11111111-1111-4111-8111-111111111111";
+    const collection = ["admin", "farms", farm, "products"];
+    const source = [...collection, product];
+    const batches = [...source, "batches"];
+    const history = [...source, "history"];
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ data: {} }));
+    vi.stubGlobal("fetch", upstream);
+    const invoke = (
+      method: "GET" | "POST" | "PATCH" | "DELETE",
+      path: readonly string[],
+      query = "",
+    ) => {
+      const proxy = { GET, POST, PATCH, DELETE }[method];
+      return proxy(
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}${query}`, {
+          method,
+          headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        }),
+        { params: Promise.resolve({ path: [...path] }) },
+      );
+    };
+
+    for (const [path, query] of [
+      [collection, "?supply_status=active"],
+      [collection, "?supply_status=supplying&supply_status=all"],
+      [collection, "?page=10001"],
+      [collection, "?scope=history"],
+      [source, "?page=1"],
+      [batches, "?scope=expired"],
+      [batches, "?status=historical"],
+      [batches, "?scope=all&scope=history"],
+      [history, "?search=R01"],
+    ] as const) {
+      expect((await invoke("GET", path, query)).status).toBe(404);
+    }
+    expect((await invoke("PATCH", source)).status).toBe(404);
+    expect((await invoke("DELETE", source)).status).toBe(404);
+    expect((await invoke("POST", [...source, "remove"], "?page=1")).status).toBe(404);
+    expect((await invoke("POST", [...source, "remove", "extra"])).status).toBe(404);
+    expect((await invoke("POST", [...collection, "bad-id", "re-add"])).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const allowed = [
+      ["GET", collection, "?page=2&supply_status=removed&search=R01"],
+      ["GET", source, ""],
+      ["GET", batches, "?page=1&scope=history&status=active"],
+      ["GET", history, "?page=2"],
+      ["POST", [...source, "remove"], ""],
+      ["POST", [...source, "re-add"], ""],
+    ] as const;
+    for (const [method, path, query] of allowed) {
+      const response = await invoke(method, path, query);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+    }
+    expect(upstream).toHaveBeenCalledTimes(allowed.length);
+    for (let index = 0; index < allowed.length; index += 1) {
+      const [, path, query] = allowed[index];
+      const [url, init] = upstream.mock.calls[index];
+      expect(String(url)).toBe(`https://auth.example.test/api/v1/${path.join("/")}${query}`);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+    }
+  });
+
+  describe("Farm bulk supply product-status query contract", () => {
+    const farm = "1f373011-45a6-4a1b-9607-1f0ea865bccf";
+    const product = "11111111-1111-4111-8111-111111111111";
+    const collection = ["admin", "farms", farm, "products"];
+
+    it.each([
+      "product_status=active",
+      "product_status=draft",
+      "product_status=discontinued",
+      // Exact query emitted when FarmBulkSupply opens Farm 1.
+      "page=1&supply_status=supplying&product_status=active",
+      "page=2&supply_status=supplying&search=rau+mu%E1%BB%91ng&product_status=active",
+    ])("forwards the complete valid query through the real BFF: %s", async (query) => {
+      const payload = { data: [], meta: { page: 1, page_size: 20, total: 0 } };
+      const upstream = vi.fn<typeof fetch>(async () => Response.json(payload));
+      vi.stubGlobal("fetch", upstream);
+      const response = await GET(
+        pageRequest(`https://admin.example.test/api/backend/${collection.join("/")}?${query}`),
+        { params: Promise.resolve({ path: collection }) },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(payload);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(upstream).toHaveBeenCalledTimes(1);
+      const [target, init] = upstream.mock.calls[0];
+      expect(String(target)).toBe(
+        `https://auth.example.test/api/v1/${collection.join("/")}?${query}`,
+      );
+      expect(init?.method).toBe("GET");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+    });
+
+    it.each([
+      ["GET", collection, "product_status=unknown"],
+      ["GET", collection, "product_status="],
+      ["GET", collection, "product_status=ACTIVE"],
+      ["GET", collection, "product_status=active&product_status=draft"],
+      ["GET", collection, "product_status=active&product_status=active"],
+      ["GET", ["admin", "farms"], "product_status=active"],
+      ["GET", ["admin", "farms", farm], "product_status=active"],
+      ["GET", ["admin", "farms", farm, "available-products"], "product_status=active"],
+      ["GET", [...collection, product], "product_status=active"],
+      ["GET", [...collection, product, "batches"], "product_status=active"],
+      ["GET", [...collection, product, "batches", product], "product_status=active"],
+      ["GET", [...collection, product, "history"], "product_status=active"],
+      ["POST", collection, "product_status=active"],
+      ["POST", [...collection, product, "remove"], "product_status=active"],
+      ["PATCH", ["admin", "farms", farm], "product_status=active"],
+      ["DELETE", ["admin", "farms", farm], "product_status=active"],
+      ["PUT", collection, "product_status=active"],
+    ] as const)("rejects %s %j?%s without upstream access", async (method, path, query) => {
+      const upstream = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", upstream);
+      const response = await { GET, POST, PATCH, DELETE, PUT }[method](
+        pageRequest(`https://admin.example.test/api/backend/${path.join("/")}?${query}`, {
+          method,
+          headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+        }),
+        { params: Promise.resolve({ path: [...path] }) },
+      );
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "backend_route_not_allowed" });
+      expect(upstream).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Farm bulk receipt query", () => {
+    const farm = ["admin", "farms", membershipId];
+    const bulk = [...farm, "stock-batches", "bulk"];
+    const query = `creation_key=${versionId}`;
+    const request = (path: string[], search: string, method = "GET") =>
+      pageRequest(`https://admin.example.test/api/backend/${path.join("/")}?${search}`, {
+        method,
+        headers: { origin: "https://admin.example.test", "x-nfv-admin-request": "1" },
+      });
+    const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
+
+    it.each([200, 404])(
+      "forwards the exact receipt GET and preserves upstream %i",
+      async (status) => {
+        const payload =
+          status === 200
+            ? {
+                data: { farm_id: membershipId, created_count: 1 },
+                meta: {
+                  idempotent_replay: true,
+                  action_receipt: {
+                    action: "create_farm_stock_batches",
+                    resource_id: membershipId,
+                    idempotency_key: versionId,
+                  },
+                },
+              }
+            : { errors: [{ code: "create_receipt_not_found" }] };
+        const upstream = vi.fn<typeof fetch>(async () => Response.json(payload, { status }));
+        vi.stubGlobal("fetch", upstream);
+        const response = await GET(request(bulk, query), context(bulk));
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual(payload);
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        expect(upstream).toHaveBeenCalledTimes(1);
+        const [url, init] = upstream.mock.calls[0];
+        expect(String(url)).toBe(`https://auth.example.test/api/v1/${bulk.join("/")}?${query}`);
+        expect(init?.method).toBe("GET");
+        expect(init?.cache).toBe("no-store");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
+      },
+    );
+
+    it.each(["store-products", "csa-round-configurations"])(
+      "preserves the %s collection receipt GET",
+      async (resource) => {
+        const path = ["admin", resource];
+        const upstream = vi.fn<typeof fetch>(async () => Response.json({ data: {} }));
+        vi.stubGlobal("fetch", upstream);
+        expect((await GET(request(path, query), context(path))).status).toBe(200);
+        expect(String(upstream.mock.calls[0][0])).toBe(
+          `https://auth.example.test/api/v1/${path.join("/")}?${query}`,
+        );
+      },
+    );
+
+    it("rejects receipt parameters outside the exact read contract", async () => {
+      const upstream = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", upstream);
+      for (const search of [
+        "",
+        "creation_key=",
+        "creation_key=bad",
+        `${query}&${query}`,
+        `${query}&page=1`,
+      ]) {
+        expect((await GET(request(bulk, search), context(bulk))).status).toBe(404);
+      }
+      for (const path of [
+        ["admin", "farms", "bad-id", "stock-batches", "bulk"],
+        [...bulk, "extra"],
+        farm,
+        [...farm, "products"],
+        [...farm, "products", versionId],
+        [...farm, "products", versionId, "batches"],
+        [...farm, "stock-batches", versionId],
+        ["admin", "store-orders", membershipId],
+      ]) {
+        expect((await GET(request(path, query), context(path))).status).toBe(404);
+      }
+      for (const [method, invoke] of [
+        ["POST", POST],
+        ["PATCH", PATCH],
+        ["DELETE", DELETE],
+      ] as const) {
+        expect((await invoke(request(bulk, query, method), context(bulk))).status).toBe(404);
+      }
+      expect(upstream).not.toHaveBeenCalled();
+    });
+
+    it("keeps session binding and origin checks before forwarding a receipt", async () => {
+      const upstream = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", upstream);
+      vi.mocked(readSession).mockResolvedValueOnce(null);
+      expect((await GET(request(bulk, query), context(bulk))).status).toBe(401);
+      const url = `https://admin.example.test/api/backend/${bulk.join("/")}?${query}`;
+      expect((await GET(new NextRequest(url), context(bulk))).status).toBe(409);
+      expect(
+        (
+          await GET(
+            pageRequest(url, { headers: { "x-nfv-admin-session": "old-session" } }),
+            context(bulk),
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (
+          await POST(
+            pageRequest(url, {
+              method: "POST",
+              headers: { origin: "https://elsewhere.example.test" },
+            }),
+            context(bulk),
+          )
+        ).status,
+      ).toBe(403);
+      expect(upstream).not.toHaveBeenCalled();
+    });
+  });
+
   it("forwards Farm stock-batch writes through the same-origin proxy", async () => {
     const farm = "24803641-2dce-4cac-8fc4-91e55f03e95f";
     const product = "11111111-1111-4111-8111-111111111111";
@@ -1249,6 +1732,8 @@ describe("admin backend proxy", () => {
           start_date: "2026-10-19",
           end_date: "2026-10-25",
           quantity_units: 10,
+          expected_link_id: "22222222-2222-4222-8222-222222222222",
+          expected_version: 2,
         }),
       }),
       { params: Promise.resolve({ path }) },
@@ -1633,3 +2118,274 @@ describe("admin backend proxy", () => {
     expect(writeSession).not.toHaveBeenCalled();
   });
 });
+
+it("checks supply request list filters and rejects query on link and decisions", async () => {
+  const id = "87703641-2dce-4cac-8fc4-91e55f03e95f";
+  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ data: [] })));
+  vi.stubGlobal("fetch", fetcher);
+  const origin = "https://admin.example.test";
+  const list = ["admin", "farm-supply-requests"];
+  const url = `${origin}/api/backend/${list.join("/")}`;
+  const context = (path: string[]) => ({ params: Promise.resolve({ path }) });
+  for (const query of [
+    "status=all",
+    "farm_id=wrong",
+    "page=10001",
+    "page_size=20",
+    "search=a&search=b",
+  ]) {
+    expect((await GET(pageRequest(`${url}?${query}`), context(list))).status).toBe(404);
+  }
+  const link = ["admin", "farms", id, "farmer-link"];
+  expect(
+    (await GET(pageRequest(`${origin}/api/backend/${link.join("/")}?page=1`), context(link)))
+      .status,
+  ).toBe(404);
+  const decision = [...list, id, "approve"];
+  expect(
+    (
+      await POST(
+        pageRequest(`${origin}/api/backend/${decision.join("/")}?status=pending`, {
+          method: "POST",
+          headers: { origin, "x-nfv-admin-request": "1" },
+        }),
+        context(decision),
+      )
+    ).status,
+  ).toBe(404);
+  expect(fetcher).not.toHaveBeenCalled();
+  const valid = await GET(pageRequest(`${url}?farm_id=${id}&status=pending&page=2`), context(list));
+  expect(valid.status).toBe(200);
+  expect(String(fetcher.mock.calls[0][0])).toBe(
+    `https://auth.example.test/api/v1/admin/farm-supply-requests?farm_id=${id}&status=pending&page=2`,
+  );
+});
+
+describe("Farm bulk removal proxy", () => {
+  const farmId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const key = "55555555-5555-4555-8555-555555555555";
+  const productId = "33333333-3333-4333-8333-333333333333";
+  const sourceId = "44444444-4444-4444-8444-444444444444";
+  const path = `admin/farms/${farmId}/products/bulk-remove`;
+  const receiptQuery = `?creation_key=${key}`;
+  const origin = "https://admin.example.test";
+  const body = JSON.stringify({
+    idempotency_key: key,
+    items: [{ product_id: productId, expected_link_id: sourceId, expected_version: 3 }],
+  });
+  const handlers = { GET, POST, PUT, PATCH, DELETE };
+  function request(
+    method: keyof typeof handlers,
+    query = "",
+    target = path,
+    headers: Record<string, string> = {},
+  ) {
+    return handlers[method](
+      pageRequest(`${origin}/api/backend/${target}${query}`, {
+        method,
+        body: method === "POST" ? body : undefined,
+        headers: {
+          "content-type": "application/json",
+          origin,
+          "x-nfv-admin-request": "1",
+          ...headers,
+        },
+      }),
+      { params: Promise.resolve({ path: target.split("/") }) },
+    );
+  }
+
+  it("forwards POST body and GET receipt through the existing session and CSRF checks", async () => {
+    const data = { farm_id: farmId, removed_count: 1 };
+    const action_receipt = {
+      action: "remove_farm_products",
+      resource_id: farmId,
+      idempotency_key: key,
+    };
+    const commit = { data, meta: { idempotent_replay: false, action_receipt } };
+    const receipt = { data, meta: { idempotent_replay: true, action_receipt } };
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(commit))
+      .mockResolvedValueOnce(Response.json(receipt));
+    vi.stubGlobal("fetch", upstream);
+
+    expect((await request("POST", "", path, { origin: "https://untrusted.test" })).status).toBe(
+      403,
+    );
+    expect((await request("POST", "", path, { "x-nfv-admin-request": "" })).status).toBe(403);
+    expect((await request("POST", "", path, { "x-nfv-admin-session": "obsolete" })).status).toBe(
+      409,
+    );
+    expect(
+      (await request("GET", receiptQuery, path, { "x-nfv-admin-session": "obsolete" })).status,
+    ).toBe(409);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await request("GET", receiptQuery)).status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const post = await request("POST", "", path, { authorization: "Bearer browser-token" });
+    expect(post.status).toBe(200);
+    expect(await post.json()).toEqual(commit);
+    expect(post.headers.get("cache-control")).toBe("private, no-store");
+    const get = await request("GET", receiptQuery);
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual(receipt);
+    expect(get.headers.get("cache-control")).toBe("private, no-store");
+    const target = `https://auth.example.test/api/v1/${path}`;
+    expect(upstream.mock.calls.map(([url, init]) => [String(url), init?.method])).toEqual([
+      [target, "POST"],
+      [target + receiptQuery, "GET"],
+    ]);
+    const [, postOptions] = upstream.mock.calls[0];
+    const postBody = postOptions?.body;
+    if (!(postBody instanceof ArrayBuffer)) throw new Error("Expected a buffered POST body");
+    expect(new TextDecoder().decode(postBody)).toBe(body);
+    expect(new Headers(postOptions?.headers).get("authorization")).toBe("Bearer access-token");
+    expect(upstream.mock.calls[1][1]?.body).toBeUndefined();
+  });
+
+  it("rejects other methods, paths and queries without contacting Core", async () => {
+    const upstream = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", upstream);
+    for (const method of ["PATCH", "DELETE", "PUT"] as const) {
+      expect((await request(method)).status).toBe(404);
+      expect((await request(method, receiptQuery)).status).toBe(404);
+    }
+    for (const target of [
+      path + "/extra",
+      path.replace(farmId, "bad-farm"),
+      path.replace("products", "stock-batches"),
+    ]) {
+      expect((await request("POST", "", target)).status).toBe(404);
+      expect((await request("GET", receiptQuery, target)).status).toBe(404);
+    }
+    for (const query of [
+      "",
+      "?page=1",
+      "?creation_key=",
+      "?creation_key=bad",
+      `${receiptQuery}&page=1`,
+      `${receiptQuery}&creation_key=${key}`,
+    ]) {
+      expect((await request("GET", query)).status).toBe(404);
+    }
+    expect((await request("POST", "?page=1")).status).toBe(404);
+    expect((await request("POST", receiptQuery)).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
+it.each(["legacy", "mixed", "single"])(
+  "forwards only exact session-bound %s Farm linking requests",
+  async (mode) => {
+    const key = "55555555-5555-4555-8555-555555555555";
+    const productId = "33333333-3333-4333-8333-333333333333";
+    const bulk = mode !== "single";
+    const tail = bulk ? "products/bulk" : `products/${productId}/re-add`;
+    const prefix = `admin/farms/${key}/`;
+    const path = prefix + tail;
+    const body = JSON.stringify(
+      mode === "single"
+        ? { idempotency_key: key, expected_link_id: productId, expected_version: 2 }
+        : mode === "legacy"
+          ? { idempotency_key: key, product_ids: [productId] }
+          : {
+              idempotency_key: key,
+              items: [
+                { product_id: productId, expected_source: null },
+                {
+                  product_id: "44444444-4444-4444-8444-444444444444",
+                  expected_source: { id: key, version: 2 },
+                },
+              ],
+            },
+    );
+    const request = (method: "GET" | "POST" | "PATCH", query = "", target = path, headers = {}) =>
+      ({ GET, POST, PATCH })[method](
+        pageRequest(`https://admin.example.test/api/backend/${target}${query}`, {
+          method,
+          body: method === "POST" ? body : undefined,
+          headers: {
+            "content-type": "application/json",
+            origin: "https://admin.example.test",
+            "x-nfv-admin-request": "1",
+            ...headers,
+          },
+        }),
+        { params: Promise.resolve({ path: target.split("/") }) },
+      );
+    const receipt = `?creation_key=${key}`;
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ data: null }));
+    vi.stubGlobal("fetch", upstream);
+    for (const query of [
+      "",
+      "?creation_key=bad",
+      receipt + "&page=1",
+      receipt + "&creation_key=" + key,
+    ]) {
+      expect((await request("GET", query)).status).toBe(404);
+    }
+    expect((await request("GET", receipt, "admin/farms/bad/" + tail)).status).toBe(404);
+    expect((await request("GET", receipt, path + "/extra")).status).toBe(404);
+    expect((await request("PATCH")).status).toBe(404);
+    expect((await request("POST", "?page=1")).status).toBe(404);
+    expect((await request("POST", receipt)).status).toBe(404);
+    expect((await request("POST", "", prefix + "products")).status).toBe(404);
+    expect((await request("POST", "", path, { origin: "https://untrusted.test" })).status).toBe(
+      403,
+    );
+    expect(
+      (await request("GET", receipt, path, { "x-nfv-admin-session": "obsolete" })).status,
+    ).toBe(409);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await request("GET", receipt)).status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const conflict = {
+      errors: [
+        mode === "mixed"
+          ? {
+              code: "farm_product_version_conflict",
+              context: { item_index: 1, product_id: productId, source_id: key, version: 3 },
+            }
+          : { code: "product_already_linked", context: { product_id: key } },
+      ],
+    };
+    upstream.mockResolvedValueOnce(Response.json(conflict, { status: 409 }));
+    const mutation = await request("POST");
+    expect(mutation.status).toBe(409);
+    expect(await mutation.json()).toEqual(conflict);
+    const miss = { errors: [{ code: "create_receipt_not_found" }] };
+    upstream.mockResolvedValueOnce(Response.json(miss, { status: 404 }));
+    const recovery = await request("GET", receipt);
+    expect(recovery.status).toBe(404);
+    expect(await recovery.json()).toEqual(miss);
+    expect(recovery.headers.get("cache-control")).toBe("private, no-store");
+    const committed = {
+      data: bulk ? { farm_id: key, created_count: mode === "mixed" ? 2 : 1 } : null,
+      meta: { idempotent_replay: false },
+    };
+    const replayed = { ...committed, meta: { idempotent_replay: true } };
+    upstream
+      .mockResolvedValueOnce(Response.json(committed, { status: bulk ? 201 : 200 }))
+      .mockResolvedValueOnce(Response.json(replayed));
+    const post = await request("POST");
+    expect(post.status).toBe(bulk ? 201 : 200);
+    expect(await post.json()).toEqual(committed);
+    const get = await request("GET", receipt);
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual(replayed);
+    const target = `https://auth.example.test/api/v1/${path}`;
+    expect(upstream.mock.calls.map(([url]) => String(url))).toEqual([
+      target,
+      target + receipt,
+      target,
+      target + receipt,
+    ]);
+    expect(new TextDecoder().decode(upstream.mock.calls[2][1]?.body as ArrayBuffer)).toBe(body);
+    expect(new Headers(upstream.mock.calls[0][1]?.headers).get("authorization")).toBe(
+      "Bearer access-token",
+    );
+  },
+);

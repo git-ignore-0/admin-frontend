@@ -26,7 +26,7 @@ describe("validateStockBatchInput", () => {
   it("accepts a current range with a positive integer quantity", () => {
     expect(
       validateStockBatchInput(
-        { start_date: "2026-10-26", end_date: "2026-11-01", quantity: "10" },
+        { start_date: "26/10/2026", end_date: "01/11/2026", quantity: "10" },
         "2026-10-31",
       ),
     ).toEqual({
@@ -38,7 +38,7 @@ describe("validateStockBatchInput", () => {
   it("rejects an expired range, reversed dates, and zero quantity", () => {
     expect(
       validateStockBatchInput(
-        { start_date: "2026-10-30", end_date: "2026-10-29", quantity: "0" },
+        { start_date: "30/10/2026", end_date: "29/10/2026", quantity: "0" },
         "2026-10-31",
       ),
     ).toEqual({
@@ -47,10 +47,25 @@ describe("validateStockBatchInput", () => {
     });
     expect(
       validateStockBatchInput(
-        { start_date: "2026-10-01", end_date: "2026-10-30", quantity: "1" },
+        { start_date: "01/10/2026", end_date: "30/10/2026", quantity: "1" },
         "2026-10-31",
       ).errors,
     ).toEqual({ end_date: "expired" });
+  });
+
+  it("distinguishes incomplete or impossible dates from an empty required field", () => {
+    expect(
+      validateStockBatchInput(
+        { start_date: "31/02/2027", end_date: "03/11/202", quantity: "1" },
+        "2026-10-31",
+      ),
+    ).toEqual({ value: null, errors: { start_date: "invalid_date", end_date: "invalid_date" } });
+    expect(
+      validateStockBatchInput(
+        { start_date: "", end_date: "01/11/2026", quantity: "1" },
+        "2026-10-31",
+      ).errors,
+    ).toEqual({ start_date: "required" });
   });
 });
 

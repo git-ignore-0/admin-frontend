@@ -1,11 +1,13 @@
 "use client";
 
-import { Anchor, Box, Divider, Paper, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
+import { Box, Button, Divider, Select, Skeleton, Stack, Table, Text } from "@mantine/core";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { AdminNavigationLink } from "@/components/admin-navigation-link";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListState } from "@/components/list-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Status } from "@/components/nfv-controls";
@@ -81,11 +83,12 @@ export function CSAPurchaseRequestList() {
     getErrorMessage,
   });
   const meta =
-    !error && pageMeta?.page === page && pageMeta.search === search && pageMeta.status === status
+    pageMeta?.page === page && pageMeta.search === search && pageMeta.status === status
       ? pageMeta
       : null;
   const items = meta ? records : null;
-  const initialLoading = items === null && !error;
+  const initialLoading = items === null && loading && !error;
+  const hasFilters = Boolean(search || status);
 
   useEffect(() => setDraftSearch(search), [search]);
   useEffect(() => {
@@ -108,6 +111,12 @@ export function CSAPurchaseRequestList() {
     navigateList({ search, status: value, page: 1 });
   }
 
+  function clearFilters() {
+    setDraftSearch("");
+    setDraftStatus("");
+    navigateList({ search: "", status: "", page: 1 });
+  }
+
   const table = (
     <Table.ScrollContainer
       type="native"
@@ -116,7 +125,6 @@ export function CSAPurchaseRequestList() {
       aria-hidden={initialLoading || undefined}
       role="region"
       tabIndex={initialLoading ? undefined : 0}
-      style={{ outlineOffset: -2 }}
     >
       <Table aria-label={copy.title} aria-busy={loading || undefined} withRowBorders>
         <Table.Thead>
@@ -142,18 +150,15 @@ export function CSAPurchaseRequestList() {
             : items?.map((item) => (
                 <Table.Tr key={item.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
                   <Table.Td>
-                    <Anchor
+                    <DataListRecordLink
                       component={AdminNavigationLink}
                       href={csaPurchaseHref(context, item.id)}
                       data-record-link
                       aria-label={`${item.request_code}: ${item.name}`}
-                      c="inherit"
-                      fw={600}
-                      underline="never"
                       style={{ overflowWrap: "anywhere" }}
                     >
                       {item.request_code}
-                    </Anchor>
+                    </DataListRecordLink>
                   </Table.Td>
                   <Table.Td>
                     <Stack gap={4} style={{ overflowWrap: "anywhere" }}>
@@ -247,14 +252,27 @@ export function CSAPurchaseRequestList() {
             />
           ),
         }}
-        refresh={{ label: copy.refresh, onRefresh: reload }}
+        refresh={{
+          label: copy.refresh,
+          onRefresh: reload,
+          loading: loading && items !== null,
+          disabled: initialLoading,
+        }}
       />
-      <Paper component="section" miw={0} style={{ overflow: "hidden" }}>
+      <DataListPaper component="section">
         {Boolean(items?.length) && table}
         <Box p={error ? "md" : undefined}>
           <ListState
             embedded
             empty={copy.empty}
+            noResults={hasFilters ? t.membershipCatalog.noMatches : undefined}
+            action={
+              hasFilters && items?.length === 0 ? (
+                <Button variant="default" onClick={clearFilters}>
+                  {t.common.clearFilters}
+                </Button>
+              ) : undefined
+            }
             error={error}
             hasData={items !== null}
             isEmpty={items?.length === 0}
@@ -268,7 +286,7 @@ export function CSAPurchaseRequestList() {
         {meta && (
           <>
             <Divider />
-            <Box px="md" py="sm">
+            <Box component="footer" px="md" py="sm">
               <Pagination
                 disabled={loading}
                 nextLabel={t.common.next}
@@ -284,7 +302,7 @@ export function CSAPurchaseRequestList() {
             </Box>
           </>
         )}
-      </Paper>
+      </DataListPaper>
     </Stack>
   );
 }

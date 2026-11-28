@@ -1,8 +1,8 @@
 "use client";
 
-import { Anchor, Button, Group, Stack, Table, Text } from "@mantine/core";
+import { Button, Group, Stack, Table, Text } from "@mantine/core";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -24,6 +24,7 @@ import {
   useCSARoundPage,
 } from "@/components/csa-round-list-results";
 import { ListToolbar } from "@/components/list-toolbar";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { DataState, Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { openRecordFromRow } from "@/components/record-row-navigation";
@@ -31,7 +32,7 @@ import { RecordDetailField, RecordDetailFields } from "@/components/record-detai
 import { RecoveryAlert } from "@/components/recovery-alert";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDate, formatAdminDateTime } from "@/lib/admin-date";
-import { requestErrorMessage, type ClientApiError } from "@/lib/client-error";
+import { isProtectedDataError, requestErrorMessage, type ClientApiError } from "@/lib/client-error";
 import {
   csaRoundConfigurationKey,
   getRoundConfiguration,
@@ -43,6 +44,10 @@ import {
 import { csaRoundError, csaRoundsCopy } from "@/lib/csa-rounds-copy";
 
 export function CSAOccurrenceList({ configurationId }: { configurationId: string }) {
+  return <CSAOccurrenceListContent key={configurationId} configurationId={configurationId} />;
+}
+
+function CSAOccurrenceListContent({ configurationId }: { configurationId: string }) {
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
   const router = useRouter();
@@ -60,22 +65,23 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
-  const configurationError = configurationQuery.error;
+  const [accessError, setAccessError] = useState<ClientApiError | null>(null);
+  const configurationError = accessError ?? configurationQuery.error;
   const configurationUnavailable = Boolean(
     configurationError &&
-    ([401, 403, 404].includes(configurationError.status ?? 0) ||
-      ["forbidden", "csrf_rejected", "session_changed"].includes(configurationError.message)),
+    (isProtectedDataError(configurationError) || configurationError.status === 404),
   );
   const configuration = configurationUnavailable ? undefined : configurationQuery.data;
   const configurationLoading = configurationQuery.isPending || configurationQuery.isFetching;
   const [action, setAction] = useState<"publish" | "delete" | "stop" | null>(null);
+  const actionVersion = useRef<number>(0);
   const [actionError, setActionError] = useState<unknown>(null);
   const [mutating, setMutating] = useState(false);
   const mutationLock = useRef(false);
   const mounted = useRef(false);
   const summary = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -128,34 +134,51 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
   const busy = (hasRounds && loading) || configurationLoading || mutating;
   const actionsDisabled = busy || Boolean(configurationError);
   function refreshList() {
-    void configurationQuery.refetch({ cancelRefetch: false });
+    void configurationQuery.refetch({ cancelRefetch: false }).then(({ isSuccess }) => {
+      if (isSuccess && mounted.current && isQueryScopeCurrent()) setAccessError(null);
+    });
     if (hasRounds) reload();
   }
 
   function openAction(next: NonNullable<typeof action>) {
+    if (!configuration || actionsDisabled || !isQueryScopeCurrent()) return;
+    actionVersion.current = configuration.version;
     setActionError(null);
     setAction(next);
   }
 
   async function submitAction() {
-    if (!action || mutationLock.current || actionsDisabled) return;
+    if (
+      !action ||
+      !configuration ||
+      mutationLock.current ||
+      actionsDisabled ||
+      !isQueryScopeCurrent()
+    )
+      return;
     if (action === "stop" ? !canCancelRecurrence : !isDraft) return;
     mutationLock.current = true;
     setMutating(true);
     setActionError(null);
+    const active = () => mounted.current && isQueryScopeCurrent();
     let navigating = false;
     try {
       if (action === "delete") {
-        await deleteRoundConfiguration(configurationId);
-        if (!mounted.current || !isQueryScopeCurrent()) return;
+        await deleteRoundConfiguration(configurationId, actionVersion.current, active);
+        if (!active()) return;
         client.removeQueries({ queryKey: configurationKey });
         router.replace(roundNavigationHref(csaRoundListPath, { page, status, type }));
         navigating = true;
         return;
       }
 
-      const result = await mutateRoundConfiguration(configurationId, action);
-      if (!mounted.current || !isQueryScopeCurrent()) return;
+      const result = await mutateRoundConfiguration(
+        configurationId,
+        action,
+        actionVersion.current,
+        active,
+      );
+      if (!active()) return;
       if (action === "publish" && (occurrencePage > 1 || occurrenceStatus || occurrenceSearch)) {
         window.history.replaceState(null, "", occurrenceHref(1, "", ""));
       }
@@ -163,10 +186,18 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
       setAction(null);
       if (action === "stop") toast(c.recurrence.stoppedNotice);
     } catch (error) {
-      if (!mounted.current || !isQueryScopeCurrent()) return;
-      if (error instanceof Error && error.message === "csa_configuration_not_draft") {
+      if (!active()) return;
+      if (isProtectedDataError(error) || (error as ClientApiError | null)?.status === 404) {
         setAction(null);
-        toast(c.configurationNotDraft, "error");
+        setAccessError(error as ClientApiError);
+        void client.cancelQueries({ queryKey: configurationKey, exact: true });
+        client.removeQueries({ queryKey: configurationKey, exact: true });
+      } else if (
+        error instanceof Error &&
+        ["csa_configuration_not_draft", "version_conflict"].includes(error.message)
+      ) {
+        setAction(null);
+        toast(csaRoundError(error, locale, c.configurationNotDraft), "error");
         await configurationQuery.refetch({ cancelRefetch: false });
       } else {
         setActionError(error);
@@ -174,7 +205,7 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
     } finally {
       if (!navigating) {
         mutationLock.current = false;
-        if (mounted.current) setMutating(false);
+        if (active()) setMutating(false);
       }
     }
   }
@@ -198,15 +229,12 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
   const rows = items?.map((round) => (
     <Table.Tr key={round.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
       <Table.Td>
-        <Anchor
+        <DataListRecordLink
           component={AdminNavigationLink}
           display="block"
-          c="inherit"
           data-record-link
-          fw={600}
           href={roundDetailHref(round.id)}
           style={{ overflowWrap: "anywhere" }}
-          underline="never"
         >
           <time dateTime={round.opens_at}>{formatAdminDateTime(round.opens_at)}</time>
           {" → "}
@@ -214,7 +242,7 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
           <Text component="span" display="block" size="sm" fw={400} c="dimmed">
             {round.name}
           </Text>
-        </Anchor>
+        </DataListRecordLink>
       </Table.Td>
       <Table.Td>
         <Status domain="csa-round" status={round.status} label={c.statuses[round.status]} />
@@ -335,7 +363,8 @@ export function CSAOccurrenceList({ configurationId }: { configurationId: string
                 refresh={{
                   label: c.refresh,
                   onRefresh: refreshList,
-                  loading: loading || configurationLoading,
+                  loading: configurationLoading || (loading && items !== null),
+                  disabled: loading && items === null,
                 }}
                 primaryAction={
                   canCancelRecurrence && (

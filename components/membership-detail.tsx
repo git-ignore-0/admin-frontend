@@ -11,9 +11,10 @@ import {
 } from "@/components/nfv-controls";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { useIsAdminQueryScopeCurrent } from "@/components/admin-query-provider";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { DetailBackLink } from "@/components/detail-back-link";
 import { csaRoundsCopy } from "@/lib/csa-rounds-copy";
@@ -21,8 +22,16 @@ import { MembershipStatusBadge } from "@/components/membership-status-badge";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/components/toast-provider";
 import { formatAdminDate, formatAdminDateTime, membershipLastReceiptDate } from "@/lib/admin-date";
+import { useAdminMutationIntent } from "@/lib/admin-mutation-intent";
+import { requirePaginatedList } from "@/lib/api-response";
 import { api, apiEnvelope, apiFile } from "@/lib/client-api";
-import { requestErrorMessage } from "@/lib/client-error";
+import {
+  invalidApiResponse,
+  isProtectedDataError,
+  isUncertainMutationError,
+  requestErrorMessage,
+  type ClientApiError,
+} from "@/lib/client-error";
 import { formatMembershipMoney } from "@/lib/membership-format";
 import {
   numericInputErrorMessage,
@@ -39,6 +48,12 @@ import type {
 } from "@/lib/types";
 
 type UsageLineForm = { productId: string; units: string };
+type UsageIntent = {
+  membership_id: string;
+  idempotency_key: string;
+  lines: Array<{ product_id: string; units: number }>;
+  note: string;
+};
 type CycleQuantities = { granted: number; received: number; remaining: number };
 
 function cycleQuantities(cycle: MembershipCycle): CycleQuantities | null {
@@ -74,10 +89,25 @@ function quantity(value: number | undefined): string {
 }
 
 export function MembershipDetail({ membershipId }: { membershipId: string }) {
+  return <MembershipDetailContent key={membershipId} membershipId={membershipId} />;
+}
+
+function MembershipDetailContent({ membershipId }: { membershipId: string }) {
   const { locale, t } = useAdminI18n();
   const toast = useToast();
+  const isCurrent = useIsAdminQueryScopeCurrent();
+  const { intent, controls } = useAdminMutationIntent<UsageIntent, true>(
+    "membership-usage",
+    membershipId,
+  );
+  const replayUsage = intent?.phase === "unknown" ? intent.payload : null;
   const savingRef = useRef(false);
-  const attemptedUsageRef = useRef("");
+  const mounted = useRef(false);
+  const accessRevision = useRef(0);
+  const revoked = useRef(false);
+  const reads = useRef(new Map<string, AbortController>());
+  const objectUrls = useRef(new Map<string, number>());
+  const [accessLost, setAccessLost] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const revokeButtonRef = useRef<HTMLButtonElement>(null);
   const [item, setItem] = useState<AdminMembership | null>(null);
@@ -91,77 +121,212 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   const [contractLoading, setContractLoading] = useState(false);
   const [contractError, setContractError] = useState("");
   const [contractPdfError, setContractPdfError] = useState("");
-  const downloadingContractRef = useRef(new Set<string>());
   const [downloadingContracts, setDownloadingContracts] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
   const [usageLines, setUsageLines] = useState<UsageLineForm[]>([]);
   const [usageUnitErrors, setUsageUnitErrors] = useState<Record<number, string>>({});
   const [usageNote, setUsageNote] = useState("");
-  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [undoItem, setUndoItem] = useState<MembershipUsage | null>(null);
   const [undoReason, setUndoReason] = useState("");
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [revokeReason, setRevokeReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState("");
+  const busy = saving || intent?.phase === "pending";
+
+  const cleanupReads = useCallback(() => {
+    reads.current.forEach((controller) => controller.abort());
+    reads.current.clear();
+    objectUrls.current.forEach((timer, url) => {
+      window.clearTimeout(timer);
+      URL.revokeObjectURL(url);
+    });
+    objectUrls.current.clear();
+  }, []);
+
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      accessRevision.current += 1;
+      cleanupReads();
+    };
+  }, [cleanupReads]);
+
+  const ownsAccess = useCallback(
+    (revision = accessRevision.current) =>
+      mounted.current && isCurrent() && !revoked.current && revision === accessRevision.current,
+    [isCurrent],
+  );
+
+  const retire = useCallback(
+    (cause: unknown) => {
+      revoked.current = true;
+      accessRevision.current += 1;
+      cleanupReads();
+      controls.retire();
+      setAccessLost(true);
+      setItem(null);
+      setHistory(null);
+      setHistoryMeta(null);
+      setContract(null);
+      setCreateOpen(false);
+      setUsageLines([]);
+      setUsageNote("");
+      setUndoItem(null);
+      setUndoReason("");
+      setRevokeOpen(false);
+      setRevokeReason("");
+      setDownloadingContracts(new Set());
+      setLoading(false);
+      setLoadError(() => cause);
+    },
+    [cleanupReads, controls],
+  );
+
+  const startRead = useCallback(
+    (key: string) => {
+      reads.current.get(key)?.abort();
+      const controller = new AbortController();
+      reads.current.set(key, controller);
+      const revision = accessRevision.current;
+      const current = () =>
+        mounted.current &&
+        isCurrent() &&
+        revision === accessRevision.current &&
+        !controller.signal.aborted;
+      const finish = () => {
+        if (reads.current.get(key) === controller) reads.current.delete(key);
+      };
+      return { signal: controller.signal, current, finish };
+    },
+    [isCurrent],
+  );
 
   const loadMembership = useCallback(async () => {
+    const read = startRead("membership");
     setLoading(true);
     try {
       const latest = await api<AdminMembership>(
         `admin/memberships/${membershipId}?locale=${locale}`,
+        { signal: read.signal },
+        { shouldRedirectToLogin: read.current },
       );
+      if (!read.current()) return null;
+      if (latest?.id !== membershipId) throw invalidApiResponse();
+      if (revoked.current) {
+        revoked.current = false;
+        setAccessLost(false);
+      }
       setItem(latest);
       setLoadError(null);
       return latest;
     } catch (caught) {
-      setLoadError(() => caught);
+      if (read.current()) {
+        if (isProtectedDataError(caught) || (caught as ClientApiError | null)?.status === 404)
+          retire(caught);
+        else setLoadError(() => caught);
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (read.current()) setLoading(false);
+      read.finish();
     }
-  }, [locale, membershipId]);
+  }, [locale, membershipId, retire, startRead]);
 
   const loadHistory = useCallback(async () => {
+    if (!ownsAccess()) return;
+    const read = startRead("history");
     setHistory(null);
     setHistoryError("");
     try {
       const payload = await apiEnvelope<MembershipUsage[], PaginationMeta>(
         `admin/memberships/${membershipId}/history?page=${historyPage}&locale=${locale}`,
+        { signal: read.signal },
+        { shouldRedirectToLogin: read.current },
       );
-      setHistory(payload.data);
-      setHistoryMeta(payload.meta ?? null);
+      if (!read.current()) return;
+      const { data, meta } = requirePaginatedList(
+        payload,
+        (usage) => {
+          if (usage?.membership_id !== membershipId || !usage.id || !Array.isArray(usage.lines))
+            throw invalidApiResponse();
+        },
+        historyPage,
+      );
+      setHistory(data);
+      setHistoryMeta(meta);
     } catch (caught) {
-      setHistoryError(requestErrorMessage(caught, t));
+      if (!read.current()) return;
+      if (isProtectedDataError(caught)) retire(caught);
+      else setHistoryError(requestErrorMessage(caught, t));
+    } finally {
+      read.finish();
     }
-  }, [historyPage, locale, membershipId, t]);
+  }, [historyPage, locale, membershipId, ownsAccess, retire, startRead, t]);
 
   const contractId = item?.contract?.id ?? "";
+  const currentContractId = useRef("");
+  currentContractId.current = contractId;
   const contractVersions: CSAContractVersion[] = [...(contract?.versions ?? [])].sort(
     (left, right) => left.version_number - right.version_number,
   );
   const loadContract = useCallback(async () => {
+    const read = startRead("contract");
     setContractError("");
     setContractPdfError("");
-    if (!contractId) {
+    if (!contractId || !ownsAccess()) {
       setContract(null);
       setContractLoading(false);
+      read.finish();
       return;
     }
     setContractLoading(true);
     try {
-      setContract(await api<AdminCSAContract>(`admin/memberships/${membershipId}/contract`));
-    } catch {
-      setContract(null);
-      setContractError(t.memberships.contractUnavailable);
+      const latest = await api<AdminCSAContract>(
+        `admin/memberships/${membershipId}/contract`,
+        { signal: read.signal },
+        { shouldRedirectToLogin: read.current },
+      );
+      if (!read.current()) return;
+      if (latest?.id !== contractId || !Array.isArray(latest.available_locales))
+        throw invalidApiResponse();
+      setContract(latest);
+    } catch (caught) {
+      if (!read.current()) return;
+      if (isProtectedDataError(caught)) retire(caught);
+      else {
+        setContract(null);
+        setContractError(t.memberships.contractUnavailable);
+      }
     } finally {
-      setContractLoading(false);
+      if (read.current()) setContractLoading(false);
+      read.finish();
     }
-  }, [contractId, membershipId, t.memberships.contractUnavailable]);
+  }, [contractId, membershipId, ownsAccess, retire, startRead, t.memberships.contractUnavailable]);
 
   useEffect(() => void loadMembership(), [loadMembership]);
-  useEffect(() => void loadHistory(), [loadHistory]);
+  useEffect(() => {
+    if (!accessLost) void loadHistory();
+  }, [accessLost, loadHistory]);
   useEffect(() => void loadContract(), [loadContract]);
+  useEffect(() => {
+    if (intent?.phase !== "confirmed" || !item || !ownsAccess()) return;
+    const revision = accessRevision.current;
+    controls.clear();
+    void Promise.all([loadMembership(), loadHistory()]).then(() => {
+      if (ownsAccess(revision)) toast(t.memberships.usageCreated);
+    });
+  }, [
+    controls,
+    intent,
+    item,
+    loadHistory,
+    loadMembership,
+    ownsAccess,
+    t.memberships.usageCreated,
+    toast,
+  ]);
 
   async function downloadContract(localeToDownload: "vi" | "en", versionId?: string) {
     const version = versionId ? contract?.versions?.find((entry) => entry.id === versionId) : null;
@@ -169,41 +334,73 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
       ? version.available_locales.includes(localeToDownload)
       : !versionId && contract?.available_locales.includes(localeToDownload);
     const downloadKey = `${versionId ?? "current"}:${localeToDownload}`;
-    if (!available || downloadingContractRef.current.has(downloadKey)) return;
-    downloadingContractRef.current.add(downloadKey);
-    setDownloadingContracts(new Set(downloadingContractRef.current));
+    const requestKey = `pdf:${downloadKey}`;
+    if (
+      !available ||
+      !contractId ||
+      contract?.id !== contractId ||
+      !ownsAccess() ||
+      reads.current.has(requestKey)
+    )
+      return;
+    const read = startRead(requestKey);
+    setDownloadingContracts((current) => new Set(current).add(downloadKey));
     setContractPdfError("");
     try {
       const file = await apiFile(
         `admin/memberships/${membershipId}/contract/pdf?locale=${localeToDownload}${versionId ? `&version_id=${encodeURIComponent(versionId)}` : ""}`,
+        { signal: read.signal },
       );
+      if (!read.current() || currentContractId.current !== contractId) return;
+      if (!file.blob.size) throw invalidApiResponse();
       const objectUrl = URL.createObjectURL(file.blob);
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
       anchor.download = file.filename;
       anchor.click();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
-    } catch {
-      setContractPdfError(t.memberships.contractPdfUnavailable);
+      objectUrls.current.set(
+        objectUrl,
+        window.setTimeout(() => {
+          URL.revokeObjectURL(objectUrl);
+          objectUrls.current.delete(objectUrl);
+        }, 1_000),
+      );
+    } catch (caught) {
+      if (!read.current()) return;
+      if (isProtectedDataError(caught)) retire(caught);
+      else setContractPdfError(t.memberships.contractPdfUnavailable);
     } finally {
-      downloadingContractRef.current.delete(downloadKey);
-      setDownloadingContracts(new Set(downloadingContractRef.current));
+      if (read.current())
+        setDownloadingContracts((current) => {
+          const active = new Set(current);
+          active.delete(downloadKey);
+          return active;
+        });
+      read.finish();
     }
   }
 
   function openCreate() {
-    if (!item?.quota?.length || item.status !== "active" || saving) return;
-    setUsageLines([{ productId: item.quota[0].product_id, units: "1" }]);
+    if (!item || busy || !ownsAccess() || intent?.phase === "retired") return;
+    const firstQuota = item.quota?.[0];
+    if (replayUsage)
+      setUsageLines(
+        replayUsage.lines.map((line) => ({
+          productId: line.product_id,
+          units: String(line.units),
+        })),
+      );
+    else if (firstQuota && item.status === "active")
+      setUsageLines([{ productId: firstQuota.product_id, units: "1" }]);
+    else return;
     setUsageUnitErrors({});
-    setUsageNote("");
-    setIdempotencyKey(crypto.randomUUID());
-    attemptedUsageRef.current = "";
-    setActionError("");
+    setUsageNote(replayUsage?.note ?? "");
+    setActionError(replayUsage ? t.memberships.usageUncertain : "");
     setCreateOpen(true);
   }
 
   function closeDialogs() {
-    if (saving) return;
+    if (busy) return;
     setCreateOpen(false);
     setUndoItem(null);
     setRevokeOpen(false);
@@ -220,7 +417,9 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
   }
 
   async function createUsage() {
-    if (!item || savingRef.current || item.status !== "active") return;
+    if (!item || savingRef.current || !ownsAccess() || (!replayUsage && item.status !== "active"))
+      return;
+    if (replayUsage) return sendUsage();
     const productIds = usageLines.map((line) => line.productId);
     const validatedLines: Array<{ productId: string; units: number }> = [];
     const nextUnitErrors: Record<number, string> = {};
@@ -246,65 +445,106 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
       if (!Object.keys(nextUnitErrors).length) setActionError(t.memberships.usageValidation);
       return;
     }
-    const signature = JSON.stringify({ lines: validatedLines, note: usageNote.trim() });
-    const requestKey =
-      attemptedUsageRef.current && attemptedUsageRef.current !== signature
-        ? crypto.randomUUID()
-        : idempotencyKey;
-    if (requestKey !== idempotencyKey) setIdempotencyKey(requestKey);
-    attemptedUsageRef.current = signature;
+    return sendUsage({
+      membership_id: item.id,
+      idempotency_key: crypto.randomUUID(),
+      lines: validatedLines.map((line) => ({ product_id: line.productId, units: line.units })),
+      note: usageNote.trim(),
+    });
+  }
+
+  async function sendUsage(payload?: UsageIntent) {
+    const attempt = controls.begin(payload);
+    if (!attempt) return;
+    const revision = accessRevision.current;
     savingRef.current = true;
     setSaving(true);
     setActionError("");
     try {
-      await api<MembershipUsage>(`admin/membership-usage?locale=${locale}`, {
-        method: "POST",
-        body: JSON.stringify({
-          membership_id: item.id,
-          idempotency_key: requestKey,
-          lines: validatedLines.map((line) => ({
-            product_id: line.productId,
-            units: line.units,
-          })),
-          note: usageNote.trim(),
-        }),
-      });
+      const usage = await api<MembershipUsage>(
+        `admin/membership-usage?locale=${locale}`,
+        {
+          method: "POST",
+          body: JSON.stringify(attempt.payload),
+        },
+        { shouldRedirectToLogin: () => ownsAccess(revision) },
+      );
+      if (
+        !usage?.id ||
+        usage.membership_id !== membershipId ||
+        !["applied", "reversed"].includes(usage.status)
+      )
+        throw invalidApiResponse();
+      if (
+        !isCurrent() ||
+        !controls.settle(
+          attempt,
+          ownsAccess(revision) ? null : { phase: "confirmed", receipt: true },
+        ) ||
+        !ownsAccess(revision)
+      )
+        return;
       await Promise.all([loadMembership(), loadHistory()]);
+      if (!ownsAccess(revision)) return;
       setCreateOpen(false);
-      attemptedUsageRef.current = "";
       toast(t.memberships.usageCreated);
     } catch (caught) {
-      setActionError(requestErrorMessage(caught, t));
+      if (!isCurrent()) return;
+      const denied = isProtectedDataError(caught);
+      const unknown =
+        isUncertainMutationError(caught) ||
+        (replayUsage && (caught as ClientApiError | null)?.message === "csrf_rejected");
+      if (
+        !controls.settle(
+          attempt,
+          denied ? { phase: "retired" } : unknown ? { ...attempt, phase: "unknown" } : null,
+        ) ||
+        !ownsAccess(revision)
+      )
+        return;
+      if (denied) retire(caught);
+      else setActionError(unknown ? t.memberships.usageUncertain : requestErrorMessage(caught, t));
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (mounted.current && isCurrent()) setSaving(false);
     }
   }
 
   async function undoUsage() {
-    if (!undoItem || savingRef.current || !undoReason.trim()) return;
+    if (!undoItem || busy || savingRef.current || !undoReason.trim() || !ownsAccess()) return;
+    const revision = accessRevision.current;
     savingRef.current = true;
     setSaving(true);
     setActionError("");
     try {
-      await api<MembershipUsage>(`admin/membership-usage/${undoItem.id}/undo?locale=${locale}`, {
-        method: "POST",
-        body: JSON.stringify({ reason: undoReason.trim() }),
-      });
+      await api<MembershipUsage>(
+        `admin/membership-usage/${undoItem.id}/undo?locale=${locale}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: undoReason.trim() }),
+        },
+        { shouldRedirectToLogin: () => ownsAccess(revision) },
+      );
+      if (!ownsAccess(revision)) return;
       await Promise.all([loadMembership(), loadHistory()]);
+      if (!ownsAccess(revision)) return;
       setUndoItem(null);
       setUndoReason("");
       toast(t.memberships.usageUndone);
     } catch (caught) {
-      setActionError(requestErrorMessage(caught, t));
+      if (ownsAccess(revision)) {
+        if (isProtectedDataError(caught)) retire(caught);
+        else setActionError(requestErrorMessage(caught, t));
+      }
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (mounted.current && isCurrent()) setSaving(false);
     }
   }
 
   async function revokeMembership() {
-    if (!item || savingRef.current || !revokeReason.trim()) return;
+    if (!item || busy || savingRef.current || !revokeReason.trim() || !ownsAccess()) return;
+    const revision = accessRevision.current;
     savingRef.current = true;
     setSaving(true);
     setActionError("");
@@ -315,7 +555,10 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           method: "POST",
           body: JSON.stringify({ reason: revokeReason.trim() }),
         },
+        { shouldRedirectToLogin: () => ownsAccess(revision) },
       );
+      if (!ownsAccess(revision)) return;
+      if (revoked?.id !== membershipId) throw invalidApiResponse();
       setItem((current) =>
         current
           ? {
@@ -327,14 +570,18 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           : revoked,
       );
       await Promise.all([loadMembership(), loadContract()]);
+      if (!ownsAccess(revision)) return;
       setRevokeOpen(false);
       setRevokeReason("");
       toast(t.memberships.revokeSuccess);
     } catch (caught) {
-      setActionError(requestErrorMessage(caught, t));
+      if (ownsAccess(revision)) {
+        if (isProtectedDataError(caught)) retire(caught);
+        else setActionError(requestErrorMessage(caught, t));
+      }
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      if (mounted.current && isCurrent()) setSaving(false);
     }
   }
 
@@ -455,21 +702,23 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           )}
         </div>
         <div className="membership-hero-actions">
-          {item.status === "active" && (
+          {(item.status === "active" || replayUsage) && (
             <Button
               type="submit"
 
-              disabled={saving || !item.quota?.length}
+              disabled={
+                busy || intent?.phase === "retired" || (!replayUsage && !item.quota?.length)
+              }
               onClick={openCreate}
             >
-              {t.memberships.createUsage}
+              {replayUsage ? t.memberships.retryUsage : t.memberships.createUsage}
             </Button>
           )}
           {(item.status === "active" || item.status === "scheduled") && (
             <Button
               type="submit"
               color="red"
-              disabled={saving}
+              disabled={busy}
               onClick={() => {
                 setRevokeReason("");
                 setActionError("");
@@ -827,7 +1076,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
       </section>
       {createOpen && (
         <ConfirmationDialog
-          busy={saving}
+          busy={busy}
           busyLabel={t.memberships.creatingUsage}
           cancelLabel={t.memberships.cancel}
           confirmLabel={t.memberships.confirmUsage}
@@ -844,7 +1093,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                 <FormField label={t.memberships.product + " *"} className="field">
                   <FormSelect
                     aria-label={`${t.memberships.product} ${index + 1}`}
-                    disabled={saving}
+                    disabled={busy || Boolean(replayUsage)}
                     onChange={(selectedValue) =>
                       updateUsageLine(index, { productId: selectedValue ?? "" })
                     }
@@ -874,7 +1123,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                     aria-label={`${t.memberships.units} ${index + 1}`}
                     aria-invalid={Boolean(usageUnitErrors[index])}
 
-                    disabled={saving}
+                    disabled={busy || Boolean(replayUsage)}
                     inputMode="decimal"
                     onChange={(event) => {
                       updateUsageLine(index, {
@@ -893,7 +1142,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
                 </label>
                 <Button
                   variant="default"
-                  disabled={saving || usageLines.length === 1}
+                  disabled={busy || Boolean(replayUsage) || usageLines.length === 1}
                   onClick={() =>
                     setUsageLines((current) =>
                       current.filter((_, lineIndex) => lineIndex !== index),
@@ -909,7 +1158,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <Button
             className="add-usage-line"
             variant="default"
-            disabled={saving || selected.size >= (item.quota?.length ?? 0)}
+            disabled={busy || Boolean(replayUsage) || selected.size >= (item.quota?.length ?? 0)}
             onClick={() => {
               const next = item.quota?.find((quota) => !selected.has(quota.product_id));
               if (next)
@@ -925,7 +1174,7 @@ export function MembershipDetail({ membershipId }: { membershipId: string }) {
           <label className="field usage-note">
             <span>{t.memberships.note}</span>
             <FormTextarea
-              disabled={saving}
+              disabled={busy || Boolean(replayUsage)}
               maxLength={500}
               onChange={(event) => setUsageNote(event.target.value)}
               value={usageNote}

@@ -8,7 +8,6 @@ import {
   Button,
   Divider,
   Group,
-  Paper,
   Select,
   Skeleton,
   Stack,
@@ -21,6 +20,8 @@ import {
 import { IconFlag, IconPlus } from "@tabler/icons-react";
 import Link from "next/link";
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { DataListPaper } from "@/components/data-list-paper";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListState } from "@/components/list-state";
 import { Pagination } from "@/components/pagination";
@@ -70,7 +71,6 @@ const previewWidths = [
 const previewControl = { flex: "1 1 150px", miw: 0, maw: 198 };
 const previewDescription =
   "This preview changes the content width. Resize the browser to test the viewport.";
-const refreshingLabel = "Refreshing sample records…";
 
 const statusOptions = Object.entries(recordStatuses).map(([value, label]) => ({ value, label }));
 // Keep option clicks inside the filter dialog while positioning above the fieldset's scroll area.
@@ -128,11 +128,10 @@ function SampleRecordRow({
     >
       <Table.Td>
         <Stack gap="calc(var(--mantine-spacing-xs) / 2)" style={{ overflowWrap: "anywhere" }}>
-          <Anchor
+          <DataListRecordLink
             href={recordHref(record.id)}
             data-record-link
             aria-current={selected || undefined}
-            fw={600}
             onClick={(event) => {
               if (!event.defaultPrevented && isUnmodifiedClick(event)) {
                 event.preventDefault();
@@ -141,7 +140,7 @@ function SampleRecordRow({
             }}
           >
             {record.name}
-          </Anchor>
+          </DataListRecordLink>
           <Text size="sm" c="dimmed">
             {record.id}
           </Text>
@@ -535,7 +534,8 @@ export function SampleRecordList({
                   ? {
                       label: vietnamese ? "Làm mới danh sách" : "Refresh records",
                       onRefresh: refresh,
-                      loading: toolbarRefreshing,
+                      loading: toolbarRefreshing && !initialLoading,
+                      disabled: initialLoading,
                     }
                   : undefined
               }
@@ -552,13 +552,7 @@ export function SampleRecordList({
               }
             />
           </Box>
-          {toolbarRefreshing ? (
-            <Text size="sm" c="dimmed" role="status">
-              {refreshingLabel}
-            </Text>
-          ) : (
-            refreshConfirmation
-          )}
+          {refreshConfirmation}
         </Stack>
       </Tabs.Panel>
       <Tabs.Panel value="list" pt="lg" miw={0}>
@@ -613,23 +607,30 @@ export function SampleRecordList({
               Open fixed sample page: {linkedRecord.name}
             </Anchor>
           )}
-          <Paper
+          <Box maw={listWidth === "available" ? undefined : Number(listWidth)} w="100%">
+            <ListToolbar
+              refresh={{
+                label: "Refresh records",
+                onRefresh: refresh,
+                loading: refreshing && !initialLoading,
+                disabled: initialLoading,
+              }}
+            />
+          </Box>
+          <DataListPaper
             component="section"
             aria-label="Data list"
             maw={listWidth === "available" ? undefined : Number(listWidth)}
             w="100%"
-            miw={0}
-            style={{ overflow: "hidden" }}
           >
             {hasRows && table}
-            {(!hasRows || refreshing || listError) && (
-              <Box p={listError || (refreshing && hasRows) ? "md" : undefined}>
+            {(!hasRows || listError) && (
+              <Box p={listError ? "md" : undefined}>
                 <ListState
-                  loading={initialLoading || refreshing}
+                  loading={initialLoading}
                   loadingPlaceholder={initialLoading ? table : undefined}
                   hasData={hasRows}
-                  refreshingLabel={refreshingLabel}
-                  loadingLabel={initialLoading ? "Loading sample records…" : refreshingLabel}
+                  loadingLabel="Loading sample records…"
                   error={listError}
                   empty="No sample records yet"
                   noResults={noResults ? "No matching sample records" : undefined}
@@ -659,7 +660,7 @@ export function SampleRecordList({
             {(showData || isEmpty) && (
               <>
                 <Divider />
-                <Box px="md" py="sm">
+                <Box component="footer" px="md" py="sm">
                   <Pagination
                     page={showData ? visiblePage : 1}
                     total={showData ? total : 0}
@@ -675,7 +676,7 @@ export function SampleRecordList({
                 </Box>
               </>
             )}
-          </Paper>
+          </DataListPaper>
           {refreshConfirmation}
         </Stack>
       </Tabs.Panel>

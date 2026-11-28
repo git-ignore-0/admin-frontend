@@ -21,8 +21,14 @@ admin/farms/media/{media}	DELETE	no
 admin/farms/{farm}	GET,PATCH,DELETE	no
 admin/farms/{farm}/growth-tracker	GET,POST,PATCH,DELETE	no
 admin/farms/{farm}/available-products	GET	no
-admin/farms/{farm}/products	GET,POST	no
-admin/farms/{farm}/products/{product}	PATCH,DELETE	no
+admin/farms/{farm}/stock-batches/bulk	GET,POST	no
+admin/farms/{farm}/products	GET	no
+admin/farms/{farm}/products/bulk	GET,POST	no
+admin/farms/{farm}/products/bulk-remove	GET,POST	no
+admin/farms/{farm}/products/{product}	GET	no
+admin/farms/{farm}/products/{product}/remove	POST	no
+admin/farms/{farm}/products/{product}/re-add	GET,POST	no
+admin/farms/{farm}/products/{product}/history	GET	no
 admin/farms/{farm}/products/{product}/batches	GET,POST	no
 admin/farms/{farm}/products/{product}/batches/{batch}	PATCH	no
 admin/farms/{farm}/products/{product}/batches/{batch}/cancel	POST	no
@@ -30,6 +36,7 @@ admin/store-categories	GET,POST	no
 admin/store-categories/{category}	GET,PATCH,DELETE	no
 admin/store-products	GET,POST	no
 admin/store-products/{product}	GET,PATCH,DELETE	no
+admin/store-products/{product}/transition	POST	no
 admin/store-products/media	POST	no
 admin/store-products/media/{media}	DELETE	no
 admin/shipping-settings/{province}	GET,PUT	no
@@ -57,7 +64,9 @@ admin/memberships/{membership}/contract	GET	no
 admin/memberships/{membership}/contract/pdf	GET	no
 admin/csa-purchase-requests/{request}/payments/{sequence}/confirm	POST	no
 admin/csa-purchase-requests/{request}/payments/{sequence}/reject	POST	no
-admin/store-orders	GET	no
+admin/store-orders	GET,POST	no
+admin/store-orders/quote	POST	no
+admin/store-orders/close-creation	POST	no
 admin/store-orders/{order}	GET	no
 admin/store-orders/{order}/approve	POST	no
 admin/store-orders/{order}/cancel	POST	no

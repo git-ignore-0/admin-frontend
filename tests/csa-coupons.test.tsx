@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminI18nProvider } from "@/components/admin-i18n-provider";
+import { AdminQueryProvider } from "@/components/admin-query-provider";
 import { CSACouponEditor } from "@/components/csa-coupon-editor";
 import { CSACouponList } from "@/components/csa-coupon-list";
 import { api, apiEnvelope } from "@/lib/client-api";
@@ -54,7 +55,9 @@ const coupon: AdminCoupon = {
 function showEditor(id?: string) {
   render(
     <AdminI18nProvider initialLocale="en">
-      <CSACouponEditor couponId={id} />
+      <AdminQueryProvider>
+        <CSACouponEditor couponId={id} />
+      </AdminQueryProvider>
     </AdminI18nProvider>,
   );
 }
@@ -62,6 +65,13 @@ function showEditor(id?: string) {
 function mockEditorApi(item: AdminCoupon = coupon) {
   vi.mocked(api).mockResolvedValue(item);
 }
+
+it("never displays a voucher returned for a different ID", async () => {
+  mockEditorApi();
+  showEditor(packageId);
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(screen.queryByDisplayValue(coupon.code)).not.toBeInTheDocument();
+});
 
 function chooseCouponDateTime(label: string, value: string) {
   const input = screen.getByLabelText(label);
@@ -85,7 +95,28 @@ describe("CSA coupon administration", () => {
         <CSACouponList />
       </AdminI18nProvider>,
     );
+    const announcement = screen.getByRole("status");
+    const loadingList = announcement.closest("[data-list-paper]")!;
+    const loadingScroll = loadingList.querySelector<HTMLElement>(
+      '[role="region"][aria-hidden="true"]',
+    );
+    const loadingWidth = loadingScroll?.style.getPropertyValue("--table-min-width");
+    expect(loadingWidth).toBe("calc(52.5rem * var(--mantine-scale))");
+    expect(loadingScroll?.querySelectorAll("th")).toHaveLength(7);
+    expect(loadingScroll?.querySelector("a, button, input, [tabindex]")).toBeNull();
+    expect(screen.queryByRole("table", { name: "Vouchers" })).toBeNull();
     expect(await screen.findByText(coupon.code)).toBeVisible();
+    const table = screen.getByRole("table", { name: "Vouchers" });
+    const scroll = screen.getByRole("region", { name: "Vouchers" });
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(scroll).toContainElement(table);
+    expect(scroll.style.getPropertyValue("--table-min-width")).toBe(loadingWidth);
+    expect(scroll.closest("[data-list-paper]")).toBe(loadingList);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
+    const footer = scroll.closest("[data-list-paper]")?.querySelector("footer") ?? null;
+    expect(footer).toHaveTextContent("1 result");
+    expect(scroll).not.toContainElement(footer);
+    fireEvent.click(screen.getByRole("button", { name: "Filter" }));
     expect(screen.getByLabelText("Filter status")).toHaveClass("mantine-Input-input");
     expect(screen.getByRole("link", { name: "Edit" })).toHaveClass("mantine-Button-root");
     expect(screen.getByText("01/09/2026 – 30/09/2026")).toBeVisible();
@@ -93,6 +124,11 @@ describe("CSA coupon administration", () => {
     await waitFor(() =>
       expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("status=inactive"),
     );
+    const refresh = screen.getByRole("button", { name: "Refresh list" });
+    await waitFor(() => expect(refresh).toBeEnabled());
+    fireEvent.click(refresh);
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("status=inactive");
   });
 
   it("renders the basic create form without conditions or preview", async () => {

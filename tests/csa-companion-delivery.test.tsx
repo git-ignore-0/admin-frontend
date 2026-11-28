@@ -22,6 +22,7 @@ afterEach(() => {
 const id = "24803641-2dce-4cac-8fc4-91e55f03e95f";
 const path = `admin/csa-rounds/${id}/companion-delivery`;
 const round: CSARound = {
+  ...{ version: 3 },
   id,
   sequence: 1,
   name: "CSA",
@@ -31,8 +32,9 @@ const round: CSARound = {
   delivery_date: "2026-11-22",
   server_time: "2026-11-20T09:00:00+07:00",
 };
-const empty = { companion_delivery_enabled: false, companion_delivery_cutoff: null };
+const empty = { version: 3, companion_delivery_enabled: false, companion_delivery_cutoff: null };
 const enabled = {
+  version: 3,
   companion_delivery_enabled: true,
   companion_delivery_cutoff: "2026-11-21T18:00:00+07:00",
 };
@@ -114,7 +116,7 @@ it("closes using only enabled=false and reopens with a valid cutoff", async () =
   await screen.findByText("Closed");
   expect(api).toHaveBeenLastCalledWith(path, {
     method: "PATCH",
-    body: '{"companion_delivery_enabled":false}',
+    body: '{"version":3,"companion_delivery_enabled":false}',
   });
   fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
   await screen.findByText("Accepting orders");

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import {
   administrativeUnitName,
@@ -6,47 +6,27 @@ import {
   getAdministrativeWards,
 } from "@/lib/administrative-units";
 
+const staleTime = 5 * 60 * 1000;
+
 export function useAdministrativeUnitNames(
   provinceCode: string | null,
   wardCode: string | null,
   locale: "vi" | "en",
 ) {
-  const [provinceName, setProvinceName] = useState<string | null>(null);
-  const [wardName, setWardName] = useState<string | null>(null);
-
-  useEffect(() => {
-    setProvinceName(null);
-    if (!provinceCode) return;
-
-    const controller = new AbortController();
-    getAdministrativeProvinces(locale, controller.signal)
-      .then((units) => {
-        if (!controller.signal.aborted && Array.isArray(units)) {
-          setProvinceName(administrativeUnitName(units, provinceCode));
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setProvinceName(null);
-      });
-    return () => controller.abort();
-  }, [locale, provinceCode]);
-
-  useEffect(() => {
-    setWardName(null);
-    if (!provinceCode || !wardCode) return;
-
-    const controller = new AbortController();
-    getAdministrativeWards(provinceCode, locale, controller.signal)
-      .then((units) => {
-        if (!controller.signal.aborted && Array.isArray(units)) {
-          setWardName(administrativeUnitName(units, wardCode));
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setWardName(null);
-      });
-    return () => controller.abort();
-  }, [locale, provinceCode, wardCode]);
-
-  return { provinceName, wardName };
+  const provinces = useQuery({
+    queryKey: ["administrative-units", locale, "provinces"],
+    enabled: Boolean(provinceCode),
+    queryFn: ({ signal }) => getAdministrativeProvinces(locale, signal),
+    staleTime,
+  });
+  const wards = useQuery({
+    queryKey: ["administrative-units", locale, provinceCode, "wards"],
+    enabled: Boolean(provinceCode && wardCode),
+    queryFn: ({ signal }) => getAdministrativeWards(provinceCode ?? "", locale, signal),
+    staleTime,
+  });
+  return {
+    provinceName: provinces.data ? administrativeUnitName(provinces.data, provinceCode) : null,
+    wardName: wards.data ? administrativeUnitName(wards.data, wardCode) : null,
+  };
 }

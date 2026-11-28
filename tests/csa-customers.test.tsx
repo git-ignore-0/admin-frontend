@@ -331,6 +331,39 @@ describe("CSA customer administration", () => {
     );
   });
 
+  it("reconciles an account search when the last page has disappeared", async () => {
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [account], meta: { ...meta, total: 31 } })
+      .mockResolvedValueOnce({ data: [], meta: { ...meta, page: 2 } })
+      .mockResolvedValueOnce({ data: [account], meta });
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await waitFor(() => expect(apiEnvelope).toHaveBeenCalledTimes(3));
+    expect(await screen.findByRole("button", { name: /Web User/ })).toBeVisible();
+    expect(vi.mocked(apiEnvelope).mock.lastCall?.[0]).toContain("page=1&search=Web+User");
+  });
+
+  it("does not restore a cached account search after another search loses access", async () => {
+    const verified = deferred<{ data: AdminUserDetail[]; meta: PaginationMeta }>();
+    vi.mocked(apiEnvelope)
+      .mockResolvedValueOnce({ data: [account], meta })
+      .mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }))
+      .mockReturnValueOnce(verified.promise);
+    providers(<CSACustomerForm />);
+    await searchAccounts();
+    expect(await screen.findByRole("button", { name: /Web User/ })).toBeVisible();
+    const input = screen.getByRole("searchbox");
+    fireEvent.change(input, { target: { value: "Different search" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText(adminDictionaries.en.common.forbidden)).toBeVisible();
+    fireEvent.change(input, { target: { value: "Web User" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.queryByRole("button", { name: /Web User/ })).not.toBeInTheDocument();
+    await act(async () => verified.resolve({ data: [account], meta }));
+    expect(await screen.findByRole("button", { name: /Web User/ })).toBeVisible();
+  });
+
   it.each(["managed", "linked", "missing", "unsupported"])(
     "blocks duplicate customers and incomplete account shipping (%s)",
     async (scenario) => {
@@ -1232,6 +1265,31 @@ describe("CSA customer administration", () => {
     );
   });
 
+  it("can find an account on a later search page without loading it in advance", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === `admin/users/${account.id}`) return account as never;
+      return customer;
+    });
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      const page = path.includes("page=2") ? 2 : 1;
+      return {
+        data: page === 1 ? [{ ...account, name: "First Account" }] : [account],
+        meta: { page, page_size: 1, total: 2 },
+      } as never;
+    });
+    providers(<CSACustomerDetail customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Link account" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("searchbox"), { target: { value: "web" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Search" }));
+    expect(await dialog.findByText("First Account")).toBeVisible();
+    expect(apiEnvelope).toHaveBeenCalledTimes(1);
+    fireEvent.click(dialog.getByRole("button", { name: "Next" }));
+    expect(await dialog.findByText(account.name)).toBeVisible();
+    expect(dialog.queryByText("First Account")).not.toBeInTheDocument();
+    expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toBe("admin/users?page=2&search=web");
+  });
+
   it("refreshes the CSA customer when a different account was linked before confirmation", async () => {
     let customerReads = 0;
     const linkedElsewhere = { ...account, id: customer.id, email: "linked-elsewhere@example.com" };
@@ -1670,6 +1728,7 @@ describe("CSA customer administration", () => {
       expect(api).toHaveBeenCalledWith(
         expect.stringContaining("admin/memberships"),
         expect.anything(),
+        { shouldRedirectToLogin: expect.any(Function) },
       ),
     );
     const body = JSON.parse(String(vi.mocked(api).mock.calls.at(-1)?.[1]?.body));
@@ -1696,6 +1755,103 @@ describe("CSA customer administration", () => {
       vi.mocked(api).mock.calls.filter(([path]) => path.startsWith("admin/memberships")),
     ).toHaveLength(1);
     expect(navigation.replace).toHaveBeenCalledWith(`/csa-customers/${customer.id}`);
+  });
+
+  it("offers active packages from subsequent pages on demand", async () => {
+    vi.mocked(api).mockResolvedValue(customer);
+    vi.mocked(apiEnvelope).mockImplementation(async (path) => {
+      const page = path.endsWith("page=2") ? 2 : 1;
+      return {
+        data: [
+          {
+            id: `package-${page}`,
+            name: `Available package ${page}`,
+            is_active: true,
+            description: "",
+            translations: [],
+            items: [],
+            price_options: [
+              {
+                id: "option-1",
+                duration_months: 3,
+                monthly_price_vnd: "100000",
+                total_price_vnd: "300000",
+                is_active: true,
+              },
+            ],
+          },
+        ],
+        meta: { page, page_size: 1, total: 2 },
+      } as never;
+    });
+    providers(<MembershipAssignmentForm customerId={customer.id} />);
+    expect(await screen.findByRole("radio", { name: /Available package 1/ })).toBeEnabled();
+    expect(apiEnvelope).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("radio", { name: /Available package 2/ })).toBeEnabled();
+    expect(vi.mocked(apiEnvelope).mock.calls.at(-1)?.[0]).toBe(
+      "admin/membership-packages?active=true&page=2",
+    );
+  });
+
+  it.each(["left route", "lost access"])("retires an assignment after %s", async (scenario) => {
+    const pending = deferred<{ id: string }>();
+    vi.mocked(api).mockImplementation(async (_path, init) =>
+      init?.method === "POST" ? (pending.promise as never) : customer,
+    );
+    vi.mocked(apiEnvelope).mockResolvedValue({
+      data: [
+        {
+          id: "package-1",
+          name: "Available package",
+          is_active: true,
+          description: "",
+          translations: [],
+          items: [],
+          price_options: [
+            {
+              id: "option-1",
+              duration_months: 3,
+              monthly_price_vnd: "100000",
+              total_price_vnd: "300000",
+              is_active: true,
+            },
+          ],
+        },
+      ],
+      meta,
+    });
+    const view = providers(<MembershipAssignmentForm customerId={customer.id} />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Available package/ }));
+    selectOption(screen.getByRole("textbox", { name: "Price option" }), "option-1");
+    fireEvent.change(screen.getByRole("textbox", { name: "Order reference" }), {
+      target: { value: "FB-100" },
+    });
+    fireEvent.change(screen.getByLabelText(/Start date/), { target: { value: "01/05/2099" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assign CSA package" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Assign CSA package" }));
+    await waitFor(() =>
+      expect(vi.mocked(api).mock.calls.some(([, init]) => init?.method === "POST")).toBe(true),
+    );
+    if (scenario === "lost access") {
+      await act(async () => pending.reject(Object.assign(new Error("forbidden"), { status: 403 })));
+      expect(screen.queryByText(customer.address)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Assign CSA package" })).not.toBeInTheDocument();
+      expect(screen.getByRole("alert")).toBeVisible();
+      return;
+    }
+    view.rerender(
+      <AdminI18nProvider initialLocale="en">
+        <ToastProvider>
+          <AdminQueryProvider>
+            <div>Another route</div>
+          </AdminQueryProvider>
+        </ToastProvider>
+      </AdminI18nProvider>,
+    );
+    await act(async () => pending.resolve({ id: "membership-1" }));
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 
   it("keeps the assignment draft editable when a package refresh fails during confirmation", async () => {

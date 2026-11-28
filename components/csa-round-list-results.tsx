@@ -1,9 +1,10 @@
 "use client";
 
-import { Box, Divider, Paper, Select, Skeleton, Table, VisuallyHidden } from "@mantine/core";
+import { Box, Divider, Select, Skeleton, Table } from "@mantine/core";
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
+import { DataListPaper } from "@/components/data-list-paper";
 import { ListState } from "@/components/list-state";
 import { Pagination } from "@/components/pagination";
 import { requestErrorMessage } from "@/lib/client-error";
@@ -101,7 +102,7 @@ export function CSARoundListResults({
   const { locale, t } = useAdminI18n();
   const c = csaRoundsCopy(locale);
   const results = useRef<HTMLDivElement>(null);
-  const initialLoading = rows === null && !error;
+  const initialLoading = rows === null && loading && !error;
   const table = (
     <Table.ScrollContainer
       aria-hidden={initialLoading || undefined}
@@ -139,33 +140,27 @@ export function CSARoundListResults({
   );
 
   return (
-    <Paper
-      ref={results}
-      role="group"
-      aria-label={title}
-      tabIndex={-1}
-      withBorder
-      style={{ overflow: "hidden" }}
-    >
+    <DataListPaper ref={results} role="group" aria-label={title} tabIndex={-1}>
       {Boolean(rows?.length) && table}
-      {rows !== null && loading && <VisuallyHidden role="status">{c.refreshing}</VisuallyHidden>}
-      <ListState
-        embedded
-        empty={empty}
-        noResults={filtered ? t.membershipCatalog.noMatches : undefined}
-        error={error}
-        hasData={rows !== null}
-        isEmpty={rows?.length === 0}
-        loading={initialLoading}
-        loadingLabel={c.loading}
-        loadingPlaceholder={table}
-        onRetry={onRetry}
-        retryLabel={t.common.retry}
-      />
+      <Box p={error ? "md" : undefined}>
+        <ListState
+          embedded
+          empty={empty}
+          noResults={filtered ? t.membershipCatalog.noMatches : undefined}
+          error={error}
+          hasData={rows !== null}
+          isEmpty={rows?.length === 0}
+          loading={initialLoading}
+          loadingLabel={c.loading}
+          loadingPlaceholder={table}
+          onRetry={onRetry}
+          retryLabel={t.common.retry}
+        />
+      </Box>
       {meta && (
         <>
           <Divider />
-          <Box p="sm">
+          <Box component="footer" px="md" py="sm">
             <Pagination
               page={meta.page}
               pageSize={meta.page_size}
@@ -184,6 +179,6 @@ export function CSARoundListResults({
           </Box>
         </>
       )}
-    </Paper>
+    </DataListPaper>
   );
 }

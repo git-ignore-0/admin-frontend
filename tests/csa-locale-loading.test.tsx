@@ -57,6 +57,7 @@ it("keeps loaded history when switching locale", async () => {
 it("refreshes only localized demand and keeps history open on locale change", async () => {
   vi.mocked(api).mockResolvedValue({
     id: "r",
+    version: 3,
     sequence: 1,
     name: "Round",
     status: "closed",
@@ -134,6 +135,7 @@ it("refreshes open history when the selection revision changes", async () => {
 it("keeps fresh round status when locale changes during an explicit refresh", async () => {
   const draft = {
     id: "r",
+    version: 3,
     sequence: 1,
     name: "Round",
     status: "draft",
@@ -173,6 +175,7 @@ it("keeps fresh round status when locale changes during an explicit refresh", as
 it("retains the current locale when a pending mutation completes", async () => {
   const round = {
     id: "r",
+    version: 3,
     name: "Round",
     status: "draft",
     opens_at: "2026-11-10T01:00:00Z",

@@ -1,370 +1,254 @@
 "use client";
-import { Button } from "@mantine/core";
 
-import { ReactNode, RefObject, useCallback, useEffect, useMemo, useState } from "react";
+import { Box, Button, Divider, Group, Select, Stack, Table, Text, Title } from "@mantine/core";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
-import { ConfirmationDialog } from "@/components/confirmation-dialog";
-import { DataState, FormField, FormSelect, Status } from "@/components/nfv-controls";
+import { DataListPaper } from "@/components/data-list-paper";
+import { ListState } from "@/components/list-state";
+import { TableSkeletonRows } from "@/components/table-skeleton-rows";
+import { Status } from "@/components/nfv-controls";
 import { Pagination } from "@/components/pagination";
-import { StockBatchFields } from "@/components/stock-batch-fields";
 import { formatAdminDate } from "@/lib/admin-date";
-import { requestErrorMessage } from "@/lib/client-error";
-import {
-  cancelFarmStockBatch,
-  createFarmStockBatch,
-  listFarmStockBatches,
-  updateFarmStockBatch,
-} from "@/lib/farms-api";
+import { isProtectedDataError, requestErrorMessage } from "@/lib/client-error";
+import { farmListCanShowData } from "@/lib/farm-query";
 import { farmsCopy } from "@/lib/farms-copy";
-import {
-  formatStockQuantityTotal,
-  stockBatchRangeForPreset,
-  validateStockBatchInput,
-  type StockBatchDraft,
-  type StockBatchFieldErrors,
-  type StockBatchPreset,
-} from "@/lib/farm-stock";
-import type { FarmProduct, FarmStockBatch, PaginationMeta, StockBatchStatus } from "@/lib/types";
-
-const conflictCodes = new Set([
-  "version_conflict",
-  "stock_batch_changed",
-  "stock_batch_cancelled",
-  "stock_batch_expired",
-  "stock_batch_start_locked",
-  "farm_product_changed",
-]);
-
-function emptyDraft(): StockBatchDraft {
-  return { ...stockBatchRangeForPreset("week"), quantity: "" };
-}
+import { farmBatchQuery, type FarmBatchFilter } from "@/lib/farm-supply-query";
+import type { FarmBatchScope, FarmProduct, FarmStockBatch, StockBatchStatus } from "@/lib/types";
 
 type Props = {
-  farmId: string;
-  product: FarmProduct;
-  detailHeadingRef: RefObject<HTMLHeadingElement | null>;
-  onBack: () => void;
-  onSummaryChanged: () => void;
-  actions?: ReactNode;
+  source: FarmProduct;
+  filter: FarmBatchFilter;
+  onFilterChange: (filter: FarmBatchFilter) => void;
+  locked: boolean;
+  reviewingBatchId?: string;
+  onAccessLost?: (cause: unknown) => void;
+  onEdit: (batch: FarmStockBatch) => void;
+  onCancel: (batch: FarmStockBatch) => void;
 };
 
 export function FarmStockBatches({
-  farmId,
-  product,
-  detailHeadingRef,
-  onBack,
-  onSummaryChanged,
-  actions,
+  source,
+  filter,
+  onFilterChange,
+  locked,
+  reviewingBatchId,
+  onAccessLost,
+  onEdit,
+  onCancel,
 }: Props) {
   const { locale, t } = useAdminI18n();
   const c = farmsCopy(locale);
-  const unitLabel = locale === "vi" ? product.unit_label_vi : product.unit_label_en;
-  const [rows, setRows] = useState<FarmStockBatch[] | null>(null);
-  const [meta, setMeta] = useState<PaginationMeta>({ page: 1, page_size: 20, total: 0 });
-  const [page, setPage] = useState(1);
-  const [status, setStatus] = useState<StockBatchStatus | "">("");
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [actionError, setActionError] = useState("");
-  const [retry, setRetry] = useState(0);
-  const [editor, setEditor] = useState<"new" | FarmStockBatch | null>(null);
-  const [cancelTarget, setCancelTarget] = useState<FarmStockBatch | null>(null);
-  const [preset, setPreset] = useState<StockBatchPreset>("week");
-  const [draft, setDraft] = useState<StockBatchDraft>(emptyDraft);
-  const [fieldErrors, setFieldErrors] = useState<StockBatchFieldErrors>({});
-
-  const load = useCallback(
-    () => listFarmStockBatches(farmId, product.product_id, { page, status: status || undefined }),
-    [farmId, page, product.product_id, status],
-  );
+  const removed = source.supply_status === "removed";
+  const result = useQuery(farmBatchQuery(source, filter));
+  const denied = isProtectedDataError(result.error);
+  const data = farmListCanShowData(result.error) ? result.data : undefined;
+  const initialLoading = result.isFetching && !data;
+  const showingError = Boolean(result.error && !result.isFetching);
+  const lastPage = data
+    ? Math.max(1, Math.ceil(data.meta.total / data.meta.page_size))
+    : filter.page;
 
   useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setError("");
-    load()
-      .then((result) => {
-        if (!live) return;
-        setRows(result.data);
-        setMeta(result.meta ?? { page, page_size: 20, total: result.data.length });
-      })
-      .catch((caught) => live && setError(requestErrorMessage(caught, t)))
-      .finally(() => live && setLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [load, page, retry, t]);
+    if (denied) onAccessLost?.(result.error);
+  }, [denied, onAccessLost, result.error]);
+  useEffect(() => {
+    if (lastPage < filter.page) onFilterChange({ ...filter, page: lastPage });
+  }, [filter, lastPage, onFilterChange]);
 
-  const statusLabels = useMemo(
-    () => ({
-      upcoming: c.batchStatusUpcoming,
-      active: c.batchStatusActive,
-      expired: c.batchStatusExpired,
-      cancelled: c.batchStatusCancelled,
-    }),
-    [c],
+  if (denied) return null;
+  const statuses: Record<StockBatchStatus, string> = {
+    upcoming: c.batchStatusUpcoming,
+    active: c.batchStatusActive,
+    expired: c.batchStatusExpired,
+    cancelled: c.batchStatusCancelled,
+  };
+  const num = new Intl.NumberFormat(locale);
+  const actions = !removed && filter.scope !== "history";
+  const canWrite = !locked && result.isSuccess && !result.isFetching;
+  const table = (
+    <Table.ScrollContainer
+      type="native"
+      minWidth={actions ? 600 : 490}
+      role="region"
+      aria-label={c.stockBatches}
+      aria-hidden={initialLoading || undefined}
+      tabIndex={initialLoading ? undefined : 0}
+    >
+      <Table aria-label={c.stockBatches} aria-busy={result.isFetching || undefined}>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th scope="col">{c.batchPeriod}</Table.Th>
+            <Table.Th scope="col">{c.batchInitial}</Table.Th>
+            <Table.Th scope="col">{c.batchBalance}</Table.Th>
+            <Table.Th scope="col">{c.status}</Table.Th>
+            {actions && <Table.Th scope="col">{c.moreActions}</Table.Th>}
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {initialLoading ? (
+            <TableSkeletonRows columns={actions ? 5 : 4} height={actions ? 36 : 26} />
+          ) : (
+            data?.data.map((batch) => {
+              const editable =
+                actions &&
+                !batch.is_historical &&
+                (batch.status === "active" || batch.status === "upcoming");
+              return (
+                <Table.Tr key={batch.id}>
+                  <Table.Td>
+                    {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
+                    {batch.id === reviewingBatchId && (
+                      <Text size="xs" c="dimmed">
+                        {c.batchPendingReview}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>{num.format(batch.quantity_units)}</Table.Td>
+                  <Table.Td>
+                    {num.format(batch.remaining_quantity)}
+                    {batch.net_sold_quantity > 0 && (
+                      <Text size="xs" c="dimmed">
+                        {c.batchSold.replace("{count}", num.format(batch.net_sold_quantity))}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Status
+                      domain="farm-stock"
+                      status={batch.is_historical ? "inactive" : batch.status}
+                      label={batch.is_historical ? c.batchHistoryStatus : statuses[batch.status]}
+                    />
+                    {batch.is_historical && (
+                      <Text size="xs" c="dimmed">
+                        {c.batchDateStatus.replace("{status}", statuses[batch.status])}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  {actions && (
+                    <Table.Td>
+                      {editable && (
+                        <Group gap={4} wrap="wrap">
+                          <Button
+                            variant="subtle"
+                            disabled={!canWrite}
+                            aria-label={c.editBatch}
+                            onClick={canWrite ? () => onEdit(batch) : undefined}
+                          >
+                            {c.editBatchShort}
+                          </Button>
+                          <Button
+                            color="red"
+                            variant="subtle"
+                            disabled={!canWrite}
+                            aria-label={c.cancelBatch}
+                            onClick={canWrite ? () => onCancel(batch) : undefined}
+                          >
+                            {c.cancelBatchShort}
+                          </Button>
+                        </Group>
+                      )}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
+              );
+            })
+          )}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
   );
-  const productStockLabel = !product.is_active
-    ? c.productInactive
-    : product.available_quantity > 0
-      ? c.remainingUnits.replace("{count}", String(product.available_quantity))
-      : c.outOfStock;
-
-  function openNew() {
-    setEditor("new");
-    setPreset("week");
-    setDraft(emptyDraft());
-    setFieldErrors({});
-    setActionError("");
-  }
-
-  function openEdit(batch: FarmStockBatch) {
-    setEditor(batch);
-    setPreset("custom");
-    setDraft({
-      start_date: batch.start_date,
-      end_date: batch.end_date,
-      quantity: String(batch.quantity_units),
-    });
-    setFieldErrors({});
-    setActionError("");
-  }
-
-  function errorFor(caught: unknown) {
-    return caught instanceof Error && conflictCodes.has(caught.message)
-      ? c.batchChanged
-      : requestErrorMessage(caught, t);
-  }
-
-  function reloadAfterConflict() {
-    setEditor(null);
-    setCancelTarget(null);
-    setActionError("");
-    reloadFromFirstPage();
-    onSummaryChanged();
-  }
-
-  function reloadFromFirstPage() {
-    if (page === 1) setRetry((value) => value + 1);
-    else setPage(1);
-  }
-
-  async function save() {
-    const validated = validateStockBatchInput(draft);
-    setFieldErrors(validated.errors);
-    if (!editor || !validated.value || busy) return;
-    setBusy(true);
-    setActionError("");
-    try {
-      if (editor === "new") {
-        await createFarmStockBatch(farmId, product.product_id, validated.value);
-      } else {
-        await updateFarmStockBatch(farmId, product.product_id, editor.id, {
-          ...validated.value,
-          version: editor.version,
-        });
-      }
-      setEditor(null);
-      reloadFromFirstPage();
-      onSummaryChanged();
-    } catch (caught) {
-      setActionError(errorFor(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function cancel() {
-    if (!cancelTarget || busy) return;
-    setBusy(true);
-    setActionError("");
-    try {
-      await cancelFarmStockBatch(farmId, product.product_id, cancelTarget.id, cancelTarget.version);
-      setCancelTarget(null);
-      reloadFromFirstPage();
-      onSummaryChanged();
-    } catch (caught) {
-      setActionError(errorFor(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
-    <section className="farm-stock-batches" aria-label={`${c.stockBatches} ${product.sku}`}>
-      <Button
-        aria-label={c.backToProducts}
-        className="farm-stock-mobile-back"
-        variant="subtle"
-        onClick={onBack}
-      >
-        ← {c.backToProducts}
-      </Button>
-      <div className="farm-stock-batches-heading">
-        <div>
-          <h3 ref={detailHeadingRef} tabIndex={-1}>
-            {c.stockBatches}: {locale === "vi" ? product.name_vi : product.name_en}
-          </h3>
-          <p>{c.stockBatchesHint}</p>
-          <Status
-            domain="farm-stock"
-            status={
-              !product.is_active
-                ? "inactive"
-                : product.available_quantity > 0
-                  ? "active"
-                  : "expired"
-            }
-            label={productStockLabel}
-          />
-        </div>
-        <div className="farm-stock-batches-actions">
-          <Button size="xs" onClick={openNew}>
-            {c.addBatch}
-          </Button>
-          {actions}
-        </div>
-      </div>
-      <div className="farm-stock-batches-filter">
-        <FormField label={c.batchStatus}>
-          <FormSelect
-            value={status}
-            onChange={(value) => {
-              setPage(1);
-              setStatus((value ?? "") as StockBatchStatus | "");
-            }}
+    <Stack gap="sm" miw={0}>
+      <Group justify="space-between" gap="sm" align="end">
+        <Stack gap={4}>
+          <Title order={3} size="h4">
+            {c.stockBatches}
+          </Title>
+          <Text size="xs" c="dimmed">
+            {c.batchSellingUnits}
+          </Text>
+        </Stack>
+        <Group gap="sm" align="end">
+          {!removed && (
+            <Select
+              label={c.batchScope}
+              role="combobox"
+              value={filter.scope}
+              allowDeselect={false}
+              data={[
+                { value: "current", label: c.currentBatches },
+                { value: "history", label: c.historicalBatches },
+                { value: "all", label: c.allBatches },
+              ]}
+              onChange={(value) => {
+                if (value) onFilterChange({ ...filter, scope: value as FarmBatchScope, page: 1 });
+              }}
+            />
+          )}
+          <Select
+            label={c.batchStatus}
+            role="combobox"
+            value={filter.status ?? ""}
+            allowDeselect={false}
             data={[
               { value: "", label: c.batchStatusAll },
-              ...Object.entries(statusLabels).map(([value, label]) => ({ value, label })),
+              ...Object.entries(statuses).map(([value, label]) => ({ value, label })),
             ]}
+            onChange={(value) =>
+              onFilterChange({
+                ...filter,
+                status: (value || undefined) as StockBatchStatus | undefined,
+                page: 1,
+              })
+            }
           />
-        </FormField>
-      </div>
-      {error ? (
-        <DataState
-          kind="error"
-          title={c.batchError}
-          description={error}
-          action={{ label: t.common.retry, onClick: () => setRetry((value) => value + 1) }}
-        />
-      ) : loading ? (
-        <DataState kind="loading" title={c.loading} compact />
-      ) : rows?.length ? (
-        <div className="farm-stock-batch-list">
-          {rows.map((batch) => {
-            const editable = batch.status === "active" || batch.status === "upcoming";
-            return (
-              <article className="farm-stock-batch-row" key={batch.id}>
-                <div>
-                  <strong>
-                    {formatAdminDate(batch.start_date)} – {formatAdminDate(batch.end_date)}
-                  </strong>
-                  <span>
-                    {c.batchInventory
-                      .replace("{initial}", String(batch.quantity_units))
-                      .replace("{sold}", String(batch.net_sold_quantity))
-                      .replace("{remaining}", String(batch.remaining_quantity))
-                      .replace("{available}", String(batch.available_quantity))}
-                  </span>
-                </div>
-                <strong>
-                  {formatStockQuantityTotal(batch.remaining_quantity, product.unit_size, unitLabel)}
-                </strong>
-                <Status
-                  domain="farm-stock"
-                  status={batch.status}
-                  label={statusLabels[batch.status]}
-                />
-                <div className="farm-stock-batch-row-actions">
-                  {editable ? (
-                    <>
-                      <Button size="xs" variant="subtle" onClick={() => openEdit(batch)}>
-                        {c.edit}
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        onClick={() => {
-                          setActionError("");
-                          setCancelTarget(batch);
-                        }}
-                      >
-                        {c.cancelBatch}
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      ) : (
-        <DataState kind="empty" title={c.batchEmpty} compact />
-      )}
-      {!loading && !error && meta.total > meta.page_size ? (
-        <Pagination
-          page={page}
-          total={meta.total}
-          pageSize={meta.page_size}
-          onPage={setPage}
-          disabled={loading}
-          previousLabel={t.common.previous}
-          nextLabel={t.common.next}
-          summary={t.common.pagination}
-        />
-      ) : null}
-      {editor ? (
-        <ConfirmationDialog
-          title={editor === "new" ? c.addBatch : c.editBatch}
-          busy={busy}
-          busyLabel={c.saving}
-          cancelLabel={c.cancel}
-          confirmLabel={editor === "new" ? c.addBatch : c.save}
-          alternateLabel={actionError === c.batchChanged ? c.reload : undefined}
-          error={actionError}
-          onAlternate={reloadAfterConflict}
-          onCancel={() => !busy && setEditor(null)}
-          onConfirm={() => void save()}
-        >
-          <StockBatchFields
-            draft={draft}
-            errors={fieldErrors}
-            labels={c}
-            preset={preset}
-            unitSize={product.unit_size}
-            unitLabel={unitLabel}
-            startDisabled={editor !== "new" && editor.status === "active"}
-            onChange={(value) => {
-              setDraft(value);
-              setFieldErrors({});
-            }}
-            onPresetChange={setPreset}
+        </Group>
+      </Group>
+      <DataListPaper>
+        {Boolean(data?.data.length) && table}
+        <Box p={showingError || (data && result.isFetching) ? "md" : undefined}>
+          <ListState
+            embedded
+            loadingPlaceholder={table}
+            loading={result.isFetching || lastPage < filter.page}
+            loadingLabel={c.loadingSupply}
+            hasData={Boolean(data)}
+            isEmpty={data?.data.length === 0}
+            empty={
+              filter.scope === "history"
+                ? c.noHistoricalBatches
+                : filter.scope === "current"
+                  ? c.noCurrentBatches
+                  : c.batchEmpty
+            }
+            error={showingError ? requestErrorMessage(result.error, t) : ""}
+            onRetry={() => void result.refetch({ cancelRefetch: false })}
+            retryLabel={t.common.retry}
           />
-        </ConfirmationDialog>
-      ) : null}
-      {cancelTarget ? (
-        <ConfirmationDialog
-          title={c.cancelBatch}
-          busy={busy}
-          busyLabel={c.saving}
-          cancelLabel={c.cancel}
-          confirmLabel={c.cancelBatch}
-          danger
-          alternateLabel={actionError === c.batchChanged ? c.reload : undefined}
-          error={actionError}
-          onAlternate={reloadAfterConflict}
-          onCancel={() => !busy && setCancelTarget(null)}
-          onConfirm={() => void cancel()}
-        >
-          <p>
-            {c.cancelBatchConfirm
-              .replace("{start}", formatAdminDate(cancelTarget.start_date))
-              .replace("{end}", formatAdminDate(cancelTarget.end_date))}
-          </p>
-        </ConfirmationDialog>
-      ) : null}
-    </section>
+        </Box>
+        {data && (
+          <>
+            <Divider />
+            <Box component="footer" px="md" py="sm">
+              <Pagination
+                page={filter.page}
+                pageSize={data.meta.page_size}
+                total={data.meta.total}
+                disabled={result.isFetching || lastPage < filter.page}
+                onPage={(page) => onFilterChange({ ...filter, page })}
+                previousLabel={t.common.previous}
+                nextLabel={t.common.next}
+                summary={t.common.pagination}
+                resultCountLabel={t.common.resultCount}
+                resultCountSingularLabel={t.common.resultCountSingular}
+              />
+            </Box>
+          </>
+        )}
+      </DataListPaper>
+    </Stack>
   );
 }

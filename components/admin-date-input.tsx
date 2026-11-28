@@ -94,8 +94,10 @@ export function AdminDateInput({
               <IconCalendar size={17} stroke={1.7} />
             </ActionIcon>
           </Popover.Target>
-          <Popover.Dropdown p="xs">
+          <Popover.Dropdown p="xs" data-mantine-stop-propagation>
             <DatePicker
+              // Mantine uses this marker for a calendar popover inside another overlay.
+              __stopPropagation
               value={selectedDate}
               defaultDate={selectedDate || minimumDate}
               minDate={minimumDate}

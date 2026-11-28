@@ -378,7 +378,11 @@ it("submits a search, returns to the first page and retries an empty or failed l
   await finishSampleRequest(() => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(screen.getByRole("link", { name: firstRecord })).toBeVisible();
-    expect(screen.getByText("Refreshing sample records…")).toBeVisible();
+    expect(within(list).getByRole("button", { name: "Refresh records" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(within(list).queryByRole("status")).not.toBeInTheDocument();
   });
   expect(screen.getByText("Sample records refreshed.")).toBeVisible();
   expect(screen.queryByText("Sample refresh failed.")).not.toBeInTheDocument();

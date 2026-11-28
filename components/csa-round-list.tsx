@@ -1,6 +1,6 @@
 "use client";
 
-import { Anchor, Button, Select, Stack, Table } from "@mantine/core";
+import { Button, Select, Stack, Table } from "@mantine/core";
 import { IconPlus } from "@tabler/icons-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
@@ -16,6 +16,7 @@ import { AdminNavigationLink } from "@/components/admin-navigation-link";
 import { CSARoundBreadcrumbs } from "@/components/csa-round-breadcrumbs";
 import { CSARoundListResults, useCSARoundPage } from "@/components/csa-round-list-results";
 import { ListToolbar } from "@/components/list-toolbar";
+import { DataListRecordLink } from "@/components/data-list-record-link";
 import { Status } from "@/components/nfv-controls";
 import { PageHeading } from "@/components/page-heading";
 import { openRecordFromRow } from "@/components/record-row-navigation";
@@ -74,17 +75,14 @@ export function CSARoundList() {
     return (
       <Table.Tr key={item.id} onClick={openRecordFromRow} style={{ cursor: "pointer" }}>
         <Table.Td>
-          <Anchor
+          <DataListRecordLink
             component={AdminNavigationLink}
-            c="inherit"
             data-record-link
-            fw={600}
             href={roundConfigurationHref(context, item.id)}
             style={{ overflowWrap: "anywhere" }}
-            underline="never"
           >
             {item.name}
-          </Anchor>
+          </DataListRecordLink>
         </Table.Td>
         <Table.Td>{item.type === "weekly" ? c.recurrence.weekly : c.standalone}</Table.Td>
         <Table.Td>
@@ -172,7 +170,12 @@ export function CSARoundList() {
             {c.createConfiguration}
           </Button>
         }
-        refresh={{ label: c.refresh, onRefresh: reload, loading }}
+        refresh={{
+          label: c.refresh,
+          onRefresh: reload,
+          loading: loading && items !== null,
+          disabled: loading && items === null,
+        }}
       />
       <CSARoundListResults
         title={c.configurations}
