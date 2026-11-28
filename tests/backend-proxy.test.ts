@@ -2047,6 +2047,121 @@ it("checks supply request list filters and rejects query on link and decisions",
   );
 });
 
+describe("Farm bulk removal proxy", () => {
+  const farmId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const key = "55555555-5555-4555-8555-555555555555";
+  const productId = "33333333-3333-4333-8333-333333333333";
+  const sourceId = "44444444-4444-4444-8444-444444444444";
+  const path = `admin/farms/${farmId}/products/bulk-remove`;
+  const receiptQuery = `?creation_key=${key}`;
+  const origin = "https://admin.example.test";
+  const body = JSON.stringify({
+    idempotency_key: key,
+    items: [{ product_id: productId, expected_link_id: sourceId, expected_version: 3 }],
+  });
+  const handlers = { GET, POST, PUT, PATCH, DELETE };
+  function request(
+    method: keyof typeof handlers,
+    query = "",
+    target = path,
+    headers: Record<string, string> = {},
+  ) {
+    return handlers[method](
+      pageRequest(`${origin}/api/backend/${target}${query}`, {
+        method,
+        body: method === "POST" ? body : undefined,
+        headers: {
+          "content-type": "application/json",
+          origin,
+          "x-nfv-admin-request": "1",
+          ...headers,
+        },
+      }),
+      { params: Promise.resolve({ path: target.split("/") }) },
+    );
+  }
+
+  it("forwards POST body and GET receipt through the existing session and CSRF checks", async () => {
+    const data = { farm_id: farmId, removed_count: 1 };
+    const action_receipt = {
+      action: "remove_farm_products",
+      resource_id: farmId,
+      idempotency_key: key,
+    };
+    const commit = { data, meta: { idempotent_replay: false, action_receipt } };
+    const receipt = { data, meta: { idempotent_replay: true, action_receipt } };
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(commit))
+      .mockResolvedValueOnce(Response.json(receipt));
+    vi.stubGlobal("fetch", upstream);
+
+    expect((await request("POST", "", path, { origin: "https://untrusted.test" })).status).toBe(
+      403,
+    );
+    expect((await request("POST", "", path, { "x-nfv-admin-request": "" })).status).toBe(403);
+    expect((await request("POST", "", path, { "x-nfv-admin-session": "obsolete" })).status).toBe(
+      409,
+    );
+    expect(
+      (await request("GET", receiptQuery, path, { "x-nfv-admin-session": "obsolete" })).status,
+    ).toBe(409);
+    vi.mocked(readSession).mockResolvedValueOnce(null);
+    expect((await request("GET", receiptQuery)).status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+
+    const post = await request("POST", "", path, { authorization: "Bearer browser-token" });
+    expect(post.status).toBe(200);
+    expect(await post.json()).toEqual(commit);
+    expect(post.headers.get("cache-control")).toBe("private, no-store");
+    const get = await request("GET", receiptQuery);
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual(receipt);
+    expect(get.headers.get("cache-control")).toBe("private, no-store");
+    const target = `https://auth.example.test/api/v1/${path}`;
+    expect(upstream.mock.calls.map(([url, init]) => [String(url), init?.method])).toEqual([
+      [target, "POST"],
+      [target + receiptQuery, "GET"],
+    ]);
+    const [, postOptions] = upstream.mock.calls[0];
+    const postBody = postOptions?.body;
+    if (!(postBody instanceof ArrayBuffer)) throw new Error("Expected a buffered POST body");
+    expect(new TextDecoder().decode(postBody)).toBe(body);
+    expect(new Headers(postOptions?.headers).get("authorization")).toBe("Bearer access-token");
+    expect(upstream.mock.calls[1][1]?.body).toBeUndefined();
+  });
+
+  it("rejects other methods, paths and queries without contacting Core", async () => {
+    const upstream = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", upstream);
+    for (const method of ["PATCH", "DELETE", "PUT"] as const) {
+      expect((await request(method)).status).toBe(404);
+      expect((await request(method, receiptQuery)).status).toBe(404);
+    }
+    for (const target of [
+      path + "/extra",
+      path.replace(farmId, "bad-farm"),
+      path.replace("products", "stock-batches"),
+    ]) {
+      expect((await request("POST", "", target)).status).toBe(404);
+      expect((await request("GET", receiptQuery, target)).status).toBe(404);
+    }
+    for (const query of [
+      "",
+      "?page=1",
+      "?creation_key=",
+      "?creation_key=bad",
+      `${receiptQuery}&page=1`,
+      `${receiptQuery}&creation_key=${key}`,
+    ]) {
+      expect((await request("GET", query)).status).toBe(404);
+    }
+    expect((await request("POST", "?page=1")).status).toBe(404);
+    expect((await request("POST", receiptQuery)).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
 it.each(["legacy", "mixed", "single"])(
   "forwards only exact session-bound %s Farm linking requests",
   async (mode) => {

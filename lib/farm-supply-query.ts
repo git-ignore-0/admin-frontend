@@ -1,5 +1,6 @@
-import { queryOptions } from "@tanstack/react-query";
-import { farmSupplyKey } from "@/lib/farm-query";
+import { notifyManager, queryOptions, type QueryClient } from "@tanstack/react-query";
+import { invalidateFarmDetail } from "@/lib/farm-detail-snapshot";
+import { farmListKey, farmSupplyKey } from "@/lib/farm-query";
 import { getFarmProduct, listFarmStockBatches } from "@/lib/farms-api";
 import type { FarmBatchScope, FarmProduct, StockBatchStatus } from "@/lib/types";
 
@@ -25,5 +26,36 @@ export function farmBatchQuery(source: FarmProduct, filter: FarmBatchFilter) {
     ],
     queryFn: ({ signal }) =>
       listFarmStockBatches(source.farm_id, source.product_id, filter, { signal, source }),
+  });
+}
+
+export function invalidateFarmProductLinks(
+  client: QueryClient,
+  farmId: string,
+  productIds: readonly string[],
+  confirmed: boolean,
+) {
+  const scope = farmSupplyKey(farmId);
+  const ids = new Set(productIds);
+  notifyManager.batch(() => {
+    if (confirmed) {
+      invalidateFarmDetail(client, farmId);
+      void client.invalidateQueries({ queryKey: farmListKey });
+    }
+    void client.invalidateQueries({
+      queryKey: scope,
+      predicate: ({ queryKey }) => {
+        const group = queryKey[scope.length];
+        const productId = queryKey[scope.length + 1];
+        return (
+          group === "available" ||
+          group === "list" ||
+          group === "eligible" ||
+          ((group === "source" || group === "batches" || group === "history") &&
+            typeof productId === "string" &&
+            ids.has(productId))
+        );
+      },
+    });
   });
 }

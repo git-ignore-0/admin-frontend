@@ -34,6 +34,7 @@ export function isFarmReceiptPath(path: string[]) {
     resource === "farms" &&
     UUID_PATH_SEGMENT.test(farm ?? "") &&
     ((path.length === 5 && ["products", "stock-batches"].includes(collection) && item === "bulk") ||
+      (path.length === 5 && collection === "products" && item === "bulk-remove") ||
       (path.length === 6 &&
         collection === "products" &&
         UUID_PATH_SEGMENT.test(item) &&
@@ -113,7 +114,7 @@ export function isAllowedBackendRequest(method: string, path: string[]) {
         (path.length === 5 && extra === "rotate" && normalizedMethod === "POST")
       );
     if (action === "available-products") return path.length === 4 && normalizedMethod === "GET";
-    if (isFarmReceiptPath(path)) return CRUD_COLLECTION.has(normalizedMethod);
+    if (isFarmReceiptPath(path)) return normalizedMethod === "GET" || normalizedMethod === "POST";
     if (action !== "products") return false;
     if (extra === undefined) return path.length === 4 && READ.has(normalizedMethod);
     if (!UUID_PATH_SEGMENT.test(extra)) return false;

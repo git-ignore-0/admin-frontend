@@ -8,6 +8,7 @@ type CreationAction =
   | "create_csa_configuration"
   | "create_farm_stock_batches"
   | "link_farm_products"
+  | "remove_farm_products"
   | "readd_farm_product";
 
 export function requireCreationReceipt(meta: unknown, key: string, action: CreationAction) {

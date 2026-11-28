@@ -50,6 +50,8 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   readd: vi.fn(),
   removeLink: vi.fn(),
+  bulkRemove: vi.fn(),
+  recoverBulkRemove: vi.fn(),
   batches: vi.fn(),
   updateBatch: vi.fn(),
   cancelBatch: vi.fn(),
@@ -91,6 +93,8 @@ vi.mock("@/lib/farms-api", async (importOriginal) => ({
   listFarmProductHistory: mocks.history,
   readdFarmProduct: mocks.readd,
   removeFarmProduct: mocks.removeLink,
+  removeFarmProductsBulk: mocks.bulkRemove,
+  recoverFarmProductBulkRemove: mocks.recoverBulkRemove,
   listFarmStockBatches: mocks.batches,
   updateFarmStockBatch: mocks.updateBatch,
   cancelFarmStockBatch: mocks.cancelBatch,
@@ -1019,7 +1023,7 @@ it("keeps a verified Farm product page on refresh timeout and locks Add until re
   view(<FarmProducts farm={farm} />, "en");
   const link = await screen.findByRole("link", { name: "Water spinach" });
   expect(screen.getByText("21 results")).toBeVisible();
-  const add = screen.getByRole("button", { name: "Add product" });
+  const add = screen.getByRole("button", { name: "Add products" });
   const next = screen.getByRole("button", { name: "Next" });
   const refresh = screen.getByRole("button", { name: "Refresh supply list" });
   expect(add).toBeEnabled();
@@ -1071,7 +1075,7 @@ it.each(["directory", "products"] as const)(
     const loadingTable = screen.getByRole("table", { hidden: true });
     const viewport = loadingTable.closest<HTMLElement>("[aria-hidden=true]");
     expect(viewport).not.toHaveAttribute("tabindex");
-    expect(loadingTable.querySelectorAll("thead th")).toHaveLength(3);
+    expect(loadingTable.querySelectorAll("thead th")).toHaveLength(products ? 4 : 3);
     expect(loadingTable.querySelectorAll("tbody tr")).toHaveLength(3);
     expect(loadingTable.querySelector("button, a, input, select, [tabindex]")).toBeNull();
     expect(screen.getAllByRole("status")).toHaveLength(1);
@@ -1114,7 +1118,7 @@ it("withdraws Farm product data and actions after access is denied", async () =>
   await waitFor(() => expect(onAccessLost).toHaveBeenCalledWith(denial));
   expect(screen.queryByRole("link", { name: linkedProduct.name_en })).not.toBeInTheDocument();
   expect(screen.queryByText("21 results")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Add product" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add products" })).not.toBeInTheDocument();
 });
 
 it("keeps stock batches read-only after a transient refresh error until revalidation succeeds", async () => {
@@ -1309,7 +1313,7 @@ it("opens Information from the old Tracker query and keeps the draft and browsin
   await waitFor(() =>
     expect(mocks.linked).toHaveBeenCalledExactlyOnceWith(
       "farm-1",
-      { page: 3, search: "rau", supplyStatus: "all" },
+      { page: 3, search: "rau", supplyStatus: "supplying" },
       expect.any(AbortSignal),
     ),
   );
@@ -1339,7 +1343,7 @@ it("corrects a late out-of-range supply page only when the Products tab is activ
   await waitFor(() =>
     expect(mocks.linked).toHaveBeenCalledExactlyOnceWith(
       farm.id,
-      { page: 3, search: "", supplyStatus: "all" },
+      { page: 3, search: "", supplyStatus: "supplying" },
       expect.any(AbortSignal),
     ),
   );
@@ -2318,10 +2322,10 @@ it("enforces the 50-product request limit across catalog pages and exposes the E
     }),
   );
   view(<FarmProducts farm={farm} />, "en");
-  const trigger = await screen.findByRole("button", { name: "Add product" });
+  const trigger = await screen.findByRole("button", { name: "Add products" });
   await waitFor(() => expect(trigger).toBeEnabled());
   fireEvent.click(trigger);
-  const dialog = within(await screen.findByRole("dialog", { name: "Add product" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Add products" }));
   const first = await dialog.findByRole("checkbox", { name: /SK-001/ });
   expect(first).toHaveAttribute("type", "checkbox");
   expect(dialog.getByText(available[0].name_en)).toBeVisible();
@@ -2335,7 +2339,7 @@ it("enforces the 50-product request limit across catalog pages and exposes the E
   for (const row of rows.slice(0, 20)) fireEvent.click(row);
   expect(dialog.getByText("50 products selected")).toBeVisible();
   expect(rows[20]).toBeDisabled();
-  expect(dialog.getByRole("button", { name: "Add product" })).toBeEnabled();
+  expect(dialog.getByRole("button", { name: "Add products" })).toBeEnabled();
 });
 
 it("retains a selected product in review when a complete catalog refresh shows it became unavailable", async () => {
@@ -2844,27 +2848,317 @@ it("locks Delete while the outcome of a re-add from the supply route remains unc
   expect(mocks.get).toHaveBeenCalledTimes(1);
 });
 
-it("keeps Farm query context while changing supply filters, and reuses no per-row detail", async () => {
-  setRoute("/farms/farm-1?search=Hue&page=2");
-  mocks.linked.mockImplementation((_farm, { supplyStatus, page }) =>
-    Promise.resolve(linkedResult(supplyStatus === "removed" ? [removedSupply] : [supplying], page)),
+it.each(["removed", "all"])(
+  "ignores obsolete %s filters in the list and retains source navigation",
+  async (status) => {
+    setRoute(`/farms/farm-1?search=Hue&page=2&supply_status=${status}`);
+    mocks.linked.mockImplementation((_farm, { supplyStatus, page }) =>
+      Promise.resolve(
+        linkedResult(supplyStatus === "removed" ? [removedSupply] : [supplying], page),
+      ),
+    );
+    view(<FarmProducts farm={farm} />);
+    expect(await screen.findByRole("link", { name: "Rau muống" })).toHaveAttribute(
+      "href",
+      `/farms/farm-1/products/product-1?search=Hue&page=2&supply_status=${status}`,
+    );
+    expect(screen.queryByRole("button", { name: "Bộ lọc" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(mocks.linked).toHaveBeenCalledExactlyOnceWith(
+      farm.id,
+      { page: 1, search: "", supplyStatus: "supplying" },
+      expect.any(AbortSignal),
+    );
+    expect(mocks.source).not.toHaveBeenCalled();
+    expect(mocks.batches).not.toHaveBeenCalled();
+  },
+);
+
+it("selects only the current page and preserves product detail links and lifecycle status", async () => {
+  const second = {
+    ...linkedProduct,
+    id: "link-2",
+    product_id: "product-2",
+    sku: "RAU-02",
+    name_vi: "Cải ngọt",
+    product_status: "discontinued" as const,
+    available_quantity: 0,
+  };
+  const next = {
+    ...linkedProduct,
+    id: "link-3",
+    product_id: "product-3",
+    sku: "RAU-03",
+    name_vi: "Cải bẹ",
+  };
+  mocks.linked.mockImplementation(async (_id, { page }) =>
+    linkedResult(page === 1 ? [linkedProduct, second] : [next], page, 21),
+  );
+  view(<FarmProducts farm={farm} canAddSupply />);
+  const headers = await screen.findAllByRole("columnheader");
+  expect(headers.map((header) => header.textContent)).toEqual([
+    "",
+    "Sản phẩm",
+    "Đơn vị bán",
+    "Tồn kho",
+  ]);
+  expect(screen.getByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+  const all = within(headers[0]).getByRole("checkbox", {
+    name: "Chọn tất cả sản phẩm trên trang hiện tại",
+  });
+  const first = screen.getByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" });
+  expect(all).not.toBeChecked();
+  fireEvent.click(first);
+  expect(all).toBePartiallyChecked();
+  expect(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" })).toBeEnabled();
+  fireEvent.click(all);
+  expect(all).toBeChecked();
+  expect(screen.getByRole("button", { name: "Gỡ sản phẩm (2)" })).toBeEnabled();
+  const row = within(screen.getByRole("row", { name: /Cải ngọt/ }));
+  expect(row.getByRole("cell", { name: "0" })).toBeVisible();
+  expect(row.getByText("Ngừng bán")).toBeVisible();
+  expect(row.getByRole("link")).toHaveAttribute("href", "/farms/farm-1/products/product-2");
+  expect(screen.queryByText("Đã chọn 2 sản phẩm")).not.toBeInTheDocument();
+  fireEvent.click(row.getByRole("checkbox"));
+  expect(all).toBePartiallyChecked();
+  expect(mocks.push).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Sau" }));
+  expect(await screen.findByRole("checkbox", { name: "Chọn Cải bẹ (RAU-03)" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Trước" }));
+  expect(
+    await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }),
+  ).not.toBeChecked();
+});
+
+it("invalidates a selected source when its version changes during a refresh", async () => {
+  mocks.linked.mockResolvedValueOnce(linkedResult([linkedProduct]));
+  view(<FarmProducts farm={farm} />, "en");
+  const row = await screen.findByRole("checkbox", { name: "Select Water spinach (RAU-01)" });
+  expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+    "",
+    "Product",
+    "Selling unit",
+    "Stock",
+  ]);
+  expect(screen.getByRole("button", { name: "Add products" })).toBeEnabled();
+  fireEvent.click(row);
+  mocks.linked.mockResolvedValueOnce(linkedResult([{ ...linkedProduct, version: 3 }]));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh supply list" }));
+  await waitFor(() => expect(row).not.toBeChecked());
+  expect(screen.getByRole("button", { name: "Remove products" })).toBeDisabled();
+  fireEvent.click(row);
+  expect(screen.getByRole("button", { name: "Remove products (1)" })).toBeEnabled();
+});
+
+it("resets selection on applied search and on a Farm change even if the same product is present", async () => {
+  const otherFarm = { ...farm, id: "farm-2" };
+  mocks.linked.mockImplementation(async (farmId) =>
+    linkedResult([{ ...linkedProduct, farm_id: farmId }]),
+  );
+  const rendered = view(<FarmProducts farm={farm} />);
+  const checkbox = () => screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" });
+  fireEvent.click(await checkbox());
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "RAU-01" } });
+  expect(await checkbox()).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Tìm kiếm" }));
+  expect(await checkbox()).not.toBeChecked();
+  fireEvent.click(await checkbox());
+  rendered.change(<FarmProducts farm={otherFarm} />);
+  expect(await checkbox()).not.toBeChecked();
+  rendered.change(<FarmProducts farm={farm} />);
+  expect(await checkbox()).not.toBeChecked();
+});
+
+it("cancels bulk removal with the original selection and restores focus", async () => {
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  view(<FarmProducts farm={farm} />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }));
+  const trigger = screen.getByRole("button", { name: "Gỡ sản phẩm (1)" });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const dialog = within(screen.getByRole("dialog", { name: "Gỡ sản phẩm" }));
+  expect(dialog.getByText("RAU-01")).toBeVisible();
+  expect(dialog.getByText("Rau muống")).toBeVisible();
+  expect(dialog.getByText("Đã chọn 1 sản phẩm")).toBeVisible();
+  fireEvent.click(dialog.getByRole("button", { name: "Hủy" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(trigger).toBeEnabled();
+  expect(mocks.linked).toHaveBeenCalledTimes(1);
+  expect(mocks.bulkRemove).not.toHaveBeenCalled();
+});
+
+it("confirms the selected source versions once and reconciles a now-empty last page", async () => {
+  setRoute("/farms/farm-1?supply_search=rau&supply_page=2");
+  const first = {
+    ...linkedProduct,
+    id: "link-2",
+    product_id: "product-2",
+    version: 5,
+    sku: "RAU-02",
+    name_vi: "Cải ngọt",
+  };
+  const pending = Promise.withResolvers<{ removed_count: number }>();
+  mocks.bulkRemove.mockReturnValue(pending.promise);
+  mocks.linked.mockResolvedValueOnce(linkedResult([first], 2, 21));
+  view(<FarmProducts farm={farm} canAddSupply />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Chọn Cải ngọt (RAU-02)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Gỡ sản phẩm" }));
+  const submit = dialog.getByRole("button", { name: "Gỡ sản phẩm" });
+  act(() => {
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+  });
+  await waitFor(() =>
+    expect(mocks.bulkRemove).toHaveBeenCalledExactlyOnceWith(farm.id, {
+      idempotency_key: expect.any(String),
+      items: [{ product_id: "product-2", expected_link_id: "link-2", expected_version: 5 }],
+    }),
+  );
+  expect(dialog.getByRole("button", { name: "Hủy" })).toBeDisabled();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Thêm sản phẩm", hidden: true })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Bổ sung nguồn cung", hidden: true })).toBeDisabled();
+  mocks.linked
+    .mockResolvedValueOnce(linkedResult([], 2, 20))
+    .mockResolvedValue(linkedResult([linkedProduct], 1, 20));
+  await act(async () => pending.resolve({ removed_count: 1 }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(await screen.findByText("Đã gỡ 1 sản phẩm khỏi trang trại.")).toBeVisible();
+  expect(
+    await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }),
+  ).not.toBeChecked();
+  expect(mocks.replace).toHaveBeenCalledExactlyOnceWith("/farms/farm-1?supply_search=rau", {
+    scroll: false,
+  });
+});
+
+it("keeps a missed removal receipt across remount and explicitly resends the immutable intent", async () => {
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  mocks.bulkRemove
+    .mockRejectedValueOnce(fail("request_timeout", 408))
+    .mockResolvedValueOnce({ removed_count: 1 });
+  mocks.recoverBulkRemove.mockRejectedValueOnce(fail("create_receipt_not_found", 404));
+  const rendered = view(<FarmProducts farm={farm} />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Gỡ sản phẩm" }));
+  await screen.findByRole("button", { name: "Kiểm tra biên nhận" });
+  rendered.close();
+  rendered.change(<FarmProducts farm={farm} />);
+  const dialog = within(await screen.findByRole("dialog", { name: "Gỡ sản phẩm" }));
+  expect(dialog.getByText("Rau muống")).toBeVisible();
+  fireEvent.click(dialog.getByRole("button", { name: "Kiểm tra biên nhận" }));
+  expect(await dialog.findByText(/Chưa tìm thấy biên nhận/)).toBeVisible();
+  expect(mocks.bulkRemove).toHaveBeenCalledTimes(1);
+  fireEvent.click(dialog.getByRole("button", { name: "Gửi lại giao dịch này" }));
+  expect(await screen.findByText("Đã gỡ 1 sản phẩm khỏi trang trại.")).toBeVisible();
+  expect(mocks.bulkRemove).toHaveBeenCalledTimes(2);
+  expect(mocks.bulkRemove.mock.calls[1][1]).toBe(mocks.bulkRemove.mock.calls[0][1]);
+  expect(mocks.recoverBulkRemove.mock.calls[0][1]).toBe(mocks.bulkRemove.mock.calls[0][1]);
+  expect(await screen.findByRole("link", { name: "Rau muống" })).toBeVisible();
+});
+
+it("shows the rejected item and validated allocation reference for an atomic rejection", async () => {
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  mocks.bulkRemove.mockRejectedValueOnce(
+    fail("farm_product_has_open_allocations", 409, {
+      item_index: 0,
+      product_id: "product-1",
+      orders: [{ id: "33333333-3333-4333-8333-333333333333", reference_code: "NFV-000123" }],
+      has_more: false,
+      internal_detail: "raw backend detail",
+    }),
   );
   view(<FarmProducts farm={farm} />);
-  expect(await screen.findByRole("link", { name: "Rau muống" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Bộ lọc" }));
-  fireEvent.click(await screen.findByRole("combobox", { name: "Trạng thái nguồn cung" }));
-  fireEvent.click(await screen.findByRole("option", { name: "Đã gỡ" }));
-  expect(await screen.findByRole("link", { name: "Rau muống" })).toHaveAttribute(
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" }));
+  const dialog = within(screen.getByRole("dialog"));
+  fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
+  expect(await dialog.findByText("Không có sản phẩm nào bị gỡ.")).toBeVisible();
+  expect(dialog.getByText(/Rau muống.*RAU-01/)).toBeVisible();
+  expect(dialog.getByText(/phân bổ cho đơn hàng chưa hoàn tất/)).toBeVisible();
+  expect(dialog.getByRole("link", { name: "NFV-000123" })).toHaveAttribute(
     "href",
-    "/farms/farm-1/products/product-1?search=Hue&page=2&supply_status=removed",
+    "/store-orders/33333333-3333-4333-8333-333333333333",
   );
-  expect(mocks.linked.mock.calls.map((call) => call[1].supplyStatus)).toEqual([
-    "supplying",
-    "removed",
-  ]);
-  expect(mocks.source).not.toHaveBeenCalled();
-  expect(mocks.batches).not.toHaveBeenCalled();
+  expect(dialog.queryByText(/raw backend detail/)).not.toBeInTheDocument();
+  expect(dialog.queryByRole("button", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
+  expect(mocks.bulkRemove).toHaveBeenCalledTimes(1);
 });
+
+it("requires renewed selection after the server reports a newer source version", async () => {
+  mocks.linked.mockResolvedValueOnce(linkedResult([linkedProduct]));
+  mocks.bulkRemove.mockRejectedValueOnce(
+    fail("farm_product_version_conflict", 409, { item_index: 0, product_id: "product-1" }),
+  );
+  view(<FarmProducts farm={farm} />);
+  const checkbox = await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" });
+  fireEvent.click(checkbox);
+  fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" }));
+  const dialog = within(screen.getByRole("dialog"));
+  mocks.linked.mockResolvedValue(linkedResult([{ ...linkedProduct, version: 3 }]));
+  fireEvent.click(dialog.getByRole("button", { name: "Gỡ sản phẩm" }));
+  expect(await dialog.findByText(/Xem dữ liệu mới và chọn lại sản phẩm/)).toBeVisible();
+  expect(dialog.queryByRole("button", { name: "Gỡ sản phẩm" })).not.toBeInTheDocument();
+  fireEvent.click(dialog.getByRole("button", { name: "Đóng và xem lại" }));
+  await waitFor(() => expect(checkbox).toBeEnabled());
+  expect(checkbox).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Gỡ sản phẩm" })).toBeDisabled();
+  expect(mocks.linked).toHaveBeenCalledTimes(2);
+  expect(mocks.bulkRemove).toHaveBeenCalledTimes(1);
+  fireEvent.click(checkbox);
+  expect(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" })).toBeEnabled();
+});
+
+it("uses server-provided supply shortfall quantities for the matched product", async () => {
+  mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+  mocks.bulkRemove.mockRejectedValueOnce(
+    fail("farm_product_supply_shortfall", 409, {
+      item_index: 0,
+      product_id: "product-1",
+      required_units: 17,
+      remaining_units: 6,
+      shortfall_units: 11,
+    }),
+  );
+  view(<FarmProducts farm={farm} />, "en");
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Water spinach (RAU-01)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove products (1)" }));
+  const dialog = within(screen.getByRole("dialog"));
+  fireEvent.click(dialog.getByRole("button", { name: "Remove products" }));
+  expect(await dialog.findByText("No products were removed.")).toBeVisible();
+  expect(dialog.getByText(/Water spinach.*RAU-01/)).toBeVisible();
+  expect(dialog.getByText(/holding 17 units.*cover 6 units.*Add 11 units/)).toBeVisible();
+});
+
+it.each(["post", "receipt"])(
+  "retires selected Farm product data when the removal %s loses access",
+  async (request) => {
+    mocks.linked.mockResolvedValue(linkedResult([linkedProduct]));
+    mocks.bulkRemove.mockRejectedValueOnce(
+      request === "post" ? fail("forbidden", 403) : fail("request_timeout", 408),
+    );
+    mocks.recoverBulkRemove.mockRejectedValueOnce(fail("session_expired", 401));
+    const onAccessLost = vi.fn();
+    view(<FarmProducts farm={farm} onAccessLost={onAccessLost} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Chọn Rau muống (RAU-01)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gỡ sản phẩm (1)" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Gỡ sản phẩm" }),
+    );
+    if (request === "receipt")
+      fireEvent.click(await screen.findByRole("button", { name: "Kiểm tra biên nhận" }));
+    await waitFor(() => expect(onAccessLost).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rau muống")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Đã gỡ 1 sản phẩm/)).not.toBeInTheDocument();
+  },
+);
 
 it("keeps date status separate from history and protects old batches in all scopes", async () => {
   prepareInventory();

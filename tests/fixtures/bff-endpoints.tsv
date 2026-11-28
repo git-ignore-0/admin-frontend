@@ -24,6 +24,7 @@ admin/farms/{farm}/available-products	GET	no
 admin/farms/{farm}/stock-batches/bulk	GET,POST	no
 admin/farms/{farm}/products	GET	no
 admin/farms/{farm}/products/bulk	GET,POST	no
+admin/farms/{farm}/products/bulk-remove	GET,POST	no
 admin/farms/{farm}/products/{product}	GET	no
 admin/farms/{farm}/products/{product}/remove	POST	no
 admin/farms/{farm}/products/{product}/re-add	GET,POST	no

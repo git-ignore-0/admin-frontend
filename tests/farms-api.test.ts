@@ -19,7 +19,9 @@ import {
   parseFarmDeleteReasons,
   parseFarmSourceBlocker,
   readdFarmProduct,
+  recoverFarmProductBulkRemove,
   removeFarmProduct,
+  removeFarmProductsBulk,
   updateFarmStockBatch,
   enableFarmTracker,
 } from "@/lib/farms-api";
@@ -33,6 +35,24 @@ const farmId = "11111111-1111-4111-8111-111111111111";
 const productId = "22222222-2222-4222-8222-222222222222";
 const linkId = "33333333-3333-4333-8333-333333333333";
 const batchId = "44444444-4444-4444-8444-444444444444";
+const bulkRemoveIntent = {
+  idempotency_key: batchId,
+  items: [
+    { product_id: productId, expected_link_id: linkId, expected_version: 3 },
+    {
+      product_id: "55555555-5555-4555-8555-555555555555",
+      expected_link_id: "66666666-6666-4666-8666-666666666666",
+      expected_version: 1,
+    },
+  ],
+} as const;
+const bulkRemoveData = { farm_id: farmId, removed_count: 2 };
+const bulkRemoveReceipt = {
+  action: "remove_farm_products",
+  resource_id: farmId,
+  idempotency_key: batchId,
+};
+const bulkRemoveMeta = { idempotent_replay: true, action_receipt: bulkRemoveReceipt };
 const farmImage = {
   id: batchId,
   url: "https://example.com/media/farms/photo.webp",
@@ -748,6 +768,91 @@ it("filters eligible supply without altering the existing products request", asy
   );
   await listFarmProducts(farmId, { productStatus: "active", page: 2, search: "rau" });
   expect(String(fetchMock.mock.calls[0][0])).toContain("product_status=active");
+});
+
+it("posts the exact bulk removal intent and verifies first, replayed and recovered receipts", async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({
+        data: bulkRemoveData,
+        meta: { ...bulkRemoveMeta, idempotent_replay: false },
+      }),
+    )
+    .mockResolvedValueOnce(Response.json({ data: bulkRemoveData, meta: bulkRemoveMeta }))
+    .mockResolvedValueOnce(Response.json({ data: bulkRemoveData, meta: bulkRemoveMeta }));
+  const expected = { ...bulkRemoveData, idempotent_replay: true };
+  const intentWithLocalData = {
+    ...bulkRemoveIntent,
+    title: "Local display title",
+    items: bulkRemoveIntent.items.map((item) => ({ ...item, sku: "Local SKU" })),
+  };
+  await expect(removeFarmProductsBulk(farmId, intentWithLocalData)).resolves.toEqual({
+    ...expected,
+    idempotent_replay: false,
+  });
+  await expect(removeFarmProductsBulk(farmId, intentWithLocalData)).resolves.toEqual(expected);
+  await expect(recoverFarmProductBulkRemove(farmId, bulkRemoveIntent)).resolves.toEqual(expected);
+
+  const path = `/api/backend/admin/farms/${farmId}/products/bulk-remove`;
+  expect(fetchMock.mock.calls.map(([target]) => target)).toEqual([
+    path,
+    path,
+    `${path}?creation_key=${batchId}`,
+  ]);
+  const [, firstPost] = fetchMock.mock.calls[0];
+  expect(firstPost.method).toBe("POST");
+  expect(JSON.parse(firstPost.body)).toEqual(bulkRemoveIntent);
+  expect(fetchMock.mock.calls[1][1].body).toBe(firstPost.body);
+  expect(fetchMock.mock.calls[2][1].body).toBeUndefined();
+});
+
+it.each<[string, unknown]>([
+  ["missing data", { meta: bulkRemoveMeta }],
+  ["invalid data", { data: [bulkRemoveData], meta: bulkRemoveMeta }],
+  ["missing metadata", { data: bulkRemoveData }],
+  ["wrong Farm", { data: { ...bulkRemoveData, farm_id: productId }, meta: bulkRemoveMeta }],
+  ["wrong count", { data: { ...bulkRemoveData, removed_count: 1 }, meta: bulkRemoveMeta }],
+  ["string count", { data: { ...bulkRemoveData, removed_count: "2" }, meta: bulkRemoveMeta }],
+  ["fractional count", { data: { ...bulkRemoveData, removed_count: 1.5 }, meta: bulkRemoveMeta }],
+  [
+    "wrong replay type",
+    { data: bulkRemoveData, meta: { ...bulkRemoveMeta, idempotent_replay: 1 } },
+  ],
+  ...[
+    ["action", "link_farm_products"],
+    ["resource_id", productId],
+    ["idempotency_key", linkId],
+  ].map(([key, value]): [string, unknown] => [
+    `wrong receipt ${key}`,
+    {
+      data: bulkRemoveData,
+      meta: { ...bulkRemoveMeta, action_receipt: { ...bulkRemoveReceipt, [key]: value } },
+    },
+  ]),
+])("rejects a bulk removal 2xx with %s", async (_, payload) => {
+  fetchMock.mockResolvedValueOnce(Response.json(payload));
+  await expect(removeFarmProductsBulk(farmId, bulkRemoveIntent)).rejects.toThrow(
+    "invalid_response",
+  );
+});
+
+it("rejects a bulk removal recovery response that is not a replay", async () => {
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ data: bulkRemoveData, meta: { ...bulkRemoveMeta, idempotent_replay: false } }),
+  );
+  await expect(recoverFarmProductBulkRemove(farmId, bulkRemoveIntent)).rejects.toThrow(
+    "invalid_response",
+  );
+});
+
+it("preserves a missing bulk removal receipt as an unconfirmed HTTP error", async () => {
+  fetchMock.mockResolvedValueOnce(
+    Response.json({ errors: [{ code: "create_receipt_not_found" }] }, { status: 404 }),
+  );
+  await expect(recoverFarmProductBulkRemove(farmId, bulkRemoveIntent)).rejects.toMatchObject({
+    message: "create_receipt_not_found",
+    status: 404,
+  });
 });
 
 it("accepts only a bulk receipt matching the submitted farm, key and count", async () => {

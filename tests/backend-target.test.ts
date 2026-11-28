@@ -6,7 +6,7 @@ import { buildBackendTarget, isAllowedBackendRequest } from "@/lib/backend-targe
 
 const uuid = "24803641-2dce-4cac-8fc4-91e55f03e95f";
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"];
-// Canonical path and method columns from the Phase 3.0.3 audit, with Django URLconf slash rules.
+// Canonical path and method columns, with Django URLconf slash rules.
 const auditedRoutes = readFileSync(
   new NodeURL("./fixtures/bff-endpoints.tsv", import.meta.url),
   "utf8",
@@ -22,10 +22,10 @@ const auditedRoutes = readFileSync(
 describe("backend API target", () => {
   const origin = "http://127.0.0.1:8000";
 
-  it("covers the 131 canonical route shapes and 183 audited method–route pairs", () => {
-    expect(auditedRoutes).toHaveLength(131);
-    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(131);
-    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(183);
+  it("covers the 132 canonical route shapes and 185 audited method–route pairs", () => {
+    expect(auditedRoutes).toHaveLength(132);
+    expect(new Set(auditedRoutes.map(({ shape }) => shape)).size).toBe(132);
+    expect(auditedRoutes.flatMap(({ allowed }) => allowed)).toHaveLength(185);
     for (const { allowed } of auditedRoutes) {
       expect(allowed.every((method) => methods.includes(method))).toBe(true);
       expect(new Set(allowed).size).toBe(allowed.length);

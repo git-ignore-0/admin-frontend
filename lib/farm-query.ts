@@ -60,6 +60,8 @@ export const farmSupplyDecisionWriteKey = (farmId: string, requestId: string) =>
   [...farmSupplyWriteKey(farmId), "decision", requestId] as const;
 export const farmProductLinkWriteKey = (farmId: string, productId?: string) =>
   [...farmSupplyWriteKey(farmId), "link", ...(productId ? [productId.toLowerCase()] : [])] as const;
+export const farmProductBulkRemoveWriteKey = (farmId: string) =>
+  [...farmSupplyWriteKey(farmId), "bulk-remove"] as const;
 export const farmBulkDraftKey = (farmId: string) =>
   [...farmSupplyKey(farmId), "bulk-draft"] as const;
 const farmDeleteMutationKey = (farmId: string) =>
@@ -158,7 +160,8 @@ export function farmDeleteSupplyWriteFilters(farmId: string): MutationFilters {
     predicate: ({ options, state }) => {
       const { variables, status, error } = state;
       const writer = options.mutationKey?.[mutationKey.length];
-      if (writer === "bulk" || writer === "link") return receiptWriteUnsettled({ state });
+      if (writer === "bulk" || writer === "link" || writer === "bulk-remove")
+        return receiptWriteUnsettled({ state });
       if (writer === "decision") return status === "pending" || state.data === "unknown";
       const action =
         isApiObject(variables) && isApiObject(variables.action) ? variables.action.kind : undefined;
@@ -209,6 +212,23 @@ export function useFarmProductLinkBlocksWrite(farmId: string) {
   return (
     useMutationState({ filters: farmProductLinkWriteFilters(farmId), select: () => true }).length >
     0
+  );
+}
+
+const farmProductBulkRemoveWriteFilters = (farmId: string): MutationFilters => ({
+  mutationKey: farmProductBulkRemoveWriteKey(farmId),
+  exact: true,
+  predicate: receiptWriteUnsettled,
+});
+
+export function farmProductBulkRemoveBlocksWrite(client: QueryClient, farmId: string) {
+  return Boolean(client.getMutationCache().find(farmProductBulkRemoveWriteFilters(farmId)));
+}
+
+export function useFarmProductBulkRemoveBlocksWrite(farmId: string) {
+  return (
+    useMutationState({ filters: farmProductBulkRemoveWriteFilters(farmId), select: () => true })
+      .length > 0
   );
 }
 

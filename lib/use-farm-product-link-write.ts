@@ -1,12 +1,10 @@
 "use client";
 
 import {
-  notifyManager,
   useMutation,
   useMutationState,
   useQueryClient,
   type MutationFilters,
-  type QueryClient,
 } from "@tanstack/react-query";
 
 import {
@@ -20,10 +18,8 @@ import {
   farmAccessDenied,
   farmDeleteBlocksWrite,
   farmDeleteSupplyWriteFilters,
-  farmListKey,
   farmNotFound,
   farmProductLinkWriteKey,
-  farmSupplyKey,
   isFarmGone,
   retireFarmAccess,
   useFarmAccess,
@@ -40,6 +36,7 @@ import {
   type FarmProductReaddIntent,
 } from "@/lib/farms-api";
 import { isUncertainFarmSupplyWrite } from "@/lib/farm-stock";
+import { invalidateFarmProductLinks } from "@/lib/farm-supply-query";
 import type { AvailableFarmProduct, FarmProduct, LinkableFarmProduct } from "@/lib/types";
 
 type Input =
@@ -140,39 +137,6 @@ function settleFailure(attempt: Attempt, cause: unknown): Failure {
   };
 }
 
-function invalidateLinkWrite(
-  client: QueryClient,
-  farmId: string,
-  intent: Intent,
-  success: boolean,
-) {
-  const scope = farmSupplyKey(farmId);
-  const ids = new Set(
-    intent.kind === "link" ? farmProductLinkIds(intent.payload) : [intent.productId],
-  );
-  notifyManager.batch(() => {
-    if (success) {
-      invalidateFarmDetail(client, farmId);
-      void client.invalidateQueries({ queryKey: farmListKey });
-    }
-    void client.invalidateQueries({
-      queryKey: scope,
-      predicate: ({ queryKey }) => {
-        const group = queryKey[scope.length];
-        const productId = queryKey[scope.length + 1];
-        return (
-          group === "available" ||
-          group === "list" ||
-          group === "eligible" ||
-          (["source", "batches", "history"].includes(String(group)) &&
-            typeof productId === "string" &&
-            ids.has(productId))
-        );
-      },
-    });
-  });
-}
-
 export function useFarmProductLinkWrite(
   farmId: string,
   productId: string | undefined,
@@ -239,6 +203,7 @@ export function useFarmProductLinkWrite(
     mutationFn: async (attempt: Attempt): Promise<Outcome> => {
       if (!permitted(attempt.revision)) return {};
       const { kind, intent, revision } = attempt;
+      const ids = intent.kind === "link" ? farmProductLinkIds(intent.payload) : [intent.productId];
       try {
         if (intent.kind === "link") {
           if (kind === "recover") await recoverFarmProductLinking(farmId, intent.payload);
@@ -256,16 +221,16 @@ export function useFarmProductLinkWrite(
         }
         const failed = settleFailure(attempt, cause);
         if (failed.kind === "conflict" || failed.kind === "idempotency_conflict")
-          invalidateLinkWrite(client, farmId, intent, false);
+          invalidateFarmProductLinks(client, farmId, ids, false);
         if (kind !== "recover" && !Object.keys(failed.itemCodes).length && farmNotFound(cause)) {
           // Revalidate the parent before retiring it. A re-link may refer to a missing source.
           invalidateFarmDetail(client, farmId);
-          invalidateLinkWrite(client, farmId, intent, false);
+          invalidateFarmProductLinks(client, farmId, ids, false);
         }
         return { failure: failed };
       }
       if (!permitted(revision)) return {};
-      invalidateLinkWrite(client, farmId, intent, true);
+      invalidateFarmProductLinks(client, farmId, ids, true);
       return { confirmed: true };
     },
   });

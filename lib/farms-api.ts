@@ -542,7 +542,17 @@ export type FarmProductReaddIntent = Readonly<{
   previous_generation: number;
 }>;
 
+export type FarmProductBulkRemoveIntent = Readonly<{
+  idempotency_key: string;
+  items: readonly Readonly<{
+    product_id: string;
+    expected_link_id: string;
+    expected_version: number;
+  }>[];
+}>;
+
 export const MAX_FARM_PRODUCT_LINKS = 50;
+export const MAX_FARM_PRODUCT_REMOVALS = 50;
 
 function creationReceiptPath(path: string, key: string) {
   return `${path}?${new URLSearchParams({ creation_key: key })}`;
@@ -600,6 +610,52 @@ export function recoverFarmProductLinking(farmId: string, intent: FarmProductLin
   return apiEnvelope<unknown>(
     creationReceiptPath(`${supplyPath(farmId)}/bulk`, intent.idempotency_key),
   ).then((payload) => requireLinkReceipt(payload, farmId, intent, true));
+}
+
+function bulkRemovePath(farmId: string) {
+  return `${supplyPath(farmId)}/bulk-remove`;
+}
+
+function requireBulkRemoveReceipt(
+  { data, meta }: ApiEnvelope<unknown>,
+  farmId: string,
+  intent: FarmProductBulkRemoveIntent,
+  recovery: boolean,
+) {
+  const replay = verifyFarmCreationReceipt(
+    meta,
+    intent.idempotency_key,
+    "remove_farm_products",
+    farmId,
+    recovery,
+  );
+  if (
+    !isApiObject(data) ||
+    !uuid(data.farm_id, farmId) ||
+    !integer(data.removed_count, 1) ||
+    data.removed_count > MAX_FARM_PRODUCT_REMOVALS ||
+    data.removed_count !== intent.items.length
+  )
+    throw invalidApiResponse();
+  return { farm_id: data.farm_id, removed_count: data.removed_count, idempotent_replay: replay };
+}
+
+export function removeFarmProductsBulk(farmId: string, intent: FarmProductBulkRemoveIntent) {
+  const items = intent.items.map(({ product_id, expected_link_id, expected_version }) => ({
+    product_id,
+    expected_link_id,
+    expected_version,
+  }));
+  return apiEnvelope<unknown>(bulkRemovePath(farmId), {
+    method: "POST",
+    body: JSON.stringify({ idempotency_key: intent.idempotency_key, items }),
+  }).then((payload) => requireBulkRemoveReceipt(payload, farmId, intent, false));
+}
+
+export function recoverFarmProductBulkRemove(farmId: string, intent: FarmProductBulkRemoveIntent) {
+  return apiEnvelope<unknown>(
+    creationReceiptPath(bulkRemovePath(farmId), intent.idempotency_key),
+  ).then((payload) => requireBulkRemoveReceipt(payload, farmId, intent, true));
 }
 
 function requireReaddReceipt(
