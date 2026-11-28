@@ -9,6 +9,7 @@ import { ToastProvider } from "@/components/toast-provider";
 import { adminTodayIso, isoDateToAdminInput } from "@/lib/admin-date";
 import type { StoreOrderCreateInput, StoreOrderQuoteInput } from "@/lib/admin-store-order-api";
 import { storeOrderDateRange } from "@/lib/store-order-draft";
+import { formatStoreMoney } from "@/lib/store-orders";
 import type { StoreProduct } from "@/lib/types";
 import { useAcknowledgeStoreOrderCreation } from "@/lib/use-store-order-creation";
 
@@ -56,9 +57,14 @@ vi.mock("@/components/store-order-product-picker", () => ({
     onAdd: (values: StoreProduct[]) => void;
   }) =>
     opened ? (
-      <button type="button" onClick={() => onAdd([product])}>
-        Select Tomato
-      </button>
+      <>
+        <button type="button" onClick={() => onAdd([product])}>
+          Select Tomato
+        </button>
+        <button type="button" onClick={() => onAdd([discontinuedProduct])}>
+          Select Basil
+        </button>
+      </>
     ) : null,
 }));
 
@@ -90,6 +96,15 @@ const product: StoreProduct = {
   translations: [{ locale: "en", name: "Tomato", description: "", short_description: "" }],
   created_at: "2026-10-31T10:00:00Z",
   updated_at: "2026-10-31T10:00:00Z",
+};
+const discontinuedProduct: StoreProduct = {
+  ...product,
+  id: "55555555-5555-4555-8555-555555555555",
+  sku: "BASIL",
+  slug: "basil",
+  retail_price_vnd: "12000",
+  status: "discontinued",
+  translations: [{ locale: "en", name: "Basil", description: "", short_description: "" }],
 };
 const confirmation = "c".repeat(64);
 const collection = "/api/backend/admin/store-orders";
@@ -187,7 +202,7 @@ function tree(
   );
 }
 
-function setupDraft(kind: "new" | "historical" = "new", buyer: "user" | "guest" = "user") {
+function selectOrder(kind: "new" | "historical", buyer: "user" | "guest") {
   if (kind === "historical")
     fireEvent.click(screen.getByRole("radio", { name: "Delivered order" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Delivery date" }), {
@@ -198,8 +213,16 @@ function setupDraft(kind: "new" | "historical" = "new", buyer: "user" | "guest" 
   fireEvent.click(
     screen.getByRole("button", { name: buyer === "user" ? "Choose Taylor" : "Choose guest" }),
   );
+}
+
+function addProduct(name = "Tomato") {
   fireEvent.click(screen.getByRole("button", { name: "Add products" }));
-  fireEvent.click(screen.getByRole("button", { name: "Select Tomato" }));
+  fireEvent.click(screen.getByRole("button", { name: `Select ${name}` }));
+}
+
+function setupDraft(kind: "new" | "historical" = "new", buyer: "user" | "guest" = "user") {
+  selectOrder(kind, buyer);
+  addProduct();
   fireEvent.change(screen.getByRole("textbox", { name: /Quantity/ }), { target: { value: "2" } });
   if (kind === "historical") {
     fireEvent.change(screen.getByRole("textbox", { name: /Unit price/ }), {
@@ -462,6 +485,100 @@ it.each([
   },
 );
 
+it.each([
+  [null, null],
+  ["34000", "7000"],
+  ["0", null],
+])("quotes and records historical unit price %s and delivery fee %s", async (unitPrice, fee) => {
+  const expectedPrice = unitPrice ?? product.retail_price_vnd;
+  const expectedFee = fee ?? "0";
+  const fetcher = vi.fn(async (path: string, init: RequestInit) => {
+    if (path.startsWith("/api/backend/admin/store-products?"))
+      return Response.json({
+        data: [{ ...product, retail_price_vnd: "59000" }],
+        meta: { page: 1, page_size: 50, total: 1 },
+      });
+    if (path === quotePath) return makeQuote(readBody(init) as StoreOrderQuoteInput);
+    return created(readBody(init) as StoreOrderCreateInput, { id: orderId });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(tree());
+  selectOrder("historical", "guest");
+  const feeInput = () => screen.getByRole("textbox", { name: /Delivery fee \(VND\)/ });
+  const priceInput = (name: string) =>
+    screen.getByRole("textbox", { name: `Unit price (VND) · ${name}` });
+  const expectTotal = (total: string) => {
+    const label = within(screen.getByRole("region", { name: "Payment" })).getByText(
+      "Total to record",
+    );
+    expect(label.nextElementSibling).toHaveTextContent(formatStoreMoney(total, "en"));
+  };
+  expect(feeInput()).toHaveValue("0");
+  addProduct();
+  expect(screen.getByRole("textbox", { name: "Quantity · Tomato" })).toHaveValue("1");
+  expect(priceInput("Tomato")).toHaveValue("45000");
+  expect(
+    within(screen.getByRole("listitem", { name: "Tomato" })).getByText(
+      formatStoreMoney("45000", "en"),
+    ),
+  ).toBeVisible();
+  expectTotal("45000");
+
+  if (fee !== null) fireEvent.change(feeInput(), { target: { value: fee } });
+  if (unitPrice !== null) {
+    fireEvent.change(priceInput("Tomato"), { target: { value: unitPrice } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Quantity · Tomato" }), {
+      target: { value: "2" },
+    });
+    expect(priceInput("Tomato")).toHaveValue(unitPrice);
+    await act(async () => fireEvent.click(screen.getByRole("radio", { name: "New order" })));
+    expect(
+      screen.queryByRole("textbox", { name: /Unit price \(VND\)|Delivery fee \(VND\)/ }),
+    ).not.toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("radio", { name: "Delivered order" })));
+    expect(
+      fetcher.mock.calls.filter(([path]) => path.startsWith("/api/backend/admin/store-products?")),
+    ).toHaveLength(2);
+    expect(priceInput("Tomato")).toHaveValue(unitPrice);
+    fireEvent.change(screen.getByRole("textbox", { name: "Delivery date" }), {
+      target: { value: isoDateToAdminInput(storeOrderDateRange("historical").max) },
+    });
+  }
+  addProduct("Basil");
+  expect(priceInput("Tomato")).toHaveValue(expectedPrice);
+  expect(screen.getByRole("textbox", { name: "Quantity · Basil" })).toHaveValue("1");
+  expect(priceInput("Basil")).toHaveValue("12000");
+  expect(feeInput()).toHaveValue(expectedFee);
+  const tomatoQuantity = unitPrice === null ? 1 : 2;
+  expectTotal(String(Number(expectedPrice) * tomatoQuantity + 12000 + Number(expectedFee)));
+
+  submitDraft();
+  const dialog = await screen.findByRole("dialog", { name: "Review order details" });
+  expect(
+    within(dialog).queryByText(/Calculated at confirmation|Tính theo xác nhận của Backend/),
+  ).not.toBeInTheDocument();
+  await approveQuote();
+  const newOrder = await screen.findByRole("button", { name: "Create another order" });
+  expect(
+    fetcher.mock.calls
+      .filter(([path]) => path === quotePath || path === collection)
+      .map(([, init]) => readBody(init)),
+  ).toEqual(
+    Array.from({ length: 2 }, () =>
+      expect.objectContaining({
+        shipping_fee_vnd: expectedFee,
+        lines: [
+          { product_id: product.id, unit_price_vnd: expectedPrice, quantity: tomatoQuantity },
+          { product_id: discontinuedProduct.id, unit_price_vnd: "12000", quantity: 1 },
+        ],
+      }),
+    ),
+  );
+  fireEvent.click(newOrder);
+  fireEvent.click(await screen.findByRole("radio", { name: "Delivered order" }));
+  expect(feeInput()).toHaveValue("0");
+});
+
 it("abandons an in-flight quote when the draft changes and keeps the draft across locale changes", async () => {
   let finish!: (response: Response) => void;
   let submitted: StoreOrderQuoteInput | undefined;
@@ -719,23 +836,35 @@ it("keeps the draft and original key after a remounted retry gets a requote conf
   await waitFor(() => expect(router.replace).toHaveBeenCalledOnce());
 });
 
-it("rejects the entire multiline numeric paste and allows a clean replacement", async () => {
-  const fetcher = vi.fn(async (_path: string, init: RequestInit) =>
-    makeQuote(readBody(init) as StoreOrderQuoteInput),
-  );
-  vi.stubGlobal("fetch", fetcher);
-  render(tree());
-  setupDraft("historical", "guest");
-  const unitPrice = screen.getByRole<HTMLInputElement>("textbox", { name: /Unit price/ });
-  fireEvent.paste(unitPrice, { clipboardData: { getData: () => "34\n000" } });
-  expect(unitPrice).toHaveValue("34000");
-  submitDraft();
-  expect(screen.getByText(/Enter a whole VND amount/)).toBeVisible();
-  expect(fetcher).not.toHaveBeenCalled();
-  fireEvent.change(unitPrice, { target: { value: "35000" } });
-  submitDraft();
-  expect(await screen.findByRole("dialog", { name: "Review order details" })).toBeVisible();
-});
+it.each([
+  [/Quantity/, "2", "3"],
+  [/Unit price/, "34000", "35000"],
+  [/Delivery fee \(VND\)/, "7000", "8000"],
+])(
+  "blocks quote and creation after invalid numeric input in %s",
+  async (name, original, corrected) => {
+    const fetcher = vi.fn(async (_path: string, init: RequestInit) =>
+      makeQuote(readBody(init) as StoreOrderQuoteInput),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(tree());
+    setupDraft("historical", "guest");
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name });
+    input.select();
+    fireEvent.paste(input, { clipboardData: { getData: () => "34\n000" } });
+    expect(input).toHaveValue(original);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    submitDraft();
+    expect(fetcher).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input).toHaveValue("");
+    submitDraft();
+    expect(fetcher).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: corrected } });
+    submitDraft();
+    expect(await screen.findByRole("dialog", { name: "Review order details" })).toBeVisible();
+  },
+);
 
 it("restores focus after closing the confirmation and moves it to recovery when needed", async () => {
   vi.stubGlobal(

@@ -654,7 +654,11 @@ export function StoreOrderCreate() {
               ...previous,
               lines: [
                 ...previous.lines,
-                ...added.map((product) => ({ product, quantity: "1", unitPrice: "" })),
+                ...added.map((product) => ({
+                  product,
+                  quantity: "1",
+                  unitPrice: product.retail_price_vnd,
+                })),
               ],
             };
           });

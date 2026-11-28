@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useId, useRef, type ReactNode } from "react";
 
 import { useAdminI18n } from "@/components/admin-i18n-provider";
 import { DataListPaper } from "@/components/data-list-paper";
@@ -67,9 +67,12 @@ function selection(input: HTMLInputElement) {
   };
 }
 
-function replacement(input: HTMLInputElement, inserted: string) {
-  const { start, end } = selection(input);
-  return input.value.slice(0, start) + inserted + input.value.slice(end);
+function replacement(
+  value: string,
+  { start, end }: ReturnType<typeof selection>,
+  inserted: string,
+) {
+  return value.slice(0, start) + inserted + value.slice(end);
 }
 
 function OrderIntegerInput({
@@ -88,16 +91,53 @@ function OrderIntegerInput({
   const { locale } = useAdminI18n();
   const copy = storeOrderCreateCopy(locale);
   const compositionSelection = useRef<ReturnType<typeof selection> | null>(null);
-  const [compositionValue, setCompositionValue] = useState<string | null>(null);
+
+  function accepts(candidate: string, inserted = "") {
+    return !invalidIntegerCharacter.test(inserted) && acceptsOrderInteger(candidate, allowZero);
+  }
+
   function reject() {
     if (!rejected) onValueChange(value, true);
+  }
+
+  function allowReplacement(input: HTMLInputElement, inserted: string) {
+    const candidate = replacement(value, selection(input), inserted);
+    if (!accepts(candidate, inserted)) {
+      reject();
+      return false;
+    }
+    // Replacing a selection with the same digits may not emit a React change.
+    if (rejected && candidate === value) onValueChange(value, false);
+    return true;
+  }
+
+  function restore(input: HTMLInputElement, { start, end }: ReturnType<typeof selection>) {
+    if (input.value !== value) input.value = value;
+    input.setSelectionRange(start, end);
+  }
+
+  function handleInput(input: HTMLInputElement, inserted?: string) {
+    const valid = accepts(input.value, inserted);
+    const composing = compositionSelection.current;
+    if (composing) {
+      // The mobile keyboard can emit non-cancelable inputs while composing.
+      // Keep the last accepted value until the entire composition commits.
+      restore(input, composing);
+      if (!valid) reject();
+    } else if (valid) {
+      onValueChange(input.value, false);
+    } else {
+      const caret = Math.max(0, selection(input).start - (inserted?.length ?? 0));
+      restore(input, { start: caret, end: caret });
+      reject();
+    }
   }
 
   return (
     <TextInput
       {...props}
       inputMode="numeric"
-      value={compositionValue ?? value}
+      value={value}
       error={rejected ? (allowZero ? copy.moneyError : copy.quantityError) : error}
       errorProps={rejected ? { role: "alert" } : undefined}
       onKeyDown={(event) => {
@@ -110,24 +150,11 @@ function OrderIntegerInput({
           compositionSelection.current
         )
           return;
-        const candidate = replacement(event.currentTarget, event.key);
-        if (!acceptsOrderInteger(candidate, allowZero)) {
-          event.preventDefault();
-          reject();
-        } else if (rejected && candidate === value) {
-          onValueChange(value, false);
-        }
+        if (!allowReplacement(event.currentTarget, event.key)) event.preventDefault();
       }}
       onPaste={(event) => {
         const pasted = event.clipboardData.getData("text/plain");
-        if (!pasted) return;
-        const candidate = replacement(event.currentTarget, pasted);
-        if (!acceptsOrderInteger(candidate, allowZero)) {
-          event.preventDefault();
-          reject();
-        } else if (rejected && candidate === value) {
-          onValueChange(value, false);
-        }
+        if (pasted && !allowReplacement(event.currentTarget, pasted)) event.preventDefault();
       }}
       onCompositionStart={(event) => {
         compositionSelection.current = selection(event.currentTarget);
@@ -136,39 +163,28 @@ function OrderIntegerInput({
         const input = event.currentTarget;
         const prior = compositionSelection.current;
         compositionSelection.current = null;
-        setCompositionValue(null);
-        if (!prior) return;
-        const candidate = value.slice(0, prior.start) + event.data + value.slice(prior.end);
-        if (event.data && acceptsOrderInteger(candidate, allowZero)) {
+        if (!prior) {
+          if (event.data) handleInput(input, event.data);
+          return;
+        }
+        const candidate = replacement(value, prior, event.data);
+        if (event.data && accepts(candidate, event.data)) {
           if (input.value !== candidate) input.value = candidate;
           const caret = prior.start + event.data.length;
           input.setSelectionRange(caret, caret);
           onValueChange(candidate, false);
         } else {
-          input.value = value;
-          input.setSelectionRange(prior.start, prior.end);
+          restore(input, prior);
           if (event.data) reject();
         }
       }}
-      onChange={(event) => {
-        const input = event.currentTarget;
-        if (compositionSelection.current) {
-          setCompositionValue(input.value);
-          return;
-        }
-        // A text input can strip line breaks before its value reaches React.
+      onInput={(event) => {
+        // Validate the inserted text too: the input may already have removed line breaks.
         const inserted = event.nativeEvent instanceof InputEvent ? event.nativeEvent.data : null;
-        if (
-          !invalidIntegerCharacter.test(inserted ?? "") &&
-          acceptsOrderInteger(input.value, allowZero)
-        ) {
-          onValueChange(input.value, false);
-        } else {
-          const caret = Math.max(0, selection(input).start - (inserted?.length ?? 0));
-          input.value = value;
-          input.setSelectionRange(caret, caret);
-          reject();
-        }
+        handleInput(event.currentTarget, inserted ?? undefined);
+      }}
+      onChange={(event) => {
+        if (event.nativeEvent.type === "change") handleInput(event.currentTarget);
       }}
     />
   );
@@ -473,7 +489,7 @@ export function StoreOrderAmounts({
           {money(subtotal, locale)}
         </PaymentRow>
         <PaymentRow label={shippingEditor ? copy.shippingFeeVnd : c.shippingFee}>
-          {shippingEditor ?? (authoritative ? money(shipping, locale) : copy.pendingQuote)}
+          {shippingEditor ?? money(authoritative ? shipping : null, locale)}
         </PaymentRow>
         {shippingDiscountReason && (
           <PaymentRow label={c.shippingDiscount}>
@@ -485,7 +501,7 @@ export function StoreOrderAmounts({
       <Box component="dl" m={0}>
         <PaymentRow label={kind === "historical" ? copy.recordedTotal : c.total} emphasis>
           <Text component="span" size={authoritative && total !== null ? "lg" : "sm"} fw={700}>
-            {authoritative ? money(total, locale) : copy.pendingQuote}
+            {money(authoritative ? total : null, locale)}
           </Text>
         </PaymentRow>
       </Box>

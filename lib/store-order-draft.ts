@@ -43,7 +43,7 @@ export function blankStoreOrderDraft<P extends DraftProduct = DraftProduct>(): S
     guest: { recipient_name: "", phone_number: "", province_code: "", ward_code: "", address: "" },
     guestPhoneRejected: false,
     lines: [],
-    shippingFee: "",
+    shippingFee: "0",
   };
 }
 

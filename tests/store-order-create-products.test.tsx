@@ -44,11 +44,13 @@ const product: StoreProduct = {
 
 function EditableOrder({
   kind,
+  locale = "en",
   productsError,
   lineErrors,
   shippingError,
 }: {
   kind: StoreOrderKind;
+  locale?: "vi" | "en";
   productsError?: string;
   lineErrors?: Parameters<typeof StoreOrderCreateProducts>[0]["lineErrors"];
   shippingError?: string;
@@ -59,9 +61,9 @@ function EditableOrder({
     shippingFee: "10",
     lines: [{ product, quantity: "12", unitPrice: "50" }],
   });
-  const preview = validateStoreOrderDraft(draft, "en");
+  const preview = validateStoreOrderDraft(draft, locale);
   return (
-    <AdminI18nProvider initialLocale="en">
+    <AdminI18nProvider initialLocale={locale}>
       <StoreOrderCreateProducts
         kind={kind}
         lines={draft.lines}
@@ -179,6 +181,89 @@ it("commits a composition only when the full replacement is valid", () => {
   expect(quantity).not.toHaveAttribute("aria-invalid", "true");
 });
 
+it.each([
+  ["en", ["Quantity · Tomato", "Unit price (VND) · Tomato", "Delivery fee (VND)"]],
+  ["vi", ["Số lượng · Tomato", "Đơn giá (VND) · Tomato", "Phí giao hàng (VND)"]],
+] as const)("keeps every numeric input valid through all edit events in %s", (locale, names) => {
+  render(<EditableOrder kind="historical" locale={locale} />);
+  names.forEach((name, index) => {
+    const input = screen.getByRole<HTMLInputElement>("textbox", { name });
+    const initial = input.value;
+    const max = index === 0 ? "999" : "9007199254740991";
+    const overflow = index === 0 ? "1000" : "9007199254740992";
+    expect(input).toHaveAttribute("inputmode", "numeric");
+
+    for (const invalid of [
+      "abc",
+      "tiếng Việt",
+      "12x",
+      "₫500",
+      "-12",
+      "1.2",
+      "1e3",
+      "1E3",
+      "12\n34",
+      overflow,
+    ]) {
+      input.select();
+      paste(input, invalid);
+      expect(input).toHaveValue(initial);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+    }
+    for (const invalid of ["x", "đ", "$", "-", ".", "e", "E"]) {
+      expect(fireEvent.keyDown(input, { key: invalid })).toBe(false);
+      expect(input).toHaveValue(initial);
+    }
+
+    input.select();
+    paste(input, initial);
+    expect(input).not.toHaveAttribute("aria-invalid", "true");
+    input.select();
+    fireEvent.compositionStart(input);
+    for (const fragment of ["T", "Tiê", "Tiếng Việt", "12đ"]) {
+      fireEvent.input(input, {
+        target: { value: fragment },
+        inputType: "insertCompositionText",
+        data: fragment,
+        isComposing: true,
+      });
+      expect(input).toHaveValue(initial);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+    }
+    fireEvent.compositionEnd(input, { data: "12đ" });
+    expect(input).toHaveValue(initial);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+
+    for (const invalid of ["1.2", "1e3", "１２", overflow]) {
+      fireEvent.input(input, {
+        target: { value: invalid },
+        inputType: "insertText",
+        data: invalid,
+      });
+      expect(input).toHaveValue(initial);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+    }
+    input.select();
+    paste(input, max);
+    expect(input).toHaveValue(max);
+    expect(input).not.toHaveAttribute("aria-invalid", "true");
+    expect(fireEvent.keyDown(input, { key: "ArrowLeft" })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "Backspace" })).toBe(true);
+    fireEvent.input(input, {
+      target: { value: max.slice(0, -1) },
+      inputType: "deleteContentBackward",
+    });
+    expect(input).toHaveValue(max.slice(0, -1));
+    input.select();
+    expect(fireEvent.keyDown(input, { key: "Delete" })).toBe(true);
+    fireEvent.input(input, { target: { value: "" }, inputType: "deleteContentForward" });
+    expect(input).toHaveValue("");
+    expect(fireEvent.keyDown(input, { key: "7" })).toBe(true);
+    fireEvent.input(input, { target: { value: "7" }, inputType: "insertText", data: "7" });
+    expect(input).toHaveValue("7");
+  });
+});
+
 it("announces rejected replacements at the control and preserves keyboard shortcuts", () => {
   render(<EditableOrder kind="historical" />);
   const quantity = screen.getByRole<HTMLInputElement>("textbox", { name: "Quantity · Tomato" });
@@ -219,7 +304,8 @@ it("presents catalog amounts as estimates and historical payment as received or 
   const payment = screen.getByRole("region", { name: "Payment" });
   expect(within(payment).getByText("Estimated subtotal")).toBeVisible();
   expect(within(payment).getByText("Payment not confirmed")).toBeVisible();
-  expect(within(payment).getAllByText("Calculated at confirmation")).toHaveLength(2);
+  expect(within(payment).getAllByText("—")).toHaveLength(2);
+  expect(within(payment).queryByText("Calculated at confirmation")).not.toBeInTheDocument();
 
   view.rerender(<EditableOrder key="historical" kind="historical" />);
   const historical = screen.getByRole("region", { name: "Payment" });
@@ -237,6 +323,15 @@ it("presents catalog amounts as estimates and historical payment as received or 
   expect(within(historical).getByText("No bank transfer required")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Remove Tomato" }));
   expect(screen.queryByRole("listitem", { name: "Tomato" })).not.toBeInTheDocument();
+});
+
+it("leaves unquoted delivery and total blank in Vietnamese without technical copy", () => {
+  render(<EditableOrder kind="new" locale="vi" />);
+  const payment = within(screen.getByRole("region", { name: "Thanh toán" }));
+  expect(payment.getByText("Tiền hàng dự kiến")).toBeVisible();
+  expect(payment.getByText("540.000 ₫")).toBeVisible();
+  expect(payment.getAllByText("—")).toHaveLength(2);
+  expect(payment.queryByText("Tính theo xác nhận của Backend")).not.toBeInTheDocument();
 });
 
 it("explains when valid individual amounts produce a historical total above the order limit", () => {
