@@ -466,7 +466,7 @@ it("revalidates once on repeated confirmation and replays an uncertain guest req
 });
 
 it.each(["quote", "create"] as const)(
-  "refreshes shared areas after a definitive %s rejection and requires reselection",
+  "refreshes shared areas after a definitive %s rejection and allows selecting another area",
   async (boundary) => {
     let areas = supportedShippingAreas;
     const getAreas = vi.fn(async () => Response.json({ data: areas }));
@@ -489,8 +489,6 @@ it.each(["quote", "create"] as const)(
     await waitFor(() => expect(getAreas).toHaveBeenCalledTimes(boundary === "quote" ? 3 : 4));
     expect(screen.getByRole("textbox", { name: "Detailed address" })).toHaveValue(address.address);
     expect(localStorage.getItem(recoverySlot)).toBeNull();
-    submitDraft();
-    expect(orderFetch).toHaveBeenCalledTimes(boundary === "quote" ? 1 : 2);
     fireEvent.click(province);
     const replacement = screen.getByRole("option", { name: "Hà Nội" });
     expect(replacement).toBeVisible();
@@ -508,6 +506,56 @@ it.each(["quote", "create"] as const)(
     expect(await screen.findByRole("dialog", { name: "Review order details" })).toBeVisible();
   },
 );
+
+it("rechecks the same historical guest address after a rejection without discarding the draft", async () => {
+  const restoredAreas = { data: supportedShippingAreas.slice(0, 1) };
+  const getAreas = vi.fn(async () => Response.json(restoredAreas));
+  const orderFetch = vi.fn(async (_path: string, init: RequestInit) =>
+    makeQuote(readBody(init) as StoreOrderQuoteInput),
+  );
+  orderFetch.mockResolvedValueOnce(businessError("store_shipping_area_unsupported", 400));
+  stubOrderFetch(orderFetch, getAreas);
+  render(tree());
+  setupDraft("historical", "guest");
+  await fillGuestAddress();
+  const ward = screen.getByRole("combobox", { name: "Ward/Commune" });
+  submitDraft();
+  await waitFor(() => expect(ward).toBeInvalid());
+  await waitFor(() => expect(getAreas).toHaveBeenCalledTimes(3));
+  expect(ward).toHaveValue("Ward");
+  expect(orderFetch).toHaveBeenCalledOnce();
+
+  // The post-rejection refresh still lists the ward. A failed explicit check
+  // must not trust that cached result or clear the rejection.
+  getAreas.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  submitDraft();
+  expect(await screen.findByText("Could not load delivery areas.")).toBeVisible();
+  expect(ward).toBeInvalid();
+  expect(orderFetch).toHaveBeenCalledOnce();
+
+  getAreas.mockResolvedValueOnce(Response.json({ data: [] }));
+  submitDraft();
+  expect(await screen.findByText("There are no supported shipping areas.")).toBeVisible();
+  expect(orderFetch).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  const restored = deferred<Response>();
+  const requote = deferred<Response>();
+  orderFetch.mockReturnValueOnce(requote.promise);
+  getAreas.mockReturnValueOnce(restored.promise);
+  submitDraft();
+  expect(getAreas).toHaveBeenCalledTimes(6);
+  expect(orderFetch).toHaveBeenCalledOnce();
+  await act(async () => restored.resolve(Response.json(restoredAreas)));
+  await waitFor(() => expect(orderFetch).toHaveBeenCalledTimes(2));
+  expect(ward).not.toBeInvalid();
+  expect(orderFetch.mock.calls.map(([path]) => path)).toEqual([quotePath, quotePath]);
+  const input = readBody(orderFetch.mock.calls[1][1]) as StoreOrderQuoteInput;
+  expect(input).toEqual(readBody(orderFetch.mock.calls[0][1]));
+  await act(async () => requote.resolve(makeQuote(input)));
+  expect(await screen.findByRole("dialog", { name: "Review order details" })).toBeVisible();
+  expect(localStorage.getItem(recoverySlot)).toBeNull();
+});
 
 beforeEach(() => {
   let pending = Promise.resolve<unknown>(undefined);

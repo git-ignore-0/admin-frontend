@@ -286,7 +286,6 @@ export function StoreOrderCreate() {
     const { input } = validateStoreOrderDraft(draft, locale);
     if (
       !input ||
-      guestAreaRejected ||
       (draft.buyerType === "user" &&
         (!buyer.eligible || (draft.kind === "new" && buyer.address?.is_supported === false)))
     ) {
@@ -304,10 +303,10 @@ export function StoreOrderCreate() {
           setValidationAttempt((version) => version + 1);
           return;
         }
+        if (guestAreaRejected) setRejectedGuestArea(undefined);
       }
       const quote = await quoteAdminStoreOrder(input, read.signal);
       if (read.current() && matchesCurrentInput(input)) {
-        if (input.guest) setRejectedGuestArea(undefined);
         setUnavailableProducts(new Set());
         setReview({
           input,
